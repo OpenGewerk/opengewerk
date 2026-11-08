@@ -116,6 +116,7 @@ export function describeDeletion(made: DeletionMade): string {
     '|---|---|---|',
     ...kinds,
     '| Sitzungen | nach zwölf Stunden, ein Gerät für die Arbeit ohne Netz nach dreißig Tagen | von selbst |',
+    '| Neue E-Mail-Adressen, die auf den Link in der Mail an sie warten | spätestens einen Tag, nachdem der Link abgelaufen ist; er gilt einen Tag | von selbst |',
     '',
     '## 3. Was aufbewahrt wird',
     '',

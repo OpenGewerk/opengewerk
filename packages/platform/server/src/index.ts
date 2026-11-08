@@ -108,6 +108,7 @@ export * from './network/internal-address.js'
 // there, and the commands that are the way back. The application names
 // itself, its roles and its words.
 export * from './authentication/access.js'
+export * from './authentication/address-sweep.js'
 export * from './authentication/administration.js'
 export * from './authentication/authentication.controller.js'
 export * from './authentication/authentication.js'
