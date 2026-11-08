@@ -1,9 +1,14 @@
+import { UnprocessableEntityException } from '@nestjs/common'
 import { type Permission, tradeContacts } from '@opengewerk/domain'
 import type { ContactRights, ContactRoutes } from '@opengewerk/platform-server'
 
 import type { ContactParentColumns } from '../database/schema/contacts.js'
 import { contacts } from '../database/schema/index.js'
 import { requireReferences } from './references.js'
+
+/** Why a contact does not move between a supplier and a customer or a site. */
+export const changesSides =
+  'Ein Ansprechpartner eines Lieferanten bleibt beim Lieferanten, einer eines Kunden oder Objekts bei diesen. Für die andere Seite einen neuen anlegen.'
 
 /**
  * The rights of the routes of the contacts, which are the customer's.
@@ -48,6 +53,19 @@ export const contactRoutes: ContactRoutes<
   // record of another business with a sentence about a constraint, and a
   // record marked as deleted it would take.
   place: async ({ tx, parents, creating }) => {
+    // A contact of a supplier stays with the suppliers, and one of a customer
+    // or a site with them (opengewerk#883). A device that may read only one
+    // of the two is narrowed to it, and a contact that changed sides left its
+    // rows there without a word: it never heard of a later change, nor of the
+    // contact being taken away. Moving between a customer and a site stays.
+    if (
+      !creating &&
+      'supplierId' in parents &&
+      Object.keys(parents).some((field) => field !== 'supplierId')
+    ) {
+      throw new UnprocessableEntityException(changesSides)
+    }
+
     await requireReferences(tx, contacts, parents, creating)
 
     return undefined
