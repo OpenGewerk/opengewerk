@@ -35,7 +35,6 @@ import {
 } from '../database/device-scope.js'
 import {
   siteAccessDeliveries,
-  contacts,
   siteAccesses,
   siteAccessReveals,
   timeEntries,
@@ -63,10 +62,6 @@ function setsField(patches: Operation['patches'], field: string): boolean {
  * right gets none of the rows, and the answer names the entity as narrowed to
  * none, so that a device that held them drops them.
  *
- * The contacts are not here either: a contact is the one of a customer or a
- * site, or of a supplier (#296), and follows the right of what it belongs
- * to, row by row (`contactsOf` in the scope).
- *
  * Not here: the working time, which everybody holds of their own (`time.read`
  * decides over the others below), the reveals of a code, which are each
  * person's own, the stores with their stock, which every device holds for the
@@ -74,6 +69,9 @@ function setsField(patches: Operation['patches'], field: string): boolean {
  */
 export const readRights: Readonly<Record<string, Permission>> = {
   customers: 'customer.read',
+  // As the route of the contacts reads them, a supplier's among them
+  // (`contactRights`).
+  contacts: 'customer.read',
   customer_tags: 'customer.read',
   suppliers: 'supplier.read',
   sites: 'site.read',
@@ -433,19 +431,6 @@ export function syncRoutes(key: SecretKey | null): SyncRoutes<Identity, Permissi
       const unreadable = Object.entries(readRights).flatMap(([entity, right]) =>
         isAllowed(identity, right) ? [] : [entity],
       )
-      // A contact goes with the right on what it is the contact of: the
-      // contacts of the suppliers with `supplier.read`, the others with
-      // `customer.read`.
-      const customersRead = isAllowed(identity, 'customer.read')
-      const suppliersRead = isAllowed(identity, 'supplier.read')
-      const contactsOf =
-        customersRead && suppliersRead
-          ? null
-          : customersRead
-            ? { only: sql`${contacts.supplierId} is null`, named: 'customers' }
-            : suppliersRead
-              ? { only: sql`${contacts.supplierId} is not null`, named: 'suppliers' }
-              : { only: sql`false`, named: 'none' }
       const narrowFor = (entity: string): SQL | undefined => {
         if (unreadable.includes(entity)) {
           return sql`false`
@@ -475,13 +460,7 @@ export function syncRoutes(key: SecretKey | null): SyncRoutes<Identity, Permissi
           return keepsAccess ? undefined : scope ? accessesOfOpenJobs(scope) : sql`false`
         }
 
-        const scoped = scope ? narrowedTo(scope, entity) : undefined
-
-        if (entity === 'contacts' && contactsOf) {
-          return scoped === undefined ? contactsOf.only : and(scoped, contactsOf.only)
-        }
-
-        return scoped
+        return scope ? narrowedTo(scope, entity) : undefined
       }
 
       return {
@@ -533,14 +512,6 @@ export function syncRoutes(key: SecretKey | null): SyncRoutes<Identity, Permissi
           store_articles: vehicles.value,
           stock_movements: vehicles.value,
           ...Object.fromEntries(unreadable.map((entity) => [entity, 'none'])),
-          ...(contactsOf === null
-            ? {}
-            : {
-                contacts:
-                  contactsOf.named === 'none'
-                    ? 'none'
-                    : `${narrowedWith(scope ? scope.value : 'all', restricted)}:${contactsOf.named}`,
-              }),
         },
         answer: (changes) =>
           key

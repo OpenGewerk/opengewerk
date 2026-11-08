@@ -698,6 +698,71 @@ describe('a device handed to somebody who sees less, or more', () => {
     after.stop()
   })
 
+  it('lets go of the rows a build that knew fewer entities kept and never loaded', async () => {
+    // Pulled visits from before any narrowing with a build that knew visits
+    // alone, then started by one that knows shelves alone: it starts from 0
+    // and holds no rows it loads, and is told the first narrowing.
+    const before = await startOn('mixed-tablet', ['visits'])
+
+    transport.pulls = [
+      { changes: [{ entity: 'visits', rows: [theirs, mine] }], cursor: 9, hasMore: false },
+    ]
+    await before.synchronise()
+    before.stop()
+
+    const fewer = await startOn('mixed-tablet', ['shelves'])
+
+    transport.pulls = [
+      { changes: [], cursor: 9, hasMore: false, narrowed: { visits: 'user:u-road' } },
+    ]
+    await fewer.synchronise()
+    fewer.stop()
+
+    // A build that knows visits again finds none of the rows from before.
+    const again = await startOn('mixed-tablet')
+
+    transport.pulls = [
+      { changes: [], cursor: 9, hasMore: false, narrowed: { visits: 'user:u-road' } },
+    ]
+    await again.synchronise()
+
+    expect(again.list('visits')).toEqual([])
+    again.stop()
+  })
+
+  it('asks from the start when its rows went and its cursor did not, before any narrowing was kept', async () => {
+    const before = await startOn('half-tablet')
+
+    transport.pulls = [
+      { changes: [{ entity: 'visits', rows: [theirs, mine] }], cursor: 9, hasMore: false },
+    ]
+    await before.synchronise()
+    before.stop()
+
+    // A page closed after the rows went and before anything else was written.
+    const store = await openLocalStore('half-tablet')
+
+    await store.drop('visits')
+    store.close()
+
+    const after = await startOn('half-tablet')
+
+    transport.pulls = [
+      { changes: [], cursor: 9, hasMore: false, narrowed: { visits: 'user:u-road' } },
+      {
+        changes: [{ entity: 'visits', rows: [mine] }],
+        cursor: 9,
+        hasMore: false,
+        narrowed: { visits: 'user:u-road' },
+      },
+    ]
+    await after.synchronise()
+
+    expect(transport.asked.slice(-2)).toEqual([9, 0])
+    expect(after.list('visits').map((entry) => entry['id'])).toEqual(['v-2'])
+    after.stop()
+  })
+
   it('lets go of the rows of the others, and asks again from the start', async () => {
     // Somebody who reads every visit pulled first, and with it everybody's.
     const desk = await startOn('shared-tablet')
@@ -808,7 +873,9 @@ describe('a device handed to somebody who sees less, or more', () => {
     ]
     await again.synchronise()
 
-    expect(transport.asked).toEqual([9, 0])
+    // The cursor went back before anything was let go of, so the next start
+    // asks from the start at once, and once more for the new narrowing.
+    expect(transport.asked).toEqual([0, 0])
     expect(again.list('visits').map((entry) => entry['id'])).toEqual(['v-2'])
     expect(again.list('shelves')).toEqual([])
   })

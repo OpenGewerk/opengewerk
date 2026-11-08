@@ -1182,10 +1182,23 @@ export class SyncClient {
       return false
     }
 
-    // Asked of the rows and not of the cursor: a build that knows more
-    // entities than the one before starts again from cursor 0 and keeps the
-    // rows it holds (`cursorStands`).
-    if (typeof kept !== 'string' && ![...this.records.values()].some((rows) => rows.size > 0)) {
+    // A device that has kept no narrowing, stands at cursor 0 and holds no
+    // rows keeps the first answer. It drops the entities the answer names
+    // from the store all the same: a build that knows fewer entities starts
+    // from 0 (`cursorStands`) with the rows of the others kept, rows it never
+    // loads and a later build would show. Any other device takes every named
+    // entity as changed, a cursor without rows behind it included: rows from
+    // before the server narrowed may be more than the person may hold now.
+    const fresh =
+      typeof kept !== 'string' &&
+      this.cursor === 0 &&
+      ![...this.records.values()].some((rows) => rows.size > 0)
+
+    if (fresh) {
+      for (const entity of Object.keys(narrowed)) {
+        await this.store.drop(entity)
+      }
+
       await this.store.writeMeta(narrowedKey, said)
 
       return false
@@ -1200,14 +1213,16 @@ export class SyncClient {
     // run through, and also after a start in between.
     this.narrowedNow = null
     await this.store.writeMeta(settledKey, '')
+    // The cursor back before anything goes: a page closed between the two
+    // found rows gone behind a cursor that would never bring them back.
+    this.cursor = 0
+    await this.store.writeMeta(cursorKey, 0)
 
     for (const entity of changed) {
       await this.store.drop(entity)
       this.records.get(entity)?.clear()
     }
 
-    this.cursor = 0
-    await this.store.writeMeta(cursorKey, 0)
     // The new answer last, as the proof that everything it asks for is done
     // (opengewerk-haustechnik#31). Written first, a page closed in between
     // found it kept at the next start and went on with the rows of somebody

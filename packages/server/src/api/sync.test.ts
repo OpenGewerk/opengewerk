@@ -1377,7 +1377,7 @@ describe('a rule over the fields of one record', () => {
 })
 
 describe('what a device gets back', () => {
-  it('hands the contacts of a supplier with the right on suppliers, and the others with the one on customers', async () => {
+  it('hands the contacts as the route of the contacts does, those of a supplier among them', async () => {
     const supplier = (
       await http()
         .post('/suppliers')
@@ -1405,21 +1405,25 @@ describe('what a device gets back', () => {
     const pulled = async (who: string) =>
       (await http().get('/sync?since=0').set('x-test-identity', who).expect(200)).body as Pulled
     const contactsIn = (body: Pulled) =>
-      body.changes.find((change) => change.entity === 'contacts')?.rows ?? []
+      (body.changes.find((change) => change.entity === 'contacts')?.rows ?? []).map(
+        (row) => row['id'],
+      )
 
-    const noSuppliers = await pulled(without('supplier.read'))
+    // Without the right on customers: the route refuses, and the sync hands none.
+    await http().get('/contacts').set('x-test-identity', without('customer.read')).expect(403)
+
     const noCustomers = await pulled(without('customer.read'))
-    const both = await pulled(office())
 
-    expect(contactsIn(noSuppliers).map((row) => row['id'])).not.toContain(ofSupplier.id)
-    expect(contactsIn(noSuppliers).every((row) => row['supplierId'] === null)).toBe(true)
-    expect(contactsIn(noCustomers).map((row) => row['id'])).toContain(ofSupplier.id)
-    expect(contactsIn(noCustomers).every((row) => row['supplierId'] !== null)).toBe(true)
-    expect(contactsIn(both).map((row) => row['id'])).toContain(ofSupplier.id)
-    // A device that held them under another combination drops them.
-    expect(
-      new Set([noSuppliers, noCustomers, both].map((body) => body.narrowed['contacts'])).size,
-    ).toBe(3)
+    expect(contactsIn(noCustomers)).toEqual([])
+    expect(noCustomers.narrowed['contacts']).toBe('none')
+
+    // Without the right on suppliers: the route hands the supplier's contact, and so does the sync.
+    const listed = (
+      await http().get('/contacts').set('x-test-identity', without('supplier.read')).expect(200)
+    ).body as { id: string }[]
+
+    expect(listed.map((contact) => contact.id)).toContain(ofSupplier.id)
+    expect(contactsIn(await pulled(without('supplier.read')))).toContain(ofSupplier.id)
   })
 
   it('holds nothing of an entity whose right to read a role leaves out, and is told to drop it', async () => {
