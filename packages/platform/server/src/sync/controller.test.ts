@@ -1034,6 +1034,47 @@ describe('the conflicts', () => {
    * part of the tenant, and anybody could mark it decided
    * (GHSA-4jfj-cxqw-qgpj, opengewerk-haustechnik#31).
    */
+  it('shows the values of a record only where the scope of a pull would hand it', async () => {
+    const { noteId } = await shelfWithNote('Keller', 'Zähler ablesen')
+    // The same application, for somebody whose device a pull hands no note.
+    const notesAway = await instanceWith({
+      ...probeSyncRoutes(sync, answerFor),
+      scope: () => ({ narrow: (entity) => (entity === 'notes' ? sql`false` : undefined) }),
+    })
+    const lenasPhone = on(lena(), 'lenas-phone')
+
+    try {
+      await push(
+        lenasPhone,
+        [
+          operation({
+            entity: 'notes',
+            recordId: noteId,
+            kind: 'update',
+            patches: [{ field: 'text', from: 'Zähler abgelesen', to: 'Zähler fehlt' }],
+          }),
+        ],
+        'lenas-phone',
+      ).expect(201)
+
+      type Listed = { recordId: string; found: Record<string, unknown> }[]
+      const hidden = (
+        await request(notesAway.getHttpServer())
+          .get('/sync/conflicts')
+          .set(testIdentityHeader, lenasPhone)
+          .expect(200)
+      ).body as Listed
+      const shown = (await conflictsOf(lenasPhone).expect(200)).body as Listed
+
+      expect(hidden.map((conflict) => [conflict.recordId, conflict.found])).toEqual([[noteId, {}]])
+      expect(shown.map((conflict) => [conflict.recordId, conflict.found])).toEqual([
+        [noteId, { text: 'Zähler ablesen' }],
+      ])
+    } finally {
+      await notesAway.close()
+    }
+  })
+
   it('lists what a device has to decide and closes it once, for that device alone', async () => {
     const { shelfId } = await shelfWithNote('Keller', 'Zähler ablesen')
 

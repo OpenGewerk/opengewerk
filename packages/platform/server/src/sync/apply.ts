@@ -25,6 +25,7 @@ import type { PgColumn, PgTable } from 'drizzle-orm/pg-core'
 
 import type { TenantTransaction } from '../database/database.js'
 import { syncConflicts, syncOperations, syncSequences } from '../database/schema/sync.js'
+import { leftOnTheServer } from './stamp.js'
 import { carriesJson, forColumn, inJsonText, toRecordState, travellingRows } from './tables.js'
 
 /**
@@ -258,7 +259,14 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
       return null
     }
 
-    const patched = operation.patches.find((patch) => patch.field === inherited.reference)
+    // A deletion writes none of its fields and takes the record from the
+    // parent it is under: that parent decides. Asked for the one a field of
+    // the deletion named, the line of a sent letter was deleted by naming a
+    // draft.
+    const patched =
+      operation.kind === 'delete'
+        ? undefined
+        : operation.patches.find((patch) => patch.field === inherited.reference)
     const reference = patched ? patched.to : (current?.[inherited.reference] ?? null)
 
     if (typeof reference !== 'string') {
@@ -315,6 +323,26 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
     }
 
     return picked
+  }
+
+  /**
+   * What an operation has to be before anything is decided about it or
+   * written down, refusing it as a mistake of the client otherwise.
+   *
+   * A field named twice was asked for its first value and written with its
+   * last, so a line passed the gate of an open letter and landed under a
+   * fixed one.
+   */
+  function formed(operation: Operation): void {
+    const named = new Set<string>()
+
+    for (const patch of operation.patches) {
+      if (named.has(patch.field)) {
+        throw new UnknownFieldError(`Dieses Feld steht zweimal in einer Änderung: ${patch.field}`)
+      }
+
+      named.add(patch.field)
+    }
   }
 
   /**
@@ -415,6 +443,8 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
     }
 
     const operation = withJsonText(table, sent)
+
+    formed(operation)
 
     // Without a condition on `deletedAt`, unlike a route, and that is the
     // point: a deleted row has to be found here. It is what turns a repeated
@@ -626,9 +656,15 @@ async function record(
       seen: Object.fromEntries(operation.patches.map((patch) => [patch.field, patch.from])),
       // Only the fields in question. The rest of the record is on the device
       // already, and a conflict list that repeats it buries the three values
-      // somebody actually has to look at.
+      // somebody actually has to look at. Never the stamp, which no answer
+      // hands out (`leftOnTheServer`): a change that named it ran into a
+      // conflict first and copied when the record last changed, who changed
+      // it and from which device, and the list lets it through, since what it
+      // strips it finds by the change sequence of a whole record.
       found: Object.fromEntries(
-        interesting.map((field) => [field, result.current?.[field] ?? null]),
+        interesting
+          .filter((field) => !leftOnTheServer.includes(field))
+          .map((field) => [field, result.current?.[field] ?? null]),
       ),
       deviceId: operation.deviceId,
       // The person of the transaction, which is the session that sent it:
@@ -691,14 +727,19 @@ function holdsValuesOfTheServer(conflict: SyncConflictRow): boolean {
 
 /**
  * The records among those of the conflicts that the person asking sees,
- * asked in the transaction of the request, so under its row level security
- * and nothing else. A record marked as deleted is seen; a record of an entity
- * nothing knows is not.
+ * asked in the transaction of the request, so under its row level security,
+ * and narrowed as a pull would narrow them for the person (`narrow`). A
+ * record a pull would not hand them was told by its conflict all the same:
+ * an update sent for the attendance of a colleague, whose record a pull
+ * keeps from whoever reads only their own, came back with what it holds. A
+ * record marked as deleted is seen; a record of an entity nothing knows is
+ * not.
  */
 async function seenRecords(
   tx: TenantTransaction,
   conflicts: readonly SyncConflictRow[],
   tableFor: (entity: string) => PgTable | null,
+  narrow: (entity: string) => SQL | undefined,
 ): Promise<Set<string>> {
   const seen = new Set<string>()
 
@@ -713,7 +754,10 @@ async function seenRecords(
     const ids = conflicts
       .filter((conflict) => conflict.entity === entity)
       .map((conflict) => conflict.recordId)
-    const rows = await tx.select({ id }).from(table).where(inArray(id, ids))
+    const rows = await tx
+      .select({ id })
+      .from(table)
+      .where(and(inArray(id, ids), narrow(entity)))
 
     for (const row of rows) {
       seen.add(`${entity}:${String(row.id)}`)
@@ -753,6 +797,11 @@ export async function openConflicts(
   owner: ConflictOwner,
   tableFor: (entity: string) => PgTable | null,
   most = mostOpenConflicts,
+  /** How a pull is narrowed for the person, asked only when there is a conflict to list. */
+  narrowing: () =>
+    Promise<(entity: string) => SQL | undefined> | ((entity: string) => SQL | undefined) = () =>
+    () =>
+      undefined,
 ): Promise<SyncConflictRow[]> {
   // The oldest first and no more than `most`: each carries the values of the
   // fields it is about, and a device with thousands of them got them all in
@@ -764,12 +813,19 @@ export async function openConflicts(
     .where(and(isNull(syncConflicts.resolvedAt), ownedBy(owner)))
     .orderBy(asc(syncConflicts.recordedAt))
     .limit(most)
-  const seen = await seenRecords(tx, open, tableFor)
+  const seen =
+    open.length === 0 ? new Set<string>() : await seenRecords(tx, open, tableFor, await narrowing())
 
   return open.map((conflict) =>
     holdsValuesOfTheServer(conflict) && !seen.has(`${conflict.entity}:${conflict.recordId}`)
       ? { ...conflict, fields: [], wanted: {}, seen: {}, found: {} }
-      : conflict,
+      : // Without the stamp also where a conflict written before kept it (`record`).
+        {
+          ...conflict,
+          found: Object.fromEntries(
+            Object.entries(conflict.found).filter(([field]) => !leftOnTheServer.includes(field)),
+          ),
+        },
   )
 }
 

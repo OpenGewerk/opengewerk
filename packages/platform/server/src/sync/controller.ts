@@ -502,7 +502,8 @@ export class SyncController {
    * The list somebody has to work through: the conflicts of the device this
    * session belongs to and of the person signed in on it, and only those
    * (GHSA-4jfj-cxqw-qgpj, opengewerk-haustechnik#360). The values of a record
-   * the person no longer sees stay out (`openConflicts`).
+   * the person no longer sees, or that a pull would not hand them, stay out
+   * (`openConflicts`).
    *
    * Device and person are the session's and never ones a request names, so
    * that no query reaches the conflicts of another. A session that was not
@@ -518,7 +519,18 @@ export class SyncController {
     }
 
     return this.database.forTenant(identity, (tx) =>
-      openConflicts(tx, { deviceId, userId }, (entity) => this.routes.sync.tableFor(entity)),
+      openConflicts(
+        tx,
+        { deviceId, userId },
+        (entity) => this.routes.sync.tableFor(entity),
+        undefined,
+        // The narrowing of a pull that asks for nothing more than the rows.
+        async () => {
+          const scope = (await this.routes.scope?.({ tx, identity, query: {} })) ?? {}
+
+          return (entity) => scope.narrow?.(entity)
+        },
+      ),
     )
   }
 
