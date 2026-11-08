@@ -32,10 +32,13 @@ export async function sweepExpiredAddresses(
 }
 
 /**
- * The sweep of the addresses as a job of an instance: an hour after the
- * start, then once a day, so that an address goes at the latest a day after
- * its link ran out. Not on a closed instance, which writes nothing; the
- * application decides that and does not start it there.
+ * The sweep of the addresses as a job of an instance: ten minutes after the
+ * start, then every hour. The deletion concept promises that an address goes
+ * at the latest a day after its link ran out; a pass every hour keeps that
+ * with room to spare, also when the pause counts from the end of a pass and
+ * a few passes in a row fail. The delete is one statement on a small table.
+ * Not on a closed instance, which writes nothing; the application decides
+ * that and does not start it there.
  */
 export function startAddressSweep(
   database: Database,
@@ -43,10 +46,10 @@ export function startAddressSweep(
 ): RepeatingJob {
   return startRepeating({
     run: () => sweepExpiredAddresses(database),
-    intervalMs: 24 * 60 * 60 * 1000,
-    firstAfterMs: 60 * 60 * 1000,
+    intervalMs: 60 * 60 * 1000,
+    firstAfterMs: 10 * 60 * 1000,
     failure:
-      'Das Aufräumen abgelaufener E-Mail-Adressen ist gescheitert, der nächste Lauf kommt in einem Tag.',
+      'Das Aufräumen abgelaufener E-Mail-Adressen ist gescheitert, der nächste Lauf kommt in einer Stunde.',
     ...(complain === undefined ? {} : { complain }),
   })
 }

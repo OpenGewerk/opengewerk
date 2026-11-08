@@ -280,7 +280,7 @@ async function start(): Promise<void> {
     // The bytes of a file no business holds any more go out of the store,
     // once a day (#657). Not on a closed instance, which writes nothing.
     fileSweep = startFileSweep(database, output.files)
-    // A new address whose link ran out goes, once a day (#862).
+    // A new address whose link ran out goes, checked every hour (#862).
     addressSweep = startAddressSweep(database)
   }
 
