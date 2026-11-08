@@ -239,9 +239,10 @@ Ein Konto, das nur über seine Adresse gefunden wird, findet die Anwendung nur
 über eine bestätigte: beim Benennen als Betreiber, bei `add-staff` und
 `add-tenant` für ein Konto, das es schon gibt, und beim Einlösen einer
 Einladung per Link. Bestätigt ist jede Adresse, die es beim Update auf diese
-Fassung schon gab, jede, die ein Link bestätigt hat, und jede aus einer
-Einladung per Mail. Eine Einladung per Link legt ein Konto mit einer
-Adresse an, die noch nicht bestätigt ist; unter "Konto" geht dafür mit
+Fassung schon gab, und jede, die ein Link der Instanz bestätigt hat. Eine
+Einladung, per Link oder per Mail, legt ein Konto mit einer Adresse an, die
+noch nicht bestätigt ist: die Mail geht über den Mailserver des Betriebs, und
+das zeigt nicht, wem das Postfach gehört. Unter "Konto" geht dafür mit
 "Adresse bestätigen" ein Link an sie.
 
 Einen zweiten Faktor kann jedes Konto auch später einrichten, auf dem Bildschirm

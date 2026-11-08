@@ -14,6 +14,8 @@ import {
   authAddressConfirmations,
   authUsers,
   authVerifications,
+  instanceOperators,
+  memberships,
 } from '../schema.js'
 import { normalise, oneAccountPerAddress, openPasswordResets } from './administration.js'
 import { hashToken, mintToken } from './invitation.js'
@@ -198,6 +200,10 @@ export async function confirmAddress(
   const asUser = found.requestedBy ?? found.userId
   const changed = found.email !== found.before
 
+  if (asUser !== found.userId && !(await stillCorrectable(database, found.userId, asUser))) {
+    throw new GoneException(goneLink)
+  }
+
   try {
     await database.forInstance(async (tx) => {
       const taken = await tx
@@ -247,6 +253,55 @@ export async function confirmAddress(
   }
 
   return { email: found.email, changed }
+}
+
+/**
+ * Whether a correction by whoever leads a tenant still holds when its link is
+ * opened. It could be made only for an account that works in that tenant
+ * alone and does not run the instance (`correctAccount`); an account that
+ * joined another tenant or was appointed since is no longer that tenant's to
+ * correct, and whoever corrected it must still be one of the tenant. Asked
+ * before the address is set.
+ */
+async function stillCorrectable(
+  database: Database,
+  userId: string,
+  correctedBy: string,
+): Promise<boolean> {
+  // Each read as the account whose rows it reads: the memberships of an
+  // account are in reach outside a tenant only for that account itself.
+  const [tenants, operator] = await database.forInstance(
+    async (tx) =>
+      [
+        await tx
+          .select({ tenantId: memberships.tenantId })
+          .from(memberships)
+          .where(eq(memberships.userId, userId)),
+        await tx
+          .select({ id: instanceOperators.id })
+          .from(instanceOperators)
+          .where(eq(instanceOperators.userId, userId))
+          .limit(1),
+      ] as const,
+    userId,
+  )
+  const [only] = tenants
+
+  if (tenants.length !== 1 || only === undefined || operator.length > 0) {
+    return false
+  }
+
+  const corrector = await database.forInstance(
+    (tx) =>
+      tx
+        .select({ tenantId: memberships.tenantId })
+        .from(memberships)
+        .where(and(eq(memberships.userId, correctedBy), eq(memberships.tenantId, only.tenantId)))
+        .limit(1),
+    correctedBy,
+  )
+
+  return corrector.length > 0
 }
 
 async function recordChange(
