@@ -907,6 +907,54 @@ catch-up)
   fail 'Der Zeitplan hat die fehlende Sicherung nicht nachgeholt.'
   ;;
 
+superuser-reads)
+  # The backup scripts read a few tables as postgres, the one role that sees
+  # every tenant. After a restore those tables are whatever the archive made
+  # them: here a view in the place of audit_chains, which calls a function
+  # that notes who read it. A superuser who read the view would run the
+  # function as superuser. backup.sh has to stop before that, saying why, and
+  # the function must never have run. The schedule reads the time of the
+  # backups the same way, from instance_settings, and falls back to 02:30.
+  # Whatever stops the step, the tables come back, so that a stack kept for
+  # the next step keeps no view.
+  restore_tables() {
+    sql "drop view if exists audit_chains; drop view if exists instance_settings;
+         drop function if exists noted(); drop table if exists read_by;
+         alter table if exists audit_chains_kept rename to audit_chains;
+         alter table if exists instance_settings_kept rename to instance_settings;"
+  }
+  trap restore_tables EXIT
+  sql "alter table audit_chains rename to audit_chains_kept;
+       alter table instance_settings rename to instance_settings_kept;
+       create table read_by (who text);
+       create function noted() returns bigint language sql as
+         \$\$ insert into public.read_by values (current_user) returning 0 \$\$;
+       create view audit_chains as
+         select tenant_id, next_sequence + noted() as next_sequence, head_hash from audit_chains_kept;
+       create view instance_settings as
+         select id, backup_time + noted() * interval '1 minute' as backup_time from instance_settings_kept;"
+
+  if compose --profile backup run --rm backup backup.sh > "$temp/superuser.txt" 2>&1; then
+    stopped=false
+  else
+    stopped=true
+  fi
+
+  scheduled=$(compose --profile backup run --rm backup schedule.sh --time 2> /dev/null | tr -d '\r' | tail -n 1)
+  read_by=$(value "select count(*) from read_by")
+  restore_tables
+  trap - EXIT
+
+  cat "$temp/superuser.txt"
+  [ "$read_by" = "0" ] || fail "Die Funktion hinter der Sicht lief ${read_by}-mal, als postgres."
+  [ "$stopped" = true ] || fail 'Die Sicherung lief durch, obwohl audit_chains eine Sicht war.'
+  grep -q 'public.audit_chains ist keine gewöhnliche Tabelle' "$temp/superuser.txt" ||
+    fail 'Die Sicherung brach ab, aber nicht an der Prüfung der Tabelle.'
+  [ "$scheduled" = '02:30' ] ||
+    fail "Der Zeitplan nahm aus einer Sicht ${scheduled} statt der Vorgabe 02:30."
+  echo 'Eine Sicht an der Stelle von audit_chains oder instance_settings liest weder die Sicherung noch der Zeitplan.'
+  ;;
+
 # --- Update einer laufenden Instanz ------------------------------------------
 
 rewind)

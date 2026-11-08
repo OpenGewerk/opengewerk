@@ -40,7 +40,7 @@ real_cp=$(command -v cp)
 mkdir -p "$work/bin" "$work/storage" "$work/backups" "$work/status" "$work/tmp"
 cp "$source_dir/backup/backup.sh" "$source_dir/backup/restore.sh" \
   "$source_dir/backup/verify.sh" "$source_dir/backup/names.sh" \
-  "$source_dir/backup/archive-checks.sh" "$work/bin/"
+  "$source_dir/backup/archive-checks.sh" "$source_dir/backup/superuser-reads.sh" "$work/bin/"
 
 # A dump with something in it, a database without audit chains and a server
 # with a version; whatever else the scripts ask is answered with nothing.
@@ -60,6 +60,12 @@ FAKE
 cat > "$work/bin/psql" <<'FAKE'
 #!/bin/sh
 printf 'psql %s\n' "$*" >> "$CALLS"
+# Without --command, psql reads its statements from stdin, as checked_query
+# hands them over; they are written down with the call.
+case " $* " in
+  *" --command "*) ;;
+  *) cat >> "$CALLS" ;;
+esac
 case "$*" in
   *server_version*) echo 18 ;;
 esac
