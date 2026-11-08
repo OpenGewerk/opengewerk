@@ -340,8 +340,7 @@ describe('signing in and out', () => {
   })
 
   it('keeps the session signed out of through a second sign out without a network', async () => {
-    // The clock of the server an hour ahead, so that the time would let the session through.
-    const anna = () => aSession('s-anna', 'anna', 50 * 60_000)
+    const anna = () => aSession('s-anna', 'anna', -10 * 60_000)
 
     answers = anna
 
@@ -353,11 +352,30 @@ describe('signing in and out', () => {
     // Pressed again, still without a network.
     await expect(signOut()).rejects.toThrow(TypeError)
 
+    // Her session is still told by its id: ended at the next start.
     asked = []
     answers = (path) => (path.endsWith('/get-session') ? anna() : json({}))
 
     expect(await currentAccount()).toBeNull()
     expect(asked.at(-1)).toMatchObject({ path: '/auth/sign-out', method: 'POST' })
+  })
+
+  it('keeps a session of somebody else after a second sign out without a network', async () => {
+    answers = () => aSession('s-anna', 'anna', -10 * 60_000)
+
+    expect(await currentAccount()).toMatchObject({ userId: 'anna' })
+
+    answers = () => new TypeError('Failed to fetch')
+
+    await expect(signOut()).rejects.toThrow(TypeError)
+    await expect(signOut()).rejects.toThrow(TypeError)
+
+    // Ben's session, which is not the one signed out of, stays.
+    asked = []
+    answers = () => aSession('s-ben', 'ben', -60_000)
+
+    expect(await currentAccount()).toMatchObject({ userId: 'ben' })
+    expect(asked.map((each) => each.path)).not.toContain('/auth/sign-out')
   })
 
   it('ends a session begun since the last answer, when it signs out without a network', async () => {

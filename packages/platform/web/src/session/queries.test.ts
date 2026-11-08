@@ -4,10 +4,12 @@ import {
   QueryObserver,
   type QueryObserverResult,
 } from '@tanstack/react-query'
+import { render } from '@testing-library/react'
+import { createElement } from 'react'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { RequestRefused } from '../sync/transport.js'
-import { forgetOnAccountChange, queries } from './queries.js'
+import { forgetOnAccountChange, queries, QueryProvider } from './queries.js'
 
 /**
  * What the cache does with a question that failed. It asks once more where
@@ -98,6 +100,18 @@ describe('the answers of a page when another account signs in on it', () => {
     signInMethod: 'password',
     secondFactor: false,
     deviceId: null,
+  })
+
+  it('go where the applications hold them, under the provider they all use', () => {
+    const client = new QueryClient()
+    const shown = render(createElement(QueryProvider, { client, children: null }))
+
+    client.setQueryData(['account'], someone('anna', 't-1'))
+    client.setQueryData(['access-requests'], ['Anfrage von Anna'])
+    client.setQueryData(['account'], someone('bert', 't-1'))
+
+    expect(client.getQueryData(['access-requests'])).toBeUndefined()
+    shown.unmount()
   })
 
   it('go, those of the account and the tenant before, and stay for the same one', () => {

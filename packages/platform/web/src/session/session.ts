@@ -561,11 +561,11 @@ export async function signOut(): Promise<void> {
 
   forgetSignIn()
 
-  // A sign out of nobody leaves the one before as it was: a second one
-  // without a network, after the first, found no session kept and wrote a
-  // sign out that knew none, and the next start told the session by the
-  // clock again. The browser holds one cookie, and it is still the one of the
-  // session signed out of first.
+  // A sign out of nobody leaves the one before as it was. A second one
+  // without a network, after the first, found no id kept and wrote a sign out
+  // that knew none, and the next start ended whatever session it found, the
+  // one of somebody who had signed in since among them. The browser holds one
+  // cookie, and it is still the one of the session signed out of first.
   if (signedIn || signedOut() === null) {
     keep(signedOutKey, JSON.stringify({ session } satisfies SignedOut))
   }
