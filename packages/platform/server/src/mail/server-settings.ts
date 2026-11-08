@@ -5,7 +5,7 @@ import {
   smtpSecurities,
   type TenantId,
 } from '@opengewerk/platform-domain'
-import { eq } from 'drizzle-orm'
+import { eq, type SQL, sql } from 'drizzle-orm'
 
 import type { Actor, Database, TenantTransaction } from '../database/database.js'
 import { mailSettings } from '../database/schema/mail-settings.js'
@@ -186,6 +186,17 @@ function viewOf(row: SettingsRow, secret: StoredSecret): MailServerView {
   }
 }
 
+/**
+ * The lock every write of the mail settings of a tenant takes first, its
+ * first one included, for the length of its transaction. Whoever saves or
+ * removes them waits for whoever does so at the same moment, and reads what
+ * that one left: a password kept for one server is never written beside the
+ * server another request put there in between.
+ */
+export function mailSettingsLock(tenantId: TenantId): SQL {
+  return sql`select pg_advisory_xact_lock(hashtextextended(${`mail-settings:${tenantId}`}, 0))`
+}
+
 async function settingsOf(tx: TenantTransaction, tenantId: TenantId) {
   const [row] = await tx.select().from(mailSettings).where(eq(mailSettings.tenantId, tenantId))
 
@@ -348,6 +359,8 @@ export function mailServers<Purpose extends string>(rules: MailServerRules<Purpo
     const input = validMailServer(wanted)
 
     return database.forTenant(actor, async (tx) => {
+      await tx.execute(mailSettingsLock(actor.tenantId))
+
       const current = await settingsOf(tx, actor.tenantId)
       let passwordSetAt = current?.passwordSetAt ?? null
 
@@ -406,6 +419,8 @@ export function mailServers<Purpose extends string>(rules: MailServerRules<Purpo
 
   async function removeMailServer(database: Database, actor: Actor): Promise<void> {
     await database.forTenant(actor, async (tx) => {
+      await tx.execute(mailSettingsLock(actor.tenantId))
+
       const removed = await tx
         .delete(mailSettings)
         .where(eq(mailSettings.tenantId, actor.tenantId))
@@ -437,7 +452,9 @@ export function mailServers<Purpose extends string>(rules: MailServerRules<Purpo
     tenantId: TenantId,
     key: SecretKey,
   ): Promise<MailConnection | null> {
-    return database.forTenant({ tenantId, reason: 'mail' }, async (tx) => {
+    // Server and password from one moment: read apart, a change saved
+    // between the two would hand the password to the server before it.
+    return database.readingTenant({ tenantId, reason: 'mail' }, async (tx) => {
       const row = await settingsOf(tx, tenantId)
 
       if (!row) {
@@ -511,7 +528,9 @@ export function mailServers<Purpose extends string>(rules: MailServerRules<Purpo
       return { ...configuration, user: input.username, password: input.password }
     }
 
-    const { current, stored } = await database.forTenant(actor, async (tx) => ({
+    // The settings the kept password is checked against and the password
+    // itself from one moment, as in `connectionOf`.
+    const { current, stored } = await database.readingTenant(actor, async (tx) => ({
       current: await settingsOf(tx, actor.tenantId),
       stored: await secrets.read(tx, key, place(actor.tenantId)),
     }))

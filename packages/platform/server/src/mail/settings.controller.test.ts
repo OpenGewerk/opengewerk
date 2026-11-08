@@ -327,6 +327,34 @@ describe('the mail server of a tenant', () => {
     expect(rows).toEqual([])
   })
 
+  it('waits to be saved while the settings of the tenant are being written elsewhere', async () => {
+    // Another write of the same tenant holds the lock of its settings.
+    const other = await admin.connect()
+
+    await other.query('begin')
+    await other.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [
+      `mail-settings:${north.id}`,
+    ])
+
+    let saved = false
+    const saving = save(settings).then((answer) => {
+      saved = true
+
+      return answer
+    })
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 500))
+
+      expect(saved).toBe(false)
+    } finally {
+      await other.query('commit')
+      other.release()
+    }
+
+    expect((await saving).status).toBe(200)
+  })
+
   /**
    * Saving asks the server first. A connection it refuses is not kept, and
    * the answer says why, so that nobody finds out from a message that never
