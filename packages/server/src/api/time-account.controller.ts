@@ -1,5 +1,5 @@
 import { BadRequestException, Controller, Get, Query } from '@nestjs/common'
-import { addDays, type IsoDate } from '@opengewerk/domain'
+import { addDays, calendarYears, inCalendarYears, type IsoDate } from '@opengewerk/domain'
 import { Database } from '@opengewerk/platform-server'
 
 import { accountOf } from '../time-account/time-account.js'
@@ -21,6 +21,15 @@ function stretchOf(from: unknown, to: unknown): { from: IsoDate; to: IsoDate } {
   if (!calendarDay(from) || !calendarDay(to) || to < from) {
     throw new BadRequestException(
       'Von und bis sind Tage, geschrieben 2026-10-03, bis nicht vor von.',
+    )
+  }
+
+  // The account counts from its beginning to the later of the last day
+  // asked for and the last day counted, so a day far off would stretch the
+  // count however short the stretch asked for is.
+  if (!inCalendarYears(from) || !inCalendarYears(to)) {
+    throw new BadRequestException(
+      `Ein Zeitraum in den Jahren ${String(calendarYears.first)} bis ${String(calendarYears.last)}.`,
     )
   }
 

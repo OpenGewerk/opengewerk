@@ -2,7 +2,13 @@ import { federalStates, type FederalState } from '@opengewerk/platform-domain'
 import { describe, expect, it } from 'vitest'
 
 import { shippedRules } from '../rules/shipped.js'
-import { holidayCalendar, holidaysIn, localHolidaysOf } from './holiday.js'
+import {
+  daysFrom,
+  holidayCalendar,
+  holidaysIn,
+  localHolidaysOf,
+  longestSpanDays,
+} from './holiday.js'
 
 const of = (state: FederalState, local: readonly string[] = []) => ({ state, local })
 
@@ -128,5 +134,13 @@ describe('the public holidays of a business (#288)', () => {
     expect(hessen('2026-11-08')).toBe(true)
     expect(hessen('2026-11-09')).toBe(false)
     expect(bavaria('2026-11-08')).toBe(false)
+  })
+})
+
+describe('the days of a span', () => {
+  it('are counted out up to the years the application counts in, and refused beyond', () => {
+    expect(daysFrom('2026-12-30', '2027-01-01')).toEqual(['2026-12-30', '2026-12-31', '2027-01-01'])
+    expect(daysFrom('1900-01-01', '2100-12-31').length).toBeLessThanOrEqual(longestSpanDays)
+    expect(() => daysFrom('0001-01-01', '9999-12-31')).toThrow(RangeError)
   })
 })

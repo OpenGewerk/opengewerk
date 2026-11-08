@@ -164,11 +164,38 @@ export function holidayCalendar(rules: RuleSet, setting: HolidaySetting): (on: I
   }
 }
 
-/** Every day from one to another, both counted. */
+/**
+ * The years any day the application counts lies in: absences, the time
+ * account, the files of the people. A day outside them is refused where it
+ * comes in, and no span of days is longer than they are, so that one request
+ * with a day in the year 1 or 9999 does not keep the server counting for a
+ * million days.
+ */
+export const calendarYears = { first: 1900, last: 2100 } as const
+
+/** Whether a day lies in the years the application counts in. */
+export function inCalendarYears(day: IsoDate): boolean {
+  const year = Number(day.slice(0, 4))
+
+  return year >= calendarYears.first && year <= calendarYears.last
+}
+
+/** The most days a span can have: every day of those years. */
+export const longestSpanDays = (calendarYears.last - calendarYears.first + 1) * 366
+
+/**
+ * Every day from one to another, both counted. A span longer than the years
+ * the application counts in is refused rather than counted out, which also
+ * holds for a span written before those years were checked.
+ */
 export function daysFrom(first: IsoDate, last: IsoDate): readonly IsoDate[] {
   const days: IsoDate[] = []
 
   for (let on = first; on <= last; on = addDays(on, 1)) {
+    if (days.length === longestSpanDays) {
+      throw new RangeError(`More than ${String(longestSpanDays)} days from ${first} to ${last}.`)
+    }
+
     days.push(on)
   }
 
