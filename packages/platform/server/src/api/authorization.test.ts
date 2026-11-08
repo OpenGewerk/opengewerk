@@ -17,6 +17,7 @@ import {
   RequiresMembership,
   RequiresOperator,
   RequiresPermission,
+  AlsoWith,
   RequiresSession,
 } from './authorization.js'
 import { TRUSTED_ORIGINS } from './handed-in.js'
@@ -81,6 +82,13 @@ class ProbeController {
   @Post()
   @RequiresPermission('probe.write')
   write(@CurrentIdentity() identity: RequestIdentity<ProbeIdentity, ProbeRight>) {
+    return { reason: identity.reason }
+  }
+
+  @Get('either')
+  @RequiresPermission('probe.write')
+  @AlsoWith('probe.read')
+  either(@CurrentIdentity() identity: RequestIdentity<ProbeIdentity, ProbeRight>) {
     return { reason: identity.reason }
   }
 
@@ -181,6 +189,25 @@ describe('a route that declares a right', () => {
     )
   })
 
+  it('lets a request through with a right the route names as well, and hands that one on', async () => {
+    const answer = await http()
+      .get('/probe/either')
+      .set(testIdentityHeader, as('reader', tenant, 'probe.read'))
+      .expect(200)
+
+    expect(answer.body).toEqual({ reason: 'probe.read' })
+
+    // With neither, refused over the route's own.
+    const refused = await http()
+      .get('/probe/either')
+      .set(testIdentityHeader, as('nobody', tenant))
+      .expect(403)
+
+    expect((refused.body as { message: string }).message).toBe(
+      'Das Recht probe.write fehlt diesem Zugang.',
+    )
+  })
+
   it('refuses a request without an identity as not signed in, not as forbidden', async () => {
     const refused = await http().get('/probe').expect(401)
 
@@ -205,6 +232,7 @@ describe('a route that declares nothing', () => {
 
     expect(routes.map((route) => route.name).sort()).toEqual([
       'GET /probe',
+      'GET /probe/either',
       'GET /probe/forgotten',
       'GET /probe/instance',
       'GET /probe/me',
@@ -222,6 +250,11 @@ describe('a route that declares nothing', () => {
     expect(routes.find((route) => route.name === 'POST /probe')).toMatchObject({
       writes: true,
       permission: 'probe.write',
+      alternatives: [],
+    })
+    expect(routes.find((route) => route.name === 'GET /probe/either')).toMatchObject({
+      permission: 'probe.write',
+      alternatives: ['probe.read'],
     })
   })
 })

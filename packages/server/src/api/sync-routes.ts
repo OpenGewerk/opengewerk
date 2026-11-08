@@ -141,8 +141,9 @@ export function permissionFor(
 ): Permission | null {
   // A contact of a supplier is the supplier's (#296), which a technician, who
   // may add a customer's contact on site, may not keep. Creating one names the
-  // supplier; a change to a contact asks `customer.write`, which a technician
-  // lacks, and the route asks for the supplier's right on top.
+  // supplier and asks `supplier.write` alone. A change to a contact goes to
+  // the routes (`change: 'never'`), which keep the people of a supplier with
+  // that right as well, in place of `customer.write` (`keptBy`, opengewerk#884).
   if (entity === 'contacts' && kind === 'create' && setsField(patches, 'supplierId')) {
     return 'supplier.write'
   }
