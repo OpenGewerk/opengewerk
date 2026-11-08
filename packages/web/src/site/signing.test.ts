@@ -16,6 +16,10 @@ import { signedContentOf } from './signing.js'
 describe('what the customer signs', () => {
   const report: RecordState = {
     id: 'd-1',
+    subject: 'Sicherungen Keller',
+    documentDate: '2026-09-21',
+    customerId: 'c-1',
+    jobId: 'j-1',
     introText: 'Zwei Leitungsschutzschalter getauscht.',
   }
 
@@ -34,6 +38,10 @@ describe('what the customer signs', () => {
     ]
 
     const onServer = signedContentFingerprint({
+      subject: 'Sicherungen Keller',
+      documentDate: '2026-09-21',
+      customerId: 'c-1',
+      jobId: 'j-1',
       introText: 'Zwei Leitungsschutzschalter getauscht.',
       lines: [
         {
@@ -63,8 +71,17 @@ describe('what the customer signs', () => {
   it('reads a report without a text as one whose text is empty, as the server does', () => {
     const blank = signedContentOf({ id: 'd-2' }, [])
 
-    // And without fields of the business, which leaves the fingerprint as it was (#78).
-    expect(blank).toEqual({ introText: null, fields: null, lines: [] })
+    // And without fields of the business, which go into the fingerprint as none (#78).
+    expect(blank).toEqual({
+      subject: null,
+      documentDate: null,
+      customerId: null,
+      jobId: null,
+      introText: null,
+      fields: null,
+      fieldsVersion: null,
+      lines: [],
+    })
     expect(signedContentFingerprint(blank)).toBe(
       signedContentFingerprint({ introText: null, lines: [] }),
     )

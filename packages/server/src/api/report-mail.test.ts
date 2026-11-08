@@ -159,6 +159,10 @@ async function signedReport(business: Business, email: string | null = 'berg@exa
           deviceInfo: 'Mozilla/5.0 (Linux; Android 15) Chrome/140 Mobile',
           path: scribble,
           contentFingerprint: signedContentFingerprint({
+            subject: null,
+            documentDate: signedOn,
+            customerId,
+            jobId,
             introText,
             lines: [{ ...line, kind: 'item', description: null, unit: 'hour' }],
           }),
@@ -205,7 +209,13 @@ async function signedDeliveryNote(business: Business) {
     .set('x-test-identity', office)
     .send({ kind: 'delivery_note' })
     .expect(201)
-  const id = (note.body as { id: string }).id
+  const head = note.body as {
+    id: string
+    subject: string | null
+    documentDate: string
+    jobId: string | null
+  }
+  const id = head.id
   const lines = (
     await http().get(`/documents/${id}/lines`).set('x-test-identity', office).expect(200)
   ).body as {
@@ -231,6 +241,10 @@ async function signedDeliveryNote(business: Business) {
           deviceInfo: 'Mozilla/5.0 (Linux; Android 15) Chrome/140 Mobile',
           path: scribble,
           contentFingerprint: signedContentFingerprint({
+            subject: head.subject,
+            documentDate: head.documentDate,
+            customerId,
+            jobId: head.jobId,
             introText: null,
             lines: lines.map(
               ({ id, position, kind, designation, description, quantityMilli, unit }) => ({

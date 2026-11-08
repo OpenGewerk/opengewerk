@@ -361,14 +361,15 @@ export async function plantSampleData(base: string, today: IsoDate): Promise<voi
   await post('/settings/parameters', { key: 'customer_reminder.mail', from: today, value: 1 })
 
   async function document(values: Record<string, unknown>, lines: readonly Line[]) {
-    const id = idOf(await post('/documents', { documentDate: today, ...values }))
+    const created = await post('/documents', { documentDate: today, ...values })
+    const id = idOf(created)
     const written: Answer[] = []
 
     for (const line of lines) {
       written.push(await post(`/documents/${id}/lines`, line))
     }
 
-    return { id, lines: written }
+    return { id, lines: written, head: created }
   }
 
   const { id: quote } = await document(
@@ -1288,7 +1289,7 @@ export async function plantSampleData(base: string, today: IsoDate): Promise<voi
  */
 async function signOnDevice(
   post: (path: string, body: unknown) => Promise<Answer>,
-  report: { readonly id: string; readonly lines: readonly Answer[] },
+  report: { readonly id: string; readonly lines: readonly Answer[]; readonly head: Answer },
   introText: string,
   signerName = 'Erika Berg',
 ): Promise<void> {
@@ -1308,6 +1309,11 @@ async function signOnDevice(
           deviceInfo: 'Tablet der Vorschau',
           path: sampleSignature,
           contentFingerprint: signedContentFingerprint({
+            // What the head of the page names, as the document was made.
+            subject: typeof report.head['subject'] === 'string' ? report.head['subject'] : null,
+            documentDate: String(report.head['documentDate']),
+            customerId: String(report.head['customerId']),
+            jobId: typeof report.head['jobId'] === 'string' ? report.head['jobId'] : null,
             introText,
             lines: report.lines.map((line) => ({
               id: String(line['id']),

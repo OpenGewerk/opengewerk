@@ -46,8 +46,13 @@ export async function signatureRefusal(
     .select({
       kind: documents.kind,
       predecessorDocumentId: documents.predecessorDocumentId,
+      subject: documents.subject,
+      documentDate: documents.documentDate,
+      customerId: documents.customerId,
+      jobId: documents.jobId,
       introText: documents.introText,
       fieldValues: documents.fieldValues,
+      fieldsVersion: documents.fieldsVersion,
       deletedAt: documents.deletedAt,
     })
     .from(documents)
@@ -87,11 +92,17 @@ export async function signatureRefusal(
     .from(documentLines)
     .where(and(eq(documentLines.documentId, documentId), isNull(documentLines.deletedAt)))
 
-  // The fields of the business (#78) are part of the page the customer read.
+  // The fields of the business (#78) are part of the page the customer read,
+  // with the version of their definition, which says what a value meant.
   const held = signedContentFingerprint({
+    subject: document.subject,
+    documentDate: document.documentDate,
+    customerId: document.customerId,
+    jobId: document.jobId,
     introText: document.introText,
     lines,
     fields: document.fieldValues,
+    fieldsVersion: document.fieldsVersion,
   })
 
   return values['contentFingerprint'] === held

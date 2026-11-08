@@ -299,20 +299,38 @@ describe('the fields of a report', () => {
 
     await push([report(id, { fieldsVersion: 2, fieldValues })])
 
-    const signature = (fields: string | null) =>
+    const signature = (fields: string | null, fieldsVersion: number | null = 2) =>
       creating('document_signatures', newId<'document-signature'>(), {
         documentId: id,
         signerName: 'Erika Berg',
         signedAt: '2026-09-24T12:32:00.000Z',
         deviceInfo: 'Mozilla/5.0',
         path: scribble,
-        contentFingerprint: signedContentFingerprint({ introText, lines: [], fields }),
+        contentFingerprint: signedContentFingerprint({
+          subject: null,
+          documentDate: '2026-09-24',
+          customerId,
+          jobId: null,
+          introText,
+          lines: [],
+          fields,
+          fieldsVersion,
+        }),
       })
 
     // Signed on a page without the fields, it is about another page.
     const blind = await push([signature(null)])
 
     expect(blind.receipts[0]).toMatchObject({ outcome: 'conflict', reason: 'changed_elsewhere' })
+
+    // The same values under another version of the definition: other labels,
+    // other units, another page.
+    const otherVersion = await push([signature(fieldValues, 1)])
+
+    expect(otherVersion.receipts[0]).toMatchObject({
+      outcome: 'conflict',
+      reason: 'changed_elsewhere',
+    })
 
     const signed = await push([signature(fieldValues)])
 

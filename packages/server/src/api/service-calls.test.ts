@@ -7,7 +7,6 @@ import { Test } from '@nestjs/testing'
 import {
   instructionSheetsFingerprint,
   type InstructionSheet,
-  signedContentFingerprint,
   type TenantId,
 } from '@opengewerk/domain'
 import {
@@ -30,6 +29,7 @@ import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/te
 import { documentAttachments, withCallInstructions } from '../mail/attachments.js'
 import { runMailCycle } from '../mail/worker.js'
 import { ApiModule } from './api.module.js'
+import { fingerprintAsHeld } from './test-signing.js'
 import { DocumentFiles } from './document-files.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { invoiceable, readyToInvoice } from './test-invoice.js'
@@ -187,30 +187,7 @@ async function aSignedReport(customerId: string, jobId: string) {
     technician(),
   )
 
-  const { rows } = await admin.query<{
-    id: string
-    position: number
-    kind: 'item'
-    designation: string
-    description: string | null
-    quantity_milli: string
-    unit: 'hour'
-  }>(
-    'select id, position, kind, designation, description, quantity_milli, unit from document_lines where document_id = $1',
-    [report],
-  )
-  const fingerprint = signedContentFingerprint({
-    introText: null,
-    lines: rows.map((row) => ({
-      id: row.id,
-      position: row.position,
-      kind: row.kind,
-      designation: row.designation,
-      description: row.description,
-      quantityMilli: Number(row.quantity_milli),
-      unit: row.unit,
-    })),
-  })
+  const fingerprint = await fingerprintAsHeld(admin, report)
   const sent = await push(app, technician(), [
     created('document_signatures', newId<'document-signature'>(), {
       documentId: report,
