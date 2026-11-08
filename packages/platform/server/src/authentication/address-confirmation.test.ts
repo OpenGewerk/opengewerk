@@ -11,6 +11,7 @@ import { type FakeSmtpServer, fakeSmtpServer } from '../mail/test-smtp.js'
 import { smtpTransport } from '../mail/transport.js'
 import { SecretKey } from '../secrets/key.js'
 import { addressNeedsMail, addressUnconfirmed } from './address-confirmation.js'
+import { sweepExpiredAddresses } from './address-sweep.js'
 import {
   type ProbeFoundation,
   probeFoundation,
@@ -546,5 +547,27 @@ describe('an invitation', () => {
     )
 
     expect(rows[0]?.verified).toBe(true)
+  })
+})
+
+describe('an address whose link ran out (#862)', () => {
+  it('goes with the sweep, and one whose link still works stays', async () => {
+    await admin.query('delete from auth_address_confirmations')
+    await admin.query(
+      `insert into auth_address_confirmations
+              (user_id, email, token_hash, requested_by, created_at, expires_at)
+       values ($1, 'nina.alt@nord.example.de', $3, $1, now() - interval '1 day 1 minute',
+               now() - interval '1 minute'),
+              ($2, 'bea.bald@nord.example.de', $4, $2, now(), now() + interval '1 hour')`,
+      [idOf(nina), idOf(bea), 'a'.repeat(64), 'b'.repeat(64)],
+    )
+
+    expect(await sweepExpiredAddresses(database)).toBe(1)
+
+    const { rows } = await admin.query<{ email: string }>(
+      'select email from auth_address_confirmations',
+    )
+
+    expect(rows.map((row) => row.email)).toEqual(['bea.bald@nord.example.de'])
   })
 })
