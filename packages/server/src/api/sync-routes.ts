@@ -15,7 +15,7 @@ import {
   type SyncRoutes,
   type TenantTransaction,
 } from '@opengewerk/platform-server'
-import { and, eq, type SQL, sql } from 'drizzle-orm'
+import { and, eq, inArray, type SQL, sql } from 'drizzle-orm'
 
 import {
   accessesOfOpenJobs,
@@ -33,7 +33,12 @@ import {
   scopedEntities,
   sitesWithOpenJobs,
 } from '../database/device-scope.js'
-import { siteAccessDeliveries, siteAccessReveals, timeEntries } from '../database/schema/index.js'
+import {
+  siteAccessDeliveries,
+  siteAccesses,
+  siteAccessReveals,
+  timeEntries,
+} from '../database/schema/index.js'
 import { sync } from '../database/sync.js'
 import { readAccessValues } from '../secrets/site-access.js'
 import { answerFor } from './database-errors.js'
@@ -225,7 +230,7 @@ export function permissionFor(
  * with the person, the device and when the value was set: what a showing from
  * that device is measured against.
  */
-async function withAccessStates(
+export async function withAccessStates(
   tx: TenantTransaction,
   key: SecretKey,
   tenantId: TenantId,
@@ -240,11 +245,21 @@ async function withAccessStates(
     return changes
   }
 
-  const values = await readAccessValues(
-    tx,
-    key,
-    tenantId,
-    live.map((row) => row['id'] as SiteAccessId),
+  const ids = live.map((row) => row['id'] as SiteAccessId)
+  const values = await readAccessValues(tx, key, tenantId, ids)
+  // When each value was set, read again after the values. The row and the
+  // sealed value are two statements: a value set between them came out with
+  // the moment of the one before, on the device and in the record of who got
+  // which value. Every new value moves the moment, so a moment that is still
+  // the one of the row says the value read is the one of the row. Where it
+  // moved, the value waits for the next pull, which brings the row anew.
+  const setNow = new Map(
+    (
+      await tx
+        .select({ id: siteAccesses.id, valueSetAt: siteAccesses.valueSetAt })
+        .from(siteAccesses)
+        .where(inArray(siteAccesses.id, ids))
+    ).map((row) => [row.id as string, row.valueSetAt?.getTime() ?? null]),
   )
 
   const delivered: { readonly siteAccessId: SiteAccessId; readonly valueSetAt: Date }[] = []
@@ -264,7 +279,9 @@ async function withAccessStates(
               recipient &&
               valued?.has(String(row['siteId'])) &&
               stored.state === 'readable' &&
-              row['valueSetAt'] !== null
+              row['valueSetAt'] !== null &&
+              setNow.get(String(row['id'])) ===
+                new Date(row['valueSetAt'] as string | Date).getTime()
             ) {
               delivered.push({
                 siteAccessId: row['id'] as SiteAccessId,
