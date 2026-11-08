@@ -180,6 +180,29 @@ describe('an article the supplier does not sell yet', () => {
     expect(plan.summary.samples.every((sample) => sample.renumbered)).toBe(true)
   })
 
+  it('gets the next short code for each spelling of one number, without starting over', () => {
+    // 16,384 spellings of one number: each searched from the first suffix
+    // again, that was some 130 million searches for one catalogue.
+    const spellings = Array.from({ length: 16_384 }, (_, mask) =>
+      [...'abcdefghijklmn']
+        .map((letter, at) => (mask & (1 << at) ? letter.toUpperCase() : letter))
+        .join(''),
+    )
+    const plan = planImport(
+      delivery(...spellings.map((number) => `A;N;${number};00;Abzweigdose;;1;0;Stck;120;;;;`)),
+      holdings({ articles: [{ ...held, id: 'taken', number: 'ABCDEFGHIJKLMN' }] }),
+      options(),
+    )
+    const numbers = plan.articles.map((article) => article.number)
+
+    expect(numbers.slice(0, 3)).toEqual([
+      'abcdefghijklmn-HAN',
+      'Abcdefghijklmn-HAN2',
+      'aBcdefghijklmn-HAN3',
+    ])
+    expect(new Set(numbers.map((number) => number.toLowerCase())).size).toBe(16_384)
+  }, 5_000)
+
   it('is found among the articles of the business by its EAN and gets the supplier added', () => {
     const plan = planImport(
       delivery(cableTie, cableTieEan),

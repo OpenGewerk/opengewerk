@@ -1237,3 +1237,29 @@ describe('a workbook built to be slow', () => {
     expect(performance.now() - started).toBeLessThan(2000)
   })
 })
+
+describe('a workbook that repeats a part of itself', () => {
+  it('classifies a long format once, however many styles name it', () => {
+    // One format of 180,000 characters, named by 20,000 styles: classified
+    // for each of them, that was 3.6 billion characters for one file.
+    const format = `0${'"x"'.repeat(60_000)}`
+    const styles =
+      `${declaration}<styleSheet xmlns="${main}">` +
+      `<numFmts count="1"><numFmt numFmtId="164" formatCode="${attribute(format)}"/></numFmts>` +
+      `<cellXfs count="20001"><xf numFmtId="0"/>${'<xf numFmtId="164"/>'.repeat(20_000)}</cellXfs>` +
+      '</styleSheet>'
+
+    expect(cellsOf('<c r="A1" s="20000"><v>7</v></c>', { styles })).toEqual(['7'])
+    // Read in some 40 milliseconds; classified for every style, 13 seconds.
+  }, 5_000)
+
+  it('ends a shared string only where one began', () => {
+    // Closing tags without their opening ones read the last string again,
+    // as often as a file repeats them, and moved every string after it.
+    expect(
+      cellsOf('<c r="A1" t="s"><v>1</v></c>', {
+        strings: ['<t>Büro</t></si></si></si>', '<t>Lager</t>'],
+      }),
+    ).toEqual(['Lager'])
+  })
+})

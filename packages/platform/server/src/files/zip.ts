@@ -80,6 +80,12 @@ export function unzip(bytes: Uint8Array, limit: number, options: UnzipOptions = 
 
   const entries: ZipEntry[] = []
   let total = 0
+  // What the entries read of the archive, together, and where each begins.
+  // An entry has bytes of its own: a directory that names the same bytes for
+  // many entries, an empty stream a thousand times, would have each inflated
+  // anew without any of it counting against the limit.
+  let read = 0
+  const begun = new Set<number>()
 
   for (let index = 0; index < count; index += 1) {
     if (at + 46 > bytes.length || u32(at) !== centralSignature) {
@@ -123,6 +129,15 @@ export function unzip(bytes: Uint8Array, limit: number, options: UnzipOptions = 
     }
 
     const start = local + 30 + u16(local + 26) + u16(local + 28)
+
+    read += packed
+
+    if (begun.has(local) || start + packed > bytes.length || read > bytes.length) {
+      throw new ZipRefused('Das Verzeichnis des Archivs ist beschädigt.')
+    }
+
+    begun.add(local)
+
     const data = bytes.subarray(start, start + packed)
     let unpacked: Uint8Array
 

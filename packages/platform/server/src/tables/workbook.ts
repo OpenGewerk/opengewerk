@@ -176,6 +176,7 @@ const unescaped = (text: string) =>
 function sharedStrings(xml: string): string[] {
   const strings: string[] = []
   let current = ''
+  let inString = false
   let inText = false
   let aid = 0
 
@@ -183,6 +184,7 @@ function sharedStrings(xml: string): string[] {
     open(name, _attributes, closed) {
       if (name === 'si') {
         current = ''
+        inString = !closed
 
         if (closed) {
           strings.push('')
@@ -194,12 +196,16 @@ function sharedStrings(xml: string): string[] {
       }
     },
     close(name) {
-      if (name === 'si') {
+      if (name === 'si' && inString) {
         // Made into the text of a cell once, here, and not again for every
         // cell that points to it: a string of a megabyte that comes to
         // nothing was otherwise read once for each of its cells, and an
-        // empty cell counts for no limit.
+        // empty cell counts for no limit. Only the end of a string that was
+        // begun: a closing tag without its opening one would read the last
+        // string again, as often as a file repeats it.
         strings.push(cellText(unescaped(current)))
+        current = ''
+        inString = false
       } else if (name === 'rPh') {
         aid -= 1
       } else if (name === 't') {
@@ -297,11 +303,28 @@ function numberKinds(xml: string): NumberKind[] {
     },
   })
 
+  // Each format of its own is classified once: a file may name one long
+  // format from every one of thousands of styles.
+  const kinds = new Map<number, NumberKind>()
+  const kindOf = (format: number, code: string): NumberKind => {
+    const known = kinds.get(format)
+
+    if (known !== undefined) {
+      return known
+    }
+
+    const kind = kindOfFormat(code)
+
+    kinds.set(format, kind)
+
+    return kind
+  }
+
   return formats.map((format) => {
     const code = written.get(format)
 
     return code !== undefined
-      ? kindOfFormat(code)
+      ? kindOf(format, code)
       : builtInDays.has(format)
         ? 'day'
         : builtInShares.has(format)
@@ -398,6 +421,7 @@ function sheetRows(
   let format = 0
   let value = ''
   let inline = ''
+  let inCell = false
   let inValue = false
   let inInline = false
   let inText = false
@@ -417,6 +441,8 @@ function sheetRows(
       } else if (name === 'c') {
         const placed = columnOf(attributes.r ?? '')
 
+        inCell = !closed
+
         column = placed < 0 ? column + 1 : placed
         type = attributes.t ?? ''
         format = Number(attributes.s ?? 0)
@@ -433,8 +459,10 @@ function sheetRows(
       }
     },
     close(name) {
-      if (name === 'c') {
+      if (name === 'c' && inCell) {
+        // Only a cell that was begun, once.
         put()
+        inCell = false
       } else if (name === 'v') {
         inValue = false
       } else if (name === 'is') {

@@ -12,6 +12,7 @@ import {
 } from '@opengewerk/domain'
 import { describe, expect, it } from 'vitest'
 
+import { durabilityLabelSvg } from './durability-label.js'
 import { instructionSheet, legalPagesOf, printJob } from './template.js'
 
 /**
@@ -840,5 +841,25 @@ describe('the instructions of a document', () => {
     expect(html).toContain('<p class="annex">Zu Angebot vom 21.09.2026</p>')
     expect(html).toContain('ENTWURF')
     expect(() => instructionSheet(content, 2, { logo: null, durabilityLabel: null })).toThrow()
+  })
+})
+
+describe('the labels of the guarantees of durability', () => {
+  it('draw the label of the Commission once, however many guarantees a document has', () => {
+    // 200 guarantees of their own: each with the whole drawing, that was some
+    // 60 megabytes of HTML before the renderer saw it.
+    const lines = Array.from({ length: 200 }, (_, at) =>
+      line(at + 1, 1000, {
+        durability: { halfYears: 4, producer: 'Kraft', model: `M${String(at)}` },
+      }),
+    )
+    const { html } = printJob(invoice({}, { lines }), {
+      logo: null,
+      durabilityLabel: durabilityLabelSvg,
+    })
+
+    expect(html.split('<symbol id="durability-drawing"').length).toBe(2)
+    expect(html.split('<use href="#durability-drawing"/>').length).toBe(201)
+    expect(html.length).toBeLessThan(2_000_000)
   })
 })

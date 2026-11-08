@@ -328,22 +328,29 @@ export const inspectionsDue: SourceQuery<DeadlineValues> = async (tx) => {
      where r.deleted_at is null and r.status = 'signed' and ${forms}
      order by r.installation_id, r.performed_on desc, r.updated_at desc, r.id desc`)
 
-  // The protocols of each installation together, the newest first.
+  // The protocols of each installation together, the newest first. Each
+  // added to the list of its installation, not the list copied for each:
+  // an installation with years of signed protocols took the square of their
+  // count on every pass of the deadlines.
   const testsOf = new Map<string, (SignedTest & { readonly row: (typeof rows)[number] })[]>()
 
   for (const row of rows) {
     const definition = tradeForms.definitionFor(row.definition_key, Number(row.definition_version))
 
     if (definition !== null) {
-      testsOf.set(row.installation_id, [
-        ...(testsOf.get(row.installation_id) ?? []),
-        {
-          definition,
-          values: readFormValues(row.values) ?? {},
-          performedOn: row.performed_on as IsoDate,
-          row,
-        },
-      ])
+      let tests = testsOf.get(row.installation_id)
+
+      if (tests === undefined) {
+        tests = []
+        testsOf.set(row.installation_id, tests)
+      }
+
+      tests.push({
+        definition,
+        values: readFormValues(row.values) ?? {},
+        performedOn: row.performed_on as IsoDate,
+        row,
+      })
     }
   }
 

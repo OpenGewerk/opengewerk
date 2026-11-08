@@ -417,19 +417,35 @@ export function planImport(
     return selling
   }
 
+  /**
+   * Where the search for a free number goes on, per number as it compares:
+   * a catalogue may hold one number in many spellings, "ab", "AB", "aB",
+   * and each began its search at the first suffix again, which made the
+   * plan take the square of their count.
+   */
+  const resumeAt = new Map<string, number>()
+
   /** The number of a new article: the supplier's, or with the short code where it is taken. */
   const freeNumber = (wanted: string): { number: string; renumbered: boolean } => {
-    if (!numbers.has(wanted.toLowerCase())) {
+    const compared = wanted.toLowerCase()
+
+    if (!numbers.has(compared)) {
       return { number: wanted, renumbered: false }
     }
 
-    let candidate = `${wanted}-${options.shortCode}`
+    const candidate = (next: number) =>
+      next === 1
+        ? `${wanted}-${options.shortCode}`
+        : `${wanted}-${options.shortCode}${String(next)}`
+    let next = resumeAt.get(compared) ?? 1
 
-    for (let next = 2; numbers.has(candidate.toLowerCase()); next += 1) {
-      candidate = `${wanted}-${options.shortCode}${String(next)}`
+    while (numbers.has(candidate(next).toLowerCase())) {
+      next += 1
     }
 
-    return { number: candidate, renumbered: true }
+    resumeAt.set(compared, next + 1)
+
+    return { number: candidate(next), renumbered: true }
   }
 
   /**

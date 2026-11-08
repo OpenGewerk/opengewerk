@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 
 import { durabilityLabelSvg } from './durability-label.js'
 import {
+  durabilityLabelDrawing,
   filledDurabilityLabel,
   isLegalGraphic,
   LegalGraphicError,
@@ -101,66 +102,88 @@ describe('the label of a guarantee of durability (#433)', () => {
     expect(createHash('sha256').update(durabilityLabelSvg, 'utf8').digest('hex')).toBe(digest)
   })
 
-  it('fills its three fields, the model at the right edge, and escapes what it fills in', () => {
-    const label = filledDurabilityLabel(durabilityLabelSvg, guarantee, 'one')
+  it('fills its three fields over the drawing, the model at the right edge, and escapes what it fills in', () => {
+    const label = filledDurabilityLabel(durabilityLabelSvg, guarantee)
 
+    expect(label).toContain('<use href="#durability-drawing"/>')
     expect(label).toContain('<tspan x="0" y="0">2,5</tspan>')
     expect(label).toContain('<tspan x="0" y="0">Kraft &amp; Söhne</tspan>')
     expect(label).toContain(
       'text-anchor="end" transform="translate(262.9 74.52)"><tspan x="0" y="0">K&lt;2&gt;</tspan>',
     )
-    expect(label).not.toContain('Brand/')
-    expect(label).not.toContain('Model identifier')
-    expect(label).not.toContain('>XX<')
+    expect(label).toContain('class="durability-cls-3"')
+    expect(label).toContain('viewBox="0 0 269.29 283.46"')
   })
 
-  it('changes nothing else of the file but the names of its ids and classes', () => {
+  it('draws the file once without its fields, and changes nothing else but the names of its ids and classes', () => {
     const source = durabilityLabelSvg
-    const label = filledDurabilityLabel(source, guarantee, 'one')
-    // Back to the file: the names without their prefix, and the three fields
-    // as the Commission wrote them.
-    const back = label
-      .replaceAll('id="one-', 'id="')
-      .replaceAll('url(#one-', 'url(#')
-      .replaceAll('.one-cls-', '.cls-')
-      .replaceAll(
-        /class="([^"]+)"/g,
-        (_, names: string) => `class="${names.replaceAll('one-cls-', 'cls-')}"`,
-      )
+    const drawing = durabilityLabelDrawing(source)
+    const svg = source.slice(source.indexOf('<svg')).trimEnd()
+    // The file between its opening and its closing tag, without the three
+    // fields the labels fill in.
+    const expected = svg
+      .slice(svg.indexOf('>') + 1, -'</svg>'.length)
       .replace(
-        '<text class="cls-5" transform="translate(6.32 74.52)"><tspan x="0" y="0">Kraft &amp; Söhne</tspan></text>',
         '<text class="cls-5" transform="translate(6.32 74.52)"><tspan x="0" y="0">Brand/</tspan>' +
           '<tspan class="cls-19" x="28.34" y="0">T</tspan><tspan class="cls-22" x="33.61" y="0">rademark</tspan></text>',
+        '',
       )
       .replace(
-        '<text class="cls-5" text-anchor="end" transform="translate(262.9 74.52)"><tspan x="0" y="0">K&lt;2&gt;</tspan></text>',
         '<text class="cls-5" transform="translate(196.75 74.52)"><tspan x="0" y="0">Model identifier</tspan></text>',
+        '',
       )
       .replace(
-        '<text class="cls-3" transform="translate(5.07 150.57)"><tspan x="0" y="0">2,5</tspan></text>',
         '<text class="cls-3" transform="translate(5.07 150.57)"><tspan x="0" y="0">XX</tspan></text>',
+        '',
+      )
+    const inside = drawing.slice(
+      drawing.indexOf('<symbol id="durability-drawing" viewBox="0 0 269.29 283.46">') +
+        '<symbol id="durability-drawing" viewBox="0 0 269.29 283.46">'.length,
+      -'</symbol></svg>'.length,
+    )
+    const back = inside
+      .replaceAll('id="durability-', 'id="')
+      .replaceAll('url(#durability-', 'url(#')
+      .replaceAll('.durability-cls-', '.cls-')
+      .replaceAll(
+        /class="([^"]+)"/g,
+        (_, names: string) => `class="${names.replaceAll('durability-cls-', 'cls-')}"`,
       )
 
-    expect(back).toBe(source.slice(source.indexOf('<svg')))
-    expect(label.match(/id="(?!one-)/g)).toBeNull()
+    expect(back).toBe(expected)
+    expect(drawing).not.toContain('Brand/')
+    expect(drawing).not.toContain('Model identifier')
+    expect(drawing).not.toContain('>XX<')
   })
 
-  it('gives two labels on one page ids of their own', () => {
-    const source = durabilityLabelSvg
-    const ids = (label: string) => [...label.matchAll(/id="([^"]+)"/g)].map((match) => match[1])
-    const first = ids(filledDurabilityLabel(source, guarantee, 'one'))
-    const second = ids(filledDurabilityLabel(source, guarantee, 'two'))
+  it('keeps a reference by href to an element of the file whole', () => {
+    // The file of today refers by url(#...) alone; a new one may use an
+    // element by href, and its reference must follow the id.
+    const source = durabilityLabelSvg.replace(
+      '</svg>',
+      '<use href="#clippath"/><use xlink:href="#clippath-1"/></svg>',
+    )
+    const drawing = durabilityLabelDrawing(source)
 
-    expect(first.length).toBeGreaterThan(0)
-    expect(first.filter((id) => second.includes(id))).toEqual([])
+    expect(drawing).toContain('id="durability-clippath"')
+    expect(drawing).toContain('<use href="#durability-clippath"/>')
+    expect(drawing).toContain('<use xlink:href="#durability-clippath-1"/>')
+  })
+
+  it('gives a label no id of its own, so that every label of a page uses the one drawing', () => {
+    const label = filledDurabilityLabel(durabilityLabelSvg, guarantee)
+    const drawing = durabilityLabelDrawing(durabilityLabelSvg)
+
+    expect(label).not.toContain('id=')
+    expect(drawing.split('id="durability-drawing"').length).toBe(2)
   })
 
   it('takes a dollar sign in a field as a dollar sign, never as a part of the file', () => {
-    const label = filledDurabilityLabel(
-      durabilityLabelSvg,
-      { halfYears: 6, producer: "A$'B$`C", model: '$&$$' },
-      'one',
-    )
+    const label = filledDurabilityLabel(durabilityLabelSvg, {
+      halfYears: 6,
+      producer: "A$'B$`C",
+      model: '$&$$',
+    })
 
     expect(label).toContain('<tspan x="0" y="0">A$\'B$`C</tspan>')
     expect(label).toContain('<tspan x="0" y="0">$&amp;$$</tspan>')
@@ -170,6 +193,6 @@ describe('the label of a guarantee of durability (#433)', () => {
   it('refuses a file whose fields do not stand where they should', () => {
     const source = durabilityLabelSvg.replace('Model identifier', 'Model')
 
-    expect(() => filledDurabilityLabel(source, guarantee, 'one')).toThrow(LegalGraphicError)
+    expect(() => durabilityLabelDrawing(source)).toThrow(LegalGraphicError)
   })
 })
