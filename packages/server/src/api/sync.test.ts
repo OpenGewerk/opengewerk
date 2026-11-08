@@ -5,6 +5,7 @@ import {
   contactParentText,
   longestFormValues,
   missingPermission,
+  permissionsOfRoles,
   syncEntities,
 } from '@opengewerk/domain'
 import { Database, longestSyncText, newId } from '@opengewerk/platform-server'
@@ -1376,6 +1377,84 @@ describe('a rule over the fields of one record', () => {
 })
 
 describe('what a device gets back', () => {
+  it('hands the contacts as the route of the contacts does, those of a supplier among them', async () => {
+    const supplier = (
+      await http()
+        .post('/suppliers')
+        .set('x-test-identity', office())
+        .send({ name: 'Großhandel Rhein' })
+    ).body as { id: string }
+    const ofSupplier = (
+      await http()
+        .post('/contacts')
+        .set('x-test-identity', office())
+        .send({ supplierId: supplier.id, familyName: 'Lieferkontakt' })
+    ).body as { id: string }
+    const officeRights = [...permissionsOfRoles(['office'])]
+    const without = (right: string) =>
+      JSON.stringify({
+        userId: 'test',
+        tenantId: north.id,
+        roles: ['office'],
+        rights: officeRights.filter((each) => each !== right),
+      })
+    type Pulled = {
+      changes: { entity: string; rows: Record<string, unknown>[] }[]
+      narrowed: Record<string, string>
+    }
+    const pulled = async (who: string) =>
+      (await http().get('/sync?since=0').set('x-test-identity', who).expect(200)).body as Pulled
+    const contactsIn = (body: Pulled) =>
+      (body.changes.find((change) => change.entity === 'contacts')?.rows ?? []).map(
+        (row) => row['id'],
+      )
+
+    // Without the right on customers: the route refuses, and the sync hands none.
+    await http().get('/contacts').set('x-test-identity', without('customer.read')).expect(403)
+
+    const noCustomers = await pulled(without('customer.read'))
+
+    expect(contactsIn(noCustomers)).toEqual([])
+    expect(noCustomers.narrowed['contacts']).toBe('none')
+
+    // Without the right on suppliers: the route hands the supplier's contact, and so does the sync.
+    const listed = (
+      await http().get('/contacts').set('x-test-identity', without('supplier.read')).expect(200)
+    ).body as { id: string }[]
+
+    expect(listed.map((contact) => contact.id)).toContain(ofSupplier.id)
+    expect(contactsIn(await pulled(without('supplier.read')))).toContain(ofSupplier.id)
+  })
+
+  it('holds nothing of an entity whose right to read a role leaves out, and is told to drop it', async () => {
+    const board = await installation('Ohne Leserecht')
+    const withoutInstallations = JSON.stringify({
+      userId: 'test',
+      tenantId: north.id,
+      roles: ['office'],
+      rights: [...permissionsOfRoles(['office'])].filter((right) => right !== 'installation.read'),
+    })
+    type Pulled = {
+      changes: { entity: string; rows: Record<string, unknown>[] }[]
+      narrowed: Record<string, string>
+    }
+    const pulled = async (who: string) =>
+      (await http().get('/sync?since=0').set('x-test-identity', who).expect(200)).body as Pulled
+    const ids = (body: Pulled) =>
+      (body.changes.find((change) => change.entity === 'installations')?.rows ?? []).map(
+        (row) => row['id'],
+      )
+
+    const refused = await pulled(withoutInstallations)
+    const allowed = await pulled(office())
+
+    expect(ids(refused)).toEqual([])
+    expect(refused.narrowed['installations']).toBe('none')
+    expect(refused.narrowed['documents']).not.toBe('none')
+    expect(ids(allowed)).toContain(board.id)
+    expect(allowed.narrowed['installations']).not.toBe('none')
+  })
+
   it('sees a record that was deleted, which is why it is only marked', async () => {
     const board = await installation('Wird gelöscht')
 

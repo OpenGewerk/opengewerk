@@ -55,6 +55,60 @@ function setsField(patches: Operation['patches'], field: string): boolean {
 }
 
 /**
+ * The right the ordinary routes ask to read an entity, for the entities a
+ * device holds of a subject. A pull asked for `sync.read` alone, so a role
+ * a business put together with the sync and without, say, `document.read`
+ * was handed the documents the document routes refuse it. Whoever lacks the
+ * right gets none of the rows, and the answer names the entity as narrowed to
+ * none, so that a device that held them drops them.
+ *
+ * Not here: the working time, which everybody holds of their own (`time.read`
+ * decides over the others below), the reveals of a code, which are each
+ * person's own, the stores with their stock, which every device holds for the
+ * vehicles (#298), and the forms and tags a site fills in and shows.
+ */
+export const readRights: Readonly<Record<string, Permission>> = {
+  customers: 'customer.read',
+  // As the route of the contacts reads them, a supplier's among them
+  // (`contactRights`).
+  contacts: 'customer.read',
+  customer_tags: 'customer.read',
+  suppliers: 'supplier.read',
+  sites: 'site.read',
+  site_tags: 'site.read',
+  site_accesses: 'site.read',
+  installations: 'installation.read',
+  appliances: 'installation.read',
+  distribution_boards: 'installation.read',
+  board_sections: 'installation.read',
+  circuits: 'installation.read',
+  equipment: 'installation.read',
+  inverters: 'installation.read',
+  pv_strings: 'installation.read',
+  pv_modules: 'installation.read',
+  installation_labels: 'installation.read',
+  form_records: 'installation.read',
+  jobs: 'job.read',
+  job_notes: 'job.read',
+  defects: 'job.read',
+  defect_steps: 'job.read',
+  early_start_requests: 'job.read',
+  job_assignments: 'job.read',
+  on_call_shifts: 'job.read',
+  appointments: 'job.read',
+  appointment_people: 'job.read',
+  documents: 'document.read',
+  document_lines: 'document.read',
+  document_signatures: 'document.read',
+  document_sources: 'document.read',
+  tasks: 'task.read',
+  attachments: 'attachment.read',
+  attachment_versions: 'attachment.read',
+  articles: 'article.read',
+  article_prices: 'article.read',
+}
+
+/**
  * What an operation needs beyond the right to sync at all.
  *
  * Sending a queue is a different way in, not a different thing to do. A
@@ -77,6 +131,7 @@ function setsField(patches: Operation['patches'], field: string): boolean {
  * The operation is asked for the narrowest right that covers it, and whoever
  * holds `job.write` holds `job.progress` as well.
  */
+
 export function permissionFor(
   entity: string,
   kind: OperationKind,
@@ -372,7 +427,15 @@ export function syncRoutes(key: SecretKey | null): SyncRoutes<Identity, Permissi
       const restricted = await restrictedOnDevices(tx)
       // The years of the staff deleted for good (#846), which a device drops.
       const erasedYears = await staffYearsErased(tx)
+      // What the ordinary routes would not let the person read (`readRights`).
+      const unreadable = Object.entries(readRights).flatMap(([entity, right]) =>
+        isAllowed(identity, right) ? [] : [entity],
+      )
       const narrowFor = (entity: string): SQL | undefined => {
+        if (unreadable.includes(entity)) {
+          return sql`false`
+        }
+
         if (entity === 'time_entries' && ownTimeOnly) {
           return eq(timeEntries.userId, identity.userId)
         }
@@ -448,6 +511,7 @@ export function syncRoutes(key: SecretKey | null): SyncRoutes<Identity, Permissi
           article_prices: held.value,
           store_articles: vehicles.value,
           stock_movements: vehicles.value,
+          ...Object.fromEntries(unreadable.map((entity) => [entity, 'none'])),
         },
         answer: (changes) =>
           key

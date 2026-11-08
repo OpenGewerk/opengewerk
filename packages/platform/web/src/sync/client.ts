@@ -1163,8 +1163,10 @@ export class SyncClient {
    *
    * When it changes, what the device holds of that entity goes, the cursor
    * starts again and the answer is asked for anew: a full pull costs one
-   * exchange, and the outbox is laid over what arrives as always. The first
-   * answer that says anything is simply kept; before it, nothing was narrowed.
+   * exchange, and the outbox is laid over what arrives as always. A device
+   * that holds no rows keeps the first answer that says anything. One that
+   * holds rows from before the server said anything takes every entity it
+   * names as changed: those rows may be more than the person may hold now.
    */
   private async narrowedElsewhere(
     narrowed: Readonly<Record<string, string>> | undefined,
@@ -1180,13 +1182,29 @@ export class SyncClient {
       return false
     }
 
-    if (typeof kept !== 'string') {
+    // A device that has kept no narrowing, stands at cursor 0 and holds no
+    // rows keeps the first answer. It drops the entities the answer names
+    // from the store all the same: a build that knows fewer entities starts
+    // from 0 (`cursorStands`) with the rows of the others kept, rows it never
+    // loads and a later build would show. Any other device takes every named
+    // entity as changed, a cursor without rows behind it included: rows from
+    // before the server narrowed may be more than the person may hold now.
+    const fresh =
+      typeof kept !== 'string' &&
+      this.cursor === 0 &&
+      ![...this.records.values()].some((rows) => rows.size > 0)
+
+    if (fresh) {
+      for (const entity of Object.keys(narrowed)) {
+        await this.store.drop(entity)
+      }
+
       await this.store.writeMeta(narrowedKey, said)
 
       return false
     }
 
-    const before = JSON.parse(kept) as Record<string, string>
+    const before = typeof kept === 'string' ? (JSON.parse(kept) as Record<string, string>) : {}
     const changed = [...new Set([...Object.keys(before), ...Object.keys(narrowed)])].filter(
       (entity) => before[entity] !== narrowed[entity],
     )
@@ -1195,14 +1213,16 @@ export class SyncClient {
     // run through, and also after a start in between.
     this.narrowedNow = null
     await this.store.writeMeta(settledKey, '')
+    // The cursor back before anything goes: a page closed between the two
+    // found rows gone behind a cursor that would never bring them back.
+    this.cursor = 0
+    await this.store.writeMeta(cursorKey, 0)
 
     for (const entity of changed) {
       await this.store.drop(entity)
       this.records.get(entity)?.clear()
     }
 
-    this.cursor = 0
-    await this.store.writeMeta(cursorKey, 0)
     // The new answer last, as the proof that everything it asks for is done
     // (opengewerk-haustechnik#31). Written first, a page closed in between
     // found it kept at the next start and went on with the rows of somebody
