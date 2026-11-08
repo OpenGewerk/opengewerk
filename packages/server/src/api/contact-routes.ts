@@ -1,9 +1,21 @@
+import { UnprocessableEntityException } from '@nestjs/common'
 import { type Permission, tradeContacts } from '@opengewerk/domain'
 import type { ContactRights, ContactRoutes } from '@opengewerk/platform-server'
 
 import type { ContactParentColumns } from '../database/schema/contacts.js'
 import { contacts } from '../database/schema/index.js'
 import { requireReferences } from './references.js'
+
+/** Which side a contact is on: a supplier's, or a customer's or a site's. */
+function sideOf(contact: Readonly<Record<string, unknown>>): 'supplier' | 'customer' {
+  const supplier = contact['supplierId']
+
+  return supplier === null || supplier === undefined || supplier === '' ? 'customer' : 'supplier'
+}
+
+/** Why a contact does not move between a supplier and a customer or a site. */
+export const changesSides =
+  'Ein Ansprechpartner eines Lieferanten bleibt beim Lieferanten, einer eines Kunden oder Objekts bei diesen. Für die andere Seite einen neuen anlegen.'
 
 /**
  * The rights of the routes of the contacts, which are the customer's.
@@ -39,11 +51,26 @@ export const contactRoutes: ContactRoutes<
   // suppliers keeps them, and a technician, who may add a contact to a
   // customer on site, may not add one to a supplier.
   parentRight: (field) => (field === 'supplierId' ? 'supplier.write' : null),
+  // And they are read by whoever may read the suppliers (opengewerk#883):
+  // the list of all contacts leaves them out without that right, and
+  // `GET /suppliers/:id/contacts` hands them to it alone.
+  parentReadRight: (field) => (field === 'supplierId' ? 'supplier.read' : null),
   // A parent that is gone, or that belongs to another business, is refused
   // with the field in the sentence: the key in the database would refuse a
   // record of another business with a sentence about a constraint, and a
   // record marked as deleted it would take.
-  place: async ({ tx, parents, creating }) => {
+  place: async ({ tx, parents, creating, current }) => {
+    // A contact of a supplier stays with the suppliers, and one of a customer
+    // or a site with them (opengewerk#883). A device that may read only one
+    // of the two is narrowed to it, and a contact that changed sides left its
+    // rows there without a word: it never heard of a later change, nor of the
+    // contact being taken away. Moving between a customer and a site stays.
+    // Judged by the side before and after, not by the fields a request names:
+    // a form may send a parent it does not change.
+    if (current && sideOf(current) !== sideOf({ ...current, ...parents })) {
+      throw new UnprocessableEntityException(changesSides)
+    }
+
     await requireReferences(tx, contacts, parents, creating)
 
     return undefined

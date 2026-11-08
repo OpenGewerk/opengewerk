@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { contacts } from '../database/schema/index.js'
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
+import { changesSides } from './contact-routes.js'
 import { as, testIdentities as identities } from './test-identity.js'
 
 /**
@@ -292,6 +293,51 @@ describe('contacts', () => {
     })
 
     expect(row).toMatchObject({ givenName: 'Ole', familyName: 'Hansen', role: null })
+  })
+
+  it('do not move between a supplier and a customer or a site, and between a customer and a site they do', async () => {
+    const supplierId = await made('/suppliers', { name: 'Großhandel Neckar' })
+    const ofSupplier = await contact({ supplierId, familyName: 'Lieferkontakt' })
+    const ofCustomer = await contact({ customerId, familyName: 'Kundenkontakt' })
+    const refusal = async (id: string, body: Record<string, unknown>) =>
+      (
+        (
+          await http()
+            .patch(`/contacts/${id}`)
+            .set('x-test-identity', office())
+            .send(body)
+            .expect(422)
+        ).body as { message: string }
+      ).message
+
+    expect(await refusal(ofSupplier.id, { supplierId: null, customerId })).toBe(changesSides)
+    expect(await refusal(ofCustomer.id, { customerId: null, supplierId })).toBe(changesSides)
+
+    // Neither moved.
+    const kept = await list()
+
+    expect(kept.find((row) => row.id === ofSupplier.id)).toMatchObject({
+      supplierId,
+      customerId: null,
+    })
+    expect(kept.find((row) => row.id === ofCustomer.id)).toMatchObject({
+      customerId,
+      supplierId: null,
+    })
+
+    // A change that names the parent it keeps is no move.
+    await http()
+      .patch(`/contacts/${ofSupplier.id}`)
+      .set('x-test-identity', office())
+      .send({ supplierId, role: 'Innendienst' })
+      .expect(200)
+
+    // From a customer to one of its sites is still a move, the supplier named as none.
+    await http()
+      .patch(`/contacts/${ofCustomer.id}`)
+      .set('x-test-identity', office())
+      .send({ customerId: null, siteId, supplierId: null })
+      .expect(200)
   })
 
   it('are created by a technician on site, and corrected only by whoever may correct the customer', async () => {

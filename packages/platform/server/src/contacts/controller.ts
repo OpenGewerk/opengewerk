@@ -41,6 +41,8 @@ export interface ContactPlacing<Parent extends string = string> {
    */
   readonly parents: Readonly<Partial<Record<Parent, unknown>>>
   readonly creating: boolean
+  /** The contact as it stands, held for the change; none for a new one. */
+  readonly current?: Readonly<Record<string, unknown>>
 }
 
 /** What the routes of the contacts are told by the application. */
@@ -323,7 +325,13 @@ function contactsController(rights: ContactRights<string>): Type<unknown> {
         requireParentRight(this.routes, this.authorization, identity, current)
         requireParentRight(this.routes, this.authorization, identity, parents)
 
-        const placed = await this.routes.place?.({ tx, identity, parents, creating: false })
+        const placed = await this.routes.place?.({
+          tx,
+          identity,
+          parents,
+          creating: false,
+          current,
+        })
         const [updated] = await tx
           .update(contacts)
           .set({ ...parents, ...texts, ...placed } as Partial<typeof contacts.$inferInsert>)
