@@ -421,3 +421,35 @@ describe('the public holidays of the business', () => {
     await send('put', '/holidays', { state: 'DE-BW', local: [] }, owner)
   })
 })
+
+describe('the absences and files of the people on a device', () => {
+  it('travel to none, for whoever syncs', async () => {
+    // A sickness of Anna's, as the business keeps it.
+    await send(
+      'post',
+      '/absences',
+      { personId: annasFile, kind: 'sickness', ...days('2026-09-07', '2026-09-08') },
+      office,
+    )
+
+    const personal = [
+      'people',
+      'working_times',
+      'qualifications',
+      'qualification_kinds',
+      'absences',
+      'leave_entitlements',
+      'holiday_settings',
+    ]
+
+    for (const who of [technician, anna, owner]) {
+      const pulled = (await get('/sync?since=0', who)) as unknown as {
+        changes: { entity: string }[]
+      }
+
+      expect(
+        pulled.changes.map((change) => change.entity).filter((entity) => personal.includes(entity)),
+      ).toEqual([])
+    }
+  })
+})
