@@ -21,6 +21,7 @@ import {
   SecretKey,
   smtpTransport,
   startupLine,
+  startAddressSweep,
   startFileSweep,
   stopOnSignals,
   takeOverFromEnvironment,
@@ -216,12 +217,14 @@ async function start(): Promise<void> {
   let deadlineWorker: { readonly stop: () => Promise<void> } | null = null
   let pushWorker: { readonly stop: () => Promise<void> } | null = null
   let fileSweep: { readonly stop: () => Promise<void> } | null = null
+  let addressSweep: { readonly stop: () => Promise<void> } | null = null
 
   stopOnSignals(opengewerk.name, [
     () => mailWorker?.stop(),
     () => deadlineWorker?.stop(),
     () => pushWorker?.stop(),
     () => fileSweep?.stop(),
+    () => addressSweep?.stop(),
     stopInstanceSettings,
     () => application.close(),
     () => database.close(),
@@ -277,6 +280,8 @@ async function start(): Promise<void> {
     // The bytes of a file no business holds any more go out of the store,
     // once a day (#657). Not on a closed instance, which writes nothing.
     fileSweep = startFileSweep(database, output.files)
+    // A new address whose link ran out goes, checked every hour (#862).
+    addressSweep = startAddressSweep(database)
   }
 
   if (push) {
