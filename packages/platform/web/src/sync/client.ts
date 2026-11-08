@@ -1163,8 +1163,10 @@ export class SyncClient {
    *
    * When it changes, what the device holds of that entity goes, the cursor
    * starts again and the answer is asked for anew: a full pull costs one
-   * exchange, and the outbox is laid over what arrives as always. The first
-   * answer that says anything is simply kept; before it, nothing was narrowed.
+   * exchange, and the outbox is laid over what arrives as always. A device
+   * that holds no rows keeps the first answer that says anything. One that
+   * holds rows from before the server said anything takes every entity it
+   * names as changed: those rows may be more than the person may hold now.
    */
   private async narrowedElsewhere(
     narrowed: Readonly<Record<string, string>> | undefined,
@@ -1180,13 +1182,16 @@ export class SyncClient {
       return false
     }
 
-    if (typeof kept !== 'string') {
+    // Asked of the rows and not of the cursor: a build that knows more
+    // entities than the one before starts again from cursor 0 and keeps the
+    // rows it holds (`cursorStands`).
+    if (typeof kept !== 'string' && ![...this.records.values()].some((rows) => rows.size > 0)) {
       await this.store.writeMeta(narrowedKey, said)
 
       return false
     }
 
-    const before = JSON.parse(kept) as Record<string, string>
+    const before = typeof kept === 'string' ? (JSON.parse(kept) as Record<string, string>) : {}
     const changed = [...new Set([...Object.keys(before), ...Object.keys(narrowed)])].filter(
       (entity) => before[entity] !== narrowed[entity],
     )

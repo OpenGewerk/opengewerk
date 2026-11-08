@@ -35,6 +35,7 @@ import {
 } from '../database/device-scope.js'
 import {
   siteAccessDeliveries,
+  contacts,
   siteAccesses,
   siteAccessReveals,
   timeEntries,
@@ -52,6 +53,61 @@ import { answerFor } from './database-errors.js'
 /** Whether an operation sets a field to a value, as a create sets every field it has. */
 function setsField(patches: Operation['patches'], field: string): boolean {
   return patches.some((patch) => patch.field === field && patch.to !== null && patch.to !== '')
+}
+
+/**
+ * The right the ordinary routes ask to read an entity, for the entities a
+ * device holds of a subject. A pull asked for `sync.read` alone, so a role
+ * a business put together with the sync and without, say, `document.read`
+ * was handed the documents the document routes refuse it. Whoever lacks the
+ * right gets none of the rows, and the answer names the entity as narrowed to
+ * none, so that a device that held them drops them.
+ *
+ * The contacts are not here either: a contact is the one of a customer or a
+ * site, or of a supplier (#296), and follows the right of what it belongs
+ * to, row by row (`contactsOf` in the scope).
+ *
+ * Not here: the working time, which everybody holds of their own (`time.read`
+ * decides over the others below), the reveals of a code, which are each
+ * person's own, the stores with their stock, which every device holds for the
+ * vehicles (#298), and the forms and tags a site fills in and shows.
+ */
+export const readRights: Readonly<Record<string, Permission>> = {
+  customers: 'customer.read',
+  customer_tags: 'customer.read',
+  suppliers: 'supplier.read',
+  sites: 'site.read',
+  site_tags: 'site.read',
+  site_accesses: 'site.read',
+  installations: 'installation.read',
+  appliances: 'installation.read',
+  distribution_boards: 'installation.read',
+  board_sections: 'installation.read',
+  circuits: 'installation.read',
+  equipment: 'installation.read',
+  inverters: 'installation.read',
+  pv_strings: 'installation.read',
+  pv_modules: 'installation.read',
+  installation_labels: 'installation.read',
+  form_records: 'installation.read',
+  jobs: 'job.read',
+  job_notes: 'job.read',
+  defects: 'job.read',
+  defect_steps: 'job.read',
+  early_start_requests: 'job.read',
+  job_assignments: 'job.read',
+  on_call_shifts: 'job.read',
+  appointments: 'job.read',
+  appointment_people: 'job.read',
+  documents: 'document.read',
+  document_lines: 'document.read',
+  document_signatures: 'document.read',
+  document_sources: 'document.read',
+  tasks: 'task.read',
+  attachments: 'attachment.read',
+  attachment_versions: 'attachment.read',
+  articles: 'article.read',
+  article_prices: 'article.read',
 }
 
 /**
@@ -77,6 +133,7 @@ function setsField(patches: Operation['patches'], field: string): boolean {
  * The operation is asked for the narrowest right that covers it, and whoever
  * holds `job.write` holds `job.progress` as well.
  */
+
 export function permissionFor(
   entity: string,
   kind: OperationKind,
@@ -372,7 +429,28 @@ export function syncRoutes(key: SecretKey | null): SyncRoutes<Identity, Permissi
       const restricted = await restrictedOnDevices(tx)
       // The years of the staff deleted for good (#846), which a device drops.
       const erasedYears = await staffYearsErased(tx)
+      // What the ordinary routes would not let the person read (`readRights`).
+      const unreadable = Object.entries(readRights).flatMap(([entity, right]) =>
+        isAllowed(identity, right) ? [] : [entity],
+      )
+      // A contact goes with the right on what it is the contact of: the
+      // contacts of the suppliers with `supplier.read`, the others with
+      // `customer.read`.
+      const customersRead = isAllowed(identity, 'customer.read')
+      const suppliersRead = isAllowed(identity, 'supplier.read')
+      const contactsOf =
+        customersRead && suppliersRead
+          ? null
+          : customersRead
+            ? { only: sql`${contacts.supplierId} is null`, named: 'customers' }
+            : suppliersRead
+              ? { only: sql`${contacts.supplierId} is not null`, named: 'suppliers' }
+              : { only: sql`false`, named: 'none' }
       const narrowFor = (entity: string): SQL | undefined => {
+        if (unreadable.includes(entity)) {
+          return sql`false`
+        }
+
         if (entity === 'time_entries' && ownTimeOnly) {
           return eq(timeEntries.userId, identity.userId)
         }
@@ -397,7 +475,13 @@ export function syncRoutes(key: SecretKey | null): SyncRoutes<Identity, Permissi
           return keepsAccess ? undefined : scope ? accessesOfOpenJobs(scope) : sql`false`
         }
 
-        return scope ? narrowedTo(scope, entity) : undefined
+        const scoped = scope ? narrowedTo(scope, entity) : undefined
+
+        if (entity === 'contacts' && contactsOf) {
+          return scoped === undefined ? contactsOf.only : and(scoped, contactsOf.only)
+        }
+
+        return scoped
       }
 
       return {
@@ -448,6 +532,15 @@ export function syncRoutes(key: SecretKey | null): SyncRoutes<Identity, Permissi
           article_prices: held.value,
           store_articles: vehicles.value,
           stock_movements: vehicles.value,
+          ...Object.fromEntries(unreadable.map((entity) => [entity, 'none'])),
+          ...(contactsOf === null
+            ? {}
+            : {
+                contacts:
+                  contactsOf.named === 'none'
+                    ? 'none'
+                    : `${narrowedWith(scope ? scope.value : 'all', restricted)}:${contactsOf.named}`,
+              }),
         },
         answer: (changes) =>
           key

@@ -626,20 +626,77 @@ describe('a device handed to somebody who sees less, or more', () => {
     transport = new Recorded()
   })
 
-  async function startOn(name: string) {
+  async function startOn(name: string, held: readonly string[] = ['shelves', 'visits']) {
     return await Client.start({
       store: await openLocalStore(name),
       transport,
       writer: new Writing(),
       rules,
       deviceId: 'tablet',
-      entities: ['shelves', 'visits'],
+      entities: held,
       onSignedOut: () => {},
     })
   }
 
   const theirs = row({ id: 'v-1', userId: 'u-desk' })
   const mine = row({ id: 'v-2', userId: 'u-road' })
+
+  it('lets go of what it pulled before any narrowing was kept, at the first narrowing it is told', async () => {
+    // A device that pulled from a server that named no narrowing yet.
+    const before = await startOn('old-tablet')
+
+    transport.pulls = [
+      { changes: [{ entity: 'visits', rows: [theirs, mine] }], cursor: 9, hasMore: false },
+    ]
+    await before.synchronise()
+    before.stop()
+
+    const after = await startOn('old-tablet')
+
+    transport.pulls = [
+      { changes: [], cursor: 9, hasMore: false, narrowed: { visits: 'user:u-road' } },
+      {
+        changes: [{ entity: 'visits', rows: [mine] }],
+        cursor: 9,
+        hasMore: false,
+        narrowed: { visits: 'user:u-road' },
+      },
+    ]
+    await after.synchronise()
+
+    expect(transport.asked.slice(-2)).toEqual([9, 0])
+    expect(after.list('visits').map((entry) => entry['id'])).toEqual(['v-2'])
+    after.stop()
+  })
+
+  it('lets go of them too when a newer build that knows more entities starts from the start', async () => {
+    // A build that knew visits alone, from before any narrowing.
+    const before = await startOn('older-tablet', ['visits'])
+
+    transport.pulls = [
+      { changes: [{ entity: 'visits', rows: [theirs, mine] }], cursor: 9, hasMore: false },
+    ]
+    await before.synchronise()
+    before.stop()
+
+    // This build knows shelves as well, and asks from 0 with the rows kept.
+    const after = await startOn('older-tablet')
+
+    transport.pulls = [
+      { changes: [], cursor: 9, hasMore: false, narrowed: { visits: 'user:u-road' } },
+      {
+        changes: [{ entity: 'visits', rows: [mine] }],
+        cursor: 9,
+        hasMore: false,
+        narrowed: { visits: 'user:u-road' },
+      },
+    ]
+    await after.synchronise()
+
+    expect(transport.asked.slice(-2)).toEqual([0, 0])
+    expect(after.list('visits').map((entry) => entry['id'])).toEqual(['v-2'])
+    after.stop()
+  })
 
   it('lets go of the rows of the others, and asks again from the start', async () => {
     // Somebody who reads every visit pulled first, and with it everybody's.
