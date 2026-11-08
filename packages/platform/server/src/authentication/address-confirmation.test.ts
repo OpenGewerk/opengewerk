@@ -626,3 +626,60 @@ describe('an address corrected by whoever leads a tenant, after the account move
     expect((await accountOf(idOf(nina))).email).toBe('nina.neu@nord.example.de')
   })
 })
+
+describe('an address corrected by whoever leads a tenant, after the tenant moved on', () => {
+  async function corrected(email: string, name: string, wanted: string): Promise<string> {
+    const { userId } = await addStaffMember(instance.authentication, instance.database, {
+      email,
+      name,
+      password,
+      tenantId: north,
+      roles: ['member'],
+    })
+    const cookies = await visitors.workIn(lea.email, north)
+
+    await patch(`/staff/${userId}/account`, cookies, { email: wanted }).expect(200)
+
+    return userId
+  }
+
+  it('holds no longer once whoever corrected it may not manage the people there any more', async () => {
+    const userId = await corrected('ole@nord.example.de', 'Ole Ost', 'ole.fremd@nord.example.de')
+
+    await admin.query(
+      'update memberships set blocked_at = now() where user_id = $1 and tenant_id = $2',
+      [idOf(lea), north],
+    )
+
+    try {
+      const { token } = lastMailTo('ole.fremd@nord.example.de')
+
+      await instance
+        .http()
+        .post(`/auth/address/${token ?? ''}`)
+        .set('origin', origin)
+        .expect(410)
+      expect((await accountOf(userId)).email).toBe('ole@nord.example.de')
+    } finally {
+      await admin.query(
+        'update memberships set blocked_at = null where user_id = $1 and tenant_id = $2',
+        [idOf(lea), north],
+      )
+    }
+  })
+
+  it('holds no longer once the account runs the instance', async () => {
+    const userId = await corrected('uwe@nord.example.de', 'Uwe Umbach', 'uwe.fremd@nord.example.de')
+
+    await admin.query('insert into instance_operators (user_id) values ($1)', [userId])
+
+    const { token } = lastMailTo('uwe.fremd@nord.example.de')
+
+    await instance
+      .http()
+      .post(`/auth/address/${token ?? ''}`)
+      .set('origin', origin)
+      .expect(410)
+    expect((await accountOf(userId)).email).toBe('uwe@nord.example.de')
+  })
+})
