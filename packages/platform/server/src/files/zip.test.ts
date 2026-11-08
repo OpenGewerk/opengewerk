@@ -330,6 +330,40 @@ describe('how much an archive may unpack to', () => {
 })
 
 describe('an archive that is damaged', () => {
+  it('is refused where its directory names the same bytes for many entries', () => {
+    // One empty file, and a directory that names it a thousand times: each
+    // inflated anew, and none of it counts against the limit.
+    const archive = zipOf([{ path: 'leer.txt', bytes: '' }])
+    const view = new DataView(archive.buffer, archive.byteOffset, archive.byteLength)
+    const end = archive.length - 22
+    const directoryAt = view.getUint32(end + 16, true)
+    const directorySize = view.getUint32(end + 12, true)
+    const copies = 1000
+    const repeated = new Uint8Array(directoryAt + directorySize * copies + 22)
+
+    repeated.set(archive.subarray(0, directoryAt))
+
+    for (let copy = 0; copy < copies; copy += 1) {
+      repeated.set(
+        archive.subarray(directoryAt, directoryAt + directorySize),
+        directoryAt + directorySize * copy,
+      )
+    }
+
+    const tail = archive.slice(end)
+    const tailView = new DataView(tail.buffer)
+
+    tailView.setUint16(8, copies, true)
+    tailView.setUint16(10, copies, true)
+    tailView.setUint32(12, directorySize * copies, true)
+    repeated.set(tail, directoryAt + directorySize * copies)
+
+    expect(unzip(archive, megabyte)).toHaveLength(1)
+    expect(refusalOf(() => unzip(repeated, megabyte))).toBe(
+      'Das Verzeichnis des Archivs ist beschädigt.',
+    )
+  })
+
   it('is refused where an entry does not match its checksum', () => {
     const deflated = zipOf([
       { path: 'gut.txt', bytes: 'gut' },

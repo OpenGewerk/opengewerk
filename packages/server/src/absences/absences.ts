@@ -111,7 +111,13 @@ export async function timesOf(tx: TenantTransaction, personIds: readonly string[
   const byPerson = new Map<string, (typeof rows)[number][]>()
 
   for (const row of rows) {
-    byPerson.set(row.personId, [...(byPerson.get(row.personId) ?? []), row])
+    const times = byPerson.get(row.personId)
+
+    if (times === undefined) {
+      byPerson.set(row.personId, [row])
+    } else {
+      times.push(row)
+    }
   }
 
   return byPerson

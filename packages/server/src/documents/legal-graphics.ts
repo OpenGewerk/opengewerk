@@ -125,59 +125,87 @@ function escaped(value: string): string {
     .replaceAll('"', '&quot;')
 }
 
+/** The id of the drawing of the label, once in a document that prints one. */
+const drawingId = 'durability-drawing'
+
+/** What every id and class of the drawing is prefixed with, so that nothing else of a page shares them. */
+const drawingPrefix = 'durability'
+
 /**
- * The label with its three fields filled, as an `<svg>` to put into a page.
- *
- * Nothing else of the file changes, but its ids and classes get `prefix` in
- * front: the file names its clip paths `clippath`, `clippath-1` and so on,
- * and two labels on one page would otherwise share them.
+ * The names of the file with the prefix in front: ids, the references to
+ * them, by `url(#…)` and by `href` or `xlink:href`, and classes. The file of
+ * today refers by `url(#…)` alone; a new one that uses an element by `href`
+ * keeps its references whole as well.
  */
-export function filledDurabilityLabel(
-  source: string,
-  durability: DurabilityContent,
-  prefix: string,
-): string {
-  const fields = [
-    [
-      labelFields.producer,
-      `<text class="cls-5" transform="translate(6.32 74.52)"><tspan x="0" y="0">${escaped(durability.producer)}</tspan></text>`,
-    ],
-    [
-      labelFields.model,
-      `<text class="cls-5" text-anchor="end" transform="translate(262.9 74.52)"><tspan x="0" y="0">${escaped(durability.model)}</tspan></text>`,
-    ],
-    [
-      labelFields.years,
-      `<text class="cls-3" transform="translate(5.07 150.57)"><tspan x="0" y="0">${escaped(durabilityYears(durability.halfYears))}</tspan></text>`,
-    ],
-  ] as const
-  let svg = source.slice(source.indexOf('<svg'))
-
-  for (const [field, filled] of fields) {
-    if (svg.split(field).length !== 2) {
-      throw new LegalGraphicError(
-        'In der Vorlage der Kennzeichnung steht ein Feld nicht so, wie es soll.',
-      )
-    }
-
-    // As a function and not as a text: a text replacement reads "$&", "$`"
-    // and "$'" in what somebody typed as parts of the file (security review
-    // of #801).
-    svg = svg.replace(field, () => filled)
-  }
-
+function prefixed(svg: string): string {
   return svg
-    .replaceAll(/\bid="([^"]+)"/g, `id="${prefix}-$1"`)
-    .replaceAll(/url\(#([^)]+)\)/g, `url(#${prefix}-$1)`)
-    .replaceAll(/\.cls-(\d+)/g, `.${prefix}-cls-$1`)
+    .replaceAll(/\bid="([^"]+)"/g, `id="${drawingPrefix}-$1"`)
+    .replaceAll(/url\(#([^)]+)\)/g, `url(#${drawingPrefix}-$1)`)
+    .replaceAll(/\b((?:xlink:)?href)="#([^"]+)"/g, `$1="#${drawingPrefix}-$2"`)
+    .replaceAll(/\.cls-(\d+)/g, `.${drawingPrefix}-cls-$1`)
     .replaceAll(
       /class="([^"]+)"/g,
       (_, names: string) =>
         `class="${names
           .split(' ')
-          .map((name) => `${prefix}-${name}`)
+          .map((name) => `${drawingPrefix}-${name}`)
           .join(' ')}"`,
     )
+}
+
+/** The `<svg>` of the file, from its opening tag on, and its view box. */
+function drawingOf(source: string): { readonly svg: string; readonly viewBox: string } {
+  const svg = source.slice(source.indexOf('<svg')).trimEnd()
+  const viewBox = /^<svg\b[^>]*\bviewBox="([^"]+)"/.exec(svg)?.[1]
+
+  if (viewBox === undefined || !svg.endsWith('</svg>')) {
+    throw new LegalGraphicError('Die Vorlage der Kennzeichnung ist kein vollständiges SVG.')
+  }
+
+  return { svg, viewBox }
+}
+
+/**
+ * The drawing of the label once, without its three fields, as a symbol that
+ * every label of a document uses (`filledDurabilityLabel`).
+ *
+ * The drawing is some 300 kilobytes. Copied into each label, a document of
+ * many guarantees made a draft PDF of hundreds of megabytes before the
+ * renderer saw it; drawn once, each further label adds its three fields.
+ * Nothing else of the file changes, but its ids and classes get a prefix,
+ * and the `<svg>` around it is laid out to take no room on the page.
+ */
+export function durabilityLabelDrawing(source: string): string {
+  const { svg, viewBox } = drawingOf(source)
+  let body = svg.slice(svg.indexOf('>') + 1, -'</svg>'.length)
+
+  for (const field of Object.values(labelFields)) {
+    if (body.split(field).length !== 2) {
+      throw new LegalGraphicError(
+        'In der Vorlage der Kennzeichnung steht ein Feld nicht so, wie es soll.',
+      )
+    }
+
+    body = body.replace(field, () => '')
+  }
+
+  return `<svg class="durability-drawing" aria-hidden="true" focusable="false"><symbol id="${drawingId}" viewBox="${viewBox}">${prefixed(body)}</symbol></svg>`
+}
+
+/**
+ * A label with its three fields filled, as an `<svg>` to put into a page: the
+ * drawing of `durabilityLabelDrawing`, which the page carries once, and over
+ * it the producer, the model at the right edge where "Model identifier"
+ * ended, and the years, in the places and the classes of the file.
+ */
+export function filledDurabilityLabel(source: string, durability: DurabilityContent): string {
+  const { viewBox } = drawingOf(source)
+  const fields =
+    `<text class="cls-5" transform="translate(6.32 74.52)"><tspan x="0" y="0">${escaped(durability.producer)}</tspan></text>` +
+    `<text class="cls-5" text-anchor="end" transform="translate(262.9 74.52)"><tspan x="0" y="0">${escaped(durability.model)}</tspan></text>` +
+    `<text class="cls-3" transform="translate(5.07 150.57)"><tspan x="0" y="0">${escaped(durabilityYears(durability.halfYears))}</tspan></text>`
+
+  return `<svg viewBox="${viewBox}" role="img" aria-label="Kennzeichnung der Haltbarkeitsgarantie"><use href="#${drawingId}"/>${prefixed(fields)}</svg>`
 }
 
 const require = createRequire(import.meta.url)

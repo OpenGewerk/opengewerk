@@ -30,7 +30,11 @@ import {
   typeface,
 } from '@opengewerk/platform-server'
 
-import { durabilityLabelFonts, filledDurabilityLabel } from './legal-graphics.js'
+import {
+  durabilityLabelDrawing,
+  durabilityLabelFonts,
+  filledDurabilityLabel,
+} from './legal-graphics.js'
 
 /**
  * The one letterhead template every document is printed with.
@@ -596,6 +600,7 @@ const pageStyle = `
   .durability h2 { font-size: 13pt; font-weight: 600; margin: 0 0 1mm; }
   .durability p { margin: 0 0 6mm; color: #5b6573; }
   .durability svg { display: block; width: 95mm; height: 100mm; }
+  .durability-drawing { position: absolute; width: 0; height: 0; overflow: hidden; }
   .annex { font-size: 8.5pt; color: #5b6573; margin: 0 0 2mm; }
   .instruction h2 { font-size: 13pt; font-weight: 600; margin: 0 0 4mm; }
   .instruction h3, .sheet h3 { font-size: 10pt; font-weight: 600; margin: 5mm 0 1.5mm; }
@@ -736,8 +741,10 @@ function durabilityPages(content: DocumentContent, assets: PrintAssets): string 
   }
 
   const label = assets.durabilityLabel
+  // The drawing once, before the first label; each label uses it.
+  const drawing = durabilityLabelDrawing(label)
 
-  return annexes
+  return `${drawing}\n${annexes
     .map((annex) => {
       const positions =
         annex.positions.length === 1
@@ -747,10 +754,10 @@ function durabilityPages(content: DocumentContent, assets: PrintAssets): string 
       return `<section class="durability">
     <h2>Anlage ${String(annex.number)} zu ${text(reference(content))}</h2>
     <p>Kennzeichnung der Haltbarkeitsgarantie des Herstellers zu ${positions}</p>
-    ${filledDurabilityLabel(label, annex.durability, `durability-${String(annex.number)}`)}
+    ${filledDurabilityLabel(label, annex.durability)}
   </section>`
     })
-    .join('\n')
+    .join('\n')}`
 }
 
 /**
