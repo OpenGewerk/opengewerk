@@ -366,11 +366,13 @@ describe('contacts', () => {
 
     // And reads them, where the screen and the sync have them.
     const seen = (
-      await http().get(`/suppliers/${supplierId}/contacts`).set('x-test-identity', buyer).expect(200)
+      await http()
+        .get(`/suppliers/${supplierId}/contacts`)
+        .set('x-test-identity', buyer)
+        .expect(200)
     ).body as { id: string; role: string | null }[]
-    const pulled = (
-      await http().get('/sync?since=0').set('x-test-identity', buyer).expect(200)
-    ).body as { changes: { entity: string; rows: Record<string, unknown>[] }[] }
+    const pulled = (await http().get('/sync?since=0').set('x-test-identity', buyer).expect(200))
+      .body as { changes: { entity: string; rows: Record<string, unknown>[] }[] }
 
     const held = (pulled.changes.find((change) => change.entity === 'contacts')?.rows ?? []).map(
       (row) => row['id'],
