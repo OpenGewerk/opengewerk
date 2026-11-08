@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider, queryOptions, useQuery } from '@tanstack/react-query'
-import type { ReactNode } from 'react'
+import { type ReactNode, useEffect } from 'react'
 
 import { isRefusedForGood } from '../sync/transport.js'
-import { availableTenants, currentAccount, legalTexts } from './session.js'
+import { type Account, availableTenants, currentAccount, legalTexts } from './session.js'
 
 /**
  * The cache for what is not a synced record.
@@ -75,6 +75,41 @@ export const accountQuery = queryOptions({
   networkMode: 'always',
 })
 
+/** The answers that belong to the browser, whoever is signed in: who that is, and the legal texts. */
+const keptAcrossAccounts = new Set(['account', 'legal-texts'])
+
+/**
+ * Takes every answer out of the cache once another account or another tenant
+ * is signed in on this page, before a screen of the new one reads it.
+ *
+ * The keys of the screens name what they ask for and not for whom: the
+ * requests for access of one tenant were otherwise shown to the next account
+ * signed in on the same page, until the answer for it arrived, and for good
+ * where asking again failed. The answer of `accountQuery` says who it is now;
+ * when that changes, what was asked for the one before goes. Returns the way
+ * to stop watching.
+ */
+export function forgetOnAccountChange(client: QueryClient): () => void {
+  let known: string | null | undefined
+
+  return client.getQueryCache().subscribe((event) => {
+    if (event.query.queryKey[0] !== 'account' || event.query.state.status !== 'success') {
+      return
+    }
+
+    const account = event.query.state.data as Account | null | undefined
+    const who = account ? `${account.userId}:${account.tenantId ?? ''}` : null
+
+    if (known !== undefined && who !== known) {
+      client.removeQueries({
+        predicate: (query) => !keptAcrossAccounts.has(String(query.queryKey[0])),
+      })
+    }
+
+    known = who
+  })
+}
+
 export function QueryProvider({
   client,
   children,
@@ -82,6 +117,8 @@ export function QueryProvider({
   readonly client: QueryClient
   readonly children: ReactNode
 }) {
+  useEffect(() => forgetOnAccountChange(client), [client])
+
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>
 }
 

@@ -212,8 +212,37 @@ function upgrade(database: IDBDatabase): void {
 const storePrefix = 'opengewerk.'
 
 /**
- * The tenants whose store is on this device, and the ones named. A browser
- * that cannot list its databases gets only the named ones.
+ * The tenants whose store this browser opened, kept beside the stores. A
+ * browser that cannot list its databases (`indexedDB.databases`) found at a
+ * sign out only the tenant it remembered, and the stores of the tenants
+ * before stayed with their records and files. A tenant goes from the list
+ * only once its store is gone.
+ */
+const openedKey = 'opengewerk.stores'
+
+function openedStores(): string[] {
+  try {
+    const kept: unknown = JSON.parse(globalThis.localStorage.getItem(openedKey) ?? '[]')
+
+    return Array.isArray(kept)
+      ? kept.filter((each): each is string => typeof each === 'string')
+      : []
+  } catch {
+    return []
+  }
+}
+
+function keepOpened(tenants: readonly string[]): void {
+  try {
+    globalThis.localStorage.setItem(openedKey, JSON.stringify([...new Set(tenants)]))
+  } catch {
+    // A browser that keeps nothing here keeps the named tenant at least.
+  }
+}
+
+/**
+ * The tenants whose store is on this device: those the browser lists, those
+ * it opened (`openedStores`) and the ones named.
  */
 export async function storesOnDevice(named: readonly string[] = []): Promise<string[]> {
   const listed =
@@ -224,7 +253,7 @@ export async function storesOnDevice(named: readonly string[] = []): Promise<str
           .map((name) => name.slice(storePrefix.length))
       : []
 
-  return [...new Set([...listed, ...named])]
+  return [...new Set([...listed, ...openedStores(), ...named])]
 }
 
 /** How many changes wait in the store of a tenant and have not reached the server. */
@@ -248,6 +277,7 @@ export function deleteLocalStore(tenantId: string): Promise<void> {
     const request = indexedDB.deleteDatabase(`${storePrefix}${tenantId}`)
 
     request.onsuccess = () => {
+      keepOpened(openedStores().filter((each) => each !== tenantId))
       resolve()
     }
     request.onerror = () => {
@@ -275,6 +305,9 @@ export function deleteLocalStore(tenantId: string): Promise<void> {
  * somebody else that waits here is lost with the sign out all the same.
  */
 export async function openLocalStore(tenantId: string, owner?: string): Promise<LocalStore> {
+  // Listed before it is opened, so that a store that exists is never missing from the list.
+  keepOpened([...openedStores(), tenantId])
+
   const database = await new Promise<IDBDatabase>((resolve, reject) => {
     // Version 2 added the files (#77). `upgrade` adds whatever is missing, so a
     // device on version 1 keeps its records and gains the two new stores.

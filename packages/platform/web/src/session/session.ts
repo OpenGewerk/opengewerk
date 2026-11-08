@@ -126,7 +126,98 @@ interface SessionAnswer {
     readonly signInMethod?: unknown
     readonly secondFactor?: unknown
     readonly deviceId?: unknown
+    readonly id?: unknown
   }
+}
+
+/**
+ * The session this browser last opened, by the id the server gives it. A
+ * sign out keeps it as the one it signed out of.
+ */
+const sessionKey = 'opengewerk.session'
+
+/**
+ * The sign out of this browser the server has not confirmed: the session it
+ * was of. A sign out without a network forgets everything here, but
+ * the cookie of the session is the server's and outlives it: the next start
+ * would have found the session again and opened it for whoever comes next.
+ * Kept until the server ends that session, or until another session shows
+ * somebody signed in anew.
+ */
+const signedOutKey = 'opengewerk.signedOut'
+
+interface SignedOut {
+  /** The id of the session signed out of, when this browser knew it. */
+  readonly session: string | null
+}
+
+function kept(key: string): string | null {
+  try {
+    return globalThis.localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function keep(key: string, value: string | null): void {
+  try {
+    if (value === null) {
+      globalThis.localStorage.removeItem(key)
+    } else {
+      globalThis.localStorage.setItem(key, value)
+    }
+  } catch {
+    // A browser that keeps nothing keeps no session either.
+  }
+}
+
+/**
+ * Forgets the id kept of the session, before anything that may begin a new
+ * one: a sign in by password, a second factor or a passkey, the first run,
+ * an invitation redeemed, a password changed or reset. The cookie of the new
+ * session replaces the old, while the id stayed the old one until the next
+ * answer of `get-session`: a sign out without a network in between kept the
+ * old id, and the next start opened the new session as somebody else's.
+ * Without an id a sign out ends whatever session it finds (`signedOutOf`).
+ */
+export function forgetSessionId(): void {
+  keep(sessionKey, null)
+}
+
+function signedOut(): SignedOut | null {
+  try {
+    const raw: unknown = JSON.parse(kept(signedOutKey) ?? 'null')
+
+    if (typeof raw !== 'object' || raw === null) {
+      return null
+    }
+
+    if (!('session' in raw)) {
+      return null
+    }
+
+    const { session } = raw as { session?: unknown }
+
+    return { session: typeof session === 'string' && session !== '' ? session : null }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Whether the session the server found is the one signed out of. Told by its
+ * id, so that no clock has to agree with another: compared by time, a device
+ * whose clock was behind the server's opened the session of the person before
+ * for the next, and one whose clock was ahead ended a sign in just made. A
+ * sign out that knew no id, of an account this browser kept from before it
+ * kept ids, takes the session it finds for the one signed out of. Ended once
+ * too often is a sign in to make again; opened once too often is the work of
+ * somebody else.
+ */
+function signedOutOf(session: SessionAnswer['session'], pending: SignedOut): boolean {
+  return (
+    pending.session === null || typeof session?.id !== 'string' || session.id === pending.session
+  )
 }
 
 /** Who is signed in on this browser, or nobody. */
@@ -151,10 +242,35 @@ export async function currentAccount(): Promise<Account | null> {
   }
 
   const user = answer?.user
+  const pending = signedOut()
+
+  if (pending !== null && user && typeof user.id === 'string') {
+    if (signedOutOf(answer?.session, pending)) {
+      // The session of whoever signed out here, which the server never
+      // heard about: ended now, and nobody is signed in. Without an answer
+      // it stays to be ended at the next start.
+      forgetSignIn()
+
+      try {
+        await request('/auth/sign-out', { method: 'POST' })
+        keep(signedOutKey, null)
+      } catch {
+        // Asked again next time.
+      }
+
+      return null
+    }
+  }
+
+  if (pending !== null) {
+    // Nobody signed in, or somebody anew since: nothing left to end.
+    keep(signedOutKey, null)
+  }
 
   if (!user || typeof user.id !== 'string') {
     // The server said so, and it decides: nothing kept outlives that.
     forgetSignIn()
+    keep(sessionKey, null)
 
     return null
   }
@@ -175,6 +291,7 @@ export async function currentAccount(): Promise<Account | null> {
   }
 
   rememberAccount(account)
+  keep(sessionKey, typeof answer?.session?.id === 'string' ? answer.session.id : null)
 
   return account
 }
@@ -249,6 +366,8 @@ export interface FirstRun {
  * keep right.
  */
 export async function runSetup(firstRun: FirstRun): Promise<{ tenantId: TenantId }> {
+  forgetSessionId()
+
   return request<{ tenantId: TenantId }>('/setup', {
     method: 'POST',
     body: JSON.stringify(firstRun),
@@ -300,6 +419,8 @@ export function secretFrom(totpUri: string): string {
 }
 
 export async function signIn(email: string, password: string): Promise<SignInOutcome> {
+  forgetSessionId()
+
   const answer = await request<{ twoFactorRedirect?: boolean }>(`${authentication}/sign-in/email`, {
     method: 'POST',
     body: JSON.stringify({ email, password }),
@@ -309,6 +430,8 @@ export async function signIn(email: string, password: string): Promise<SignInOut
 }
 
 export async function verifySecondFactor(code: string): Promise<void> {
+  forgetSessionId()
+
   await request(`${authentication}/two-factor/verify-totp`, {
     method: 'POST',
     // `trustDevice` is deliberately not sent. It would let a browser skip the
@@ -323,6 +446,8 @@ export async function verifySecondFactor(code: string): Promise<void> {
  * the app, for somebody whose phone is gone (#125). Each code works once.
  */
 export async function verifyRecoveryCode(code: string): Promise<void> {
+  forgetSessionId()
+
   await request(`${authentication}/two-factor/verify-backup-code`, {
     method: 'POST',
     // `trustDevice` is not sent here either, for the same reason as above.
@@ -431,8 +556,23 @@ export async function revokeDevice(sessionId: string): Promise<void> {
 export async function signOut(): Promise<void> {
   // First, so that a sign out without a network still leaves nothing for the
   // next start to open on its own (#123), nor the roles of whoever it was (#184).
+  const signedIn = rememberedAccount() !== null
+  const session = kept(sessionKey)
+
   forgetSignIn()
+
+  // A sign out of nobody leaves the one before as it was. A second one
+  // without a network, after the first, found no id kept and wrote a sign out
+  // that knew none, and the next start ended whatever session it found, the
+  // one of somebody who had signed in since among them. The browser holds one
+  // cookie, and it is still the one of the session signed out of first.
+  if (signedIn || signedOut() === null) {
+    keep(signedOutKey, JSON.stringify({ session } satisfies SignedOut))
+  }
+
+  keep(sessionKey, null)
   await request('/auth/sign-out', { method: 'POST' })
+  keep(signedOutKey, null)
 }
 
 /**
@@ -690,6 +830,8 @@ export function confirmAddressLink(token: string): Promise<{ email: string; chan
  * of the account is signed out, this one stays.
  */
 export async function changePassword(current: string, next: string): Promise<void> {
+  forgetSessionId()
+
   await request(`${authentication}/change-password`, {
     method: 'POST',
     body: JSON.stringify({
@@ -714,6 +856,8 @@ export async function requestPasswordReset(email: string): Promise<void> {
 
 /** The new password behind the link, which works once. */
 export async function resetPassword(token: string, password: string): Promise<void> {
+  forgetSessionId()
+
   await request(`${authentication}/reset-password`, {
     method: 'POST',
     body: JSON.stringify({ token, newPassword: password }),
@@ -776,6 +920,8 @@ export function redeemInvitation(
   token: string,
   password?: string,
 ): Promise<{ tenantId: TenantId; company: string; email: string; created: boolean }> {
+  forgetSessionId()
+
   return request(`/invitation/${encodeURIComponent(token)}`, {
     method: 'POST',
     body: JSON.stringify(password === undefined ? {} : { password }),

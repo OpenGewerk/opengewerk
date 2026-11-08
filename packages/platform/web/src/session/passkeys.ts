@@ -9,6 +9,7 @@ import {
 } from '@simplewebauthn/browser'
 
 import { RequestRefused, request } from '../sync/transport.js'
+import { forgetSessionId } from './session.js'
 
 /**
  * Passkeys (#167, #248): the list under "Konto", renaming and deleting one,
@@ -82,6 +83,8 @@ export async function addPasskey(name: string): Promise<void> {
  * request the server refuses, with nobody asked for anything.
  */
 export async function signInWithPasskey(): Promise<void> {
+  forgetSessionId()
+
   const options = await request<PublicKeyCredentialRequestOptionsJSON>(
     `${authentication}/passkey/generate-authenticate-options`,
   )

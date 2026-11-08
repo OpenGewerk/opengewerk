@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import { useApplication } from '../application.js'
 import { Button } from '../components/button.js'
-import { rememberedAccount } from '../session/remembered.js'
+import { rememberedAccount, rememberedTenants } from '../session/remembered.js'
 import { signOut } from '../session/session.js'
 import type { SyncClient } from '../sync/client.js'
 import { deleteLocalStore, storesOnDevice, waitingIn } from '../sync/store.js'
@@ -75,10 +75,13 @@ export function SignOutButton({
   const [busy, setBusy] = useState(false)
   const [trouble, setTrouble] = useState<string | null>(null)
 
+  // The tenant of the account and every other it belongs to: a store opened
+  // by a version from before the list of opened stores (`storesOnDevice`) is
+  // found by them in a browser that cannot list its databases.
   function named(): string[] {
     const kept = rememberedAccount()?.tenantId
 
-    return kept ? [kept] : []
+    return [...(kept ? [kept] : []), ...(rememberedTenants() ?? []).map((tenant) => tenant.id)]
   }
 
   async function leave() {
@@ -113,8 +116,9 @@ export function SignOutButton({
     ])
 
     // Without a network this fails, and the device is signed out all the
-    // same: nothing is left here, and the server ends the session the next
-    // time it hears from this browser or when it runs out.
+    // same: nothing is left here, and `signOut` keeps when it happened, so
+    // that the next start ends the session at the server before it opens
+    // anything (`currentAccount`), or it runs out.
     await signOut().catch(() => undefined)
     onSignedOut()
   }
