@@ -794,8 +794,11 @@ describe('the sync client behind the gate', () => {
       },
     })
 
-    expect(await screen.findByText('Leiter im Flur vergessen')).toBeTruthy()
-    expect(waiting).toEqual([['op-of-mine']])
+    // What was pulled for the person before is not shown to this one (the
+    // store is theirs now); the changes of each wait for their person.
+    await waitFor(() => {
+      expect(waiting).toEqual([['op-of-mine']])
+    })
   })
 })
 
@@ -901,6 +904,28 @@ describe('refused with a session that is still good (#254)', () => {
     expect(await screen.findByText('Kein Zugang zu diesem Mandanten.')).toBeTruthy()
     expect(screen.getByText('Leiter im Flur vergessen')).toBeTruthy()
     expect(screen.queryByRole('heading', { name: 'Einen Moment' })).toBeNull()
+  })
+
+  it('says so when another account took the store over between its opening and the start', async () => {
+    const tenantId = await tenantOnTheDevice()
+    const standing = probeApplication()
+
+    instance(tenantId, accepted)
+    start({
+      application: {
+        ...standing,
+        startSync: async (device: DeviceStart) => {
+          // Another tab of the same browser, for somebody else.
+          const other = await openLocalStore(tenantId, 'u-somebody-else')
+
+          other.close()
+
+          return standing.startSync(device)
+        },
+      },
+    })
+
+    expect(await screen.findByRole('heading', { name: 'Abgleich unterbrochen' })).toBeTruthy()
   })
 
   it('says so when a 401 leaves the account as it was, and starts again when asked', async () => {

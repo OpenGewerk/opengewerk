@@ -88,6 +88,8 @@ export interface LocalStore {
    */
   dropFile(sha256: string): Promise<boolean>
 
+  /** The person the store was opened for, whose changes it sends; none for a count before a sign out. */
+  readonly owner?: string
   /** Everything of this tenant, gone. What signing out has to do. */
   clear(): Promise<void>
   close(): void
@@ -97,6 +99,35 @@ const recordStore = 'records'
 const outboxStore = 'outbox'
 const conflictStore = 'conflicts'
 const metaStore = 'meta'
+
+/** The account whose pulls the records of a store hold. */
+const ownerKey = 'records-owner'
+
+/** Where the sync client is in the changes of the server. */
+export const cursorKey = 'cursor'
+
+/** What the server last said it narrowed the rows to, as JSON. */
+export const narrowedKey = 'narrowed'
+
+/**
+ * What the rows on the device were narrowed to when the last pull ran
+ * through, as JSON, and empty while the pull after a change of the narrowing
+ * is still under way (#444).
+ */
+export const settledKey = 'narrowed-settled'
+
+/**
+ * The kinds of record the build knew that last moved the cursor, as a sorted
+ * list with commas.
+ */
+export const entitiesKey = 'entities'
+
+/**
+ * What the meta store holds of the pulls, and goes with the records for
+ * another account. Everything else in it the application keeps for itself
+ * (`SyncClient.keep`), and each such value says itself whose it is.
+ */
+const pulledKeys: readonly string[] = [cursorKey, narrowedKey, settledKey, entitiesKey]
 const fileStore = 'files'
 const uploadStore = 'uploads'
 
@@ -287,6 +318,18 @@ export function deleteLocalStore(tenantId: string): Promise<void> {
 }
 
 /**
+ * The store was opened for one account, and another has taken it over since
+ * (`claimFor`): a tab still running for the one before reads and writes
+ * nothing more of what the store holds for an account.
+ */
+export class StoreTakenOver extends Error {
+  constructor() {
+    super('Auf diesem Gerät ist inzwischen ein anderes Konto angemeldet.')
+    this.name = 'StoreTakenOver'
+  }
+}
+
+/**
  * Opens the store for one tenant on this device.
  *
  * The name carries the tenant, which is the isolation on the device: two
@@ -334,9 +377,101 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     return database.transaction([...names], mode)
   }
 
+  if (owner !== undefined) {
+    await claimFor(owner)
+  }
+
+  /**
+   * A transaction over what the store holds for its account, while the
+   * store is still that account's. Asked in the same transaction, since
+   * the store is shared by the tabs of the browser: a pull still on its way
+   * for the account before wrote its rows, the codes of sites among them,
+   * into the store of the one after, and a tab still open for the one
+   * before read what was pulled for the one after.
+   */
+  async function held(names: readonly string[], mode: IDBTransactionMode): Promise<IDBTransaction> {
+    if (owner === undefined) {
+      return transact(names, mode)
+    }
+
+    const transaction = transact([...new Set([...names, metaStore])], mode)
+    const row = await promised<MetaRow | undefined>(
+      transaction.objectStore(metaStore).get(ownerKey),
+    )
+
+    if (row?.value !== owner) {
+      transaction.abort()
+
+      throw new StoreTakenOver()
+    }
+
+    return transaction
+  }
+
+  /**
+   * What the store holds of the server is for the account that pulled it.
+   * The records a server sends depend on who asks: the jobs of one
+   * technician, the ways into the sites of their open jobs with the codes. A
+   * store opened for another account of the same tenant on this browser
+   * showed those to the next person before the first pull had said what they
+   * may see. So another account finds the records, the conflicts, the files
+   * kept for reading and the cursor gone and pulls anew; the outbox, the
+   * files waiting to be sent and what the application keeps for itself, a
+   * running stopwatch with the person it is of, stay (opengewerk-haustechnik#31).
+   * A store from before this was kept goes to whoever opens it first, so that
+   * no device has to pull everything again after an update, maybe without a
+   * network.
+   */
+  async function claimFor(person: string): Promise<void> {
+    // Read and written in one transaction. Read in one of its own, two tabs
+    // opening the store for two people at once both found it without an owner,
+    // and the second took it over with what was pulled for the first. Two
+    // transactions that write the same stores run one after the other, so the
+    // second finds the owner the first wrote.
+    const names = [recordStore, conflictStore, metaStore, fileStore, uploadStore]
+    const transaction = transact(names, 'readwrite')
+    const row = await promised<MetaRow | undefined>(
+      transaction.objectStore(metaStore).get(ownerKey),
+    )
+    const kept = row?.value
+
+    if (kept === person) {
+      await finished(transaction)
+
+      return
+    }
+
+    if (kept !== undefined) {
+      transaction.objectStore(recordStore).clear()
+      transaction.objectStore(conflictStore).clear()
+      for (const key of pulledKeys) {
+        transaction.objectStore(metaStore).delete(key)
+      }
+
+      const waiting = new Set(
+        (await promised<IDBValidKey[]>(transaction.objectStore(uploadStore).getAllKeys())).map(
+          String,
+        ),
+      )
+
+      for (const key of await promised<IDBValidKey[]>(
+        transaction.objectStore(fileStore).getAllKeys(),
+      )) {
+        if (!waiting.has(String(key))) {
+          transaction.objectStore(fileStore).delete(key)
+        }
+      }
+    }
+
+    transaction.objectStore(metaStore).put({ key: ownerKey, value: person } satisfies MetaRow)
+    await finished(transaction)
+  }
+
   return {
+    ...(owner === undefined ? {} : { owner }),
+
     async readAll(entity) {
-      const transaction = transact([recordStore], 'readonly')
+      const transaction = await held([recordStore], 'readonly')
       const rows = await promised<RecordRow[]>(
         transaction.objectStore(recordStore).index('entity').getAll(entity),
       )
@@ -345,7 +480,7 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     },
 
     async write(entity, records) {
-      const transaction = transact([recordStore], 'readwrite')
+      const transaction = await held([recordStore], 'readwrite')
       const store = transaction.objectStore(recordStore)
 
       for (const values of records) {
@@ -358,7 +493,7 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     },
 
     async drop(entity) {
-      const transaction = transact([recordStore], 'readwrite')
+      const transaction = await held([recordStore], 'readwrite')
       const store = transaction.objectStore(recordStore)
       const keys = await promised<IDBValidKey[]>(store.index('entity').getAllKeys(entity))
 
@@ -397,13 +532,13 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     },
 
     async readConflicts() {
-      const transaction = transact([conflictStore], 'readonly')
+      const transaction = await held([conflictStore], 'readonly')
 
       return await promised<SyncConflict[]>(transaction.objectStore(conflictStore).getAll())
     },
 
     async writeConflicts(conflicts) {
-      const transaction = transact([conflictStore], 'readwrite')
+      const transaction = await held([conflictStore], 'readwrite')
       const store = transaction.objectStore(conflictStore)
 
       // Replaced whole rather than merged. The server owns this list, so what
@@ -419,7 +554,7 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     },
 
     async dropConflict(id) {
-      const transaction = transact([conflictStore], 'readwrite')
+      const transaction = await held([conflictStore], 'readwrite')
 
       transaction.objectStore(conflictStore).delete(id)
 
@@ -427,14 +562,14 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     },
 
     async readMeta(key) {
-      const transaction = transact([metaStore], 'readonly')
+      const transaction = await held([metaStore], 'readonly')
       const row = await promised<MetaRow | undefined>(transaction.objectStore(metaStore).get(key))
 
       return row?.value ?? null
     },
 
     async writeMeta(key, value) {
-      const transaction = transact([metaStore], 'readwrite')
+      const transaction = await held([metaStore], 'readwrite')
 
       transaction.objectStore(metaStore).put({ key, value } satisfies MetaRow)
 
@@ -442,7 +577,11 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     },
 
     async keepFile(file, waiting) {
-      const transaction = transact([fileStore, uploadStore], 'readwrite')
+      // A photo to send is the person's own, as a change in the outbox is, and
+      // waits for them; a file kept for reading is what was pulled.
+      const transaction = waiting
+        ? transact([fileStore, uploadStore], 'readwrite')
+        : await held([fileStore, uploadStore], 'readwrite')
 
       transaction.objectStore(fileStore).put(file)
 
@@ -460,7 +599,7 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     },
 
     async readFile(sha256) {
-      const transaction = transact([fileStore], 'readonly')
+      const transaction = await held([fileStore], 'readonly')
       const found = await promised<StoredFile | undefined>(
         transaction.objectStore(fileStore).get(sha256),
       )

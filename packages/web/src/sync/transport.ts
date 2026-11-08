@@ -1,4 +1,5 @@
 import {
+  accountHeader,
   httpTransport,
   type PullResult,
   request,
@@ -14,7 +15,9 @@ import {
  */
 export const siteTransport = (): SyncTransport => ({
   ...httpTransport,
-  pull(since) {
-    return request<PullResult>(`/sync?since=${String(since)}&access=values`)
+  pull(since, account) {
+    return request<PullResult>(`/sync?since=${String(since)}&access=values`, {
+      headers: accountHeader(account),
+    })
   },
 })

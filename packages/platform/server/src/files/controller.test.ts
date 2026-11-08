@@ -290,6 +290,36 @@ describe('the bytes of a file', () => {
     expect((answer.body as { message: string }).message).toMatch(/Prüfsumme/)
   })
 
+  it('are refused when they wait for another account than the one signed in, and nothing is kept', async () => {
+    const bytes = Buffer.from('ein Foto, das auf Anna wartet')
+    const answer = await request(app.getHttpServer())
+      .put(`/files/${hashOf(bytes)}`)
+      .set(testIdentityHeader, identityOf('mia'))
+      .set('Content-Type', 'application/octet-stream')
+      .set('X-Account', 'anna')
+      .send(bytes)
+      .expect(409)
+
+    expect((answer.body as { message: string }).message).toMatch(/anderen Kontos/)
+    expect((answer.body as { code: string }).code).toBe('other_account')
+
+    const { rows } = await admin.query(
+      'select count(*)::int as count from files where sha256 = $1',
+      [hashOf(bytes)],
+    )
+
+    expect(rows[0]).toEqual({ count: 0 })
+
+    // Named for the one signed in, it goes.
+    await request(app.getHttpServer())
+      .put(`/files/${hashOf(bytes)}`)
+      .set(testIdentityHeader, identityOf('mia'))
+      .set('Content-Type', 'application/octet-stream')
+      .set('X-Account', 'mia')
+      .send(bytes)
+      .expect(200)
+  })
+
   it('are refused under a name that is no hash', async () => {
     await request(app.getHttpServer())
       .put('/files/..%2F..%2Fetc%2Fpasswd')

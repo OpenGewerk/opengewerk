@@ -1,6 +1,7 @@
 import {
   type Operation,
   type OperationReceipt,
+  otherAccountSignedIn,
   type RecordState,
   type SyncConflict,
   workingInHeader,
@@ -15,8 +16,17 @@ import {
  * offline would be testing the wrong thing.
  */
 export interface SyncTransport {
-  push(deviceId: string, operations: readonly Operation[]): Promise<readonly OperationReceipt[]>
-  pull(since: number): Promise<PullResult>
+  /**
+   * Sends what is queued. `account` is the person the queued changes are
+   * for, which the server holds against the session that sends.
+   */
+  push(
+    deviceId: string,
+    operations: readonly Operation[],
+    account?: string,
+  ): Promise<readonly OperationReceipt[]>
+  /** What changed since the cursor, asked for `account`, as at `push`. */
+  pull(since: number, account?: string): Promise<PullResult>
   conflicts(): Promise<readonly SyncConflict[]>
   resolve(id: string): Promise<void>
   /**
@@ -25,7 +35,8 @@ export interface SyncTransport {
    * never touches a file; a client that has one waiting and no way to send it
    * says so rather than sending the version without it.
    */
-  upload?(sha256: string, bytes: ArrayBuffer, mediaType: string): Promise<void>
+  /** Sends a file. `account` is the person it waits for, as at `push`. */
+  upload?(sha256: string, bytes: ArrayBuffer, mediaType: string, account?: string): Promise<void>
 }
 
 export interface ChangedRows {
@@ -141,6 +152,23 @@ export function workIn(tenantId: string | null): void {
 /** The header that names the tenant, for the requests that do not go through `request`. */
 export function workingInHeaders(): Readonly<Record<string, string>> {
   return workingIn === null ? {} : { [workingInHeader]: workingIn }
+}
+
+/** The account a tab asks or sends for, as the server holds it against the session. */
+export function accountHeader(account?: string): Record<string, string> {
+  return account === undefined ? {} : { 'X-Account': account }
+}
+
+/**
+ * Whether the server refused because another account is signed in on the
+ * browser than the one the tab named (`otherAccountSignedIn`).
+ */
+export function isOtherAccount(error: unknown): boolean {
+  return (
+    error instanceof RequestRefused &&
+    error.status === 409 &&
+    (error.body as { code?: unknown } | null)?.code === otherAccountSignedIn
+  )
 }
 
 export async function request<Answer>(path: string, init?: RequestInit): Promise<Answer> {
@@ -276,17 +304,21 @@ export const directWrite = {
 }
 
 export const httpTransport: SyncTransport = {
-  async push(deviceId, operations) {
+  async push(deviceId, operations, account) {
     const answer = await request<{ receipts: readonly OperationReceipt[] }>('/sync', {
       method: 'POST',
-      body: JSON.stringify({ deviceId, operations: operations.map(onTheWire) }),
+      body: JSON.stringify({
+        deviceId,
+        ...(account === undefined ? {} : { account }),
+        operations: operations.map(onTheWire),
+      }),
     })
 
     return answer.receipts
   },
 
-  pull(since) {
-    return request<PullResult>(`/sync?since=${String(since)}`)
+  pull(since, account) {
+    return request<PullResult>(`/sync?since=${String(since)}`, { headers: accountHeader(account) })
   },
 
   conflicts() {
@@ -297,7 +329,7 @@ export const httpTransport: SyncTransport = {
     await request(`/sync/conflicts/${encodeURIComponent(id)}/resolve`, { method: 'POST' })
   },
 
-  async upload(sha256, bytes, mediaType) {
+  async upload(sha256, bytes, mediaType, account) {
     // As bytes, a type no form can send, and the file's own type beside it.
     // `request` would name the body JSON; this body is not.
     const response = await fetch(`/files/${encodeURIComponent(sha256)}`, {
@@ -307,6 +339,7 @@ export const httpTransport: SyncTransport = {
         Accept: 'application/json',
         'Content-Type': 'application/octet-stream',
         'X-Media-Type': mediaType,
+        ...accountHeader(account),
         ...workingInHeaders(),
       },
       body: bytes,
