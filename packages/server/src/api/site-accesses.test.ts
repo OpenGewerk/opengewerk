@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
+import { withAccessStates } from './sync-routes.js'
 import { type Somebody, testIdentities as identities } from './test-identity.js'
 import { created, push } from './test-structure.js'
 
@@ -650,6 +651,60 @@ describe('an access on the device of a technician', () => {
     )
 
     expect(rows).toEqual([{ site_access_id: mine['id'] }])
+  })
+
+  it('hands out and records a value only with the moment it was set, read with it', async () => {
+    const theirs = await siteWithJob('Wechsel')
+    const access = await addAccess(theirs.site, { designation: 'Haustür', value: 'Code 5151' })
+
+    await http()
+      .put(`/jobs/${theirs.job}/assignees`)
+      .set('x-test-identity', office())
+      .send({ userIds: ['max'] })
+      .expect(200)
+
+    // The row as a pull read it, before the office set a new value.
+    const [before] = accessesOf(await pull(office())).filter((row) => row['id'] === access['id'])
+
+    await http()
+      .patch(`/sites/${theirs.site}/accesses/${String(access['id'])}`)
+      .set('x-test-identity', office())
+      .send({ value: 'Code 6262' })
+      .expect(200)
+
+    const recipient = { userId: 'max', deviceId: 'phone-max' }
+    const handed = async (row: Record<string, unknown>) =>
+      (
+        await database.forTenant(
+          { tenantId: north.id, userId: 'max', deviceId: 'phone-max' },
+          (tx) =>
+            withAccessStates(
+              tx,
+              key,
+              north.id,
+              [{ entity: 'site_accesses', rows: [row] }],
+              new Set([theirs.site]),
+              recipient,
+            ),
+        )
+      )[0]?.rows[0]
+    const delivered = async () =>
+      (
+        await admin.query<{ value_set_at: Date }>(
+          'select value_set_at from site_access_deliveries where site_access_id = $1',
+          [access['id']],
+        )
+      ).rows.map((row) => row.value_set_at.toISOString())
+
+    // The row from before the new value: the value waits, and nothing is recorded.
+    expect(await handed(before!)).not.toHaveProperty('value')
+    expect(await delivered()).toEqual([])
+
+    // The row as it is now: the new value, recorded with its moment.
+    const [now] = accessesOf(await pull(office())).filter((row) => row['id'] === access['id'])
+
+    expect(await handed(now!)).toMatchObject({ value: 'Code 6262' })
+    expect(await delivered()).toEqual([now!['valueSetAt']])
   })
 
   it('records once which person got which value, and only a value handed out', async () => {
