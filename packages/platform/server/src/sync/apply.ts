@@ -548,7 +548,12 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
         const columns = getTableColumns(table) as Record<string, PgColumn>
         const sequence = columns['changeSequence']
 
-        if (!sequence) {
+        // Only what a device of the application knows. A table may carry the
+        // columns of the sync for its marks and its log and still be the
+        // server's alone, as the files and absences of the people of a
+        // business are: without a policy no device holds it, so none is sent
+        // it either, whatever right it asks with.
+        if (!sequence || rules.policyFor(entity) === null) {
           continue
         }
 

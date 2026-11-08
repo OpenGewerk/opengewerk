@@ -129,6 +129,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Sicherheit
 
+- Der Abgleich schickt einem Gerät nur noch, was die Regeln der Anwendung einem Gerät zuordnen. Bis jetzt gingen mit `GET /sync` auch die Tabellen mit, die nur Spalten des Abgleichs tragen und auf dem Server bleiben sollen: die Akten der Beschäftigten, ihre Arbeitszeiten, Qualifikationen, Abwesenheiten samt Krankheit, Urlaubsansprüche und Feiertage, an jeden mit dem Recht `sync.read`, also auch an Monteure. Kein Gerät hat sie gespeichert, in der Antwort standen sie trotzdem. Jetzt fragt der Abruf im Fundament nach der Regel jeder Entität und lässt aus, was keine hat. Warum: Diese Daten liest jede Person nur online und nur für sich, das Büro mit eigenem Recht; der Abgleich darf daran nichts ändern.
 - Der Renderer für PDFs läuft auf `browserless/chromium` 2.59.0 statt 2.57.3, im Stapel, im Job der E-Rechnung und in
   der Anleitung für die Entwicklung (#856). Warum: 2.58.3 bringt Node 26.13.0 mit, und der Job der E-Rechnung prüft
   nur, was auch im Betrieb läuft.

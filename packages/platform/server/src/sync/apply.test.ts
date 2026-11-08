@@ -1,4 +1,11 @@
-import type { Operation, OperationReceipt, SyncValue, TenantId } from '@opengewerk/platform-domain'
+import {
+  type Operation,
+  type OperationReceipt,
+  syncRules,
+  type SyncValue,
+  type TenantId,
+} from '@opengewerk/platform-domain'
+import { probePolicies } from '@opengewerk/platform-domain/testing'
 import { eq, sql } from 'drizzle-orm'
 import type { Pool } from 'pg'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -1195,6 +1202,34 @@ describe('a value of JSON or a list', () => {
 })
 
 describe('what a device is sent', () => {
+  it('sends nothing of a table the application keeps on the server alone, sync columns or not', async () => {
+    await send(north.id, [
+      operation({
+        entity: 'shelves',
+        recordId: newId<'shelf'>(),
+        patches: [{ field: 'label', to: 'Keller' }],
+      }),
+      operation({
+        entity: 'notes',
+        recordId: newId<'note'>(),
+        patches: [{ field: 'text', to: 'Nur für den Server' }],
+      }),
+    ])
+
+    // The same tables, and an application without a policy for the notes:
+    // none of its devices knows them, as none knows the files and absences
+    // of the people of a business, and whoever may sync is sent none.
+    const { notes: _serverOnly, ...policies } = probePolicies
+    const serverOnlyNotes = serverSync<Courier>({
+      rules: syncRules(policies),
+      tables: syncTables({ shelves, notes, letters, letterLines, letterSeals }),
+    })
+    const pulled = await inTenant(north.id, (tx) => serverOnlyNotes.changesSince(tx, 0))
+
+    expect(pulled.changes.map((change) => change.entity)).toContain('shelves')
+    expect(pulled.changes.map((change) => change.entity)).not.toContain('notes')
+  })
+
   it('sends a tenant its own records and nothing of the tenant next door', async () => {
     await send(north.id, [
       operation({
