@@ -6,6 +6,13 @@ import type { ContactParentColumns } from '../database/schema/contacts.js'
 import { contacts } from '../database/schema/index.js'
 import { requireReferences } from './references.js'
 
+/** Which side a contact is on: a supplier's, or a customer's or a site's. */
+function sideOf(contact: Readonly<Record<string, unknown>>): 'supplier' | 'customer' {
+  const supplier = contact['supplierId']
+
+  return supplier === null || supplier === undefined || supplier === '' ? 'customer' : 'supplier'
+}
+
 /** Why a contact does not move between a supplier and a customer or a site. */
 export const changesSides =
   'Ein Ansprechpartner eines Lieferanten bleibt beim Lieferanten, einer eines Kunden oder Objekts bei diesen. Für die andere Seite einen neuen anlegen.'
@@ -52,17 +59,15 @@ export const contactRoutes: ContactRoutes<
   // with the field in the sentence: the key in the database would refuse a
   // record of another business with a sentence about a constraint, and a
   // record marked as deleted it would take.
-  place: async ({ tx, parents, creating }) => {
+  place: async ({ tx, parents, creating, current }) => {
     // A contact of a supplier stays with the suppliers, and one of a customer
     // or a site with them (opengewerk#883). A device that may read only one
     // of the two is narrowed to it, and a contact that changed sides left its
     // rows there without a word: it never heard of a later change, nor of the
     // contact being taken away. Moving between a customer and a site stays.
-    if (
-      !creating &&
-      'supplierId' in parents &&
-      Object.keys(parents).some((field) => field !== 'supplierId')
-    ) {
+    // Judged by the side before and after, not by the fields a request names:
+    // a form may send a parent it does not change.
+    if (current && sideOf(current) !== sideOf({ ...current, ...parents })) {
       throw new UnprocessableEntityException(changesSides)
     }
 

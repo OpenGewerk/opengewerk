@@ -325,11 +325,18 @@ describe('contacts', () => {
       supplierId: null,
     })
 
-    // From a customer to one of its sites is still a move.
+    // A change that names the parent it keeps is no move.
+    await http()
+      .patch(`/contacts/${ofSupplier.id}`)
+      .set('x-test-identity', office())
+      .send({ supplierId, role: 'Innendienst' })
+      .expect(200)
+
+    // From a customer to one of its sites is still a move, the supplier named as none.
     await http()
       .patch(`/contacts/${ofCustomer.id}`)
       .set('x-test-identity', office())
-      .send({ customerId: null, siteId })
+      .send({ customerId: null, siteId, supplierId: null })
       .expect(200)
   })
 
