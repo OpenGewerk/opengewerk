@@ -100,7 +100,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Geändert
 
-- Das Review der Organisation steht auf `520efcc` von OpenGewerk/.github (OpenGewerk/.github#54), prüft neben der Sicherheit auch die Korrektheit eines Pull Requests und läuft mit Opus statt Sonnet. Warum: es hatte zwei Fehler übersehen, die CodeRabbit fand, eine nicht gehaltene Frist und eine am Telefon fehlende Spalte.
+- Das Review der Organisation steht auf `520efcc` von OpenGewerk/.github (OpenGewerk/.github#54) und prüft neben der Sicherheit auch die Korrektheit eines Pull Requests. Mit Opus statt Sonnet läuft es seit demselben Tag über die Variable `SECURITY_REVIEW_MODEL` der Organisation, nicht über diesen Pin. Warum: es hatte zwei Fehler übersehen, die CodeRabbit fand, eine nicht gehaltene Frist und eine am Telefon fehlende Spalte.
 - Das Security-Review steht auf `e53047a` von OpenGewerk/.github (OpenGewerk/.github#50) und wird
   unter dem neuen Namen der Organisation aufgerufen. Der Stand nimmt den Namen im Pin und in einer
   Submodul-Adresse in beiden Schreibweisen an.
