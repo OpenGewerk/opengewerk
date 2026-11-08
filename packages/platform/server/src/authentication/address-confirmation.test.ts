@@ -668,6 +668,59 @@ describe('an address corrected by whoever leads a tenant, after the tenant moved
     }
   })
 
+  it('holds no longer once the last day of whoever corrected it is past', async () => {
+    const userId = await corrected('tim@nord.example.de', 'Tim Tal', 'tim.fremd@nord.example.de')
+
+    await admin.query(
+      'update memberships set last_day = current_date - 1 where user_id = $1 and tenant_id = $2',
+      [idOf(lea), north],
+    )
+
+    try {
+      const { token } = lastMailTo('tim.fremd@nord.example.de')
+
+      await instance
+        .http()
+        .post(`/auth/address/${token ?? ''}`)
+        .set('origin', origin)
+        .expect(410)
+      expect((await accountOf(userId)).email).toBe('tim@nord.example.de')
+    } finally {
+      await admin.query(
+        'update memberships set last_day = null where user_id = $1 and tenant_id = $2',
+        [idOf(lea), north],
+      )
+    }
+  })
+
+  it('holds for whoever leads, whatever the row of the role says', async () => {
+    const { rows } = await admin.query<{ rights: string[] }>(
+      'select rights from tenant_roles where tenant_id = $1 and leads',
+      [north],
+    )
+
+    await admin.query("update tenant_roles set rights = '{}' where tenant_id = $1 and leads", [
+      north,
+    ])
+
+    try {
+      const userId = await corrected('ute@nord.example.de', 'Ute Ufer', 'ute.neu@nord.example.de')
+      const { token } = lastMailTo('ute.neu@nord.example.de')
+
+      await instance
+        .http()
+        .post(`/auth/address/${token ?? ''}`)
+        .set('origin', origin)
+        .expect(201)
+      expect((await accountOf(userId)).email).toBe('ute.neu@nord.example.de')
+    } finally {
+      await admin.query('update tenant_roles set rights = $2 where tenant_id = $1 and leads', [
+        north,
+        rows[0]?.rights ?? [],
+      ])
+    }
+  })
+
   it('holds no longer once the account runs the instance', async () => {
     const userId = await corrected('uwe@nord.example.de', 'Uwe Umbach', 'uwe.fremd@nord.example.de')
 

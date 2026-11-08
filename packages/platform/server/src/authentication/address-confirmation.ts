@@ -307,7 +307,9 @@ async function correctionTenant(
         where m.tenant_id = ${tenantId} and m.user_id = ${correctedBy}
           and m.blocked_at is null
           and (m.last_day is null or m.last_day >= (now() at time zone 'Europe/Berlin')::date)
-          and ${accessRights.write} = any (r.rights)
+          -- Whoever leads manages the people whatever the row of the role
+          -- says, as the sum of the rights has it (rightsCatalogue.sumOf).
+          and (r.leads or ${accessRights.write} = any (r.rights))
         limit 1`),
   )
 
