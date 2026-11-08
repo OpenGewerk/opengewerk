@@ -528,6 +528,11 @@ describe('the jobs as the boards draw them (#219)', () => {
     // What the job took out of the stores (#828), with the documents that booked it.
     const out = await screen.findByRole('region', { name: 'Warenausgang' })
     expect(within(out).getByText('Mantelleitung NYM-J 3 × 1,5 mm²')).toBeDefined()
+    // With the report that booked it, as the table has it in a column.
+    const report = within(out).getByRole('link', {
+      name: 'RB-2026-0142 zu Mantelleitung NYM-J 3 × 1,5 mm²',
+    })
+    expect(report.getAttribute('href')).toBe('/belege/d-1')
 
     await user.click(within(tabs).getByRole('tab', { name: 'Zeiten' }))
 

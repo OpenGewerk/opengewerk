@@ -1,5 +1,5 @@
 import type { LineUnit } from '@opengewerk/domain'
-import { cardLink, Cell, Column, TablePanel } from '@opengewerk/platform-web'
+import { cardLink, Cell, Column, TablePanel, useButtonLook } from '@opengewerk/platform-web'
 import { amount, date } from '@opengewerk/platform-web/format'
 import { request } from '@opengewerk/platform-web/sync'
 import { useQuery } from '@tanstack/react-query'
@@ -39,6 +39,7 @@ export function JobWithdrawals({ jobId }: { readonly jobId: string }) {
     queryFn: () => withdrawalsOf(jobId),
     enabled: reads,
   })
+  const reportLook = useButtonLook('secondary', 'small')
   // An answer this card does not understand is no list of withdrawals either.
   const rows = Array.isArray(out.data) ? out.data : []
 
@@ -62,6 +63,17 @@ export function JobWithdrawals({ jobId }: { readonly jobId: string }) {
         ),
         sub: [date(row.created_at), row.store_name].join(' · '),
         right: <span className="numeric">{quantity(row)}</span>,
+        // The report that booked it, as the column "Bericht" of the table
+        // (#828), over the link of the article that covers the box.
+        actions: row.document_id ? (
+          <Link
+            to={`/belege/${row.document_id}`}
+            className={reportLook}
+            aria-label={`${row.document_number ?? 'Regiebericht'} zu ${row.designation}`}
+          >
+            {row.document_number ?? 'Regiebericht'}
+          </Link>
+        ) : null,
       }))}
     >
       <thead>
