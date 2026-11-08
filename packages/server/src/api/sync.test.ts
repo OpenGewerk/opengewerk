@@ -1390,6 +1390,18 @@ describe('what a device gets back', () => {
         .set('x-test-identity', office())
         .send({ supplierId: supplier.id, familyName: 'Lieferkontakt' })
     ).body as { id: string }
+    const customer = (
+      await http()
+        .post('/customers')
+        .set('x-test-identity', office())
+        .send({ kind: 'private', name: 'Kundin Rhein' })
+    ).body as { id: string }
+    const ofCustomer = (
+      await http()
+        .post('/contacts')
+        .set('x-test-identity', office())
+        .send({ customerId: customer.id, familyName: 'Kundenkontakt' })
+    ).body as { id: string }
     const officeRights = [...permissionsOfRoles(['office'])]
     const without = (right: string) =>
       JSON.stringify({
@@ -1420,6 +1432,7 @@ describe('what a device gets back', () => {
 
     expect(ofTheSupplier.map((contact) => contact.id)).toEqual([ofSupplier.id])
     expect(contactsIn(supplierSide).map((row) => row['id'])).toContain(ofSupplier.id)
+    expect(contactsIn(supplierSide).map((row) => row['id'])).not.toContain(ofCustomer.id)
     expect(contactsIn(supplierSide).every((row) => row['supplierId'] !== null)).toBe(true)
 
     // Whoever reads the customers and not the suppliers: everything but the supplier's.
@@ -1430,14 +1443,18 @@ describe('what a device gets back', () => {
     const customerSide = await pulled(noSuppliers)
 
     expect(listed.map((contact) => contact.id)).not.toContain(ofSupplier.id)
+    expect(listed.map((contact) => contact.id)).toContain(ofCustomer.id)
     expect(listed.every((contact) => contact.supplierId === null)).toBe(true)
     expect(contactsIn(customerSide).map((row) => row['id'])).not.toContain(ofSupplier.id)
+    expect(contactsIn(customerSide).map((row) => row['id'])).toContain(ofCustomer.id)
     expect(contactsIn(customerSide).every((row) => row['supplierId'] === null)).toBe(true)
 
     // Both: everything, and a device told so drops what it held under another combination.
     const both = await pulled(office())
 
-    expect(contactsIn(both).map((row) => row['id'])).toContain(ofSupplier.id)
+    expect(contactsIn(both).map((row) => row['id'])).toEqual(
+      expect.arrayContaining([ofSupplier.id, ofCustomer.id]),
+    )
     expect(
       new Set([supplierSide, customerSide, both].map((body) => body.narrowed['contacts'])).size,
     ).toBe(3)

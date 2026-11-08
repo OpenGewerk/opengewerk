@@ -177,13 +177,6 @@ export class SuppliersController {
   }
 
   /**
-   * The articles a supplier sells, under its numbers, by the own number, page
-   * by page: after a DATANORM import a supplier sells tens of thousands. The
-   * purchase price of today goes only to whoever may read purchase prices;
-   * everybody else gets `null` there, not a missing field, so that a screen
-   * cannot tell an article without a price from one it may not see.
-   */
-  /**
    * The people to talk to at a supplier (#296), with the right on the
    * suppliers alone (opengewerk#883). The list of all contacts asks for the
    * right on the customers and leaves these out without the one on the
@@ -211,6 +204,13 @@ export class SuppliersController {
     })
   }
 
+  /**
+   * The articles a supplier sells, under its numbers, by the own number, page
+   * by page: after a DATANORM import a supplier sells tens of thousands. The
+   * purchase price of today goes only to whoever may read purchase prices;
+   * everybody else gets `null` there, not a missing field, so that a screen
+   * cannot tell an article without a price from one it may not see.
+   */
   @Get(':id/articles')
   @RequiresPermission('article.read')
   async articles(
