@@ -56,7 +56,7 @@ describe('the fingerprint of what was signed', () => {
     const shuffled = report({ lines: [...first.lines].reverse() })
 
     expect(signedContentFingerprint(shuffled)).toBe(signedContentFingerprint(first))
-    expect(signedContentFingerprint(first)).toMatch(/^fnv1a32:[0-9a-f]{8}:\d+$/)
+    expect(signedContentFingerprint(first)).toMatch(/^sha256:[0-9a-f]{64}$/)
   })
 
   it('changes with anything the customer saw', () => {
@@ -73,9 +73,20 @@ describe('the fingerprint of what was signed', () => {
       report({ lines: [hours, { ...material, designation: 'LS-Schalter B20' }] }),
       report({ lines: [hours] }),
       report({ lines: [{ ...hours, position: 3 }, material] }),
+      // The same values under another version of the definition of the fields:
+      // other labels, units or options, and so another page.
+      report({ fields: '{"reading":"230"}', fieldsVersion: 2 }),
     ]) {
       expect(signedContentFingerprint(changed)).not.toBe(signed)
     }
+  })
+
+  it('tells the version of the definition of the fields apart, for the same values', () => {
+    const fields = '{"reading":"230"}'
+
+    expect(signedContentFingerprint(report({ fields, fieldsVersion: 2 }))).not.toBe(
+      signedContentFingerprint(report({ fields, fieldsVersion: 3 })),
+    )
   })
 
   it('does not change with the gaps between positions', () => {

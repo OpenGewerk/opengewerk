@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
-import { type LineUnit, signedContentFingerprint, type TenantId } from '@opengewerk/domain'
+import type { TenantId } from '@opengewerk/domain'
 import { Database, FileStore, newId, type Renderer } from '@opengewerk/platform-server'
 import type { Pool } from 'pg'
 import request from 'supertest'
@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
+import { fingerprintAsHeld } from './test-signing.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { invoiceable, readyToInvoice } from './test-invoice.js'
 import { created, push } from './test-structure.js'
@@ -88,16 +89,6 @@ async function aSignedReport(
     await post(`/documents/${report}/lines`, line)
   }
 
-  const { rows } = await admin.query<{
-    id: string
-    position: number
-    designation: string
-    quantity_milli: string
-    unit: LineUnit
-  }>(
-    'select id, position, designation, quantity_milli, unit from document_lines where document_id = $1',
-    [report],
-  )
   const sent = await push(app, office(), [
     created('document_signatures', newId<'document-signature'>(), {
       documentId: report,
@@ -105,18 +96,7 @@ async function aSignedReport(
       signedAt: new Date().toISOString(),
       deviceInfo: null,
       path: scribble,
-      contentFingerprint: signedContentFingerprint({
-        introText: null,
-        lines: rows.map((row) => ({
-          id: row.id,
-          position: row.position,
-          kind: 'item',
-          designation: row.designation,
-          description: null,
-          quantityMilli: Number(row.quantity_milli),
-          unit: row.unit,
-        })),
-      }),
+      contentFingerprint: await fingerprintAsHeld(admin, report),
     }),
   ])
 

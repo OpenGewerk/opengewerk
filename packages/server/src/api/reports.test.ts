@@ -117,6 +117,7 @@ interface WrittenReport {
     unit: string
   }[]
   readonly introText: string
+  readonly documentDate: string
 }
 
 /**
@@ -169,12 +170,16 @@ async function writeReport(
 
   expect(receipts.map((receipt) => receipt.outcome)).toEqual(['applied', 'applied', 'applied'])
 
-  return { id, lines, introText }
+  return { id, lines, introText, documentDate }
 }
 
 /** What the device worked out while the customer was looking at it. */
 function fingerprintOf(report: WrittenReport): string {
   return signedContentFingerprint({
+    subject: null,
+    documentDate: report.documentDate,
+    customerId,
+    jobId,
     introText: report.introText,
     lines: report.lines.map((line) => ({
       ...line,
@@ -321,6 +326,7 @@ describe('a report from a device', () => {
     const report: WrittenReport = {
       id,
       introText: 'Zählerschrank geprüft, alles in Ordnung.',
+      documentDate: '2026-09-21',
       lines: [
         {
           id: newId<'document-line'>(),
@@ -337,7 +343,7 @@ describe('a report from a device', () => {
         customerId,
         jobId,
         kind: 'time_and_material_report',
-        documentDate: '2026-09-21',
+        documentDate: report.documentDate,
         introText: report.introText,
       }),
       ...report.lines.map((line) =>
@@ -390,6 +396,56 @@ describe('the signature', () => {
     expect(receipts[0]).toMatchObject({ outcome: 'conflict', reason: 'changed_elsewhere' })
     expect((await documentRow(report.id)).status).toBe('draft')
   })
+
+  /**
+   * The head of the page is part of it as well (#887): moved to another
+   * customer, job or day in the meantime, or given another subject, the
+   * report is another page than the one the customer read.
+   */
+  it.each([
+    ['subject', () => Promise.resolve({ subject: 'Zählerschrank geprüft' })],
+    ['date', () => Promise.resolve({ documentDate: '2026-09-22' })],
+    [
+      'customer',
+      async () => {
+        const other = await http()
+          .post('/customers')
+          .set('x-test-identity', office())
+          .send({ kind: 'private', name: 'Familie Lehmann', ...invoiceable })
+          .expect(201)
+
+        return { customerId: (other.body as { id: string }).id }
+      },
+    ],
+    [
+      'job',
+      async () => {
+        const other = await http()
+          .post('/jobs')
+          .set('x-test-identity', office())
+          .send({ customerId, kind: 'service', designation: 'Zähler tauschen' })
+          .expect(201)
+
+        return { jobId: (other.body as { id: string }).id }
+      },
+    ],
+  ])(
+    'is refused when the %s on the head of the page changed while the customer was signing',
+    async (_, change) => {
+      const report = await writeReport()
+
+      await http()
+        .patch(`/documents/${report.id}`)
+        .set('x-test-identity', office())
+        .send(await change())
+        .expect(200)
+
+      const { receipts } = await push([signing(report)])
+
+      expect(receipts[0]).toMatchObject({ outcome: 'conflict', reason: 'changed_elsewhere' })
+      expect((await documentRow(report.id)).status).toBe('draft')
+    },
+  )
 
   it('is refused as a mistake of the client when its path is not one this system draws', async () => {
     const report = await writeReport()

@@ -425,8 +425,17 @@ describe('a report on site', () => {
     // What the server works out from what it now holds, as `signatureRefusal`
     // does: the device signed exactly that.
     const held = server.row('documents', reportId) ?? {}
+    const textOf = (field: string) => {
+      const value = held[field]
+
+      return typeof value === 'string' ? value : null
+    }
     const onServer = signedContentFingerprint({
-      introText: typeof held['introText'] === 'string' ? held['introText'] : null,
+      subject: textOf('subject'),
+      documentDate: textOf('documentDate'),
+      customerId: textOf('customerId'),
+      jobId: textOf('jobId'),
+      introText: textOf('introText'),
       lines: server
         .all('document_lines')
         .filter((line) => line['documentId'] === reportId)

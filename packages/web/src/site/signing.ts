@@ -17,11 +17,25 @@ import { lineKindOf, lineUnitOf } from '../app/labels.js'
 export function signedContentOf(report: RecordState, lines: readonly RecordState[]): SignedContent {
   const introText = report['introText']
   const fields = report['fieldValues']
+  const fieldsVersion = report['fieldsVersion']
+
+  const textOf = (field: string) => {
+    const value = report[field]
+
+    return typeof value === 'string' ? value : null
+  }
 
   return {
+    // What the head of the page names, as the server reads it of the document.
+    subject: textOf('subject'),
+    documentDate: textOf('documentDate'),
+    customerId: textOf('customerId'),
+    jobId: textOf('jobId'),
     introText: typeof introText === 'string' ? introText : null,
-    // The fields of the business (#78), as the text the report carries.
+    // The fields of the business (#78), as the text the report carries, and
+    // the version of their definition, which says what a value meant.
     fields: typeof fields === 'string' ? fields : null,
+    fieldsVersion: typeof fieldsVersion === 'number' ? fieldsVersion : null,
     lines: lines.map((line) => {
       const designation = line['designation']
       const description = line['description']

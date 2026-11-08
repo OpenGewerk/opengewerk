@@ -211,16 +211,25 @@ describe('the fields of a report on site (#78)', () => {
       (signature?.patches ?? []).map((patch) => [patch.field, patch.to]),
     )
 
-    // The fingerprint the server works out from what it holds, the fields in it.
+    // The fingerprint the server works out from what it holds, the fields in
+    // it with the version of their definition.
+    const head = {
+      subject: typeof report?.['subject'] === 'string' ? report['subject'] : null,
+      documentDate: String(report?.['documentDate']),
+      customerId: String(report?.['customerId']),
+      jobId: typeof report?.['jobId'] === 'string' ? report['jobId'] : null,
+    }
     expect(sent['contentFingerprint']).toBe(
       signedContentFingerprint({
+        ...head,
         introText: String(report?.['introText']),
         lines: [],
         fields: String(report?.['fieldValues']),
+        fieldsVersion: Number(report?.['fieldsVersion']),
       }),
     )
     expect(sent['contentFingerprint']).not.toBe(
-      signedContentFingerprint({ introText: String(report?.['introText']), lines: [] }),
+      signedContentFingerprint({ ...head, introText: String(report?.['introText']), lines: [] }),
     )
   })
 })

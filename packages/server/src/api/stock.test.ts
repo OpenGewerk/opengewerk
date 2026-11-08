@@ -1,6 +1,5 @@
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
-import { signedContentFingerprint } from '@opengewerk/domain'
 import { Database, newId } from '@opengewerk/platform-server'
 import type { Pool } from 'pg'
 import request from 'supertest'
@@ -10,6 +9,7 @@ import { articlesOnDevices } from '../database/device-scope.js'
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { storesBelowMinimum } from '../deadlines/sources.js'
 import { ApiModule } from './api.module.js'
+import { fingerprintAsHeld } from './test-signing.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { changed, created, push } from './test-structure.js'
 
@@ -343,15 +343,7 @@ describe('a signed report', () => {
 
     expect(receipts.every((receipt) => receipt.outcome === 'applied')).toBe(true)
 
-    const fingerprint = signedContentFingerprint({
-      introText,
-      lines: lines.map(({ articleId: _, ...line }) => ({
-        ...line,
-        kind: 'item' as const,
-        description: null,
-        unit: line.unit as 'hour' | 'piece' | 'metre',
-      })),
-    })
+    const fingerprint = await fingerprintAsHeld(admin, id)
     const signed = await push(app, technician, [
       created('document_signatures', newId<'document-signature'>(), {
         documentId: id,
@@ -530,8 +522,6 @@ describe('a delivery note (#299)', () => {
   }
 
   async function signOnDevice(documentId: string) {
-    const lines = await linesOf(documentId)
-
     return push(app, technician, [
       created('document_signatures', newId<'document-signature'>(), {
         documentId,
@@ -539,18 +529,7 @@ describe('a delivery note (#299)', () => {
         signedAt: '2026-10-31T10:14:00.000Z',
         deviceInfo: 'Mozilla/5.0 (Linux; Android 15) Chrome/140 Mobile',
         path: scribble,
-        contentFingerprint: signedContentFingerprint({
-          introText: null,
-          lines: lines.map((line) => ({
-            id: line.id,
-            position: line.position,
-            kind: line.kind,
-            designation: line.designation,
-            description: line.description,
-            quantityMilli: line.quantityMilli,
-            unit: line.unit,
-          })),
-        }),
+        contentFingerprint: await fingerprintAsHeld(admin, documentId),
       }),
     ])
   }
