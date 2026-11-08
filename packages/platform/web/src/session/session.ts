@@ -171,6 +171,19 @@ function keep(key: string, value: string | null): void {
   }
 }
 
+/**
+ * Forgets the id kept of the session, before anything that may begin a new
+ * one: a sign in by password, a second factor or a passkey, the first run,
+ * an invitation redeemed, a password changed or reset. The cookie of the new
+ * session replaces the old, while the id stayed the old one until the next
+ * answer of `get-session`: a sign out without a network in between kept the
+ * old id, and the next start opened the new session as somebody else's.
+ * Without an id a sign out ends whatever session it finds (`signedOutOf`).
+ */
+export function forgetSessionId(): void {
+  keep(sessionKey, null)
+}
+
 function signedOut(): SignedOut | null {
   try {
     const raw: unknown = JSON.parse(kept(signedOutKey) ?? 'null')
@@ -353,6 +366,8 @@ export interface FirstRun {
  * keep right.
  */
 export async function runSetup(firstRun: FirstRun): Promise<{ tenantId: TenantId }> {
+  forgetSessionId()
+
   return request<{ tenantId: TenantId }>('/setup', {
     method: 'POST',
     body: JSON.stringify(firstRun),
@@ -404,6 +419,8 @@ export function secretFrom(totpUri: string): string {
 }
 
 export async function signIn(email: string, password: string): Promise<SignInOutcome> {
+  forgetSessionId()
+
   const answer = await request<{ twoFactorRedirect?: boolean }>(`${authentication}/sign-in/email`, {
     method: 'POST',
     body: JSON.stringify({ email, password }),
@@ -413,6 +430,8 @@ export async function signIn(email: string, password: string): Promise<SignInOut
 }
 
 export async function verifySecondFactor(code: string): Promise<void> {
+  forgetSessionId()
+
   await request(`${authentication}/two-factor/verify-totp`, {
     method: 'POST',
     // `trustDevice` is deliberately not sent. It would let a browser skip the
@@ -427,6 +446,8 @@ export async function verifySecondFactor(code: string): Promise<void> {
  * the app, for somebody whose phone is gone (#125). Each code works once.
  */
 export async function verifyRecoveryCode(code: string): Promise<void> {
+  forgetSessionId()
+
   await request(`${authentication}/two-factor/verify-backup-code`, {
     method: 'POST',
     // `trustDevice` is not sent here either, for the same reason as above.
@@ -809,6 +830,8 @@ export function confirmAddressLink(token: string): Promise<{ email: string; chan
  * of the account is signed out, this one stays.
  */
 export async function changePassword(current: string, next: string): Promise<void> {
+  forgetSessionId()
+
   await request(`${authentication}/change-password`, {
     method: 'POST',
     body: JSON.stringify({
@@ -833,6 +856,8 @@ export async function requestPasswordReset(email: string): Promise<void> {
 
 /** The new password behind the link, which works once. */
 export async function resetPassword(token: string, password: string): Promise<void> {
+  forgetSessionId()
+
   await request(`${authentication}/reset-password`, {
     method: 'POST',
     body: JSON.stringify({ token, newPassword: password }),
@@ -895,6 +920,8 @@ export function redeemInvitation(
   token: string,
   password?: string,
 ): Promise<{ tenantId: TenantId; company: string; email: string; created: boolean }> {
+  forgetSessionId()
+
   return request(`/invitation/${encodeURIComponent(token)}`, {
     method: 'POST',
     body: JSON.stringify(password === undefined ? {} : { password }),

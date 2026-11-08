@@ -360,6 +360,30 @@ describe('signing in and out', () => {
     expect(asked.at(-1)).toMatchObject({ path: '/auth/sign-out', method: 'POST' })
   })
 
+  it('ends a session begun since the last answer, when it signs out without a network', async () => {
+    // Anna was signed in, the server named her session.
+    answers = () => aSession('s-anna', 'anna', -10 * 60_000)
+
+    expect(await currentAccount()).toMatchObject({ userId: 'anna' })
+
+    // Ben signs in on this browser; the network goes before the next answer.
+    answers = () => json({ token: 'x' })
+
+    expect(await signIn('ben@example.de', 'a password of some length')).toBe('signed-in')
+
+    answers = () => new TypeError('Failed to fetch')
+
+    await expect(signOut()).rejects.toThrow(TypeError)
+
+    // The cookie is Ben's: his session is ended, not opened as one begun anew.
+    asked = []
+    answers = (path) =>
+      path.endsWith('/get-session') ? aSession('s-ben', 'ben', -60_000) : json({})
+
+    expect(await currentAccount()).toBeNull()
+    expect(asked.at(-1)).toMatchObject({ path: '/auth/sign-out', method: 'POST' })
+  })
+
   it('sends a recovery code without the spaces it was copied with', async () => {
     await verifyRecoveryCode('  ab12c-d34ef \n')
 
