@@ -39,6 +39,10 @@ export const contactRoutes: ContactRoutes<
   // suppliers keeps them, and a technician, who may add a contact to a
   // customer on site, may not add one to a supplier.
   parentRight: (field) => (field === 'supplierId' ? 'supplier.write' : null),
+  // And they are read by whoever may read the suppliers (opengewerk#883):
+  // the list of all contacts leaves them out without that right, and
+  // `GET /suppliers/:id/contacts` hands them to it alone.
+  parentReadRight: (field) => (field === 'supplierId' ? 'supplier.read' : null),
   // A parent that is gone, or that belongs to another business, is refused
   // with the field in the sentence: the key in the database would refuse a
   // record of another business with a sentence about a constraint, and a

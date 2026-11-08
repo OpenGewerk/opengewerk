@@ -36,6 +36,7 @@ import { and, asc, count, desc, eq, inArray, isNull, lte, sql } from 'drizzle-or
 import { parameterAt } from '../database/parameters.js'
 import {
   articles,
+  contacts,
   purchasePrices,
   supplierArticles,
   supplierMarkups,
@@ -182,6 +183,34 @@ export class SuppliersController {
    * everybody else gets `null` there, not a missing field, so that a screen
    * cannot tell an article without a price from one it may not see.
    */
+  /**
+   * The people to talk to at a supplier (#296), with the right on the
+   * suppliers alone (opengewerk#883). The list of all contacts asks for the
+   * right on the customers and leaves these out without the one on the
+   * suppliers; whoever keeps the suppliers and not the customers reads them
+   * here, as the sync hands them to the same person.
+   */
+  @Get(':id/contacts')
+  @RequiresPermission('supplier.read')
+  async contacts(@CurrentIdentity() identity: RequestIdentity, @Param('id') id: string) {
+    return this.database.forTenant(identity, async (tx) => {
+      const [supplier] = await tx
+        .select({ id: suppliers.id })
+        .from(suppliers)
+        .where(and(eq(suppliers.id, id as SupplierId), isNull(suppliers.deletedAt)))
+
+      if (!supplier) {
+        throw new NotFoundException()
+      }
+
+      return tx
+        .select()
+        .from(contacts)
+        .where(and(eq(contacts.supplierId, supplier.id), isNull(contacts.deletedAt)))
+        .orderBy(asc(contacts.familyName))
+    })
+  }
+
   @Get(':id/articles')
   @RequiresPermission('article.read')
   async articles(
