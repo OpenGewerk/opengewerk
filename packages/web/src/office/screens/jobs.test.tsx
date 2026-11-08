@@ -493,6 +493,20 @@ describe('the jobs as the boards draw them (#219)', () => {
       removeEventListener: () => {},
     }))
     signedInAs('office')
+    answers.set('/jobs/j-1/withdrawals', [
+      {
+        id: 'w-1',
+        created_at: '2026-10-31T09:00:00.000Z',
+        quantity_milli: 25000,
+        article_id: 'a-1',
+        number: '1042',
+        designation: 'Mantelleitung NYM-J 3 × 1,5 mm²',
+        unit: 'metre',
+        store_name: 'Fahrzeug Max Becker',
+        document_id: 'd-1',
+        document_number: 'RB-2026-0142',
+      },
+    ])
     await mount([job('j-1', { status: 'active' })], '/auftraege/j-1', { documents })
     const user = userEvent.setup()
 
@@ -511,5 +525,17 @@ describe('the jobs as the boards draw them (#219)', () => {
     const panel = screen.getByRole('region', { name: 'Belege' })
     expect(within(panel).getAllByRole('listitem')).toHaveLength(3)
     expect(screen.queryByRole('region', { name: 'Auftrag' })).toBeNull()
+    // What the job took out of the stores (#828), with the documents that booked it.
+    const out = await screen.findByRole('region', { name: 'Warenausgang' })
+    expect(within(out).getByText('Mantelleitung NYM-J 3 × 1,5 mm²')).toBeDefined()
+    // With the report that booked it, as the table has it in a column.
+    const report = within(out).getByRole('link', {
+      name: 'RB-2026-0142 zu Mantelleitung NYM-J 3 × 1,5 mm²',
+    })
+    expect(report.getAttribute('href')).toBe('/belege/d-1')
+
+    await user.click(within(tabs).getByRole('tab', { name: 'Zeiten' }))
+
+    expect(screen.queryByRole('region', { name: 'Warenausgang' })).toBeNull()
   })
 })

@@ -509,7 +509,12 @@ function JobRecord({ job }: { readonly job: RecordState }) {
                 {related}
               </>
             ) : tab === 'documents' ? (
-              documents
+              <>
+                {documents}
+                {/* What the job took out of the stores (#828): every withdrawal is
+                    booked by a signed report, so it stands with the documents. */}
+                <JobWithdrawals jobId={jobId} />
+              </>
             ) : tab === 'time' ? (
               time
             ) : (
