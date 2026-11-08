@@ -129,11 +129,21 @@ export class DocumentInstructionsController {
     private readonly files: DocumentFiles,
   ) {}
 
-  private async document(tx: TenantTransaction, documentId: string): Promise<DocumentRow> {
-    const [document] = await tx
+  private async document(
+    tx: TenantTransaction,
+    documentId: string,
+    held = false,
+  ): Promise<DocumentRow> {
+    const query = tx
       .select()
       .from(documents)
       .where(and(eq(documents.id, documentId as DocumentId), isNull(documents.deletedAt)))
+    // Held until the transaction ends, for a choice that is written after the
+    // status was asked: a signature landing in between, whose trigger sets the
+    // draft to signed, or an issuing, is waited for, and the status read once
+    // it is through. Read without the lock, a choice went into a document that
+    // had just been signed, and its instructions changed under the signature.
+    const [document] = held ? await query.for('no key update') : await query
 
     if (!document) {
       throw new NotFoundException()
@@ -252,7 +262,7 @@ export class DocumentInstructionsController {
     }
 
     return this.database.forTenant(identity, async (tx) => {
-      const document = await this.document(tx, documentId)
+      const document = await this.document(tx, documentId, true)
 
       if (document.status !== 'draft') {
         throw new ConflictException(

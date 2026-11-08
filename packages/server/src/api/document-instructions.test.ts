@@ -353,6 +353,34 @@ describe('the choice on a document', () => {
     expect((refused.body as { message: string }).message).toContain('festgeschrieben')
   })
 
+  it('waits for a signature or an issuing under way, and is refused once it is through', async () => {
+    const id = await quote()
+    // Another transaction turns the draft into a signed one, as the trigger of
+    // a signature landing does, and has not committed yet.
+    const signing = await admin.connect()
+
+    try {
+      await signing.query('begin')
+      await signing.query('set local session_replication_role = replica')
+      await signing.query("update documents set status = 'signed' where id = $1", [id])
+
+      const answer = choose(id, { variant: 'goods' }).then((response) => response)
+
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      await signing.query('commit')
+
+      expect((await answer).status).toBe(409)
+    } finally {
+      signing.release()
+    }
+
+    expect(
+      await admin.query('select 1 from document_instruction_choices where document_id = $1', [id]),
+    ).toMatchObject({
+      rowCount: 0,
+    })
+  })
+
   it('is out of reach of another business', async () => {
     const id = await quote()
 
