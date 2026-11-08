@@ -399,6 +399,37 @@ describe('applying what a device queued up', () => {
    * values of its fields, and nothing limited how many there were. The list
    * holds the oldest up to its limit; the next come when these are decided.
    */
+  it('shows the values of a record only to whoever a pull would hand it', async () => {
+    const noteId = newId<'note'>()
+
+    await send(north.id, [
+      operation({
+        entity: 'notes',
+        recordId: noteId,
+        patches: [{ field: 'text', to: 'Zähler ablesen' }],
+      }),
+    ])
+    await send(north.id, [
+      operation({
+        entity: 'notes',
+        recordId: noteId,
+        kind: 'update',
+        patches: [{ field: 'text', from: 'Zähler abgelesen', to: 'Zähler fehlt' }],
+      }),
+    ])
+
+    const notesAway = () => (entity: string) => (entity === 'notes' ? sql`false` : undefined)
+    const [hidden] = await inTenant(north.id, (tx) =>
+      openConflicts(tx, olgaOn('probe-phone'), tablesOfTheSync, undefined, notesAway),
+    )
+    const [shown] = await inTenant(north.id, (tx) =>
+      openConflicts(tx, olgaOn('probe-phone'), tablesOfTheSync),
+    )
+
+    expect(hidden).toMatchObject({ recordId: noteId, fields: [], wanted: {}, seen: {}, found: {} })
+    expect(shown).toMatchObject({ recordId: noteId, found: { text: 'Zähler ablesen' } })
+  })
+
   it('lists the oldest open conflicts of a device up to the limit, and the next ones after', async () => {
     const recorded = ['2026-10-01T08:00:00Z', '2026-10-01T09:00:00Z', '2026-10-01T10:00:00Z']
 
@@ -705,6 +736,122 @@ describe('what the application asks of an operation', () => {
     ]).catch(() => undefined)
 
     expect(senders).toEqual(['Olga'])
+  })
+
+  it('asks the gate of the parent a deletion takes the record from, whatever its fields name', async () => {
+    const sent = newId<'letter'>()
+    const draft = newId<'letter'>()
+    const lineId = newId<'letter-line'>()
+
+    await send(north.id, [
+      operation({ entity: 'letters', recordId: sent, patches: [{ field: 'subject', to: 'Alt' }] }),
+      operation({ entity: 'letters', recordId: draft, patches: [{ field: 'subject', to: 'Neu' }] }),
+      operation({
+        entity: 'letter_lines',
+        recordId: lineId,
+        patches: [{ field: 'letterId', to: sent }],
+      }),
+    ])
+    await inTenant(north.id, (tx) =>
+      tx.update(letters).set({ status: 'sent' }).where(eq(letters.id, sent)),
+    )
+
+    // The line of the sent letter, deleted with a field that names the draft.
+    const deleted = await send(north.id, [
+      operation({
+        entity: 'letter_lines',
+        recordId: lineId,
+        kind: 'delete',
+        patches: [{ field: 'letterId', from: sent, to: draft }],
+      }),
+    ])
+
+    expect(outcomes(deleted)).toEqual([
+      { outcome: 'conflict', reason: 'record_is_fixed', fields: ['status'] },
+    ])
+
+    const [line] = await inTenant(north.id, (tx) =>
+      tx.select().from(letterLines).where(eq(letterLines.id, lineId)),
+    )
+
+    expect(line).toMatchObject({ letterId: sent, deletedAt: null })
+  })
+
+  it('refuses a field named twice, which the gate would ask with one value and the write take with the other', async () => {
+    const sent = newId<'letter'>()
+    const draft = newId<'letter'>()
+    const lineId = newId<'letter-line'>()
+
+    await send(north.id, [
+      operation({ entity: 'letters', recordId: sent, patches: [{ field: 'subject', to: 'Alt' }] }),
+      operation({ entity: 'letters', recordId: draft, patches: [{ field: 'subject', to: 'Neu' }] }),
+    ])
+    await inTenant(north.id, (tx) =>
+      tx.update(letters).set({ status: 'sent' }).where(eq(letters.id, sent)),
+    )
+
+    const refused = await send(north.id, [
+      operation({
+        entity: 'letter_lines',
+        recordId: lineId,
+        patches: [
+          { field: 'letterId', to: draft },
+          { field: 'letterId', to: sent },
+        ],
+      }),
+    ]).catch((error: unknown) => error)
+
+    expect((refused as OperationRefused).cause).toBeInstanceOf(UnknownFieldError)
+    expect((refused as OperationRefused).message).toBe(
+      'Dieses Feld steht zweimal in einer Änderung: letterId',
+    )
+    expect(await inTenant(north.id, (tx) => tx.select().from(letterLines))).toEqual([])
+  })
+
+  it('keeps the stamp of the record out of a conflict, whatever fields the change named', async () => {
+    const shelfId = newId<'shelf'>()
+
+    await send(north.id, [
+      operation({
+        entity: 'shelves',
+        recordId: shelfId,
+        patches: [{ field: 'label', to: 'Keller' }],
+      }),
+    ])
+
+    // A shelf is changed online only, so this is a conflict on every field it names.
+    const changed = await send(north.id, [
+      operation({
+        entity: 'shelves',
+        recordId: shelfId,
+        kind: 'update',
+        patches: [
+          { field: 'label', from: 'Keller', to: 'Boden' },
+          { field: 'updatedAt', from: null, to: '2020-01-01T00:00:00.000Z' },
+          { field: 'updatedBy', from: null, to: 'olga' },
+          { field: 'deviceId', from: null, to: 'probe-phone' },
+        ],
+      }),
+    ])
+
+    expect(outcomes(changed).map(({ outcome }) => outcome)).toEqual(['conflict'])
+
+    const [open] = await inTenant(north.id, (tx) =>
+      openConflicts(tx, olgaOn('probe-phone'), tablesOfTheSync),
+    )
+
+    expect(Object.keys(open?.found ?? {}).filter((field) => field !== 'label')).toEqual([])
+
+    // And where a conflict written before this kept the stamp, the list leaves it out.
+    await admin.query(
+      `update sync_conflicts set found = found || '{"updatedAt": "2026-11-08T08:00:00.000Z", "deviceId": "probe-phone"}'::jsonb`,
+    )
+
+    const [kept] = await inTenant(north.id, (tx) =>
+      openConflicts(tx, olgaOn('probe-phone'), tablesOfTheSync),
+    )
+
+    expect(Object.keys(kept?.found ?? {})).toEqual(['label'])
   })
 
   it('refuses a field the table does not have, with the name of the field', async () => {
