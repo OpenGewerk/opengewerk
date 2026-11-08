@@ -112,6 +112,19 @@ const calendarDay = (value: unknown): value is IsoDate =>
   !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) &&
   new Date(`${value}T00:00:00Z`).toISOString().startsWith(value)
 
+/**
+ * Whether a day lies in the years an absence and a year of leave can have.
+ * Without it a span from the year 1 to 9999 passed, and counting it out
+ * kept the server busy with millions of days.
+ */
+const inAbsenceYears = (day: IsoDate): boolean => {
+  const year = Number(day.slice(0, 4))
+
+  return year >= absenceLimits.firstYear && year <= absenceLimits.lastYear
+}
+
+const absenceYearsWords = `Ein Tag in den Jahren ${String(absenceLimits.firstYear)} bis ${String(absenceLimits.lastYear)}.`
+
 const optionalText = (value: unknown): string | null =>
   typeof value === 'string' && value.trim() !== '' ? value.trim() : null
 
@@ -131,12 +144,16 @@ export function absenceProblems(absence: Readonly<Record<string, unknown>>): Rea
 
   if (!calendarDay(firstDay)) {
     problems['firstDay'] = 'Der erste Tag ist ein Tag, geschrieben 2026-10-03.'
+  } else if (!inAbsenceYears(firstDay)) {
+    problems['firstDay'] = absenceYearsWords
   }
 
   if (!calendarDay(lastDay)) {
     problems['lastDay'] = 'Der letzte Tag ist ein Tag, geschrieben 2026-10-03.'
   } else if (calendarDay(firstDay) && lastDay < firstDay) {
     problems['lastDay'] = 'Der letzte Tag liegt nicht vor dem ersten.'
+  } else if (!inAbsenceYears(lastDay)) {
+    problems['lastDay'] = absenceYearsWords
   } else if (
     calendarDay(firstDay) &&
     firstDay === lastDay &&

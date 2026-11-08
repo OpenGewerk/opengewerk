@@ -364,5 +364,9 @@ describe('a time account', () => {
     await account('/time-account/mine?from=2026-10-31&to=2026-10-01', anna, 400)
     await account('/time-account/mine?from=2025-01-01&to=2026-12-31', anna, 400)
     await account('/time-account?from=2026-10-01&to=2026-10-31', owner, 400)
+    // A short stretch far off would stretch the count from the beginning of
+    // the account to it.
+    await account('/time-account/mine?from=0001-01-01&to=0001-12-31', anna, 400)
+    await account('/time-account/mine?from=9999-01-01&to=9999-12-31', anna, 400)
   })
 })

@@ -213,6 +213,18 @@ describe('the days of an absence', () => {
     ).toEqual({})
   })
 
+  it('are refused outside the years an absence can have, which nothing would count out', () => {
+    expect(
+      absenceProblems({ kind: 'vacation', firstDay: '0001-01-01', lastDay: '2026-12-02' }),
+    ).toHaveProperty('firstDay')
+    expect(
+      absenceProblems({ kind: 'sickness', firstDay: '2026-12-01', lastDay: '9999-12-31' }),
+    ).toHaveProperty('lastDay')
+    expect(
+      absenceProblems({ kind: 'vacation', firstDay: '2000-01-01', lastDay: '2100-12-31' }),
+    ).toEqual({})
+  })
+
   it('stand for a year in whole half days, never below zero', () => {
     expect(entitlementProblems({ year: 2026, entitledHalfDays: 60, carriedHalfDays: 5 })).toEqual(
       {},
