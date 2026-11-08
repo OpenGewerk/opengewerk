@@ -17,7 +17,12 @@ import { type ContactRules, contactTextFields } from '@opengewerk/platform-domai
 import { and, eq, getTableColumns, isNull } from 'drizzle-orm'
 import type { PgColumn } from 'drizzle-orm/pg-core'
 
-import { AUTHORIZATION, type Authorization, RequiresPermission } from '../api/authorization.js'
+import {
+  AlsoWith,
+  AUTHORIZATION,
+  type Authorization,
+  RequiresPermission,
+} from '../api/authorization.js'
 import { pick, requireSomething } from '../api/body.js'
 import { CurrentIdentity, type RequestIdentity } from '../api/identity.js'
 import type { AccessRules } from '../authentication/access.js'
@@ -68,6 +73,15 @@ export interface ContactRoutes<
    * right of the route for reading is asked as well.
    */
   readonly parentReadRight?: (field: Parent) => Right | null
+  /**
+   * The right the contacts of one kind of record are kept with, in place of
+   * the rights of the routes for adding, correcting and taking away: the
+   * people of such a record are for whoever keeps the record, whether or not
+   * they may keep any other contact. Asked for the parent a contact has and
+   * for the one a change would give it; a contact of any other parent asks for
+   * the route's own.
+   */
+  readonly keptBy?: (field: Parent) => Right | null
   /**
    * What the application looks at before a contact is written, in the
    * transaction that writes it: whether what the contact points at is there
@@ -155,6 +169,34 @@ function requireOneParent(rules: ContactRules, standing: Readonly<Record<string,
   }
 }
 
+/**
+ * Refuses whoever lacks the right a contact is kept with: the one its parent
+ * names (`keptBy`), or the route's own for any other parent named here. The
+ * guard let the request through with either (`AlsoWith`), so this is where
+ * the route's own is asked.
+ */
+function requireKeepRight(
+  routes: AnyRoutes,
+  authorization: Authorization,
+  identity: RequestIdentity,
+  named: Readonly<Record<string, unknown>>,
+  own: string,
+): void {
+  for (const field of routes.rules.parents) {
+    const value = named[field]
+
+    if (value === null || value === undefined || value === '') {
+      continue
+    }
+
+    const right = routes.keptBy?.(field) ?? own
+
+    if (!identity.rights.includes(right)) {
+      throw new ForbiddenException(authorization.missingPermission(right))
+    }
+  }
+}
+
 /** Refuses whoever lacks a right the parents named here ask for beyond the route's own. */
 function requireParentRight(
   routes: AnyRoutes,
@@ -210,8 +252,10 @@ async function held(
  * (opengewerk-haustechnik#85): listed, added, corrected and taken away.
  *
  * What a contact hangs on is the application's, and so is who may keep one:
- * the three rights are named by the application, and the people of one kind
- * of record can ask for a right beyond them (`parentRight`). A contact hangs
+ * the three rights are named by the application, the people of one kind of
+ * record can ask for a right beyond them (`parentRight`, `parentReadRight`),
+ * and the people of a kind of record can be kept with its right in place of
+ * the route's (`keptBy`). A contact hangs
  * on exactly one of its parents, judged as it would stand afterwards, and the
  * refusal is the sentence a form shows; the sync asks the same rule
  * (`contactRecordRules`), and the check the application puts on its table
@@ -228,7 +272,7 @@ async function held(
  * its routes is on the class: whoever walks the routes of a module reads every
  * property of it.
  */
-function contactsController(rights: ContactRights<string>): Type<unknown> {
+function contactsController(rights: ContactRights<string>, kept: readonly string[]): Type<unknown> {
   @Controller('contacts')
   class ContactsController {
     constructor(
@@ -262,6 +306,7 @@ function contactsController(rights: ContactRights<string>): Type<unknown> {
 
     @Post()
     @RequiresPermission(rights.create)
+    @AlsoWith(...kept)
     create(@CurrentIdentity() identity: RequestIdentity, @Body() body: unknown) {
       const { rules } = this.routes
       const contacts = contactsOf(this.routes)
@@ -271,6 +316,7 @@ function contactsController(rights: ContactRights<string>): Type<unknown> {
 
       refuse(rules.personProblems({ familyName: null, ...texts }))
       requireOneParent(rules, parents)
+      requireKeepRight(this.routes, this.authorization, identity, parents, rights.create)
       requireParentRight(this.routes, this.authorization, identity, parents)
 
       return this.database.forTenant(identity, async (tx) => {
@@ -291,6 +337,7 @@ function contactsController(rights: ContactRights<string>): Type<unknown> {
 
     @Patch(':id')
     @RequiresPermission(rights.write)
+    @AlsoWith(...kept)
     update(
       @CurrentIdentity() identity: RequestIdentity,
       @Param('id') id: string,
@@ -322,6 +369,8 @@ function contactsController(rights: ContactRights<string>): Type<unknown> {
             ]),
           ),
         )
+        requireKeepRight(this.routes, this.authorization, identity, current, rights.write)
+        requireKeepRight(this.routes, this.authorization, identity, parents, rights.write)
         requireParentRight(this.routes, this.authorization, identity, current)
         requireParentRight(this.routes, this.authorization, identity, parents)
 
@@ -344,12 +393,14 @@ function contactsController(rights: ContactRights<string>): Type<unknown> {
 
     @Delete(':id')
     @RequiresPermission(rights.write)
+    @AlsoWith(...kept)
     remove(@CurrentIdentity() identity: RequestIdentity, @Param('id') id: string) {
       const contacts = contactsOf(this.routes)
 
       return this.database.forTenant(identity, async (tx) => {
         const current = await held(tx, contacts, id)
 
+        requireKeepRight(this.routes, this.authorization, identity, current, rights.write)
         requireParentRight(this.routes, this.authorization, identity, current)
 
         const [removed] = await tx
@@ -397,12 +448,13 @@ export function contactParts<
 ): { readonly controllers: Type<unknown>[]; readonly providers: Provider[] } {
   const { read, create, write } = parts.rights
   const { rules, table, parentRight } = parts.routes
+  const kept = [...new Set(rules.parents.flatMap((field) => parts.routes.keptBy?.(field) ?? []))]
   const beyond = rules.parents.flatMap((field) => [
     parentRight?.(field) ?? null,
     parts.routes.parentReadRight?.(field) ?? null,
   ])
 
-  for (const right of [read, create, write, ...beyond]) {
+  for (const right of [read, create, write, ...beyond, ...kept]) {
     if (right !== null && !parts.access.catalogue.isRight(right)) {
       throw new Error(`The catalogue lacks a right of the contacts: ${right}`)
     }
@@ -417,7 +469,7 @@ export function contactParts<
   }
 
   return {
-    controllers: [contactsController({ read, create, write })],
+    controllers: [contactsController({ read, create, write }, kept)],
     providers: [{ provide: CONTACT_ROUTES, useValue: parts.routes as unknown as AnyRoutes }],
   }
 }

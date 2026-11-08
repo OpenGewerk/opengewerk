@@ -1,6 +1,6 @@
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
-import { contactParentText } from '@opengewerk/domain'
+import { contactParentText, permissionsOfRoles } from '@opengewerk/domain'
 import { Database, newId } from '@opengewerk/platform-server'
 import { eq } from 'drizzle-orm'
 import type { Pool } from 'pg'
@@ -338,6 +338,59 @@ describe('contacts', () => {
       .set('x-test-identity', office())
       .send({ customerId: null, siteId, supplierId: null })
       .expect(200)
+  })
+
+  it('of a supplier are kept by whoever keeps the suppliers, without a right on the customers', async () => {
+    const supplierId = await made('/suppliers', { name: 'Großhandel Rhein' })
+    const officeRights = [...permissionsOfRoles(['office'])]
+    const without = (...rights: string[]) =>
+      JSON.stringify({
+        userId: 'test',
+        tenantId: north.id,
+        roles: ['office'],
+        rights: officeRights.filter((each) => !rights.includes(each)),
+      })
+    // Keeps the suppliers and holds no right on the customers at all, and the
+    // other way round.
+    const buyer = without('customer.read', 'customer.create', 'customer.write')
+    const clerk = without('supplier.write')
+
+    const person = await contact({ supplierId, familyName: 'Lieferkontakt' }, buyer)
+    const atCustomer = await contact({ customerId, familyName: 'Kundenkontakt' })
+
+    await http()
+      .patch(`/contacts/${person.id}`)
+      .set('x-test-identity', buyer)
+      .send({ role: 'Innendienst' })
+      .expect(200)
+
+    // And reads them, where the screen and the sync have them.
+    const seen = (
+      await http().get(`/suppliers/${supplierId}/contacts`).set('x-test-identity', buyer).expect(200)
+    ).body as { id: string; role: string | null }[]
+    const pulled = (
+      await http().get('/sync?since=0').set('x-test-identity', buyer).expect(200)
+    ).body as { changes: { entity: string; rows: Record<string, unknown>[] }[] }
+
+    const held = (pulled.changes.find((change) => change.entity === 'contacts')?.rows ?? []).map(
+      (row) => row['id'],
+    )
+
+    expect(seen).toEqual([expect.objectContaining({ id: person.id, role: 'Innendienst' })])
+    expect(held).toContain(person.id)
+    expect(held).not.toContain(atCustomer.id)
+    await http()
+      .patch(`/contacts/${atCustomer.id}`)
+      .set('x-test-identity', buyer)
+      .send({ role: 'Kasse' })
+      .expect(403)
+    await http()
+      .patch(`/contacts/${person.id}`)
+      .set('x-test-identity', clerk)
+      .send({ role: 'Kasse' })
+      .expect(403)
+    await http().delete(`/contacts/${person.id}`).set('x-test-identity', clerk).expect(403)
+    await http().delete(`/contacts/${person.id}`).set('x-test-identity', buyer).expect(200)
   })
 
   it('are created by a technician on site, and corrected only by whoever may correct the customer', async () => {

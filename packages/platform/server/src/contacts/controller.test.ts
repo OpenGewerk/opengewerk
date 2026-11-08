@@ -85,6 +85,12 @@ const people = {
   mia: { tenant: north.id, roles: ['member'], rights: ['members.read', 'notes.write'] },
   // Reads.
   gero: { tenant: north.id, roles: ['guest'], rights: ['members.read'] },
+  // Writes letters and keeps no shelf: the people of a letter where they are kept by its right.
+  olaf: {
+    tenant: north.id,
+    roles: ['clerk'],
+    rights: ['members.read', 'letters.read', 'letters.write'],
+  },
   sven: { tenant: south.id, roles: ['lead'], rights: every },
 } as const satisfies Record<string, { tenant: TenantId; roles: string[]; rights: ProbeSyncRight[] }>
 
@@ -178,11 +184,23 @@ function http() {
   return request(app.getHttpServer())
 }
 
+/**
+ * The same routes, where the people of a letter are kept by the right on the
+ * letters alone (`keptBy`) instead of that right beyond the route's own.
+ */
+const keptRoutes: typeof routes = {
+  table: probeContacts,
+  rules: probeContactRules,
+  keptBy: (field) => (field === 'letterId' ? 'letters.write' : null),
+  parentReadRight: (field) => (field === 'letterId' ? 'letters.read' : null),
+  place,
+}
+
 /** The module of an application, as far as its contacts go. */
 @Module({})
 class ProbeContactModule {
-  static create(on: Database): DynamicModule {
-    const parts = contactParts({ access: probeSyncAccess, rights, routes })
+  static create(on: Database, withRoutes = routes): DynamicModule {
+    const parts = contactParts({ access: probeSyncAccess, rights, routes: withRoutes })
 
     return {
       module: ProbeContactModule,
@@ -722,6 +740,71 @@ describe('the contacts of an application', () => {
 
     await written(shelf, null)
     expect((await list()).map((row) => row.familyName)).toEqual(['Petersen'])
+  })
+})
+
+describe('the contacts of a record kept by its own right', () => {
+  let kept: INestApplication
+
+  beforeAll(async () => {
+    kept = (
+      await Test.createTestingModule({
+        imports: [ProbeContactModule.create(database, keptRoutes)],
+      }).compile()
+    ).createNestApplication()
+    await kept.init()
+  })
+
+  afterAll(async () => {
+    await kept.close()
+  })
+
+  const on = () => request(kept.getHttpServer())
+
+  it('are added, corrected and taken away with that right alone, and every other with the right of the route', async () => {
+    // Olaf writes letters and holds none of the rights of the routes.
+    const ofLetter = (
+      await on()
+        .post('/contacts')
+        .set(testIdentityHeader, as('olaf'))
+        .send({ letterId: letter, familyName: 'Ehlers' })
+        .expect(201)
+    ).body as ContactAnswer
+
+    await on()
+      .patch(`/contacts/${ofLetter.id}`)
+      .set(testIdentityHeader, as('olaf'))
+      .send({ role: 'Empfang' })
+      .expect(200)
+
+    const ofShelf = await made({ shelfId: shelf, familyName: 'Friese' })
+
+    // Not the people of a shelf, and not a letter's handed over to a shelf.
+    await on()
+      .post('/contacts')
+      .set(testIdentityHeader, as('olaf'))
+      .send({ shelfId: shelf, familyName: 'Gerdes' })
+      .expect(403)
+    await on()
+      .patch(`/contacts/${ofShelf.id}`)
+      .set(testIdentityHeader, as('olaf'))
+      .send({ role: 'Empfang' })
+      .expect(403)
+    await on()
+      .patch(`/contacts/${ofLetter.id}`)
+      .set(testIdentityHeader, as('olaf'))
+      .send({ letterId: null, shelfId: shelf })
+      .expect(403)
+
+    // Kai keeps shelves and writes no letters: not the people of a letter.
+    await on()
+      .patch(`/contacts/${ofLetter.id}`)
+      .set(testIdentityHeader, as('kai'))
+      .send({ role: 'Kasse' })
+      .expect(403)
+
+    await on().delete(`/contacts/${ofLetter.id}`).set(testIdentityHeader, as('olaf')).expect(200)
+    await on().delete(`/contacts/${ofShelf.id}`).set(testIdentityHeader, as('olaf')).expect(403)
   })
 })
 

@@ -30,6 +30,7 @@ function headerOf(request: unknown, name: string): string | undefined {
 }
 
 export const PERMISSION_METADATA = 'opengewerk:permission'
+export const ALTERNATIVE_PERMISSIONS_METADATA = 'opengewerk:alternative-permissions'
 export const PUBLIC_METADATA = 'opengewerk:public'
 export const SESSION_METADATA = 'opengewerk:session'
 export const OPERATOR_METADATA = 'opengewerk:operator'
@@ -50,6 +51,17 @@ export const membershipReason = 'membership'
  */
 export const RequiresPermission = (permission: string) =>
   SetMetadata(PERMISSION_METADATA, permission)
+
+/**
+ * Rights that let a request past the guard as well as the one of
+ * `RequiresPermission`, for a route where what is asked decides which right
+ * it needs. The guard asks only that one of them is held; the handler asks
+ * for the right the request needs, and a handler that forgot to would answer
+ * whoever holds any of them. So it stays on routes that do, and only beside a
+ * `RequiresPermission`, which the walk over the routes still finds.
+ */
+export const AlsoWith = (...permissions: readonly string[]) =>
+  SetMetadata(ALTERNATIVE_PERMISSIONS_METADATA, permissions)
 
 /**
  * A route that answers without an identity.
@@ -266,13 +278,20 @@ export class AuthorizationGuard implements CanActivate {
       throw new ForbiddenException('Diese Route deklariert kein Recht.')
     }
 
-    if (!identity.rights.includes(permission)) {
+    const alternatives =
+      this.reflector.getAllAndOverride<readonly string[] | undefined>(
+        ALTERNATIVE_PERMISSIONS_METADATA,
+        [context.getHandler(), context.getClass()],
+      ) ?? []
+    const held = [permission, ...alternatives].find((right) => identity.rights.includes(right))
+
+    if (held === undefined) {
       throw new ForbiddenException(this.authorization.missingPermission(permission))
     }
 
     // Only once everything has passed. A handler that runs has an identity
     // and a reason; one that does not never sees either.
-    request[identityProperty] = { ...identity, reason: permission }
+    request[identityProperty] = { ...identity, reason: held }
 
     return true
   }

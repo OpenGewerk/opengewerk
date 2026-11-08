@@ -23,7 +23,9 @@ export const changesSides =
  * A contact is part of it, the way the sync treats it as well: writing down
  * who opens the door is the same act as writing down whose door it is. So a
  * technician, who may create a customer on site, may create a contact there,
- * and correcting one is for whoever may correct the customer.
+ * and correcting one is for whoever may correct the customer. The people of a
+ * supplier are the exception, kept and read with the rights on the suppliers
+ * (`contactRoutes`).
  */
 export const contactRights: ContactRights<Permission> = {
   read: 'customer.read',
@@ -48,9 +50,10 @@ export const contactRoutes: ContactRoutes<
   table: contacts,
   rules: tradeContacts,
   // The people of a supplier are the supplier's (#296): whoever may keep the
-  // suppliers keeps them, and a technician, who may add a contact to a
-  // customer on site, may not add one to a supplier.
-  parentRight: (field) => (field === 'supplierId' ? 'supplier.write' : null),
+  // suppliers keeps them, without a right on the customers (opengewerk#884),
+  // and a technician, who may add a contact to a customer on site, may not add
+  // one to a supplier.
+  keptBy: (field) => (field === 'supplierId' ? 'supplier.write' : null),
   // And they are read by whoever may read the suppliers (opengewerk#883):
   // the list of all contacts leaves them out without that right, and
   // `GET /suppliers/:id/contacts` hands them to it alone.

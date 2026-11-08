@@ -2,6 +2,7 @@ import { RequestMethod } from '@nestjs/common'
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants'
 
 import {
+  ALTERNATIVE_PERMISSIONS_METADATA,
   MEMBERSHIP_METADATA,
   OPERATOR_METADATA,
   PERMISSION_METADATA,
@@ -32,6 +33,8 @@ export interface Route {
   readonly writes: boolean
   /** The right it declares, where it declares one. */
   readonly permission: string | undefined
+  /** The rights that let a request past the guard as well (`AlsoWith`), the handler deciding which it needs. */
+  readonly alternatives: readonly string[]
   readonly isPublic: boolean
   readonly needsSessionOnly: boolean
   readonly needsOperator: boolean
@@ -69,6 +72,9 @@ export function routesOf(controllers: readonly unknown[]): Route[] {
         name: `${verb ?? 'GET'} /${base}${path === '/' ? '' : `/${path}`}`,
         writes: verb !== undefined,
         permission: Reflect.getMetadata(PERMISSION_METADATA, handler) as string | undefined,
+        alternatives:
+          (Reflect.getMetadata(ALTERNATIVE_PERMISSIONS_METADATA, handler) as
+            readonly string[] | undefined) ?? [],
         isPublic: Reflect.getMetadata(PUBLIC_METADATA, handler) === true,
         needsSessionOnly: Reflect.getMetadata(SESSION_METADATA, handler) === true,
         needsOperator: Reflect.getMetadata(OPERATOR_METADATA, handler) === true,
