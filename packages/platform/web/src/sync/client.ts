@@ -29,6 +29,7 @@ import {
 } from './store.js'
 import {
   isForbidden,
+  isOtherAccount,
   isRefusedForGood,
   isUnauthenticated,
   RequestRefused,
@@ -932,18 +933,22 @@ export class SyncClient {
     } catch (caught) {
       // Another account took the store over in another tab: this one is
       // signed out as after an expired session, and the gate opens the
-      // store for whoever is signed in now. A tab with changes or photos
-      // waiting sends them first and is told by the server, with a 409, that
-      // another account is signed in; the store then says whether it was
-      // taken over.
-      const error = await this.takenOverBehind(caught)
+      // store for whoever is signed in now. So is a tab the server tells that
+      // another account is signed in than the one it sends or pulls for
+      // (`isOtherAccount`): it may not have reached a read of the store that
+      // would have said so, with changes waiting, or with the store not taken
+      // over at all yet.
+      const error = caught
+      const otherAccount = error instanceof StoreTakenOver || isOtherAccount(error)
 
-      if (isUnauthenticated(error) || error instanceof StoreTakenOver) {
+      if (isUnauthenticated(error) || otherAccount) {
         this.publish({
           exchanging: false,
           ...troubled(
             'exchange_refused',
-            error instanceof StoreTakenOver ? error.message : 'Die Anmeldung ist abgelaufen.',
+            otherAccount
+              ? 'Auf diesem Gerät ist inzwischen ein anderes Konto angemeldet.'
+              : 'Die Anmeldung ist abgelaufen.',
           ),
         })
         this.wanted = false
@@ -999,23 +1004,6 @@ export class SyncClient {
     }
 
     return null
-  }
-
-  /** The error, or that the store was taken over where a 409 may say so. */
-  private async takenOverBehind(error: unknown): Promise<unknown> {
-    if (!(error instanceof RequestRefused) || error.status !== 409) {
-      return error
-    }
-
-    try {
-      await this.store.readMeta(cursorKey)
-    } catch (asked) {
-      if (asked instanceof StoreTakenOver) {
-        return asked
-      }
-    }
-
-    return error
   }
 
   /** One transmission, and what its receipts take off the outbox. */
@@ -1123,7 +1111,7 @@ export class SyncClient {
     let guard = 0
 
     for (;;) {
-      const answer = await this.transport.pull(this.cursor)
+      const answer = await this.transport.pull(this.cursor, this.store.owner)
 
       if (await this.narrowedElsewhere(answer.narrowed)) {
         continue

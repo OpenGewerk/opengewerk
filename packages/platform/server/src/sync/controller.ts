@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Controller,
   Get,
   HttpException,
@@ -27,6 +26,7 @@ import {
 import type { SQL } from 'drizzle-orm'
 import type { Request } from 'express'
 
+import { heldForTheSession } from '../api/account-of-tab.js'
 import { AUTHORIZATION, type Authorization, RequiresPermission } from '../api/authorization.js'
 import { bodyBytesOf } from '../api/body-bytes.js'
 import { CurrentIdentity, type FoundIdentity, type RequestIdentity } from '../api/identity.js'
@@ -427,12 +427,12 @@ export class SyncController {
     // otherwise have them written under the name and with the rights of the
     // one now. They wait on the device for their person. A client that
     // names no account, one of a build from before, is taken as it was.
-    if (account !== null && account !== identity.userId) {
-      throw new ConflictException(
-        'Diese Änderungen gehören zu einem anderen Konto als dem, das hier angemeldet ist. ' +
-          'Sie warten auf dem Gerät, bis es sich wieder anmeldet.',
-      )
-    }
+    heldForTheSession(
+      account,
+      identity.userId,
+      'Diese Änderungen gehören zu einem anderen Konto als dem, das hier angemeldet ist. ' +
+        'Sie warten auf dem Gerät, bis es sich wieder anmeldet.',
+    )
 
     for (const operation of operations) {
       const needed = this.routes.permissionFor(operation.entity, operation.kind, operation.patches)
@@ -502,7 +502,16 @@ export class SyncController {
   async pull(
     @CurrentIdentity() identity: RequestIdentity,
     @Query() query: Record<string, unknown>,
+    @Req() request: Request,
   ): Promise<Changes & { narrowed: Readonly<Record<string, string>> }> {
+    // What another account may see, asked by a tab still open for the one
+    // before, landed in its store as that person's.
+    heldForTheSession(
+      request.header('x-account'),
+      identity.userId,
+      'Auf diesem Gerät ist inzwischen ein anderes Konto angemeldet.',
+    )
+
     const from = Number(query['since'] ?? 0)
 
     if (!Number.isInteger(from) || from < 0) {

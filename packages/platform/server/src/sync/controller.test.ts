@@ -4,7 +4,12 @@ import { ConflictException, type INestApplication } from '@nestjs/common'
 import { APP_FILTER, APP_GUARD } from '@nestjs/core'
 import type { NestExpressApplication } from '@nestjs/platform-express'
 import { Test } from '@nestjs/testing'
-import { syncRights, type SyncValue, type TenantId } from '@opengewerk/platform-domain'
+import {
+  otherAccountSignedIn,
+  syncRights,
+  type SyncValue,
+  type TenantId,
+} from '@opengewerk/platform-domain'
 import { eq, sql } from 'drizzle-orm'
 import type { Pool } from 'pg'
 import request from 'supertest'
@@ -381,6 +386,7 @@ describe('sending an outbox', () => {
     const refused = await push(olga(), [queued], 'probe-phone', app, 'lena').expect(409)
 
     expect((refused.body as { message: string }).message).toContain('anderen Konto')
+    expect((refused.body as { code: string }).code).toBe(otherAccountSignedIn)
     expect((await admin.query('select id from sync_operations')).rows).toEqual([])
 
     // Olga's own, and a client that names no account, go through.
@@ -840,6 +846,19 @@ describe('whoever sent a transmission, read before its transaction', () => {
 })
 
 describe('taking what has changed', () => {
+  it('is refused to a tab asking for another account than the one signed in', async () => {
+    await shelfWithNote('Keller', 'Zähler ablesen')
+
+    const refused = await pull(olga()).set('X-Account', 'lena').expect(409)
+
+    expect((refused.body as { code: string }).code).toBe(otherAccountSignedIn)
+    expect(refused.body).not.toHaveProperty('changes')
+
+    // Olga's own, and a tab that names no account, are answered.
+    await pull(olga()).set('X-Account', 'olga').expect(200)
+    await pull(olga()).expect(200)
+  })
+
   it('hands a device every change since its cursor, with where to go on from', async () => {
     const { shelfId, noteId } = await shelfWithNote('Keller', 'Zähler ablesen')
     const answer = await pull(lena()).expect(200)

@@ -1785,7 +1785,9 @@ describe('the account of a transmission', () => {
     transport.push = async () => {
       ben = await openLocalStore(tenant, 'ben')
 
-      throw new RequestRefused(409, 'Diese Änderungen gehören zu einem anderen Konto.', {})
+      throw new RequestRefused(409, 'Diese Änderungen gehören zu einem anderen Konto.', {
+        code: 'other_account',
+      })
     }
 
     await client.synchronise()
@@ -1821,6 +1823,55 @@ describe('the account of a transmission', () => {
     expect(writer.patched).toEqual([])
     expect(signedOut).toBe(1)
     ben.close()
+  })
+
+  it('pulls for the person the store was opened for, and keeps nothing a pull for another brings', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+    const accounts: (string | undefined)[] = []
+    let signedOut = 0
+    let other = false
+
+    transport.pull = (since: number, account?: string) => {
+      accounts.push(account)
+
+      // Ben signed in in another tab, and his cookie goes with every request
+      // of this one, before his tab has opened the store.
+      return other
+        ? Promise.reject(
+            new RequestRefused(
+              409,
+              'Auf diesem Gerät ist inzwischen ein anderes Konto angemeldet.',
+              {
+                code: 'other_account',
+              },
+            ),
+          )
+        : Promise.resolve({ changes: [], cursor: since, hasMore: false })
+    }
+    writer = new Writing()
+
+    const client = await Client.start({
+      store: await openLocalStore(tenant, 'anna'),
+      transport,
+      writer,
+      rules,
+      deviceId: 'device',
+      entities,
+      onSignedOut: () => {
+        signedOut += 1
+      },
+    })
+
+    await client.synchronise()
+    other = true
+    await client.synchronise()
+
+    expect(new Set(accounts)).toEqual(new Set(['anna']))
+    expect(signedOut).toBe(1)
+    expect(client.status().trouble).toBe(
+      'Auf diesem Gerät ist inzwischen ein anderes Konto angemeldet.',
+    )
   })
 
   it('signs a tab out once another account has taken its store over', async () => {

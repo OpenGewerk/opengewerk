@@ -56,9 +56,11 @@ export type { LocalStore, StoredFile, StoredRecord } from './store.js'
 // that owns a record, and every other request of a page, which names the
 // tenant it works in.
 export {
+  accountHeader,
   directWrite,
   httpTransport,
   isForbidden,
+  isOtherAccount,
   isRefusedForGood,
   isUnauthenticated,
   request,

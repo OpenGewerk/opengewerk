@@ -61,6 +61,13 @@ export const syncRights = {
 export type SyncRight = (typeof syncRights)[keyof typeof syncRights]
 
 /**
+ * What the server names as the code of its answer when a tab sends or asks
+ * for one account while another is signed in on the browser: the cookie is
+ * the other's now, and the tab is signed out.
+ */
+export const otherAccountSignedIn = 'other_account'
+
+/**
  * A role as a tenant holds it: the key a membership names, the name a screen
  * calls it by, the rights it gives, and the two things about it that are not
  * rights.

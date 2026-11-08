@@ -301,6 +301,7 @@ describe('the bytes of a file', () => {
       .expect(409)
 
     expect((answer.body as { message: string }).message).toMatch(/anderen Kontos/)
+    expect((answer.body as { code: string }).code).toBe('other_account')
 
     const { rows } = await admin.query(
       'select count(*)::int as count from files where sha256 = $1',

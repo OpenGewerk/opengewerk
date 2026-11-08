@@ -1,6 +1,7 @@
 import {
   type Operation,
   type OperationReceipt,
+  otherAccountSignedIn,
   type RecordState,
   type SyncConflict,
   workingInHeader,
@@ -24,7 +25,8 @@ export interface SyncTransport {
     operations: readonly Operation[],
     account?: string,
   ): Promise<readonly OperationReceipt[]>
-  pull(since: number): Promise<PullResult>
+  /** What changed since the cursor, asked for `account`, as at `push`. */
+  pull(since: number, account?: string): Promise<PullResult>
   conflicts(): Promise<readonly SyncConflict[]>
   resolve(id: string): Promise<void>
   /**
@@ -150,6 +152,23 @@ export function workIn(tenantId: string | null): void {
 /** The header that names the tenant, for the requests that do not go through `request`. */
 export function workingInHeaders(): Readonly<Record<string, string>> {
   return workingIn === null ? {} : { [workingInHeader]: workingIn }
+}
+
+/** The account a tab asks or sends for, as the server holds it against the session. */
+export function accountHeader(account?: string): Record<string, string> {
+  return account === undefined ? {} : { 'X-Account': account }
+}
+
+/**
+ * Whether the server refused because another account is signed in on the
+ * browser than the one the tab named (`otherAccountSignedIn`).
+ */
+export function isOtherAccount(error: unknown): boolean {
+  return (
+    error instanceof RequestRefused &&
+    error.status === 409 &&
+    (error.body as { code?: unknown } | null)?.code === otherAccountSignedIn
+  )
 }
 
 export async function request<Answer>(path: string, init?: RequestInit): Promise<Answer> {
@@ -298,8 +317,8 @@ export const httpTransport: SyncTransport = {
     return answer.receipts
   },
 
-  pull(since) {
-    return request<PullResult>(`/sync?since=${String(since)}`)
+  pull(since, account) {
+    return request<PullResult>(`/sync?since=${String(since)}`, { headers: accountHeader(account) })
   },
 
   conflicts() {
@@ -320,7 +339,7 @@ export const httpTransport: SyncTransport = {
         Accept: 'application/json',
         'Content-Type': 'application/octet-stream',
         'X-Media-Type': mediaType,
-        ...(account === undefined ? {} : { 'X-Account': account }),
+        ...accountHeader(account),
         ...workingInHeaders(),
       },
       body: bytes,
