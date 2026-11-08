@@ -24,7 +24,7 @@ import {
 import type { Account } from '../session/session.js'
 import type { SyncClient } from '../sync/client.js'
 import { SyncProvider } from '../sync/provider.js'
-import { openLocalStore } from '../sync/store.js'
+import { type LocalStore, openLocalStore, StoreTakenOver } from '../sync/store.js'
 import { workIn } from '../sync/transport.js'
 import { Gate, GateText, GateWaiting, InstanceLegalTexts, InstanceVersion } from './frame.js'
 import { AddressScreen } from './address.js'
@@ -185,19 +185,40 @@ function BootSteps({ entry, children }: { readonly entry: Entry; readonly childr
     workIn(tenantId)
 
     void (async () => {
-      // The store is the foundation's to open and the client the
-      // application's to start: only it knows by which rules its records
-      // travel and which of them it has a screen for. Opened for the person
-      // signed in, whose changes alone it sends (opengewerk-haustechnik#31).
-      const store = await openLocalStore(tenantId, userId)
-      const running = await startSync({
-        store,
-        deviceId,
-        entry,
-        onSignedOut: () => {
+      let store: LocalStore | null = null
+      let running: SyncClient
+
+      try {
+        // The store is the foundation's to open and the client the
+        // application's to start: only it knows by which rules its records
+        // travel and which of them it has a screen for. Opened for the person
+        // signed in, whose changes alone it sends (opengewerk-haustechnik#31).
+        store = await openLocalStore(tenantId, userId)
+        running = await startSync({
+          store,
+          deviceId,
+          entry,
+          onSignedOut: () => {
+            signedOut(tenantId)
+          },
+        })
+      } catch (error) {
+        if (!(error instanceof StoreTakenOver)) {
+          throw error
+        }
+
+        // Another tab took the store over for another account between its
+        // opening here and the start of the client: this page is signed out
+        // as at an exchange, and the account is asked again, instead of a
+        // gate waiting for a client nothing would start.
+        store?.close()
+
+        if (live) {
           signedOut(tenantId)
-        },
-      })
+        }
+
+        return
+      }
 
       if (!live) {
         // The tenant changed while the store was opening. Closing it here

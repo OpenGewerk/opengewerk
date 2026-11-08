@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 
 import {
   BadRequestException,
+  ConflictException,
   Controller,
   Inject,
   Param,
@@ -90,6 +91,19 @@ function filesController(right: string): Type<unknown> {
 
       if (malformed) {
         throw new BadRequestException(malformed)
+      }
+
+      // A photo that waits for one person, sent while another is signed in
+      // on the same browser, as at `POST /sync`: it would count against the
+      // one now and leave the list of the one before. A client that names no
+      // account, one of a build from before, is taken as it was.
+      const account = request.header('x-account')
+
+      if (account !== undefined && account !== identity.userId) {
+        throw new ConflictException(
+          'Diese Datei gehört zu Änderungen eines anderen Kontos als dem, das hier ' +
+            'angemeldet ist. Sie wartet auf dem Gerät, bis es sich wieder anmeldet.',
+        )
       }
 
       const body = await bodyBytesOf(request, largestFileBytes)

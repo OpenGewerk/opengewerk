@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto'
 import type { Operation, OperationId } from '@opengewerk/platform-domain'
 import { describe, expect, it } from 'vitest'
 
-import { openLocalStore, waitingIn } from './store.js'
+import { openLocalStore, StoreTakenOver, waitingIn } from './store.js'
 
 /**
  * Whose changes a device sends (opengewerk-haustechnik#31).
@@ -78,6 +78,119 @@ describe('the outbox of a device with more than one person', () => {
     const ben = await openLocalStore(tenant, 'ben')
 
     expect((await ben.readOutbox()).map((operation) => operation.id)).toEqual(['op-before'])
+    ben.close()
+  })
+})
+
+describe('what a device holds of the server, with more than one person', () => {
+  it('is for the account that pulled it, and another finds it gone, the changes and files waiting kept', async () => {
+    const tenant = aTenant()
+    const anna = await openLocalStore(tenant, 'anna')
+    const kept = { ...photo, sha256: 'b'.repeat(64) }
+
+    await anna.write('site_accesses', [{ id: 'z-1', value: '4711' }])
+    await anna.writeMeta('cursor', 42)
+    await anna.writeMeta('narrowed', '{"jobs":"mine"}')
+    await anna.writeMeta('stopwatch', '{"userId":"anna","startedAt":"2026-11-08T07:00:00.000Z"}')
+    await anna.queue(aNote('op-anna', 'Leiter im Flur'))
+    await anna.keepFile(photo, true)
+    await anna.keepFile(kept, false)
+    anna.close()
+
+    // Ben opens the store of the same tenant on this browser.
+    const ben = await openLocalStore(tenant, 'ben')
+
+    expect(await ben.readAll('site_accesses')).toEqual([])
+    expect(await ben.readMeta('cursor')).toBeNull()
+    expect(await ben.readMeta('narrowed')).toBeNull()
+    // What the application keeps for itself says whose it is, and stays.
+    expect(await ben.readMeta('stopwatch')).toBe(
+      '{"userId":"anna","startedAt":"2026-11-08T07:00:00.000Z"}',
+    )
+    expect(await ben.readFile(kept.sha256)).toBeNull()
+    ben.close()
+
+    // Anna's change and her photo still wait for her.
+    const back = await openLocalStore(tenant, 'anna')
+
+    expect(await back.readOutbox()).toEqual([aNote('op-anna', 'Leiter im Flur')])
+    expect((await back.waitingFiles()).map((file) => file.sha256)).toEqual([photo.sha256])
+    back.close()
+  })
+
+  it('stays for the account that pulled it, and for the first to open a store from before', async () => {
+    const tenant = aTenant()
+    const before = await openLocalStore(tenant)
+
+    await before.write('notes', [{ id: 'n-1', text: 'Zählerstand' }])
+    before.close()
+
+    const anna = await openLocalStore(tenant, 'anna')
+
+    expect(await anna.readAll('notes')).toEqual([{ id: 'n-1', text: 'Zählerstand' }])
+    anna.close()
+
+    const again = await openLocalStore(tenant, 'anna')
+
+    expect(await again.readAll('notes')).toEqual([{ id: 'n-1', text: 'Zählerstand' }])
+    again.close()
+  })
+
+  it('goes to one account at a time, also when two tabs open it for two at once', async () => {
+    const tenant = aTenant()
+    const before = await openLocalStore(tenant)
+
+    await before.write('notes', [{ id: 'n-1', text: 'Zählerstand' }])
+    before.close()
+
+    // Anna and Ben, in two tabs of the same browser, at the same moment.
+    const [anna, ben] = await Promise.all([
+      openLocalStore(tenant, 'anna'),
+      openLocalStore(tenant, 'ben'),
+    ])
+
+    // Whichever came first took the store over and was taken over by the
+    // other; the other found what was pulled before gone.
+    const read = await Promise.allSettled([anna.readAll('notes'), ben.readAll('notes')])
+
+    expect(
+      read
+        .map((each) =>
+          each.status === 'fulfilled'
+            ? JSON.stringify(each.value)
+            : each.reason instanceof StoreTakenOver
+              ? 'taken over'
+              : String(each.reason),
+        )
+        .sort(),
+    ).toEqual(['[]', 'taken over'])
+    anna.close()
+    ben.close()
+  })
+
+  it('reads and writes nothing more of the server for a tab still open for the account before', async () => {
+    const tenant = aTenant()
+    const anna = await openLocalStore(tenant, 'anna')
+    const ben = await openLocalStore(tenant, 'ben')
+
+    await ben.write('site_accesses', [{ id: 'z-2', value: '0815' }])
+
+    // Anna's tab: a pull that arrives late, and a screen that reads.
+    await expect(anna.write('site_accesses', [{ id: 'z-1', value: '4711' }])).rejects.toThrow(
+      StoreTakenOver,
+    )
+    await expect(anna.readAll('site_accesses')).rejects.toThrow(StoreTakenOver)
+    await expect(anna.writeMeta('cursor', 42)).rejects.toThrow(StoreTakenOver)
+
+    await expect(anna.keepFile(photo, false)).rejects.toThrow(StoreTakenOver)
+
+    // Her own change and her photo still wait for her.
+    await anna.queue(aNote('op-anna', 'Leiter im Flur'))
+    await anna.keepFile(photo, true)
+
+    expect(await ben.readAll('site_accesses')).toEqual([{ id: 'z-2', value: '0815' }])
+    expect(await ben.readMeta('cursor')).toBeNull()
+    anna.close()
     ben.close()
   })
 })

@@ -1755,3 +1755,129 @@ describe('what a device keeps for itself', () => {
     }
   })
 })
+
+describe('the account of a transmission', () => {
+  it('signs a tab out with changes waiting, over the 409 of the server once another account took its store over', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+    let signedOut = 0
+    let ben: Awaited<ReturnType<typeof openLocalStore>> | null = null
+
+    writer = new Writing()
+
+    const client = await Client.start({
+      store: await openLocalStore(tenant, 'anna'),
+      transport,
+      writer,
+      rules,
+      deviceId: 'device',
+      entities,
+      onSignedOut: () => {
+        signedOut += 1
+      },
+    })
+
+    transport.refuse = new TypeError('Failed to fetch')
+    await client.create('shelves', { name: 'Hall', kind: 'wood' })
+    transport.refuse = null
+    // Ben takes the store over, and the server answers the change waiting for
+    // Anna that another account is signed in.
+    transport.push = async () => {
+      ben = await openLocalStore(tenant, 'ben')
+
+      throw new RequestRefused(409, 'Diese Änderungen gehören zu einem anderen Konto.', {})
+    }
+
+    await client.synchronise()
+
+    expect(signedOut).toBe(1)
+    expect(client.status().pending).toBe(1)
+    ;(ben as { close(): void } | null)?.close()
+  })
+
+  it('writes nothing at a route for a tab whose store another account took over', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+    let signedOut = 0
+
+    writer = new Writing()
+
+    const client = await Client.start({
+      store: await openLocalStore(tenant, 'anna'),
+      transport,
+      writer,
+      rules,
+      deviceId: 'device',
+      entities,
+      onSignedOut: () => {
+        signedOut += 1
+      },
+    })
+    const ben = await openLocalStore(tenant, 'ben')
+
+    // A shelf changes with a connection only, straight at its route.
+    await client.update('shelves', 's-1', { name: 'Keller' }).catch(() => undefined)
+
+    expect(writer.patched).toEqual([])
+    expect(signedOut).toBe(1)
+    ben.close()
+  })
+
+  it('signs a tab out once another account has taken its store over', async () => {
+    const tenant = `t${String((counter += 1))}`
+    let signedOut = 0
+
+    writer = new Writing()
+
+    const client = await Client.start({
+      store: await openLocalStore(tenant, 'anna'),
+      transport: new Recorded(),
+      writer,
+      rules,
+      deviceId: 'device',
+      entities,
+      onSignedOut: () => {
+        signedOut += 1
+      },
+    })
+    const ben = await openLocalStore(tenant, 'ben')
+
+    await client.synchronise()
+
+    expect(signedOut).toBe(1)
+    expect(client.status().trouble).toBe(
+      'Auf diesem Gerät ist inzwischen ein anderes Konto angemeldet.',
+    )
+    ben.close()
+  })
+
+  it('is the person the store was opened for, which the server holds against the session', async () => {
+    const transport = new Recorded()
+    const store = await openLocalStore(`t${String((counter += 1))}`, 'anna')
+    const accounts: (string | undefined)[] = []
+    const push = transport.push.bind(transport)
+
+    transport.push = (deviceId: string, operations: readonly Operation[], account?: string) => {
+      accounts.push(account)
+
+      return push(deviceId, operations)
+    }
+    writer = new Writing()
+
+    const client = await Client.start({
+      store,
+      transport,
+      writer,
+      rules,
+      deviceId: 'device',
+      entities,
+      onSignedOut: () => {},
+    })
+
+    await client.create('shelves', { name: 'Hall', kind: 'wood' })
+    await client.synchronise()
+
+    expect(accounts.length).toBeGreaterThan(0)
+    expect(new Set(accounts)).toEqual(new Set(['anna']))
+  })
+})

@@ -15,7 +15,15 @@ import {
  * offline would be testing the wrong thing.
  */
 export interface SyncTransport {
-  push(deviceId: string, operations: readonly Operation[]): Promise<readonly OperationReceipt[]>
+  /**
+   * Sends what is queued. `account` is the person the queued changes are
+   * for, which the server holds against the session that sends.
+   */
+  push(
+    deviceId: string,
+    operations: readonly Operation[],
+    account?: string,
+  ): Promise<readonly OperationReceipt[]>
   pull(since: number): Promise<PullResult>
   conflicts(): Promise<readonly SyncConflict[]>
   resolve(id: string): Promise<void>
@@ -25,7 +33,8 @@ export interface SyncTransport {
    * never touches a file; a client that has one waiting and no way to send it
    * says so rather than sending the version without it.
    */
-  upload?(sha256: string, bytes: ArrayBuffer, mediaType: string): Promise<void>
+  /** Sends a file. `account` is the person it waits for, as at `push`. */
+  upload?(sha256: string, bytes: ArrayBuffer, mediaType: string, account?: string): Promise<void>
 }
 
 export interface ChangedRows {
@@ -276,10 +285,14 @@ export const directWrite = {
 }
 
 export const httpTransport: SyncTransport = {
-  async push(deviceId, operations) {
+  async push(deviceId, operations, account) {
     const answer = await request<{ receipts: readonly OperationReceipt[] }>('/sync', {
       method: 'POST',
-      body: JSON.stringify({ deviceId, operations: operations.map(onTheWire) }),
+      body: JSON.stringify({
+        deviceId,
+        ...(account === undefined ? {} : { account }),
+        operations: operations.map(onTheWire),
+      }),
     })
 
     return answer.receipts
@@ -297,7 +310,7 @@ export const httpTransport: SyncTransport = {
     await request(`/sync/conflicts/${encodeURIComponent(id)}/resolve`, { method: 'POST' })
   },
 
-  async upload(sha256, bytes, mediaType) {
+  async upload(sha256, bytes, mediaType, account) {
     // As bytes, a type no form can send, and the file's own type beside it.
     // `request` would name the body JSON; this body is not.
     const response = await fetch(`/files/${encodeURIComponent(sha256)}`, {
@@ -307,6 +320,7 @@ export const httpTransport: SyncTransport = {
         Accept: 'application/json',
         'Content-Type': 'application/octet-stream',
         'X-Media-Type': mediaType,
+        ...(account === undefined ? {} : { 'X-Account': account }),
         ...workingInHeaders(),
       },
       body: bytes,

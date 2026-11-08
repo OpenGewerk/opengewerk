@@ -176,6 +176,40 @@ describe('a file made on the device', () => {
     expect(server.uploaded.size).toBe(0)
   })
 
+  it('names the account it waits for, and stays over a 409 that says another is signed in', async () => {
+    const client = await SyncClient.start({
+      store: await openLocalStore(`files${String((counter += 1))}`, 'anna'),
+      transport: server,
+      writer: server,
+      rules,
+      deviceId: 'phone',
+      entities: ['notes', 'parcels'],
+      onSignedOut: () => {},
+    })
+    const accounts: (string | undefined)[] = []
+    const upload = server.upload.bind(server)
+
+    server.upload = (sha256: string, bytes: ArrayBuffer, mediaType: string, account?: string) => {
+      accounts.push(account)
+
+      return upload(sha256, bytes, mediaType)
+    }
+    server.refuseUploads = new RequestRefused(409, 'Diese Datei gehört zu einem anderen Konto.', {})
+
+    const { sha256, sizeBytes } = await client.keepFile(photo, 'image/jpeg')
+
+    await attach(client, sha256, sizeBytes)
+    await client.synchronise()
+
+    expect(server.sent).toEqual([])
+
+    server.refuseUploads = null
+    await client.synchronise()
+
+    expect([...server.uploaded.keys()]).toEqual([sha256])
+    expect(new Set(accounts)).toEqual(new Set(['anna']))
+  })
+
   it('stays on the device over a 403, which refuses the request and not the file (#254)', async () => {
     const client = await start()
 

@@ -213,11 +213,12 @@ function push(
   operations: readonly Sent[],
   deviceId = 'probe-phone',
   instance: INestApplication = app,
+  account?: string,
 ) {
   return request(instance.getHttpServer())
     .post('/sync')
     .set(testIdentityHeader, who)
-    .send({ deviceId, operations })
+    .send({ deviceId, ...(account === undefined ? {} : { account }), operations })
 }
 
 function pull(who: string, query = 'since=0', instance: INestApplication = app) {
@@ -367,6 +368,23 @@ describe('sending an outbox', () => {
     expect((await admin.query('select device_id from sync_operations')).rows).toEqual([
       { device_id: 'olgas-phone' },
     ])
+  })
+
+  it('refuses the changes of another account than the one signed in, before anything is written', async () => {
+    const queued = operation({
+      entity: 'notes',
+      recordId: newId<'note'>(),
+      patches: [{ field: 'text', to: 'Von Lena geschrieben' }],
+    })
+
+    // A client that went on running for Lena sends while Olga is signed in.
+    const refused = await push(olga(), [queued], 'probe-phone', app, 'lena').expect(409)
+
+    expect((refused.body as { message: string }).message).toContain('anderen Konto')
+    expect((await admin.query('select id from sync_operations')).rows).toEqual([])
+
+    // Olga's own, and a client that names no account, go through.
+    await push(olga(), [queued], 'probe-phone', app, 'olga').expect(201)
   })
 
   it('refuses an entity the application does not sync, names the operation and writes nothing', async () => {
