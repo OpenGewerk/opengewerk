@@ -28,6 +28,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { documentAttachments, withCallInstructions } from '../mail/attachments.js'
 import { runMailCycle } from '../mail/worker.js'
+import { legacyInstructionsFingerprint, unsignedWording } from '../service-calls/instructions.js'
 import { ApiModule } from './api.module.js'
 import { fingerprintAsHeld } from './test-signing.js'
 import { DocumentFiles } from './document-files.js'
@@ -92,6 +93,35 @@ async function instructions(jobId: string, who = technician()): Promise<View> {
     .expect(200)
 
   return answer.body as View
+}
+
+/**
+ * Words the owner gives one of the instructions in the settings, for as long
+ * as `during` runs, and the shipped ones again afterwards.
+ */
+async function reworded(template: string, body: string, during: () => Promise<void>) {
+  const owner = as(north.id, 'owner')
+  const entry = (
+    (await http().get('/settings/instructions').set('x-test-identity', owner).expect(200)).body as {
+      id: string
+      template: string | null
+    }[]
+  ).find((each) => each.template === template)
+
+  await http()
+    .patch(`/settings/instructions/${entry?.id ?? ''}`)
+    .set('x-test-identity', owner)
+    .send({ body })
+    .expect(200)
+
+  try {
+    await during()
+  } finally {
+    await http()
+      .post(`/settings/instructions/${entry?.id ?? ''}/restore`)
+      .set('x-test-identity', owner)
+      .expect(201)
+  }
 }
 
 /** A call: a customer, a job, a consumer and a service call unless said otherwise. */
@@ -567,6 +597,87 @@ describe('the instructions as a PDF', () => {
 
     expect(printed.at(-1)?.html).toContain(scribble)
     expect(printed.at(-1)?.html).toContain('Klaus Lehmann')
+  })
+
+  /**
+   * The words a customer signed are kept with the request when it lands, and
+   * the PDF prints those: worded differently in the settings afterwards, the
+   * signature does not end up under words the customer never read.
+   */
+  it('print the words the customer signed under, not those the settings have now', async () => {
+    const { job } = await aCall()
+    const { fingerprint } = await instructions(job)
+    const signed = aRequest(job, fingerprint)
+
+    await push(app, technician(), [signed.operation])
+
+    await reworded('withdrawal', 'Später anders formuliert.', async () => {
+      await http()
+        .get(`/jobs/${job}/instructions/pdf?request=${signed.id}`)
+        .set('x-test-identity', office())
+        .expect(200)
+
+      expect(printed.at(-1)?.html).toContain(scribble)
+      expect(printed.at(-1)?.html).not.toContain('Später anders formuliert.')
+    })
+  })
+
+  /**
+   * A request from before the words were kept has only its fingerprint, in
+   * the old form of thirty-two bits. It prints with the words of the
+   * settings while they still have that fingerprint, and not once they are
+   * worded differently.
+   */
+  it('print a request from before its words were kept only while the settings still match it', async () => {
+    const { job } = await aCall()
+    const view = await instructions(job)
+    const id = newId<'early-start-request'>()
+
+    await admin.query(
+      `insert into early_start_requests
+         (tenant_id, id, job_id, signer_name, signed_at, path, content_fingerprint)
+         values ($1, $2, $3, 'Klaus Lehmann', now(), $4, $5)`,
+      [north.id, id, job, scribble, legacyInstructionsFingerprint(view.sheets, view.request)],
+    )
+
+    await http()
+      .get(`/jobs/${job}/instructions/pdf?request=${id}`)
+      .set('x-test-identity', office())
+      .expect(200)
+
+    expect(printed.at(-1)?.html).toContain(scribble)
+
+    await reworded('withdrawal', 'Später anders formuliert.', async () => {
+      const refused = await http()
+        .get(`/jobs/${job}/instructions/pdf?request=${id}`)
+        .set('x-test-identity', office())
+        .expect(422)
+
+      expect((refused.body as { message: string }).message).toBe(unsignedWording)
+    })
+  })
+
+  it('keep the words a request lands with, and take none a device sends', async () => {
+    const { job } = await aCall()
+    const { fingerprint, sheets, request } = await instructions(job)
+    const kept = aRequest(job, fingerprint)
+    const sent = aRequest(job, fingerprint, {
+      wording: JSON.stringify({ sheets: [], request: 'Erfunden.' }),
+    })
+
+    expect((await push(app, technician(), [kept.operation])).receipts[0]?.outcome).toBe('applied')
+    const refused = await push(app, technician(), [sent.operation])
+
+    expect(
+      refused.receipts.map((receipt) => [receipt.outcome, receipt.reason, receipt.fields]),
+    ).toEqual([['conflict', 'set_by_server', ['wording']]])
+
+    const { rows } = await admin.query<{ id: string; wording: unknown }>(
+      'select id, wording from early_start_requests where id = any($1)',
+      [[kept.id, sent.id]],
+    )
+
+    expect(rows).toEqual([{ id: kept.id, wording: { sheets, request } }])
   })
 
   it('do not print a request of another job', async () => {

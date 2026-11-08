@@ -32,7 +32,7 @@ import {
 
 import type { FoundIdentity } from '../api/identity.js'
 import { signatureRefusal } from '../documents/signing.js'
-import { earlyStartRefusal } from '../service-calls/instructions.js'
+import { earlyStartRefusal, earlyStartWording } from '../service-calls/instructions.js'
 import { onCallRefusal } from '../service-calls/on-call.js'
 import { consentGiven, correctionRefusal } from '../time/entries.js'
 import { proposedTreatment } from '../documents/treatment.js'
@@ -490,6 +490,23 @@ async function withJobNumber(
 }
 
 /**
+ * A request for an early start keeps what it was signed under (see
+ * `EarlyStartWording`), put in here once `earlyStart` let it through. A
+ * device cannot send it: the field is reserved.
+ */
+async function withEarlyStartWording(
+  tx: Parameters<Check>[0]['tx'],
+  operation: Parameters<Check>[0]['operation'],
+  values: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (operation.kind !== 'create' || operation.entity !== 'early_start_requests') {
+    return values
+  }
+
+  return { ...values, wording: await earlyStartWording(tx, values) }
+}
+
+/**
  * The sync on the server of this application, for the routes a device syncs
  * through and for the tests that read the stream of a business.
  */
@@ -523,14 +540,18 @@ export const sync = serverSync<FoundIdentity>({
     draftDeletion,
   ],
   complete: async ({ tx, tenantId, operation, values, current, sender }) =>
-    withJobNumber(
+    withEarlyStartWording(
       tx,
-      tenantId,
       operation,
-      await withProposedTreatment(
+      await withJobNumber(
         tx,
+        tenantId,
         operation,
-        withCreator(operation, withLineTotal(operation.entity, values, current), sender),
+        await withProposedTreatment(
+          tx,
+          operation,
+          withCreator(operation, withLineTotal(operation.entity, values, current), sender),
+        ),
       ),
     ),
 })

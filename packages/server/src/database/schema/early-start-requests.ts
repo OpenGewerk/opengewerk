@@ -1,4 +1,9 @@
-import { longestDeviceInfo, longestSignaturePath, longestSignerName } from '@opengewerk/domain'
+import {
+  type EarlyStartWording,
+  longestDeviceInfo,
+  longestSignaturePath,
+  longestSignerName,
+} from '@opengewerk/domain'
 import {
   primaryId,
   reference,
@@ -8,7 +13,16 @@ import {
 } from '@opengewerk/platform-server'
 import { tenantColumn } from '@opengewerk/platform-server/schema'
 import { sql } from 'drizzle-orm'
-import { check, foreignKey, index, pgTable, text, timestamp, unique } from 'drizzle-orm/pg-core'
+import {
+  check,
+  foreignKey,
+  index,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+} from 'drizzle-orm/pg-core'
 
 import { jobs } from './jobs.js'
 
@@ -31,6 +45,10 @@ export const earlyStartRequests = pgTable(
     deviceInfo: text('device_info'),
     path: text('path').notNull(),
     contentFingerprint: text('content_fingerprint').notNull(),
+    // What the customer read, as the server put it together when the
+    // request landed, and what its PDF prints: the settings may be worded
+    // differently afterwards. None on a request from before it was kept.
+    wording: jsonb('wording').$type<EarlyStartWording>(),
     createdBy: text('created_by'),
     ...timestamps,
     ...syncColumns,
