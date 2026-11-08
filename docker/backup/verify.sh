@@ -35,6 +35,9 @@ umask 077
 # The names of the archives, in one place for backup, restore and verify.
 . "$(dirname "$0")/names.sh"
 
+# Reading the database as postgres without running what it defines.
+. "$(dirname "$0")/superuser-reads.sh"
+
 # Where an archive comes from and what its chains hold.
 . "$(dirname "$0")/archive-checks.sh"
 
@@ -153,10 +156,10 @@ while IFS="$(printf '\t')" read -r tenant sequence head; do
 		continue
 	fi
 
-	current=$(psql --host "$POSTGRES_HOST" --username postgres --dbname "$POSTGRES_DB" \
-		--tuples-only --no-align --quiet --command \
-		"select coalesce(max(hash), '') from audit_entries
-		  where tenant_id = '${tenant}' and sequence = ${position}")
+	# Locked and checked for each tenant, as in restore.sh.
+	current=$(checked_query audit_entries "tenant_id sequence hash" \
+		"select coalesce(max(hash), '') from only public.audit_entries
+		  where tenant_id = '${tenant}' and sequence = ${position}") || exit 1
 
 	if [ -z "$current" ]; then
 		echo "  Mandant ${tenant}: Eintrag ${position} fehlt heute. Er stand in der" >&2

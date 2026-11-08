@@ -786,6 +786,10 @@ jobs:
         working-directory: docker
         run: sh test-stack.sh catch-up
 
+      - name: Eine Sicht statt einer Tabelle hält die Sicherung an
+        working-directory: docker
+        run: sh test-stack.sh superuser-reads
+
       - name: Protokolle bei einem Fehlschlag
         if: failure()
         working-directory: docker

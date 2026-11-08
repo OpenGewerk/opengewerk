@@ -15,9 +15,10 @@ FROM postgres:18-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143
 # instance and not in UTC (#130).
 RUN apk add --no-cache age tzdata
 
-# names.sh is read by three of them and archive-checks.sh by two, and neither
-# is run on its own, so they are not made executable.
-COPY backup.sh restore.sh verify.sh schedule.sh names.sh archive-checks.sh /usr/local/bin/
+# names.sh is read by three of them, superuser-reads.sh by four and
+# archive-checks.sh by two, and none is run on its own, so they are not made
+# executable.
+COPY backup.sh restore.sh verify.sh schedule.sh names.sh archive-checks.sh superuser-reads.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/backup.sh /usr/local/bin/restore.sh /usr/local/bin/verify.sh \
 	/usr/local/bin/schedule.sh
 

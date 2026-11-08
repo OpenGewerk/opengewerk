@@ -37,12 +37,30 @@ set -eu
 
 : "${BACKUP_STATUS_PATH:=/var/lib/opengewerk/backup-status}"
 
+# Reading the database as postgres without running what it defines.
+. "$(dirname "$0")/superuser-reads.sh"
+
 fallback='02:30'
+time_errors=$(mktemp)
 
 # The time from the settings of the instance, "HH:MM", or the fallback when
 # the database does not answer or answers with something that is not a time.
 configured_time() {
-	value=$(psql --host "$POSTGRES_HOST" --username postgres --dbname "$POSTGRES_DB" 		--tuples-only --no-align --quiet 		--command "select to_char(backup_time, 'HH24:MI') from instance_settings where id = 1" 		2>/dev/null || true)
+	# Only from the table the application made: after a restore it could be a
+	# view that runs what it calls as postgres. psql ends with 3 where a
+	# check refuses it, and that is said here, with the fallback that holds
+	# instead; a database that does not answer only means the fallback.
+	if value=$(checked_query instance_settings "id backup_time" \
+		"select to_char(backup_time, 'HH24:MI') from only public.instance_settings where id = 1" \
+		2>"$time_errors"); then
+		:
+	elif [ "$?" -eq 3 ]; then
+		cat "$time_errors" >&2
+		echo "Die Uhrzeit der Sicherung ließ sich nicht lesen, es gilt ${fallback} Uhr." >&2
+		value=''
+	else
+		value=''
+	fi
 
 	case "$value" in
 		[0-2][0-9]:[0-5][0-9]) echo "$value" ;;
@@ -75,6 +93,12 @@ latest_due() {
 		echo $((today - 86400))
 	fi
 }
+
+# The time it would take, and nothing else: for the check of the stack.
+if [ "${1:-}" = "--time" ]; then
+	configured_time
+	exit 0
+fi
 
 at=$(configured_time)
 

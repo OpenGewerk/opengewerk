@@ -46,6 +46,9 @@ umask 077
 # The names of the archives, in one place for backup, restore and verify.
 . "$(dirname "$0")/names.sh"
 
+# Reading the database as postgres without running what it defines.
+. "$(dirname "$0")/superuser-reads.sh"
+
 # Where an archive comes from and what its chains hold.
 . "$(dirname "$0")/archive-checks.sh"
 
@@ -304,9 +307,11 @@ mismatch=0
 while IFS="$(printf '\t')" read -r tenant sequence head; do
 	[ -n "$tenant" ] || continue
 
-	current=$(psql --host "$POSTGRES_HOST" --username postgres --dbname "$POSTGRES_DB" \
-		--tuples-only --no-align --quiet --command \
-		"select next_sequence || '|' || coalesce(head_hash, '') from audit_chains where tenant_id = '${tenant}'")
+	# Locked and checked for each tenant: a check made once before the loop
+	# would not hold for the reads after it.
+	current=$(checked_query audit_chains "tenant_id next_sequence head_hash" \
+		"select next_sequence || '|' || coalesce(head_hash, '') from only public.audit_chains where tenant_id = '${tenant}'") ||
+		exit 1
 
 	if [ "$current" != "${sequence}|${head}" ]; then
 		echo "    Mandant ${tenant}: die Kette weicht von der Sicherung ab." >&2

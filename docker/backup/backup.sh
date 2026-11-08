@@ -66,6 +66,9 @@ fi
 # The names of the archives, in one place for backup, restore and verify.
 . "$(dirname "$0")/names.sh"
 
+# Reading the database as postgres without running what it defines.
+. "$(dirname "$0")/superuser-reads.sh"
+
 if [ -z "${PGPASSWORD:-}" ]; then
 	echo "PGPASSWORD fehlt. Die Sicherung meldet sich als Superuser an, weil sie" >&2
 	echo "sonst wegen der Mandantentrennung leere Tabellen sichern würde." >&2
@@ -80,13 +83,11 @@ fi
 if [ "$scheduled" = true ]; then
 	# A database that is not migrated yet has no table of tenants at all, and
 	# nothing in it to back up either.
-	migrated=$(psql --host "$POSTGRES_HOST" --username postgres --dbname "$POSTGRES_DB" \
-		--tuples-only --no-align --quiet --command "select to_regclass('public.tenants') is not null")
+	migrated=$(superuser_query --command "select to_regclass('public.tenants') is not null")
 	tenants=0
 
 	if [ "$migrated" = "t" ]; then
-		tenants=$(psql --host "$POSTGRES_HOST" --username postgres --dbname "$POSTGRES_DB" \
-			--tuples-only --no-align --quiet --command "select count(*) from tenants")
+		tenants=$(checked_query tenants "" "select count(*) from only public.tenants") || exit 1
 	fi
 
 	if [ "$tenants" = "0" ]; then
@@ -164,10 +165,9 @@ pg_dump --host "$POSTGRES_HOST" --username postgres --dbname "$POSTGRES_DB" \
 # Read with the same connection, right after the dump, so the heads describe
 # the state the dump holds.
 echo "  Audit-Ketten werden festgehalten."
-psql --host "$POSTGRES_HOST" --username postgres --dbname "$POSTGRES_DB" \
-	--tuples-only --no-align --field-separator="$tab" --quiet \
-	--command "select tenant_id, next_sequence, coalesce(head_hash, '') from audit_chains order by tenant_id" \
-	>"${work}/audit-chains.tsv"
+checked_query audit_chains "tenant_id next_sequence head_hash" \
+	"select tenant_id, next_sequence, coalesce(head_hash, '') from only public.audit_chains order by tenant_id" \
+	--field-separator="$tab" >"${work}/audit-chains.tsv" || exit 1
 
 # --- 3. The file store -----------------------------------------------------
 # After the database, never before it. See the note at the top.
@@ -183,8 +183,7 @@ storage_hash=$(sha256sum "${work}/storage.tar" | cut -d' ' -f1)
 chains_hash=$(sha256sum "${work}/audit-chains.tsv" | cut -d' ' -f1)
 storage_files=$(find "$STORAGE_PATH" -type f | wc -l | tr -d ' ')
 chains=$(wc -l <"${work}/audit-chains.tsv" | tr -d ' ')
-server_version=$(psql --host "$POSTGRES_HOST" --username postgres --dbname "$POSTGRES_DB" \
-	--tuples-only --no-align --quiet --command "show server_version")
+server_version=$(superuser_query --command "show server_version")
 
 cat >"${work}/manifest.json" <<JSON
 {
