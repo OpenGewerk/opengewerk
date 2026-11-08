@@ -4,16 +4,18 @@ import {
   GoneException,
   NotFoundException,
 } from '@nestjs/common'
-import type { TenantId } from '@opengewerk/platform-domain'
-import { and, eq, like, ne } from 'drizzle-orm'
+import { accessRights, type TenantId } from '@opengewerk/platform-domain'
+import { and, eq, like, ne, sql } from 'drizzle-orm'
 
 import { isUniqueViolation } from '../api/database-errors.js'
-import type { Database } from '../database/database.js'
+import type { Database, TenantTransaction } from '../database/database.js'
 import {
   accountCorrections,
   authAddressConfirmations,
   authUsers,
   authVerifications,
+  instanceOperators,
+  memberships,
 } from '../schema.js'
 import { normalise, oneAccountPerAddress, openPasswordResets } from './administration.js'
 import { hashToken, mintToken } from './invitation.js'
@@ -198,6 +200,15 @@ export async function confirmAddress(
   const asUser = found.requestedBy ?? found.userId
   const changed = found.email !== found.before
 
+  // A correction by whoever leads a tenant: the tenant the account works in
+  // alone, and whoever corrected it still allowed to there.
+  const correctedIn =
+    asUser === found.userId ? null : await correctionTenant(database, found.userId, asUser)
+
+  if (asUser !== found.userId && correctedIn === null) {
+    throw new GoneException(goneLink)
+  }
+
   try {
     await database.forInstance(async (tx) => {
       const taken = await tx
@@ -208,6 +219,21 @@ export async function confirmAddress(
       if (taken.length === 0) {
         // Opened twice at once: the other one got here first.
         throw new GoneException(goneLink)
+      }
+
+      if (correctedIn !== null) {
+        // Asked again in the transaction that sets the address, with the row
+        // of the account locked: a membership or an appointment names that
+        // row, so one written at the same moment waits for this transaction
+        // or is seen by it.
+        await tx.execute(sql`select id from auth_users where id = ${found.userId} for update`)
+        await tx.execute(sql`select set_config('app.user_id', ${found.userId}, true)`)
+        const still = await soleTenantOf(tx, found.userId)
+        await tx.execute(sql`select set_config('app.user_id', ${asUser}, true)`)
+
+        if (still !== correctedIn) {
+          throw new GoneException(goneLink)
+        }
       }
 
       await tx
@@ -247,6 +273,68 @@ export async function confirmAddress(
   }
 
   return { email: found.email, changed }
+}
+
+/**
+ * Where a correction by whoever leads a tenant still holds when its link is
+ * opened, or null. It could be made only for an account that works in that
+ * tenant alone and does not run the instance, by somebody allowed to manage
+ * its people (`correctAccount`); an account that joined another tenant or was
+ * appointed since is no longer that tenant's to correct, and whoever corrected
+ * it must still be allowed to there: not blocked, past no last day, with a
+ * role that grants the right.
+ */
+async function correctionTenant(
+  database: Database,
+  userId: string,
+  correctedBy: string,
+): Promise<TenantId | null> {
+  // Read as the account: its memberships are in reach outside a tenant only
+  // for the account itself.
+  const tenantId = await database.forInstance((tx) => soleTenantOf(tx, userId), userId)
+
+  if (tenantId === null) {
+    return null
+  }
+
+  // Inside the tenant, where its roles are: the same question the guard of
+  // the route asks, as the policies of the tenant ask it.
+  const allowed = await database.forTenant(
+    { tenantId, userId: correctedBy, reason: 'account.address' },
+    (tx) =>
+      tx.execute(sql`select 1 from memberships m
+        join tenant_roles r on r.tenant_id = m.tenant_id and r.key = any (m.roles)
+        where m.tenant_id = ${tenantId} and m.user_id = ${correctedBy}
+          and m.blocked_at is null
+          and (m.last_day is null or m.last_day >= (now() at time zone 'Europe/Berlin')::date)
+          -- Whoever leads manages the people whatever the row of the role
+          -- says, as the sum of the rights has it (rightsCatalogue.sumOf).
+          and (r.leads or ${accessRights.write} = any (r.rights))
+        limit 1`),
+  )
+
+  return allowed.rows.length > 0 ? tenantId : null
+}
+
+/**
+ * The one tenant an account works in, or null where it works in none or in
+ * more than one, or runs the instance. Read as the account itself.
+ */
+async function soleTenantOf(tx: TenantTransaction, userId: string): Promise<TenantId | null> {
+  const tenants = await tx
+    .select({ tenantId: memberships.tenantId })
+    .from(memberships)
+    .where(eq(memberships.userId, userId))
+  const operator = await tx
+    .select({ id: instanceOperators.id })
+    .from(instanceOperators)
+    .where(eq(instanceOperators.userId, userId))
+    .limit(1)
+  const [only] = tenants
+
+  return tenants.length === 1 && only !== undefined && operator.length === 0
+    ? (only.tenantId as TenantId)
+    : null
 }
 
 async function recordChange(

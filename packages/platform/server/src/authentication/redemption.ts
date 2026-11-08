@@ -253,8 +253,11 @@ export async function redeemInvitation(
   const tenantId = row.business as TenantId
   const roles = row.invited_roles
   // Whether the link came in a mail to the address (N28 of the security
-  // audit, opengewerk#754): then whoever holds it has shown the address is
-  // theirs. Handed over by the lead, it shows nothing about the address.
+  // audit, opengewerk#754). It lets an account there already join without a
+  // confirmed address, as the lead of the tenant asked for. It confirms no
+  // address: the mail went out through the mail server of the tenant, which
+  // its lead sets up and can read, so it shows nothing about who holds the
+  // mailbox. Only the link of the instance to the address does that.
   const mailed = await mailedInvitation(database, tenantId, row.invitation_id)
 
   if (accountId !== null && !mailed && !(await addressConfirmed(database, accountId))) {
@@ -278,16 +281,8 @@ export async function redeemInvitation(
             // `createAccount` returns before it gets that far.
             password: password ?? '',
           },
-          mailed,
+          false,
         )
-
-        if (!account.confirmed && mailed) {
-          // An account there already, whose address this mail just reached.
-          await tx
-            .update(authUsers)
-            .set({ emailVerified: true, updatedAt: new Date() })
-            .where(eq(authUsers.id, account.userId))
-        }
 
         // Inside the tenant from here on, as the person who is joining it. So
         // both rows below land in this tenant's audit log with their name on

@@ -513,7 +513,7 @@ describe('an invitation', () => {
     expect(rows[0]?.verified).toBe(false)
   })
 
-  it('by link joins an account there only through a confirmed address, by mail it confirms it', async () => {
+  it('by link joins an account there only through a confirmed address, by mail without confirming it', async () => {
     const jo = await visitors.signIn('jo@nord.example.de', 'was-nur-jo-kennt-123')
     const byLink = await invite('jo@nord.example.de', south.id)
     const refused = await instance
@@ -542,11 +542,37 @@ describe('an invitation', () => {
       .send({})
       .expect(201)
 
+    // The mail went through the mail server of the tenant, which its lead
+    // can read: it shows nothing about who holds the mailbox.
     const { rows } = await admin.query<{ verified: boolean }>(
       `select email_verified as verified from auth_users where email = 'jo@nord.example.de'`,
     )
 
-    expect(rows[0]?.verified).toBe(true)
+    expect(rows[0]?.verified).toBe(false)
+  })
+
+  it('by mail makes an account whose address is not confirmed either', async () => {
+    const mailed = await invite('kai@nord.example.de')
+
+    await admin.query(
+      `insert into mail_outbox (tenant_id, kind, cause, invitation_id, sender_name,
+                                recipient_address, subject, body, status, sent_at)
+       values ($1, 'guest_invited', $2, $3, 'Probewerk', 'kai@nord.example.de', 'Einladung', 'Link',
+               'sent', now())`,
+      [north, `invitation:${mailed.id}`, mailed.id],
+    )
+    await instance
+      .http()
+      .post(`/invitation/${mailed.token}`)
+      .set('origin', origin)
+      .send({ password: 'was-nur-kai-kennt-123' })
+      .expect(201)
+
+    const { rows } = await admin.query<{ verified: boolean }>(
+      `select email_verified as verified from auth_users where email = 'kai@nord.example.de'`,
+    )
+
+    expect(rows[0]?.verified).toBe(false)
   })
 })
 
@@ -569,5 +595,144 @@ describe('an address whose link ran out (#862)', () => {
     )
 
     expect(rows.map((row) => row.email)).toEqual(['bea.bald@nord.example.de'])
+  })
+})
+
+describe('an address corrected by whoever leads a tenant, after the account moved on', () => {
+  it('holds no longer once the account works in another tenant as well', async () => {
+    const cookies = await visitors.workIn(lea.email, north)
+
+    await patch(`/staff/${idOf(nina)}/account`, cookies, {
+      email: 'nina.fremd@nord.example.de',
+    }).expect(200)
+
+    // Before the link is opened, Nina joins the tenant next door, whose
+    // address it is no longer Lea's to change.
+    await addStaffMember(instance.authentication, instance.database, {
+      ...nina,
+      email: 'nina.neu@nord.example.de',
+      password,
+      tenantId: south.id,
+      roles: ['member'],
+    })
+
+    const { token } = lastMailTo('nina.fremd@nord.example.de')
+
+    await instance
+      .http()
+      .post(`/auth/address/${token ?? ''}`)
+      .set('origin', origin)
+      .expect(410)
+    expect((await accountOf(idOf(nina))).email).toBe('nina.neu@nord.example.de')
+  })
+})
+
+describe('an address corrected by whoever leads a tenant, after the tenant moved on', () => {
+  async function corrected(email: string, name: string, wanted: string): Promise<string> {
+    const { userId } = await addStaffMember(instance.authentication, instance.database, {
+      email,
+      name,
+      password,
+      tenantId: north,
+      roles: ['member'],
+    })
+    const cookies = await visitors.workIn(lea.email, north)
+
+    await patch(`/staff/${userId}/account`, cookies, { email: wanted }).expect(200)
+
+    return userId
+  }
+
+  it('holds no longer once whoever corrected it may not manage the people there any more', async () => {
+    const userId = await corrected('ole@nord.example.de', 'Ole Ost', 'ole.fremd@nord.example.de')
+
+    await admin.query(
+      'update memberships set blocked_at = now() where user_id = $1 and tenant_id = $2',
+      [idOf(lea), north],
+    )
+
+    try {
+      const { token } = lastMailTo('ole.fremd@nord.example.de')
+
+      await instance
+        .http()
+        .post(`/auth/address/${token ?? ''}`)
+        .set('origin', origin)
+        .expect(410)
+      expect((await accountOf(userId)).email).toBe('ole@nord.example.de')
+    } finally {
+      await admin.query(
+        'update memberships set blocked_at = null where user_id = $1 and tenant_id = $2',
+        [idOf(lea), north],
+      )
+    }
+  })
+
+  it('holds no longer once the last day of whoever corrected it is past', async () => {
+    const userId = await corrected('tim@nord.example.de', 'Tim Tal', 'tim.fremd@nord.example.de')
+
+    await admin.query(
+      'update memberships set last_day = current_date - 1 where user_id = $1 and tenant_id = $2',
+      [idOf(lea), north],
+    )
+
+    try {
+      const { token } = lastMailTo('tim.fremd@nord.example.de')
+
+      await instance
+        .http()
+        .post(`/auth/address/${token ?? ''}`)
+        .set('origin', origin)
+        .expect(410)
+      expect((await accountOf(userId)).email).toBe('tim@nord.example.de')
+    } finally {
+      await admin.query(
+        'update memberships set last_day = null where user_id = $1 and tenant_id = $2',
+        [idOf(lea), north],
+      )
+    }
+  })
+
+  it('holds for whoever leads, whatever the row of the role says', async () => {
+    const { rows } = await admin.query<{ rights: string[] }>(
+      'select rights from tenant_roles where tenant_id = $1 and leads',
+      [north],
+    )
+
+    await admin.query("update tenant_roles set rights = '{}' where tenant_id = $1 and leads", [
+      north,
+    ])
+
+    try {
+      const userId = await corrected('ute@nord.example.de', 'Ute Ufer', 'ute.neu@nord.example.de')
+      const { token } = lastMailTo('ute.neu@nord.example.de')
+
+      await instance
+        .http()
+        .post(`/auth/address/${token ?? ''}`)
+        .set('origin', origin)
+        .expect(201)
+      expect((await accountOf(userId)).email).toBe('ute.neu@nord.example.de')
+    } finally {
+      await admin.query('update tenant_roles set rights = $2 where tenant_id = $1 and leads', [
+        north,
+        rows[0]?.rights ?? [],
+      ])
+    }
+  })
+
+  it('holds no longer once the account runs the instance', async () => {
+    const userId = await corrected('uwe@nord.example.de', 'Uwe Umbach', 'uwe.fremd@nord.example.de')
+
+    await admin.query('insert into instance_operators (user_id) values ($1)', [userId])
+
+    const { token } = lastMailTo('uwe.fremd@nord.example.de')
+
+    await instance
+      .http()
+      .post(`/auth/address/${token ?? ''}`)
+      .set('origin', origin)
+      .expect(410)
+    expect((await accountOf(userId)).email).toBe('uwe@nord.example.de')
   })
 })

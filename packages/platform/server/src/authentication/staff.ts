@@ -51,7 +51,8 @@ export async function createAccount(
   /**
    * Whether the address of a new account counts as confirmed (N28 of the
    * security audit, opengewerk#754): yes where whoever makes it vouches for
-   * it or a mail reached it, no for an invitation handed over as a link.
+   * it at the command line or the first run, no for an invitation, by link or
+   * by mail: a mail of a tenant goes through the mail server its lead set up.
    */
   confirmed: boolean,
 ): Promise<{ readonly userId: string; readonly created: boolean; readonly confirmed: boolean }> {
