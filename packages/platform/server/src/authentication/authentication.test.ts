@@ -242,6 +242,12 @@ describe('signing in', () => {
       .expect(200)
 
     expect((seen.body as { user: { email: string } }).user.email).toBe(member.email)
+    // The id of the session: the browser tells by it whether a session it
+    // finds is the one it signed out of without a network (platform-web,
+    // `currentAccount`).
+    const { session: found } = seen.body as { session: { id: unknown } }
+
+    expect(typeof found.id === 'string' && found.id !== '').toBe(true)
   })
 })
 

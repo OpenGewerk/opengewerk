@@ -246,6 +246,120 @@ describe('signing in and out', () => {
     expect(globalThis.localStorage.getItem(keptTenantsKey)).toBeNull()
   })
 
+  /** A session as get-session answers it, begun `begun` milliseconds from now by the clock of the server. */
+  function aSession(id: string, user: string, begun: number) {
+    return json({
+      user: { id: user, email: `${user}@example.de`, name: user },
+      session: {
+        id,
+        activeTenantId: tenantId,
+        createdAt: new Date(Date.now() + begun).toISOString(),
+      },
+    })
+  }
+
+  it('ends at the next start a session the server did not hear was signed out of', async () => {
+    answers = () => new TypeError('Failed to fetch')
+
+    await expect(signOut()).rejects.toThrow(TypeError)
+
+    // Back online, the server still knows the session from before the sign out.
+    answers = (path) =>
+      path.endsWith('/get-session')
+        ? json({
+            user: { id: 'u-1', email: account.email, name: account.name },
+            session: { activeTenantId: tenantId, createdAt: '2020-01-01T00:00:00.000Z' },
+          })
+        : json({})
+
+    expect(await currentAccount()).toBeNull()
+    expect(asked.at(-1)).toMatchObject({ path: '/auth/sign-out', method: 'POST' })
+
+    // Ended: the next start asks the server alone.
+    asked = []
+    answers = () => json(null)
+
+    expect(await currentAccount()).toBeNull()
+    expect(asked.map((each) => each.path)).not.toContain('/auth/sign-out')
+  })
+
+  it('ends the session it finds once after a sign out that knew no session, and keeps the next', async () => {
+    // An account kept from before this browser kept the id of its session.
+    rememberAccount(account)
+    answers = () => new TypeError('Failed to fetch')
+
+    await expect(signOut()).rejects.toThrow(TypeError)
+
+    // Whatever session the server finds is taken for the one signed out of,
+    // however late its clock says it began.
+    asked = []
+    answers = (path) =>
+      path.endsWith('/get-session') ? aSession('s-neu', 'neu', 60 * 60_000) : json({})
+
+    expect(await currentAccount()).toBeNull()
+    expect(asked.at(-1)).toMatchObject({ path: '/auth/sign-out', method: 'POST' })
+
+    // Ended and heard: the next sign in stays.
+    asked = []
+
+    expect(await currentAccount()).toMatchObject({ userId: 'neu' })
+    expect(asked.map((each) => each.path)).not.toContain('/auth/sign-out')
+  })
+
+  it('tells the session signed out of by its id, whichever way the clock of the device is off', async () => {
+    // The clock of the server an hour ahead of the one of the device, and an hour behind.
+    for (const skew of [60, -60].map((minutes) => minutes * 60_000)) {
+      // Anna signed in ten minutes ago and signs out where nobody hears it.
+      const anna = () => aSession('s-anna', 'anna', skew - 10 * 60_000)
+      const signedOutOffline = async () => {
+        globalThis.localStorage.clear()
+        answers = anna
+
+        expect(await currentAccount()).toMatchObject({ userId: 'anna' })
+
+        answers = () => new TypeError('Failed to fetch')
+
+        await expect(signOut()).rejects.toThrow(TypeError)
+        asked = []
+      }
+
+      // Back online, the server still has her session: ended, nobody opened.
+      await signedOutOffline()
+      answers = (path) => (path.endsWith('/get-session') ? anna() : json({}))
+
+      expect(await currentAccount()).toBeNull()
+      expect(asked.at(-1)).toMatchObject({ path: '/auth/sign-out', method: 'POST' })
+
+      // Ben signs in a minute later: his session stays.
+      await signedOutOffline()
+      answers = () => aSession('s-ben', 'ben', skew - 9 * 60_000)
+
+      expect(await currentAccount()).toMatchObject({ userId: 'ben' })
+      expect(asked.map((each) => each.path)).not.toContain('/auth/sign-out')
+    }
+  })
+
+  it('keeps the session signed out of through a second sign out without a network', async () => {
+    // The clock of the server an hour ahead, so that the time would let the session through.
+    const anna = () => aSession('s-anna', 'anna', 50 * 60_000)
+
+    answers = anna
+
+    expect(await currentAccount()).toMatchObject({ userId: 'anna' })
+
+    answers = () => new TypeError('Failed to fetch')
+
+    await expect(signOut()).rejects.toThrow(TypeError)
+    // Pressed again, still without a network.
+    await expect(signOut()).rejects.toThrow(TypeError)
+
+    asked = []
+    answers = (path) => (path.endsWith('/get-session') ? anna() : json({}))
+
+    expect(await currentAccount()).toBeNull()
+    expect(asked.at(-1)).toMatchObject({ path: '/auth/sign-out', method: 'POST' })
+  })
+
   it('sends a recovery code without the spaces it was copied with', async () => {
     await verifyRecoveryCode('  ab12c-d34ef \n')
 

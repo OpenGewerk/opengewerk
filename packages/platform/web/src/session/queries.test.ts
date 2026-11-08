@@ -7,7 +7,7 @@ import {
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { RequestRefused } from '../sync/transport.js'
-import { queries } from './queries.js'
+import { forgetOnAccountChange, queries } from './queries.js'
 
 /**
  * What the cache does with a question that failed. It asks once more where
@@ -84,5 +84,44 @@ describe('a question that failed', () => {
     // A broken connection is worth the second attempt, and that one waits
     // for the window: this is the state a screen reads as "no connection".
     expect(await settled(broken())).toEqual(['pending', 'paused'])
+  })
+})
+
+describe('the answers of a page when another account signs in on it', () => {
+  const someone = (userId: string, tenantId: string) => ({
+    userId,
+    email: `${userId}@example.de`,
+    name: userId,
+    tenantId,
+    twoFactorEnabled: false,
+    emailVerified: true,
+    signInMethod: 'password',
+    secondFactor: false,
+    deviceId: null,
+  })
+
+  it('go, those of the account and the tenant before, and stay for the same one', () => {
+    const client = new QueryClient()
+    const stop = forgetOnAccountChange(client)
+
+    client.setQueryData(['account'], someone('anna', 't-1'))
+    client.setQueryData(['access-requests'], ['Anfrage von Anna'])
+    client.setQueryData(['legal-texts'], { imprint: 'Impressum' })
+
+    // The same account again, as a refresh answers it: nothing goes.
+    client.setQueryData(['account'], someone('anna', 't-1'))
+    expect(client.getQueryData(['access-requests'])).toEqual(['Anfrage von Anna'])
+
+    // Somebody else on the same page.
+    client.setQueryData(['account'], someone('bert', 't-1'))
+    expect(client.getQueryData(['access-requests'])).toBeUndefined()
+    expect(client.getQueryData(['legal-texts'])).toEqual({ imprint: 'Impressum' })
+
+    // Another tenant of the same account.
+    client.setQueryData(['tenants'], ['t-1', 't-2'])
+    client.setQueryData(['account'], someone('bert', 't-2'))
+    expect(client.getQueryData(['tenants'])).toBeUndefined()
+
+    stop()
   })
 })

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { InterfaceApplication } from '../application.js'
 import { InProbe, probeApplication, probeRules } from '../probe-application.js'
-import { rememberAccount } from '../session/remembered.js'
+import { rememberAccount, rememberTenants } from '../session/remembered.js'
 import { SyncClient } from '../sync/client.js'
 import { deleteLocalStore, openLocalStore, storesOnDevice } from '../sync/store.js'
 import { TestServer } from '../sync/test-server.js'
@@ -97,6 +97,83 @@ describe('signing out', () => {
     })
     expect(await storesOnDevice()).toEqual([])
     expect(asked).toContain('/auth/sign-out')
+  })
+
+  it('takes the stores of the tenants before as well where the browser cannot list its databases', async () => {
+    await kept('t-nord')
+    await kept('t-sued')
+    rememberAccount({
+      userId: 'u-1',
+      email: 'max@nord.example.de',
+      name: 'Max',
+      tenantId: 't-nord' as TenantId,
+      twoFactorEnabled: false,
+      signInMethod: 'password',
+      secondFactor: false,
+    })
+    // A browser without `indexedDB.databases`, as some still are.
+    const databases = indexedDB.databases.bind(indexedDB)
+
+    Object.defineProperty(indexedDB, 'databases', { value: undefined, configurable: true })
+
+    try {
+      const signedOut = vi.fn()
+
+      button(signedOut)
+      await userEvent.click(screen.getByRole('button', { name: 'Abmelden' }))
+
+      await waitFor(() => {
+        expect(signedOut).toHaveBeenCalled()
+      })
+    } finally {
+      Object.defineProperty(indexedDB, 'databases', { value: databases, configurable: true })
+    }
+
+    expect(await storesOnDevice()).toEqual([])
+  })
+
+  it('takes the stores a version from before opened, by the tenants of the account', async () => {
+    await kept('t-nord')
+    await kept('t-sued')
+    // Opened before this browser kept a list of the stores it opened.
+    globalThis.localStorage.removeItem('opengewerk.stores')
+    rememberAccount({
+      userId: 'u-1',
+      email: 'max@nord.example.de',
+      name: 'Max',
+      tenantId: 't-nord' as TenantId,
+      twoFactorEnabled: false,
+      signInMethod: 'password',
+      secondFactor: false,
+    })
+    rememberTenants(
+      ['t-nord', 't-sued'].map((id) => ({
+        id: id as TenantId,
+        name: id,
+        roles: ['owner'],
+        roleLabels: ['Inhaber'],
+        rights: [],
+        secondFactor: false,
+      })),
+    )
+    const databases = indexedDB.databases.bind(indexedDB)
+
+    Object.defineProperty(indexedDB, 'databases', { value: undefined, configurable: true })
+
+    try {
+      const signedOut = vi.fn()
+
+      button(signedOut)
+      await userEvent.click(screen.getByRole('button', { name: 'Abmelden' }))
+
+      await waitFor(() => {
+        expect(signedOut).toHaveBeenCalled()
+      })
+    } finally {
+      Object.defineProperty(indexedDB, 'databases', { value: databases, configurable: true })
+    }
+
+    expect(await storesOnDevice()).toEqual([])
   })
 
   it('asks before changes that never reached the server are lost', async () => {

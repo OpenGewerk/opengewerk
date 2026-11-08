@@ -126,7 +126,85 @@ interface SessionAnswer {
     readonly signInMethod?: unknown
     readonly secondFactor?: unknown
     readonly deviceId?: unknown
+    readonly id?: unknown
   }
+}
+
+/**
+ * The session this browser last opened, by the id the server gives it. A
+ * sign out keeps it as the one it signed out of.
+ */
+const sessionKey = 'opengewerk.session'
+
+/**
+ * The sign out of this browser the server has not confirmed: the session it
+ * was of. A sign out without a network forgets everything here, but
+ * the cookie of the session is the server's and outlives it: the next start
+ * would have found the session again and opened it for whoever comes next.
+ * Kept until the server ends that session, or until another session shows
+ * somebody signed in anew.
+ */
+const signedOutKey = 'opengewerk.signedOut'
+
+interface SignedOut {
+  /** The id of the session signed out of, when this browser knew it. */
+  readonly session: string | null
+}
+
+function kept(key: string): string | null {
+  try {
+    return globalThis.localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function keep(key: string, value: string | null): void {
+  try {
+    if (value === null) {
+      globalThis.localStorage.removeItem(key)
+    } else {
+      globalThis.localStorage.setItem(key, value)
+    }
+  } catch {
+    // A browser that keeps nothing keeps no session either.
+  }
+}
+
+function signedOut(): SignedOut | null {
+  try {
+    const raw: unknown = JSON.parse(kept(signedOutKey) ?? 'null')
+
+    if (typeof raw !== 'object' || raw === null) {
+      return null
+    }
+
+    if (!('session' in raw)) {
+      return null
+    }
+
+    const { session } = raw as { session?: unknown }
+
+    return { session: typeof session === 'string' && session !== '' ? session : null }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Whether the session the server found is the one signed out of. Told by its
+ * id, so that no clock has to agree with another: compared by time, a device
+ * whose clock was behind the server's opened the session of the person before
+ * for the next, and one whose clock was ahead ended a sign in just made. A
+ * sign out that knew no id, of an account this browser kept from before it
+ * kept ids, takes the session it finds for the one signed out of. Ended once
+ * too often is a sign in to make again; opened once too often is the work of
+ * somebody else.
+ */
+function signedOutOf(session: SessionAnswer['session'], pending: SignedOut): boolean {
+  return (
+    pending.session === null || typeof session?.id !== 'string' || session.id === pending.session
+  )
 }
 
 /** Who is signed in on this browser, or nobody. */
@@ -151,10 +229,35 @@ export async function currentAccount(): Promise<Account | null> {
   }
 
   const user = answer?.user
+  const pending = signedOut()
+
+  if (pending !== null && user && typeof user.id === 'string') {
+    if (signedOutOf(answer?.session, pending)) {
+      // The session of whoever signed out here, which the server never
+      // heard about: ended now, and nobody is signed in. Without an answer
+      // it stays to be ended at the next start.
+      forgetSignIn()
+
+      try {
+        await request('/auth/sign-out', { method: 'POST' })
+        keep(signedOutKey, null)
+      } catch {
+        // Asked again next time.
+      }
+
+      return null
+    }
+  }
+
+  if (pending !== null) {
+    // Nobody signed in, or somebody anew since: nothing left to end.
+    keep(signedOutKey, null)
+  }
 
   if (!user || typeof user.id !== 'string') {
     // The server said so, and it decides: nothing kept outlives that.
     forgetSignIn()
+    keep(sessionKey, null)
 
     return null
   }
@@ -175,6 +278,7 @@ export async function currentAccount(): Promise<Account | null> {
   }
 
   rememberAccount(account)
+  keep(sessionKey, typeof answer?.session?.id === 'string' ? answer.session.id : null)
 
   return account
 }
@@ -431,8 +535,23 @@ export async function revokeDevice(sessionId: string): Promise<void> {
 export async function signOut(): Promise<void> {
   // First, so that a sign out without a network still leaves nothing for the
   // next start to open on its own (#123), nor the roles of whoever it was (#184).
+  const signedIn = rememberedAccount() !== null
+  const session = kept(sessionKey)
+
   forgetSignIn()
+
+  // A sign out of nobody leaves the one before as it was: a second one
+  // without a network, after the first, found no session kept and wrote a
+  // sign out that knew none, and the next start told the session by the
+  // clock again. The browser holds one cookie, and it is still the one of the
+  // session signed out of first.
+  if (signedIn || signedOut() === null) {
+    keep(signedOutKey, JSON.stringify({ session } satisfies SignedOut))
+  }
+
+  keep(sessionKey, null)
   await request('/auth/sign-out', { method: 'POST' })
+  keep(signedOutKey, null)
 }
 
 /**
