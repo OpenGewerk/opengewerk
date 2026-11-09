@@ -46,7 +46,10 @@ export function inlineHtml(line: string): string {
       }
     }
 
-    const link = /^\[([^\]]+)\]\((https:\/\/[^)\s]+)\)/.exec(rest)
+    // Neither the words nor the address of a link run over an opening
+    // bracket: each attempt ends at the next one, and a line full of them is
+    // read in one pass instead of once to its end for every bracket.
+    const link = /^\[([^\][]+)\]\((https:\/\/[^)\s[]+)\)/.exec(rest)
 
     if (link !== null) {
       html += `<a href="${text(link[2] ?? '')}">${inlineHtml(link[1] ?? '')}</a>`

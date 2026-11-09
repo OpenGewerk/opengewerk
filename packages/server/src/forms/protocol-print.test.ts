@@ -68,6 +68,34 @@ const protocol: PrintedProtocol = {
   ]),
 }
 
+describe('a signature on a printed protocol', () => {
+  const signed: FormDefinition = {
+    ...definition,
+    sections: [
+      {
+        key: 'result',
+        title: 'Ergebnis',
+        fields: [{ kind: 'signature', key: 'signature', label: 'Unterschrift' }],
+      },
+    ],
+  }
+  const printed = (signedAt: string) =>
+    protocolPrintJob({
+      ...protocol,
+      definition: signed,
+      values: { signature: { name: 'Petra Probe', path: 'M10,10L20,20', signedAt } },
+    }).html
+
+  /**
+   * The day of a signature is printed as text, whatever the value holds: a
+   * value that opens a comment would hide every signature after it.
+   */
+  it('names the day it was given on, as text', () => {
+    expect(printed('2026-10-14T10:00:00Z')).toContain('Petra Probe, 14.10.2026')
+    expect(printed('<!--------')).toContain('Petra Probe, --.--.&lt;!--')
+  })
+})
+
 describe('the limits under a table of a printed protocol', () => {
   it('names a limit a value has to stay under as such, with the source of its rule', () => {
     const { html } = protocolPrintJob(protocol)

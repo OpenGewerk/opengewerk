@@ -310,6 +310,18 @@ describe('the policy of a printed page', () => {
     )
   })
 
+  it('counts no head inside a comment or behind the content of a page', () => {
+    expect(
+      withPrintPolicy('<!doctype html><!-- <head> --><html><head><title>x</title></head></html>'),
+    ).toBe(`<!doctype html><!-- <head> --><html><head>${policyTag}<title>x</title></head></html>`)
+    expect(withPrintPolicy('<!doctype html><!-- <head> --><p>Etikett</p>')).toBe(
+      `<!doctype html>${policyTag}<!-- <head> --><p>Etikett</p>`,
+    )
+    expect(withPrintPolicy('<!doctype html><p>Etikett</p><head></head>')).toBe(
+      `<!doctype html>${policyTag}<p>Etikett</p><head></head>`,
+    )
+  })
+
   it('stands at the start of a page without a head, and never in a header', () => {
     expect(withPrintPolicy('<!doctype html><header>Kopf</header>')).toBe(
       `<!doctype html>${policyTag}<header>Kopf</header>`,

@@ -313,6 +313,19 @@ function isSignature(value: unknown): value is SignatureValue {
   )
 }
 
+/** A moment as a device stamps a signature: `toISOString`, with or without its milliseconds. */
+const instantPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/
+
+function isInstant(value: string): boolean {
+  // The day on its own as well: the clock of an engine moves the 30th of
+  // February on into March rather than refusing it.
+  return (
+    instantPattern.test(value) &&
+    isCalendarDay(value.slice(0, 10)) &&
+    !Number.isNaN(Date.parse(value))
+  )
+}
+
 /** Whether a value read out of a definition is an object at all. */
 function isObject(value: unknown): boolean {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -752,7 +765,10 @@ export function formEngine<T extends FormTerms>(setup: FormEngineSetup<T>): Form
           signerNameProblem(value.name) ??
           (signaturePathIsValid(value.path)
             ? null
-            : `${field.label}: die Unterschrift ist kein Pfad.`)
+            : `${field.label}: die Unterschrift ist kein Pfad.`) ??
+          (isInstant(value.signedAt)
+            ? null
+            : `${field.label}: wann unterschrieben wurde, als Zeitpunkt.`)
         )
       }
       default:

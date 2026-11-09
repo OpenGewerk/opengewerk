@@ -40,8 +40,11 @@ export type Block =
       readonly items: readonly (readonly Inline[])[]
     }
 
-const inlinePattern = /\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)/g
-const linkPattern = /\[([^\]]+)\]\(([^)\s]+)\)/g
+// Neither the words nor the target of a link run over an opening bracket:
+// each attempt ends at the next one, and a line full of them is read in one
+// pass instead of once to its end for every bracket.
+const inlinePattern = /\*\*([^*]+)\*\*|`([^`]+)`|\[([^\][]+)\]\(([^)\s[]+)\)/g
+const linkPattern = /\[([^\][]+)\]\(([^)\s[]+)\)/g
 
 /**
  * A path of the application: one slash and then no second one and no

@@ -111,7 +111,7 @@ function signatureOf(value: FormValue | undefined): string {
   // check on the way in makes sure of it, so it can stand in the SVG as it is.
   return `<div class="signature">
     <svg class="signature-picture" viewBox="0 0 ${String(signatureBox.width)} ${String(signatureBox.height)}" aria-hidden="true"><path d="${signature.path}" fill="none" stroke="#1b2430" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    <div>${text(signature.name)}, ${day(signature.signedAt.slice(0, 10))}</div>
+    <div>${text(signature.name)}, ${text(day(signature.signedAt.slice(0, 10)))}</div>
   </div>`
 }
 
