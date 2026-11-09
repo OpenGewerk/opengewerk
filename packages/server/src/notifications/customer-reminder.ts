@@ -218,6 +218,7 @@ export async function remindCustomer(
     .values({
       tenantId,
       kind: 'customer_reminder',
+      customerId: deadline.customerId,
       cause: `customer_reminder:${kind.key}:${deadline.customerId}:${shared ? deadline.siteId : deadline.id}:${deadline.dueOn}`,
       requestedBy: null,
       senderName: issuer.name,

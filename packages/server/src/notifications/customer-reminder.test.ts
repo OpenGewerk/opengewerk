@@ -130,8 +130,9 @@ async function mails() {
     subject: string
     body: string
     cause: string
+    customer_id: string | null
   }>(
-    `select recipient_address, subject, body, cause from mail_outbox where kind = 'customer_reminder' order by recipient_address`,
+    `select recipient_address, subject, body, cause, customer_id from mail_outbox where kind = 'customer_reminder' order by recipient_address`,
   )
 
   return rows
@@ -271,6 +272,8 @@ describe('a reminder of a due inspection to the customer', () => {
 
     expect(sent).toHaveLength(1)
     expect(sent[0]?.recipient_address).toBe('klaus.lehmann@example.com')
+    // Whose it is, for the deletion of the customer and the pass that sends it.
+    expect(sent[0]?.customer_id).toBe(customers['lehmann'])
     expect(sent[0]?.subject).toBe(
       'Fällig am 24.10.2037: Wiederholungsprüfung der Anlage Elektroinstallation von lehmann am Objekt Rheinstraße 12',
     )

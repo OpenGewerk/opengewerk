@@ -2,6 +2,7 @@ import { mailOutboxSchema, reference } from '@opengewerk/platform-server'
 import { foreignKey, index, pgEnum } from 'drizzle-orm/pg-core'
 
 import { appointments } from './appointments.js'
+import { customers } from './customers.js'
 import { deadlines } from './deadlines.js'
 import { documents } from './documents.js'
 import { earlyStartRequests } from './early-start-requests.js'
@@ -61,6 +62,11 @@ export const { mailKind, mailStatus, mailOutbox } = mailOutboxSchema({
     // made when the mail goes out. For a service call that came in, `job_id`
     // names the job, and `attachment` set to `pdf` means its instructions go along.
     appointmentId: reference<'appointment'>('appointment_id'),
+    // The customer a mail to a customer is for, as it stood when the mail was
+    // written (opengewerk#896): a job given to another customer since keeps
+    // the mail from going to the first, and the deletion of a customer finds
+    // every mail of theirs by it. None on a mail to somebody in the business.
+    customerId: reference<'customer'>('customer_id'),
   },
   constraints: (table) => [
     foreignKey({
@@ -78,6 +84,12 @@ export const { mailKind, mailStatus, mailOutbox } = mailOutboxSchema({
       foreignColumns: [deadlines.tenantId, deadlines.id],
       name: 'mail_outbox_deadline_in_tenant',
     }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.customerId],
+      foreignColumns: [customers.tenantId, customers.id],
+      name: 'mail_outbox_customer_in_tenant',
+    }).onDelete('restrict'),
+    index('mail_outbox_customer_idx').on(table.tenantId, table.customerId),
     index('mail_outbox_task_idx').on(table.tenantId, table.taskId),
     index('mail_outbox_document_idx').on(table.tenantId, table.documentId),
     foreignKey({

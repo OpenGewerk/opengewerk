@@ -371,7 +371,7 @@ afterAll(async () => {
 
 describe('a report signed on site', () => {
   it('goes to the customer who signed it, with its PDF, a moment after it arrived', async () => {
-    await signedReport(north)
+    const report = await signedReport(north)
     const post = recording()
 
     expect(await cycle(post.transport)).toMatchObject({ written: 1, sent: 1 })
@@ -388,6 +388,16 @@ describe('a report signed on site', () => {
       'Regiebericht unterschrieben.pdf',
     ])
     expect(Buffer.from(mail?.attachments[0]?.content ?? []).equals(Buffer.from(printed))).toBe(true)
+    // Whose it is, for the deletion of the customer and the pass that sends it.
+    expect(
+      (
+        await admin.query(
+          `select o.customer_id = d.customer_id as theirs from mail_outbox o
+             join documents d on d.id = o.document_id where o.document_id = $1`,
+          [report],
+        )
+      ).rows,
+    ).toEqual([{ theirs: true }])
   })
 
   it('goes once', async () => {

@@ -230,7 +230,8 @@ afterAll(async () => {
 
 describe('an issued invoice', () => {
   it('goes to a private customer with its PDF, from the business', async () => {
-    const id = await issuedInvoice(await customer(person))
+    const customerId = await customer(person)
+    const id = await issuedInvoice(customerId)
     const asked = await sending(id).expect(202)
 
     expect(asked.body).toMatchObject({
@@ -261,6 +262,10 @@ describe('an issued invoice', () => {
 
     expect(message?.status).toBe('sent')
     expect(message?.sentAt).not.toBeNull()
+    // Whose it is, for the deletion of the customer and the pass that sends it.
+    expect(
+      (await admin.query('select customer_id from mail_outbox where document_id = $1', [id])).rows,
+    ).toEqual([{ customer_id: customerId }])
   })
 
   it('goes to a business as its ZUGFeRD PDF, which the document keeps from then on', async () => {

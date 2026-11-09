@@ -1,0 +1,3 @@
+ALTER TABLE "mail_outbox" ADD COLUMN "customer_id" uuid;--> statement-breakpoint
+ALTER TABLE "mail_outbox" ADD CONSTRAINT "mail_outbox_customer_in_tenant" FOREIGN KEY ("tenant_id","customer_id") REFERENCES "public"."customers"("tenant_id","id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "mail_outbox_customer_idx" ON "mail_outbox" USING btree ("tenant_id","customer_id");
