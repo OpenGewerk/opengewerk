@@ -364,6 +364,11 @@ describe('the count of the credentials of an account', () => {
     expect(await generationOf(userId)).toBe(1)
     expect(await secondStepsOf(userId)).toBe(1)
     await post('/reset-password').send({ token, newPassword: second }).expect(200)
+
+    // The link is a revocation, and the sign in waiting on the other device
+    // ends with it.
+    expect(await generationOf(userId)).toBe(2)
+    expect(await secondStepsOf(userId)).toBe(0)
   })
 
   it('ends a sign in that waits for its second code', async () => {
