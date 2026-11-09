@@ -126,7 +126,10 @@ export const authSessions = pgTable(
     /**
      * The count of the account's credentials as the sign in began, before any
      * of them was read (`credentials.ts`). Never from a client and without a
-     * default: a row without it is refused (`session_fits_its_credentials`).
+     * default. The database refuses a count the account no longer has
+     * (`session_fits_its_credentials`) and takes a row without one, which a
+     * version from before writes while an update runs; the server writes none
+     * and lets none in (`revokedSince`).
      */
     credentialGeneration: integer('credential_generation'),
     /**

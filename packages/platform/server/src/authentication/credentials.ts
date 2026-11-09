@@ -133,6 +133,37 @@ export function revokedSince(found: { readonly session: object; readonly user: o
   return typeof session !== 'number' || typeof account !== 'number' || session !== account
 }
 
+/**
+ * Whether a sign in that waits for its second code still stands under the
+ * count its password step began with. better-auth writes the row of that wait
+ * after the session of the password, which it deletes again, and a revocation
+ * in between found no row to end: the row outlived it, and the code read the
+ * new count. Read under the lock a revocation takes, so that one under way is
+ * waited for; one that comes later finds the row and ends it. A row that does
+ * not stand goes.
+ */
+export async function secondStepStands(
+  database: Database,
+  waiting: { readonly id: string; readonly value: string },
+  generation: unknown,
+): Promise<boolean> {
+  return database.forInstance(async (tx) => {
+    const [account] = await tx
+      .select({ generation: authUsers.credentialGeneration })
+      .from(authUsers)
+      .where(eq(authUsers.id, waiting.value))
+      .for('share')
+
+    if (typeof generation === 'number' && account?.generation === generation) {
+      return true
+    }
+
+    await tx.delete(authVerifications).where(eq(authVerifications.id, waiting.id))
+
+    return false
+  }, waiting.value)
+}
+
 /** Takes a session whose credentials were taken back out of the database. */
 export async function endRevokedSession(database: Database, sessionId: string): Promise<void> {
   await database.forInstance((tx) => tx.delete(authSessions).where(theSession(sessionId)))

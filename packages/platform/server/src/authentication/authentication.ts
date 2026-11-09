@@ -35,6 +35,7 @@ import {
   generationOfPasskey,
   revokeCredentials,
   revokedSince,
+  secondStepStands,
   sessionRevoked,
   theSession,
 } from './credentials.js'
@@ -263,6 +264,12 @@ const resettingPassword = '/reset-password'
 
 /** The route that answers with the session of the cookies, or with none. */
 const askingForTheSession = '/get-session'
+
+/** How better-auth names the row of a sign in that waits for its second code. */
+const secondStep = '2fa-'
+
+/** And the row beside it that counts the wrong codes, which names no account. */
+const secondStepAttempts = '2fa-attempts-'
 
 /**
  * The relying party a passkey is bound to: the host of the first trusted
@@ -580,6 +587,33 @@ export function createAuthentication({
           },
         },
       },
+      verification: {
+        create: {
+          // A sign in that waits for its second code stands only under the
+          // count its password step began with (`credentials.ts`); one that a
+          // revocation overtook is told to begin again. The row that counts
+          // the wrong codes names no account and is left alone.
+          after: async (verification, context) => {
+            if (
+              !verification.identifier.startsWith(secondStep) ||
+              verification.identifier.startsWith(secondStepAttempts)
+            ) {
+              return
+            }
+
+            const generation = (context?.context as Record<string, unknown> | undefined)?.[
+              generationAtStart
+            ]
+
+            if (!(await secondStepStands(database, verification, generation))) {
+              throw new APIError('UNAUTHORIZED', {
+                code: 'SESSION_REVOKED',
+                message: sessionRevoked,
+              })
+            }
+          },
+        },
+      },
     },
     hooks: {
       /**
@@ -635,8 +669,12 @@ export function createAuthentication({
         }
 
         if (ctx.path === resettingPassword) {
-          // The account the link is for, for the count after the route.
-          const token = (ctx.body as { token?: unknown } | undefined)?.token
+          // The account the link is for, for the count after the route. The
+          // token as better-auth takes it: from the body, or else from the
+          // address.
+          const token =
+            (ctx.body as { token?: unknown } | undefined)?.token ||
+            (ctx.query as { token?: unknown } | undefined)?.token
           const link =
             typeof token === 'string'
               ? await ctx.context.internalAdapter.findVerificationValue(`reset-password:${token}`)
@@ -1152,7 +1190,9 @@ async function generationAtSignIn(
   }
 
   // At a sign in, the cookie better-auth set after the password names the
-  // account; the code comes after the password, and so does the count.
+  // account. Its row stands only under the count the password step began
+  // with (`secondStepStands`), and a revocation since then ended it: the
+  // count the account has now is that one.
   const challenge = await ctx.getSignedCookie(
     ctx.context.createAuthCookie(twoFactorCookie).name,
     ctx.context.secret,

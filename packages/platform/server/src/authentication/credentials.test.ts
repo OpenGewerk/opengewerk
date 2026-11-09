@@ -89,6 +89,33 @@ async function sessionOf(cookies: string): Promise<string> {
   return rows[0]?.id ?? ''
 }
 
+/** The rows of the account that wait for something, a second code among them. */
+async function waitingOf(userId: string): Promise<number> {
+  const { rows } = await admin.query<{ n: string }>(
+    'select count(*) as n from auth_verifications where value = $1',
+    [userId],
+  )
+
+  return Number(rows[0]?.n)
+}
+
+/** Sets the app up for the account, and hands back what it was fed. */
+async function withSecondFactor(email: string): Promise<string> {
+  const cookies = cookiesOf(
+    await post('/sign-in/email').send({ email, password: first }).expect(200),
+  )
+  const enabled = await post('/two-factor/enable', cookies)
+    .send({ password: first, method: 'totp' })
+    .expect(200)
+  const totpUri = (enabled.body as { totpURI: string }).totpURI
+
+  await post('/two-factor/verify-totp', cookies)
+    .send({ code: await currentCode(totpUri) })
+    .expect(200)
+
+  return totpUri
+}
+
 /** Until a connection waits for the lock that backend holds, or `over` says to stop. */
 async function blockedBy(backend: number, over: () => boolean): Promise<void> {
   for (let tries = 0; tries < 750 && !over(); tries += 1) {
@@ -130,7 +157,7 @@ afterAll(async () => {
 
 describe('the count of the credentials of an account', () => {
   it('is what a session has to carry for the database to take it', async () => {
-    const userId = await person('zaehler@nord.example.de')
+    const userId = await person('stand@nord.example.de')
     const standing = await generationOf(userId)
     const write = (id: string, generation: number | null) =>
       admin.query(
@@ -139,14 +166,14 @@ describe('the count of the credentials of an account', () => {
         [generation, id, userId],
       )
 
-    await expect(write('alter-zaehler', standing - 1)).rejects.toMatchObject({ code: 'OG015' })
-    await write('richtiger-zaehler', standing)
+    await expect(write('stale-count', standing - 1)).rejects.toMatchObject({ code: 'OG015' })
+    await write('current-count', standing)
     // Without one, as a version from before the count writes it while an
     // update runs: taken, and not let in by the server (below).
-    await write('ohne-zaehler', null)
+    await write('no-count', null)
     await expect(
       admin.query(
-        `update auth_sessions set credential_generation = $1 where id = 'richtiger-zaehler'`,
+        `update auth_sessions set credential_generation = $1 where id = 'current-count'`,
         [standing - 1],
       ),
     ).rejects.toMatchObject({ code: 'OG015' })
@@ -197,7 +224,7 @@ describe('the count of the credentials of an account', () => {
   })
 
   it('ends a session at its next request when the count went past it', async () => {
-    const email = 'nachzuegler@nord.example.de'
+    const email = 'nachher@nord.example.de'
     const userId = await person(email)
     const one = await instance.signIn(email, first)
     const other = await instance.signIn(email, first)
@@ -230,7 +257,7 @@ describe('the count of the credentials of an account', () => {
   })
 
   it('goes up when the other devices are signed out, and the session that stays takes it', async () => {
-    const email = 'geraete@nord.example.de'
+    const email = 'andere@nord.example.de'
     const userId = await person(email)
     const here = await instance.signIn(email, first)
     const elsewhere = await instance.signIn(email, first)
@@ -284,21 +311,25 @@ describe('the count of the credentials of an account', () => {
     expect(await generationOf(userId)).toBe(1)
   })
 
+  it('goes up as well when the link hands its token over in the address', async () => {
+    const email = 'adresse@nord.example.de'
+    const userId = await person(email)
+
+    await post('/request-password-reset').send({ email }).expect(200)
+    await vi.waitFor(() => {
+      expect(links.at(-1)?.email).toBe(email)
+    })
+    await post(`/reset-password?token=${encodeURIComponent(links.at(-1)?.token ?? '')}`)
+      .send({ newPassword: second })
+      .expect(200)
+
+    expect(await generationOf(userId)).toBe(1)
+  })
+
   it('ends a sign in that waits for its second code', async () => {
     const email = 'zweiter@nord.example.de'
     const userId = await person(email)
-    const setUp = cookiesOf(
-      await post('/sign-in/email').send({ email, password: first }).expect(200),
-    )
-    const enabled = await post('/two-factor/enable', setUp)
-      .send({ password: first, method: 'totp' })
-      .expect(200)
-    const totpUri = (enabled.body as { totpURI: string }).totpURI
-
-    await post('/two-factor/verify-totp', setUp)
-      .send({ code: await currentCode(totpUri) })
-      .expect(200)
-
+    const totpUri = await withSecondFactor(email)
     const started = await post('/sign-in/email').send({ email, password: first }).expect(200)
 
     expect((started.body as { twoFactorRedirect?: boolean }).twoFactorRedirect).toBe(true)
@@ -311,6 +342,67 @@ describe('the count of the credentials of an account', () => {
 
     expect(finished.status).toBeGreaterThanOrEqual(400)
     expect(await sessionsOf(userId)).toBe(0)
+  })
+
+  it('ends a sign in whose wait for the second code was written after the credentials were taken back', async () => {
+    const email = 'dazwischen@nord.example.de'
+    const userId = await person(email)
+
+    await withSecondFactor(email)
+
+    // Holds the row of the wait as it is written, and only that row, until
+    // the test lets go: better-auth writes it after the session of the
+    // password, which it deletes again, and a revocation in that moment found
+    // nothing to end.
+    const holder = await admin.connect()
+
+    await admin.query(`create function hold_second_step() returns trigger language plpgsql as $$
+      begin
+        if new.identifier like '2fa-%' and new.identifier not like '2fa-attempts-%' then
+          perform pg_advisory_xact_lock(4711);
+        end if;
+        return new;
+      end $$`)
+    await admin.query(
+      'create trigger hold_second_step before insert on auth_verifications for each row execute function hold_second_step()',
+    )
+
+    try {
+      await holder.query('select pg_advisory_lock(4711)')
+
+      const held = await holder.query<{ pid: number }>('select pg_backend_pid() as pid')
+      let answer: Response | undefined
+      const signingIn = post('/sign-in/email')
+        .send({ email, password: first })
+        .then((received) => {
+          answer = received
+        })
+
+      // The password is checked, its session written and deleted again, and
+      // the row of the wait is about to be written.
+      await blockedBy(Number(held.rows[0]?.pid), () => answer !== undefined)
+      await instance.database.forInstance(async (tx) => {
+        await revokeCredentials(tx, userId)
+
+        const { rows } = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`)
+
+        // The row goes in now, past the revocation, and what checks it waits
+        // for the revocation to be in.
+        await holder.query('select pg_advisory_unlock(4711)')
+        await blockedBy(Number(rows[0]?.pid), () => answer !== undefined)
+      }, userId)
+      await signingIn
+
+      expect(answer?.status).toBe(401)
+      expect((answer?.body as { code?: string } | undefined)?.code).toBe('SESSION_REVOKED')
+      expect(await waitingOf(userId)).toBe(0)
+      expect(await sessionsOf(userId)).toBe(0)
+    } finally {
+      await holder.query('select pg_advisory_unlock_all()')
+      holder.release()
+      await admin.query('drop trigger if exists hold_second_step on auth_verifications')
+      await admin.query('drop function if exists hold_second_step()')
+    }
   })
 })
 
