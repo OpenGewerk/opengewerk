@@ -69,7 +69,7 @@ let counter = 0
 /** A tenant whose notes are already on this device, from an earlier day with a network. */
 async function tenantOnTheDevice(): Promise<TenantId> {
   const tenantId = `offline${String((counter += 1))}` as TenantId
-  const store = await openLocalStore(tenantId)
+  const store = await openLocalStore(tenantId, account.userId)
   const quiet = {
     push: (_device: string, operations: readonly Operation[]) =>
       Promise.resolve(

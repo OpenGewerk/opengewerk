@@ -118,21 +118,32 @@ describe('what a device holds of the server, with more than one person', () => {
     back.close()
   })
 
-  it('stays for the account that pulled it, and for the first to open a store from before', async () => {
+  it('drops unowned cached credentials before the first account reads, then keeps its own cache', async () => {
     const tenant = aTenant()
     const before = await openLocalStore(tenant)
 
-    await before.write('notes', [{ id: 'n-1', text: 'Zählerstand' }])
+    await before.write('site_accesses', [{ id: 'z-1', value: '4711' }])
+    await before.writeMeta('cursor', 42)
+    await before.writeMeta('narrowed', '{"site_accesses":"previous-account"}')
+    await before.writeMeta('narrowed-settled', '{"site_accesses":"previous-account"}')
+    await before.writeMeta('entities', 'site_accesses')
+    await before.keepFile(photo, false)
     before.close()
 
     const anna = await openLocalStore(tenant, 'anna')
 
-    expect(await anna.readAll('notes')).toEqual([{ id: 'n-1', text: 'Zählerstand' }])
+    expect(await anna.readAll('site_accesses')).toEqual([])
+    for (const key of ['cursor', 'narrowed', 'narrowed-settled', 'entities']) {
+      expect(await anna.readMeta(key)).toBeNull()
+    }
+    expect(await anna.readFile(photo.sha256)).toBeNull()
+
+    await anna.write('site_accesses', [{ id: 'z-2', value: '0815' }])
     anna.close()
 
     const again = await openLocalStore(tenant, 'anna')
 
-    expect(await again.readAll('notes')).toEqual([{ id: 'n-1', text: 'Zählerstand' }])
+    expect(await again.readAll('site_accesses')).toEqual([{ id: 'z-2', value: '0815' }])
     again.close()
   })
 
