@@ -270,3 +270,26 @@ describe('the health check', () => {
     }
   })
 })
+
+describe('the isolation of a transaction', () => {
+  it('is read committed for a tenant and for the instance, whatever the server takes by default', async () => {
+    // A connection whose server default is stricter, as an instance could set it.
+    const url = new URL(kit.testDatabaseUrl())
+
+    url.searchParams.set('options', '-c default_transaction_isolation=serializable')
+
+    const strict = Database.connect(url.toString())
+    const isolation = async (tx: { execute: TenantTransaction['execute'] }) =>
+      (await tx.execute<{ transaction_isolation: string }>(sql`show transaction_isolation`)).rows[0]
+        ?.transaction_isolation
+
+    try {
+      expect([
+        await strict.forTenant({ tenantId: newId<'tenant'>() }, isolation),
+        await strict.forInstance(isolation),
+      ]).toEqual(['read committed', 'read committed'])
+    } finally {
+      await strict.close()
+    }
+  })
+})
