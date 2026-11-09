@@ -7,14 +7,17 @@ import { newId } from '../database/identifier.js'
 import { standingInLine } from '../database/test-database.js'
 import { auditEntries, invitations } from '../schema.js'
 import { mintToken } from './invitation.js'
+import type { Authentication } from './authentication.js'
 import {
   type ProbeFoundation,
+  probeAccess,
   probeChoice,
   probeFoundation,
   type ProbeInstance,
   probeInstance,
   probeOrigin as origin,
 } from './probe-application.js'
+import { redeemInvitation } from './redemption.js'
 import { addStaffMember } from './staff.js'
 
 /**
@@ -479,6 +482,36 @@ describe('using a link', () => {
     expect(await rolesIn(north.id, 'zugleich@example.de')).toBeUndefined()
     // And the next attempt meets the account: sign in first.
     expect((await redeem(token)).status).toBe(401)
+  })
+
+  /**
+   * The account of the address is made by something else after the link was
+   * looked at, and committed before the redemption asks for an account: the
+   * new account belongs to whoever made it, and nobody signed in as it. It
+   * does not join, and the link stays good for the right person signed in.
+   */
+  it('lets no account join that came into being after the link was looked at', async () => {
+    const token = await invite({ email: 'danach@example.de', name: 'Dana Danach' })
+    // The moment between the look and the account: where the redemption asks
+    // for the context of the authentication.
+    const meanwhile = {
+      get $context() {
+        return admin
+          .query(
+            `insert into auth_users (id, name, email) values ('user-danach', 'Dana Danach', 'danach@example.de')`,
+          )
+          .then(() => instance.authentication.$context)
+      },
+    } as unknown as Authentication
+
+    await expect(
+      redeemInvitation(probeAccess, meanwhile, instance.database, token, password, () =>
+        Promise.resolve(null),
+      ),
+    ).rejects.toThrow('Für diese Adresse gibt es auf dieser Instanz schon ein Konto.')
+
+    expect(await rolesIn(north.id, 'danach@example.de')).toBeUndefined()
+    expect((await http().get(`/invitation/${token}`).expect(200)).body.state).toBe('open')
   })
 
   /**

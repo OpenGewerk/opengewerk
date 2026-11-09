@@ -176,6 +176,11 @@ async function offeredIn(
   })
 }
 
+/** What somebody is told whose address has an account they did not sign in with. */
+const signInFirst =
+  'Für diese Adresse gibt es auf dieser Instanz schon ein Konto. Melden Sie sich damit an, ' +
+  'dann können Sie beitreten.'
+
 /**
  * Turns a link into a way in.
  *
@@ -231,10 +236,7 @@ export async function redeemInvitation(
     const signedIn = await signedInAs()
 
     if (signedIn === null) {
-      throw new UnauthorizedException(
-        'Für diese Adresse gibt es auf dieser Instanz schon ein Konto. Melden Sie sich damit an, ' +
-          'dann können Sie beitreten.',
-      )
+      throw new UnauthorizedException(signInFirst)
     }
 
     if (signedIn !== accountId) {
@@ -283,6 +285,15 @@ export async function redeemInvitation(
           },
           false,
         )
+
+        // The account that joins is the one the look at the link found, or a
+        // new one made here. One that came into being for the address in
+        // between, by a command on the server, belongs to whoever made it,
+        // and nobody signed in as it: it joins the way an account that was
+        // there all along does, signed in. Thrown here, nothing is written.
+        if (accountId === null ? !account.created : account.userId !== accountId) {
+          throw new UnauthorizedException(signInFirst)
+        }
 
         // Inside the tenant from here on, as the person who is joining it. So
         // both rows below land in this tenant's audit log with their name on
