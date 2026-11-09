@@ -66,7 +66,10 @@ function aTenant(over: Partial<Omit<TenantChoice, 'id'>> & { readonly id: string
 
 let counter = 0
 
-/** A tenant whose notes are already on this device, from an earlier day with a network. */
+/**
+ * A tenant whose notes are already on this device, from an earlier day with
+ * a network, pulled for the account the tests sign in as.
+ */
 async function tenantOnTheDevice(): Promise<TenantId> {
   const tenantId = `offline${String((counter += 1))}` as TenantId
   const store = await openLocalStore(tenantId, account.userId)

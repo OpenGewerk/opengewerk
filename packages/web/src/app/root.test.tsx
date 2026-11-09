@@ -41,7 +41,10 @@ const account = {
 
 let counter = 0
 
-/** A business whose jobs are already on this device, from an earlier day with a network. */
+/**
+ * A business whose jobs are already on this device, from an earlier day with
+ * a network, pulled for the account the tests sign in as.
+ */
 async function businessOnTheDevice(): Promise<TenantId> {
   const tenantId = `root${String((counter += 1))}` as TenantId
   const store = await openLocalStore(tenantId, account.userId)

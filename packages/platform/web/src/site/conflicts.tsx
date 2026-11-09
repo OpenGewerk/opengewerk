@@ -1,4 +1,4 @@
-import { Check, Clock, RefreshCw, TriangleAlert, WifiOff } from 'lucide-react'
+import { Check, Clock, RefreshCw, TriangleAlert, UserRound, WifiOff } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
@@ -7,7 +7,13 @@ import { Button } from '../components/button.js'
 import { Panel } from '../components/panel.js'
 import { clockTime } from '../format.js'
 import { exchangeRefusal, noConnection } from '../sync/client.js'
-import { NothingToDecide, useDecisions } from '../sync/decisions.js'
+import {
+  hasUnowned,
+  NothingToDecide,
+  unownedSummary,
+  unownedVerb,
+  useDecisions,
+} from '../sync/decisions.js'
 import { useSync, useSyncStatus } from '../sync/provider.js'
 
 /** One line of the state on site: a symbol and a sentence, 16 pixels. */
@@ -47,7 +53,7 @@ export function ConflictScreen() {
   const client = useSync()
   const status = useSyncStatus()
   const { made, cards, empty } = useDecisions()
-  const { conflicts, refused, pending, lastSyncedAt } = status
+  const { conflicts, refused, pending, lastSyncedAt, unowned } = status
   const offline = noConnection(status)
   // The server answered and refused: its own sentence, as in the strip.
   const refusal = exchangeRefusal(status)
@@ -96,6 +102,11 @@ export function ConflictScreen() {
               {conflicts.length === 1
                 ? 'Ein Konflikt wartet auf eine Entscheidung.'
                 : `${String(conflicts.length)} Konflikte warten auf eine Entscheidung.`}
+            </SiteStateLine>
+          ) : null}
+          {hasUnowned(unowned) ? (
+            <SiteStateLine icon={UserRound} tone="waiting">
+              {`${unownedSummary(unowned)} ohne Person ${unownedVerb(unowned)} auf dem Gerät.`}
             </SiteStateLine>
           ) : null}
         </ul>

@@ -68,7 +68,7 @@ describe('the outbox of a device with more than one person', () => {
     back.close()
   })
 
-  it('goes to whoever opens it next, for a change from before the person was kept', async () => {
+  it('is sent by nobody, for a change from before the person was kept, and still counted', async () => {
     const tenant = aTenant()
     const before = await openLocalStore(tenant)
 
@@ -77,8 +77,14 @@ describe('the outbox of a device with more than one person', () => {
 
     const ben = await openLocalStore(tenant, 'ben')
 
-    expect((await ben.readOutbox()).map((operation) => operation.id)).toEqual(['op-before'])
+    expect(await ben.readOutbox()).toEqual([])
     ben.close()
+
+    // Counting before a sign out still finds it.
+    const counting = await openLocalStore(tenant)
+
+    expect((await counting.readOutbox()).map((operation) => operation.id)).toEqual(['op-before'])
+    counting.close()
   })
 })
 
@@ -118,16 +124,18 @@ describe('what a device holds of the server, with more than one person', () => {
     back.close()
   })
 
-  it('drops unowned cached credentials before the first account reads, then keeps its own cache', async () => {
+  it('stays for the account that pulled it, and a store from before goes to nobody', async () => {
     const tenant = aTenant()
     const before = await openLocalStore(tenant)
 
+    // A store of a version that did not yet say whose it is.
     await before.write('site_accesses', [{ id: 'z-1', value: '4711' }])
     await before.writeMeta('cursor', 42)
     await before.writeMeta('narrowed', '{"site_accesses":"previous-account"}')
     await before.writeMeta('narrowed-settled', '{"site_accesses":"previous-account"}')
     await before.writeMeta('entities', 'site_accesses')
     await before.keepFile(photo, false)
+    await before.queue(aNote('op-before', 'Leiter im Flur'))
     before.close()
 
     const anna = await openLocalStore(tenant, 'anna')
@@ -141,9 +149,11 @@ describe('what a device holds of the server, with more than one person', () => {
     await anna.write('site_accesses', [{ id: 'z-2', value: '0815' }])
     anna.close()
 
+    // What Anna pulled is hers; the change of nobody waits, for nobody.
     const again = await openLocalStore(tenant, 'anna')
 
     expect(await again.readAll('site_accesses')).toEqual([{ id: 'z-2', value: '0815' }])
+    expect(await again.readOutbox()).toEqual([])
     again.close()
   })
 
@@ -203,5 +213,197 @@ describe('what a device holds of the server, with more than one person', () => {
     expect(await ben.readMeta('cursor')).toBeNull()
     anna.close()
     ben.close()
+  })
+})
+
+describe('what waits on a device for nobody', () => {
+  /** A store of a version that did not yet say whose a change is, with two changes and a photo. */
+  async function storeFromBefore(tenant: string): Promise<void> {
+    const before = await openLocalStore(tenant)
+
+    await before.queue({
+      ...aNote('op-late', 'Typenschild'),
+      recordedAt: new Date('2026-10-12T08:14:00Z'),
+    })
+    await before.queue({
+      ...aNote('op-early', 'Leiter im Flur'),
+      recordedAt: new Date('2026-10-12T07:52:00Z'),
+    })
+    await before.keepFile(photo, true)
+    before.close()
+  }
+
+  it('is shown to the person signed in, oldest first, beside what is theirs', async () => {
+    const tenant = aTenant()
+
+    await storeFromBefore(tenant)
+
+    const anna = await openLocalStore(tenant, 'anna')
+
+    await anna.queue(aNote('op-anna', 'Zählerstand'))
+
+    const unowned = await anna.readUnowned()
+
+    expect(unowned.operations.map((operation) => operation.id)).toEqual(['op-early', 'op-late'])
+    expect(unowned.files).toEqual([
+      { sha256: photo.sha256, mediaType: 'image/jpeg', since: expect.any(Number) as number },
+    ])
+    expect((await anna.readOutbox()).map((operation) => operation.id)).toEqual(['op-anna'])
+    anna.close()
+  })
+
+  it('goes out for the person who said they made it, and only what they were shown', async () => {
+    const tenant = aTenant()
+
+    await storeFromBefore(tenant)
+
+    const anna = await openLocalStore(tenant, 'anna')
+    const shown = await anna.readUnowned()
+
+    // Queued for nobody after the list was shown, by a tab of a version before.
+    const late = await openLocalStore(tenant)
+
+    await late.queue(aNote('op-unseen', 'Nicht gezeigt'))
+    late.close()
+
+    expect(
+      await anna.adoptUnowned(
+        shown.operations.map((operation) => operation.id),
+        shown.files.map((file) => file.sha256),
+      ),
+    ).toEqual({ operations: ['op-early', 'op-late'], files: [photo.sha256] })
+
+    expect((await anna.readOutbox()).map((operation) => operation.id).sort()).toEqual([
+      'op-early',
+      'op-late',
+    ])
+    expect((await anna.waitingFiles()).map((file) => file.sha256)).toEqual([photo.sha256])
+    expect((await anna.readUnowned()).operations.map((operation) => operation.id)).toEqual([
+      'op-unseen',
+    ])
+    anna.close()
+
+    // Adopted is Anna's, and nobody else sends it.
+    const ben = await openLocalStore(tenant, 'ben')
+
+    expect(await ben.readOutbox()).toEqual([])
+    expect(await ben.waitingFiles()).toEqual([])
+    expect((await ben.readUnowned()).operations.map((operation) => operation.id)).toEqual([
+      'op-unseen',
+    ])
+    ben.close()
+  })
+
+  it('is adopted by nobody from a tab of an account that no longer holds the store', async () => {
+    const tenant = aTenant()
+
+    await storeFromBefore(tenant)
+
+    const anna = await openLocalStore(tenant, 'anna')
+    const shown = await anna.readUnowned()
+    const ben = await openLocalStore(tenant, 'ben')
+
+    await expect(
+      anna.adoptUnowned(
+        shown.operations.map((operation) => operation.id),
+        shown.files.map((file) => file.sha256),
+      ),
+    ).rejects.toBeInstanceOf(StoreTakenOver)
+
+    expect((await ben.readUnowned()).operations).toHaveLength(2)
+    expect(await ben.readOutbox()).toEqual([])
+    anna.close()
+    ben.close()
+  })
+
+  it('leaves the device when let go, and takes nothing of anybody with it', async () => {
+    const tenant = aTenant()
+
+    await storeFromBefore(tenant)
+
+    const anna = await openLocalStore(tenant, 'anna')
+    const shown = await anna.readUnowned()
+    const own = { ...photo, sha256: 'c'.repeat(64) }
+
+    await anna.queue(aNote('op-anna', 'Zählerstand'))
+    await anna.keepFile(own, true)
+    // Another tab of Anna's took one of them on in the meantime.
+    await anna.adoptUnowned(['op-late' as unknown as OperationId], [])
+
+    await anna.dropUnowned(
+      shown.operations.map((operation) => operation.id),
+      shown.files.map((file) => file.sha256),
+    )
+
+    expect(await anna.readUnowned()).toEqual({ operations: [], files: [] })
+    expect(await anna.readFile(photo.sha256)).toBeNull()
+    expect((await anna.readOutbox()).map((operation) => operation.id).sort()).toEqual([
+      'op-anna',
+      'op-late',
+    ])
+    expect((await anna.waitingFiles()).map((file) => file.sha256)).toEqual([own.sha256])
+    anna.close()
+  })
+
+  it('is taken on by nobody from a stale tab, once another account said it was theirs', async () => {
+    const tenant = aTenant()
+
+    await storeFromBefore(tenant)
+
+    // A tab of Anna shows the list.
+    const stale = await openLocalStore(tenant, 'anna')
+    const shown = await stale.readUnowned()
+    const ben = await openLocalStore(tenant, 'ben')
+
+    // Ben says the changes and the photo are his.
+    await ben.adoptUnowned(
+      shown.operations.map((operation) => operation.id),
+      shown.files.map((file) => file.sha256),
+    )
+    ben.close()
+
+    // Anna signs in again in another tab, and the store is hers again; the
+    // stale tab clicks on the list it showed before.
+    const again = await openLocalStore(tenant, 'anna')
+
+    expect(
+      await stale.adoptUnowned(
+        shown.operations.map((operation) => operation.id),
+        shown.files.map((file) => file.sha256),
+      ),
+    ).toEqual({ operations: [], files: [] })
+
+    expect(await again.readOutbox()).toEqual([])
+    expect(await again.waitingFiles()).toEqual([])
+    stale.close()
+    again.close()
+  })
+
+  it('is let go by nobody from a stale tab, once another account said it was theirs', async () => {
+    const tenant = aTenant()
+
+    await storeFromBefore(tenant)
+
+    const stale = await openLocalStore(tenant, 'anna')
+    const shown = await stale.readUnowned()
+    const ben = await openLocalStore(tenant, 'ben')
+
+    await ben.adoptUnowned(
+      shown.operations.map((operation) => operation.id),
+      shown.files.map((file) => file.sha256),
+    )
+    ben.close()
+
+    const again = await openLocalStore(tenant, 'anna')
+
+    await stale.dropUnowned(
+      shown.operations.map((operation) => operation.id),
+      shown.files.map((file) => file.sha256),
+    )
+
+    // Ben's two changes and his photo wait for him.
+    expect(await waitingIn(tenant)).toBe(3)
+    stale.close()
+    again.close()
   })
 })

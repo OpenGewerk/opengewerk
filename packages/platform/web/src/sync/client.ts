@@ -26,6 +26,7 @@ import {
   settledKey,
   type StoredFile,
   StoreTakenOver,
+  type UnownedChanges,
 } from './store.js'
 import {
   isForbidden,
@@ -118,7 +119,17 @@ export interface SyncSnapshot {
   readonly troubleKind: SyncTroubleKind | null
   /** The operation the outbox is stuck on, until somebody lets it go. */
   readonly refused: RefusedOperation | null
+  /**
+   * What waits on this device for nobody: changes and files queued before
+   * the device recorded whose they are. Nobody sends them until the person
+   * signed in says they made them (`adoptUnowned`) or lets them go
+   * (`discardUnowned`).
+   */
+  readonly unowned: UnownedChanges
 }
+
+/** Nothing waits for nobody. */
+const nothingUnowned: UnownedChanges = { operations: [], files: [] }
 
 /** A reason and its kind, which are only ever published together. */
 function troubled(troubleKind: SyncTroubleKind, trouble: string) {
@@ -390,6 +401,7 @@ export class SyncClient {
     online: true,
     ...untroubled,
     refused: null,
+    unowned: nothingUnowned,
   }
 
   /** Bumped on every change, so React has one number to watch. */
@@ -481,6 +493,7 @@ export class SyncClient {
       ...client.snapshot,
       pending: client.outbox.length,
       conflicts: await store.readConflicts(),
+      unowned: await store.readUnowned(),
     }
     client.snapshot = {
       ...client.snapshot,
@@ -929,7 +942,17 @@ export class SyncClient {
       }
       await this.refreshConflicts()
 
-      this.publish({ lastSyncedAt: new Date(), exchanging: false, ...untroubled, refused })
+      // Read again: another tab of this browser may have taken them on or let
+      // them go in the meantime.
+      const unowned = await this.store.readUnowned()
+
+      this.publish({
+        lastSyncedAt: new Date(),
+        exchanging: false,
+        ...untroubled,
+        refused,
+        unowned,
+      })
     } catch (caught) {
       // Another account took the store over in another tab: this one is
       // signed out as after an expired session, and the gate opens the
@@ -1453,6 +1476,119 @@ export class SyncClient {
     await this.synchronise()
   }
 
+  /**
+   * Takes on what waits here for nobody, for the person signed in, who said
+   * they made it, and sends it with theirs, under their name and rights.
+   *
+   * Only what the screen showed: the list as it was last published, and of
+   * that only what is still nobody's. A change queued for nobody since, by a
+   * tab of a version before, is not adopted by a click on a list that did not
+   * show it.
+   */
+  async adoptUnowned(): Promise<void> {
+    const { operations, files } = this.snapshot.unowned
+    const taken = { operations: new Set<OperationId>(), files: 0 }
+
+    if (
+      !(await this.onUnowned(async () => {
+        const adopted = await this.store.adoptUnowned(
+          operations.map((operation) => operation.id),
+          files.map(hashOf),
+        )
+
+        adopted.operations.forEach((id) => taken.operations.add(id))
+        taken.files = adopted.files.length
+      }))
+    ) {
+      return
+    }
+
+    // From what the store says it took on and the list that showed it, with
+    // nothing read in between. A read that failed after the store had taken
+    // them on left them out of the outbox here, and once the list was read
+    // anew they were nobody's on the screen and nobody's to send until the
+    // next start; the photos among them, with the count of files from
+    // before, would have gone after the versions that name them (`ready`).
+    const held = new Set(this.outbox.map((operation) => operation.id))
+
+    this.outbox = inOutboxOrder([
+      ...this.outbox,
+      ...operations.filter(
+        (operation) => taken.operations.has(operation.id) && !held.has(operation.id),
+      ),
+    ])
+    this.filesWaiting += taken.files
+    this.regroup()
+    this.publish({ pending: this.outbox.length })
+
+    if (!(await this.reloadUnowned())) {
+      return
+    }
+
+    await this.synchronise()
+  }
+
+  /**
+   * The list read again after it changed. Another account may take the store
+   * over between that change and this read, and then this tab signs out as
+   * well, instead of keeping the list it showed.
+   */
+  private reloadUnowned(): Promise<boolean> {
+    return this.onUnowned(async () => {
+      this.publish({ unowned: await this.store.readUnowned() })
+    })
+  }
+
+  /**
+   * Lets go of what waits here for nobody, on this device, as signing out
+   * would. Only what the screen showed, as with `adoptUnowned`.
+   */
+  async discardUnowned(): Promise<void> {
+    const { operations, files } = this.snapshot.unowned
+
+    if (
+      !(await this.onUnowned(() =>
+        this.store.dropUnowned(
+          operations.map((operation) => operation.id),
+          files.map(hashOf),
+        ),
+      ))
+    ) {
+      return
+    }
+
+    await this.reloadUnowned()
+  }
+
+  /**
+   * Runs a change of what waits for nobody. False when another account has
+   * taken the store over in another tab: this one is signed out, as the
+   * exchange is, and the list is nobody's business here any more.
+   */
+  private async onUnowned(work: () => Promise<void>): Promise<boolean> {
+    try {
+      await work()
+
+      return true
+    } catch (error) {
+      if (!(error instanceof StoreTakenOver)) {
+        throw error
+      }
+
+      this.publish({
+        unowned: nothingUnowned,
+        ...troubled(
+          'exchange_refused',
+          'Auf diesem Gerät ist inzwischen ein anderes Konto angemeldet.',
+        ),
+      })
+      this.wanted = false
+      this.onSignedOut()
+
+      return false
+    }
+  }
+
   /** Everything this device holds of this tenant, gone. Signing out. */
   async forget(): Promise<void> {
     await this.store.clear()
@@ -1494,6 +1630,10 @@ export class SyncClient {
       listener()
     }
   }
+}
+
+function hashOf(file: { readonly sha256: string }): string {
+  return file.sha256
 }
 
 /** SHA-256 in lower case hex, the name the server stores a file under. */

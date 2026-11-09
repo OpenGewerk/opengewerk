@@ -3,6 +3,7 @@ import 'fake-indexeddb/auto'
 import { createHash } from 'node:crypto'
 
 import { syncRules } from '@opengewerk/platform-domain'
+import type { OperationId } from '@opengewerk/platform-domain'
 import { probePolicies } from '@opengewerk/platform-domain/testing'
 import { beforeEach, describe, expect, it } from 'vitest'
 
@@ -417,5 +418,65 @@ describe('the stores on a device', () => {
 
     expect([...opened.objectStoreNames]).toContain('outbox')
     opened.close()
+  })
+})
+
+describe('a photo and its record that waited for nobody', () => {
+  it('goes up ahead of its record once the person signed in takes them on', async () => {
+    const tenant = `files${String((counter += 1))}`
+    const sha256 = hashOf(photo)
+    const before = await openLocalStore(tenant)
+    const recordedAt = new Date('2026-10-12T08:14:00Z')
+
+    // As a version before 0.5.0 left them: kept and queued for nobody.
+    await before.keepFile({ sha256, bytes: photo, mediaType: 'image/jpeg' }, true)
+    await before.queue({
+      id: '01a1c10c-0000-7000-8000-000000000001' as OperationId,
+      entity: 'notes',
+      recordId: '01a1c10c-0000-7000-8000-0000000000a1',
+      kind: 'create',
+      baseVersion: null,
+      patches: [{ field: 'title', from: null, to: 'Label' }],
+      recordedAt,
+      deviceId: 'phone',
+    })
+    await before.queue({
+      id: '01a1c10c-0000-7000-8000-000000000002' as OperationId,
+      entity: 'parcels',
+      recordId: '01a1c10c-0000-7000-8000-0000000000b1',
+      kind: 'create',
+      baseVersion: null,
+      patches: [
+        { field: 'noteId', from: null, to: '01a1c10c-0000-7000-8000-0000000000a1' },
+        { field: 'sha256', from: null, to: sha256 },
+        { field: 'fileName', from: null, to: 'label.jpg' },
+        { field: 'mediaType', from: null, to: 'image/jpeg' },
+        { field: 'sizeBytes', from: null, to: photo.byteLength },
+      ],
+      recordedAt: new Date(recordedAt.getTime() + 1),
+      deviceId: 'phone',
+    })
+    before.close()
+
+    const client = await SyncClient.start({
+      store: await openLocalStore(tenant, 'anna'),
+      transport: server,
+      writer: server,
+      rules,
+      deviceId: 'phone',
+      entities: ['notes', 'parcels'],
+      onSignedOut: () => {},
+    })
+
+    await client.synchronise()
+    expect(server.log.filter((entry) => !entry.startsWith('pull'))).toEqual([])
+
+    await client.adoptUnowned()
+
+    expect(server.log.filter((entry) => !entry.startsWith('pull'))[0]).toBe(
+      `upload ${sha256.slice(0, 8)}`,
+    )
+    expect(server.all('parcels').map((parcel) => parcel['sha256'])).toEqual([sha256])
+    expect(client.status().pending).toBe(0)
   })
 })

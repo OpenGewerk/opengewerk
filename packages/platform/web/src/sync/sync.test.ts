@@ -23,7 +23,7 @@ import {
   refusalText,
 } from './client.js'
 import { byRecord, project } from './projection.js'
-import { type LocalStore, openLocalStore } from './store.js'
+import { type LocalStore, openLocalStore, StoreTakenOver, waitingIn } from './store.js'
 import { updatesHeld } from '../shell/updates.js'
 import type { ChangedRows, PullResult, SyncTransport } from './transport.js'
 import { RequestRefused } from './transport.js'
@@ -2054,5 +2054,287 @@ describe('the account of a transmission', () => {
 
     expect(accounts.length).toBeGreaterThan(0)
     expect(new Set(accounts)).toEqual(new Set(['anna']))
+  })
+})
+
+describe('what waits on a device for nobody', () => {
+  /** A change queued by a version that did not yet say whose it is. */
+  async function queuedForNobody(tenant: string): Promise<void> {
+    const before = await openLocalStore(tenant)
+
+    await before.queue({
+      id: operationId('op-before'),
+      entity: 'notes',
+      recordId: 'n-before',
+      kind: 'create',
+      baseVersion: null,
+      patches: [{ field: 'text', from: null, to: 'Leiter im Flur' }],
+      recordedAt: new Date('2026-10-12T07:52:00Z'),
+      deviceId: 'device',
+    })
+    before.close()
+  }
+
+  async function startFor(tenant: string, transport: SyncTransport, onSignedOut = () => {}) {
+    writer = new Writing()
+
+    return await Client.start({
+      store: await openLocalStore(tenant, 'anna'),
+      transport,
+      writer,
+      rules,
+      deviceId: 'device',
+      entities,
+      onSignedOut,
+    })
+  }
+
+  it('goes out only once the person signed in says they made it, and then under their account', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+    const accounts: (string | undefined)[] = []
+    const push = transport.push.bind(transport)
+
+    transport.push = (deviceId: string, operations: readonly Operation[], account?: string) => {
+      accounts.push(account)
+
+      return push(deviceId, operations)
+    }
+
+    await queuedForNobody(tenant)
+
+    const client = await startFor(tenant, transport)
+
+    await client.synchronise()
+
+    expect(transport.sent.flat()).toEqual([])
+    expect(client.status().unowned.operations.map((operation) => operation.id)).toEqual([
+      'op-before',
+    ])
+
+    await client.adoptUnowned()
+
+    expect(transport.sent.flat().map((operation) => operation.id)).toEqual(['op-before'])
+    expect(accounts).toEqual(['anna'])
+    expect(client.status().unowned).toEqual({ operations: [], files: [] })
+    expect(client.status().pending).toBe(0)
+  })
+
+  it('leaves the device when let go, and none of it goes out', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+
+    await queuedForNobody(tenant)
+
+    const client = await startFor(tenant, transport)
+
+    await client.discardUnowned()
+    await client.synchronise()
+
+    expect(client.status().unowned).toEqual({ operations: [], files: [] })
+    expect(transport.sent.flat()).toEqual([])
+    expect(await waitingIn(tenant)).toBe(0)
+  })
+
+  it('is taken on by nobody from a tab whose store another account took over', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+    let signedOut = 0
+
+    await queuedForNobody(tenant)
+
+    const client = await startFor(tenant, transport, () => {
+      signedOut += 1
+    })
+    const ben = await openLocalStore(tenant, 'ben')
+
+    await client.adoptUnowned()
+
+    expect(signedOut).toBe(1)
+    expect(transport.sent.flat()).toEqual([])
+    expect((await ben.readUnowned()).operations.map((operation) => operation.id)).toEqual([
+      'op-before',
+    ])
+    ben.close()
+  })
+
+  /** A change a tab of a version before queues for nobody after the list was shown. */
+  async function queuedLate(tenant: string): Promise<void> {
+    const late = await openLocalStore(tenant)
+
+    await late.queue({
+      id: operationId('op-unseen'),
+      entity: 'notes',
+      recordId: 'n-unseen',
+      kind: 'create',
+      baseVersion: null,
+      patches: [{ field: 'text', from: null, to: 'Nicht gezeigt' }],
+      recordedAt: new Date('2026-10-12T07:53:00Z'),
+      deviceId: 'device',
+    })
+    late.close()
+  }
+
+  it('goes out as far as the list showed, and not with what was queued for nobody since', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+
+    await queuedForNobody(tenant)
+
+    const client = await startFor(tenant, transport)
+
+    await queuedLate(tenant)
+    await client.adoptUnowned()
+
+    expect(transport.sent.flat().map((operation) => operation.id)).toEqual(['op-before'])
+    expect(client.status().unowned.operations.map((operation) => operation.id)).toEqual([
+      'op-unseen',
+    ])
+  })
+
+  it('is let go as far as the list showed, and keeps what was queued for nobody since', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+
+    await queuedForNobody(tenant)
+
+    const client = await startFor(tenant, transport)
+
+    await queuedLate(tenant)
+    await client.discardUnowned()
+
+    expect(client.status().unowned.operations.map((operation) => operation.id)).toEqual([
+      'op-unseen',
+    ])
+  })
+
+  it('is let go by nobody from a tab whose store another account took over', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+    let signedOut = 0
+
+    await queuedForNobody(tenant)
+
+    const client = await startFor(tenant, transport, () => {
+      signedOut += 1
+    })
+    const ben = await openLocalStore(tenant, 'ben')
+
+    await client.discardUnowned()
+
+    expect(signedOut).toBe(1)
+    expect((await ben.readUnowned()).operations.map((operation) => operation.id)).toEqual([
+      'op-before',
+    ])
+    ben.close()
+  })
+
+  it('signs a tab out whose store another account takes over right after it took the list on', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+    const store = await openLocalStore(tenant, 'anna')
+    let reads = 0
+    let signedOut = 0
+
+    await queuedForNobody(tenant)
+    writer = new Writing()
+
+    // The second read of the list comes after another account took the store over.
+    const client = await Client.start({
+      store: {
+        ...store,
+        readUnowned: () =>
+          (reads += 1) > 1 ? Promise.reject(new StoreTakenOver()) : store.readUnowned(),
+      },
+      transport,
+      writer,
+      rules,
+      deviceId: 'device',
+      entities,
+      onSignedOut: () => {
+        signedOut += 1
+      },
+    })
+
+    await client.adoptUnowned()
+
+    expect(signedOut).toBe(1)
+    expect(client.status().unowned).toEqual({ operations: [], files: [] })
+    expect(transport.sent.flat()).toEqual([])
+  })
+
+  it('takes the list on with what the store says it recorded, and reads nothing more for it', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+    const store = await openLocalStore(tenant, 'anna')
+    let started = false
+
+    await queuedForNobody(tenant)
+    writer = new Writing()
+
+    // After the start, the outbox and the count of files cannot be read.
+    const unreadable = () =>
+      Promise.reject(new Error('Die lokale Ablage hat den Vorgang abgebrochen.'))
+    const client = await Client.start({
+      store: {
+        ...store,
+        readOutbox: () => (started ? unreadable() : store.readOutbox()),
+        countWaitingFiles: () => (started ? unreadable() : store.countWaitingFiles()),
+      },
+      transport,
+      writer,
+      rules,
+      deviceId: 'device',
+      entities,
+      onSignedOut: () => {},
+    })
+
+    started = true
+    await client.adoptUnowned()
+
+    expect(transport.sent.flat().map((operation) => operation.id)).toEqual(['op-before'])
+    expect(client.status().unowned).toEqual({ operations: [], files: [] })
+  })
+
+  it('sends nothing another tab let go of after the list was shown', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+
+    await queuedForNobody(tenant)
+
+    const client = await startFor(tenant, transport)
+    const other = await openLocalStore(tenant, 'anna')
+
+    // Another tab of Anna shows the same card, and lets it go.
+    await other.dropUnowned([operationId('op-before')], [])
+    other.close()
+
+    await client.adoptUnowned()
+
+    expect(transport.sent.flat()).toEqual([])
+    expect(client.status().pending).toBe(0)
+  })
+
+  it('sends nothing another account took on in between, when the store is back with this one', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+
+    await queuedForNobody(tenant)
+
+    const client = await startFor(tenant, transport)
+    const ben = await openLocalStore(tenant, 'ben')
+
+    await ben.adoptUnowned([operationId('op-before')], [])
+    ben.close()
+
+    // Anna signs in again in another tab; the store is hers again, and the
+    // tab that showed the list clicks on it.
+    const again = await openLocalStore(tenant, 'anna')
+
+    await client.adoptUnowned()
+    again.close()
+
+    expect(transport.sent.flat()).toEqual([])
+    expect(client.status().pending).toBe(0)
   })
 })
