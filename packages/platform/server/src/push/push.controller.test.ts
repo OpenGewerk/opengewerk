@@ -102,6 +102,8 @@ async function waitingForALock() {
     const { rows } = await admin.query<{ waiting: string }>(
       `select count(*) as waiting from pg_stat_activity
         where wait_event_type = 'Lock'
+          and datname = current_database()
+          and pid <> pg_backend_pid()
           and (query like 'select pg_advisory_xact_lock%' or query like 'insert into "push_subscriptions"%')`,
     )
 
