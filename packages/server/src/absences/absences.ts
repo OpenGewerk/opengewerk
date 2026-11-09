@@ -22,7 +22,7 @@ import {
   type TenantId,
 } from '@opengewerk/domain'
 import type { TenantTransaction } from '@opengewerk/platform-server'
-import { and, asc, eq, gte, inArray, isNull, lte, ne } from 'drizzle-orm'
+import { and, asc, eq, gte, inArray, isNull, lte, ne, sql } from 'drizzle-orm'
 
 import {
   absences,
@@ -490,8 +490,24 @@ function checked(input: AbsenceInput, kind: AbsenceKind) {
   return values as typeof values & { firstDay: IsoDate; lastDay: IsoDate }
 }
 
+/**
+ * Holds the absences of a person until the transaction ends. Every write that
+ * checks them for an overlap takes it before it reads them, so that two such
+ * writes for the same person run one after the other and the second sees
+ * what the first wrote; read without, two overlapping requests, or two
+ * approvals at once, both found the days free. A lock of its own, and not
+ * one on a row, which a person asking for leave may not be allowed to lock.
+ */
+async function holdAbsencesOf(tx: TenantTransaction, personId: string): Promise<void> {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${`absences:${personId}`}, 0))`,
+  )
+}
+
 /** Refuses an absence that shares a half day with another of its kind that still counts. */
 async function refuseOverlap(tx: TenantTransaction, personId: string, span: Span, except?: string) {
+  await holdAbsencesOf(tx, personId)
+
   const near = await tx
     .select()
     .from(absences)
@@ -564,8 +580,15 @@ async function absenceOf(tx: TenantTransaction, id: string): Promise<Row> {
   return row
 }
 
-/** Other days, halves or note for an absence; its kind stays. */
+/**
+ * Other days, halves or note for an absence; its kind stays. Read again
+ * under the lock of the person's absences, and written only while it is
+ * still as it was read: a request taken back or decided in between is not
+ * changed on the state it had before.
+ */
 export async function change(tx: TenantTransaction, id: string, input: AbsenceInput): Promise<Row> {
+  await holdAbsencesOf(tx, (await absenceOf(tx, id)).personId)
+
   const row = await absenceOf(tx, id)
   const values = checked(
     {
@@ -592,10 +615,17 @@ export async function change(tx: TenantTransaction, id: string, input: AbsenceIn
   const [changed] = await tx
     .update(absences)
     .set(changes)
-    .where(eq(absences.id, row.id))
+    .where(and(eq(absences.id, row.id), eq(absences.state, row.state), isNull(absences.deletedAt)))
     .returning()
 
-  return changed ?? row
+  if (!changed) {
+    // Taken out, which says the absence is gone, or decided meanwhile.
+    await absenceOf(tx, id)
+
+    throw new AbsenceRefused('Diese Abwesenheit hat sich inzwischen geändert. Bitte neu öffnen.')
+  }
+
+  return changed
 }
 
 /** Takes an absence out, by marking it; the change log keeps it. */

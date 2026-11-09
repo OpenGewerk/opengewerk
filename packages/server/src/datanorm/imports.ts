@@ -461,7 +461,10 @@ export class ArticleImports {
     let session: PlanningSession | null = null
 
     try {
-      const planning = await startPlanning(await this.bytesOf(row), row.charset ?? undefined)
+      const planning = await startPlanning(
+        await this.bytesOf(importer, row),
+        row.charset ?? undefined,
+      )
 
       session = planning
 
@@ -493,7 +496,30 @@ export class ArticleImports {
     }
   }
 
-  private async bytesOf(row: ImportRow): Promise<readonly DeliveredFile[]> {
+  /**
+   * The files of a delivery, refused by the sizes stored with them before a
+   * byte is read, as its start does: also where an import is read again with
+   * other options or taken over. An import that failed before its start asked
+   * them, larger than a delivery may unpack to, loaded all of it into the one
+   * process when it was read again.
+   */
+  private async bytesOf(importer: Importer, row: ImportRow): Promise<readonly DeliveredFile[]> {
+    const stored = await this.database.forTenant({ ...importer, reason: 'article.import' }, (tx) =>
+      tx
+        .select({ sizeBytes: files.sizeBytes })
+        .from(files)
+        .where(
+          inArray(
+            files.sha256,
+            row.files.map((file) => file.sha256),
+          ),
+        ),
+    )
+
+    if (stored.reduce((sum, file) => sum + file.sizeBytes, 0) > largestUnpackedBytes) {
+      throw new ZipRefused(deliveryTooLarge)
+    }
+
     return Promise.all(
       row.files.map(async (file) => ({
         name: file.name,
@@ -590,7 +616,10 @@ export class ArticleImports {
     try {
       // Read in its own thread before the transaction begins, so that the
       // transaction is not held open while the files are read.
-      const planning = await startPlanning(await this.bytesOf(row), row.charset ?? undefined)
+      const planning = await startPlanning(
+        await this.bytesOf(importer, row),
+        row.charset ?? undefined,
+      )
 
       session = planning
 

@@ -60,7 +60,12 @@ function accessFrom(body: unknown, creating: boolean) {
  * as well, so that no route shows or changes a way into a site that is gone
  * (Greptile on #445). `lock` holds the access until the transaction ends.
  */
-async function openAccess(tx: TenantTransaction, siteId: string, id: string, lock: boolean) {
+async function openAccess(
+  tx: TenantTransaction,
+  siteId: string,
+  id: string,
+  lock: 'no key update' | 'share' | null,
+) {
   const query = tx
     .select({ access: siteAccesses })
     .from(siteAccesses)
@@ -72,7 +77,7 @@ async function openAccess(tx: TenantTransaction, siteId: string, id: string, loc
         isNull(siteAccesses.deletedAt),
       ),
     )
-  const [found] = lock ? await query.for('no key update', { of: siteAccesses }) : await query
+  const [found] = lock ? await query.for(lock, { of: siteAccesses }) : await query
 
   return found?.access
 }
@@ -163,7 +168,7 @@ export class SiteAccessesController {
     const key = access.value === undefined ? null : this.sealing()
 
     return this.database.forTenant(identity, async (tx) => {
-      const existing = await openAccess(tx, siteId, id, true)
+      const existing = await openAccess(tx, siteId, id, 'no key update')
 
       if (!existing) {
         throw new NotFoundException()
@@ -243,7 +248,12 @@ export class SiteAccessesController {
     const key = this.sealing()
 
     return this.database.forTenant(identity, async (tx) => {
-      const access = await openAccess(tx, siteId, id, false)
+      // Held until the row of the reveal is written: a change of the value
+      // waits for it, or it for the change and then reads the row anew. Read
+      // without, the change could come between the row and its value, and
+      // the log named the moment of the value before the one handed out.
+      // Reveals at once do not wait for each other.
+      const access = await openAccess(tx, siteId, id, 'share')
 
       if (!access) {
         throw new NotFoundException()

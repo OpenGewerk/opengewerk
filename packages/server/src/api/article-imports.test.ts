@@ -1189,6 +1189,40 @@ describe('the options of a preview', () => {
 
     await send('post', `/suppliers/${hansa}/imports/${read.id}/discard`, {}, 200)
   })
+
+  it('read nothing of files larger together than a delivery may unpack to', async () => {
+    const bytes = cp850([header('011026'), 'A;N;9100002;00;Klemme;;1;0;Stck;50;;;;'])
+    const read = await preview([{ name: 'DATANORM.004', bytes }])
+    const hashes = read.files.map((file) => file.sha256)
+
+    // As the files of an import from before its start asked their sizes.
+    await admin.query(
+      'update files set size_bytes = $1 where tenant_id = $2 and sha256 = any($3)',
+      [largestUnpackedBytes + 1, north.id, hashes],
+    )
+
+    try {
+      await send(
+        'patch',
+        `/suppliers/${hansa}/imports/${read.id}`,
+        { charset: 'windows-1252' },
+        202,
+      )
+      await imports.settled()
+
+      expect(await get(`/suppliers/${hansa}/imports/${read.id}`)).toMatchObject({
+        status: 'failed',
+        problem: deliveryTooLarge,
+      })
+    } finally {
+      await admin.query(
+        'update files set size_bytes = $1 where tenant_id = $2 and sha256 = any($3)',
+        [bytes.length, north.id, hashes],
+      )
+    }
+
+    await send('post', `/suppliers/${hansa}/imports/${read.id}/discard`, {}, 200)
+  })
 })
 
 describe('an import that cannot start or run', () => {

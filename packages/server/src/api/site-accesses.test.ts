@@ -2,7 +2,7 @@ import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import type { RoleKey, TenantId } from '@opengewerk/domain'
 import { Database, newId, SecretKey } from '@opengewerk/platform-server'
-import type { Pool } from 'pg'
+import { Client, type Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -238,6 +238,99 @@ describe('an access to a site', () => {
     )
 
     expect(logged[0]?.count).toBeGreaterThan(0)
+  })
+
+  it('records with a reveal the moment of the value it shows, also with a change under way', async () => {
+    const { site } = await siteWithJob('Gleichzeitig')
+    const access = await addAccess(site, { designation: 'Tor', value: 'Code 1111' })
+    const id = String(access['id'])
+    // The reveal has read its row and is about to read the value; it is held
+    // right there while the office sets a new one.
+    const query = Client.prototype.query
+    let reached: () => void = () => undefined
+    let release: () => void = () => undefined
+    const atTheValue = new Promise<void>((resolve) => {
+      reached = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let armed = true
+
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const values = (typeof config === 'string' ? args[1] : (config?.values ?? args[1])) as
+        unknown[] | undefined
+      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+      if (
+        armed &&
+        /^select/i.test(text.trim()) &&
+        text.includes('"secrets"') &&
+        values?.includes(id)
+      ) {
+        armed = false
+        reached()
+
+        return released.then(forward)
+      }
+
+      return forward()
+    } as typeof query
+
+    let shown: request.Response
+    let changed: request.Response | undefined
+
+    try {
+      const revealing = http()
+        .post(`/sites/${site}/accesses/${id}/reveal`)
+        .set('x-test-identity', office())
+        .then((answer) => answer)
+
+      await atTheValue
+
+      const changing = http()
+        .patch(`/sites/${site}/accesses/${id}`)
+        .set('x-test-identity', office())
+        .send({ value: 'Code 2222' })
+        .then((answer) => {
+          changed = answer
+        })
+
+      // Until the change waits for the reveal, or, without the lock, is done.
+      for (let tries = 0; tries < 250 && changed === undefined; tries += 1) {
+        const { rows } = await admin.query<{ waiting: string }>(
+          `select count(*) as waiting from pg_stat_activity
+            where datname = current_database() and wait_event_type = 'Lock'
+              and query ilike '%for no key update%'`,
+        )
+
+        if (Number(rows[0]?.waiting) > 0) {
+          break
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+
+      release()
+      shown = await revealing
+      await changing
+    } finally {
+      Client.prototype.query = query
+      release()
+    }
+
+    const { rows } = await admin.query<{ value_set_at: Date }>(
+      'select value_set_at from site_access_reveals where site_access_id = $1',
+      [id],
+    )
+
+    // The value of before, with its moment; the change came after it.
+    expect(shown.status).toBe(201)
+    expect(shown.body).toEqual({ state: 'readable', value: 'Code 1111' })
+    expect(rows.map((row) => row.value_set_at.toISOString())).toEqual([access['valueSetAt']])
+    expect(changed?.status).toBe(200)
   })
 
   it('keeps its value when a change leaves the value empty, and takes a new one', async () => {
