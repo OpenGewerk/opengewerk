@@ -19,6 +19,7 @@ import { holdingsOf } from '../datanorm/holdings.js'
 import { ArticleImports, endInterruptedImports } from '../datanorm/imports.js'
 import { startPlanning } from '../datanorm/planner.js'
 import { cp850, header, zipOf } from '../datanorm/test-files.js'
+import { deliveryTooLarge, largestUnpackedBytes } from '../datanorm/zip.js'
 import { ApiModule } from './api.module.js'
 import { ArticleImportsController } from './article-imports.controller.js'
 import { as, testIdentities as identities } from './test-identity.js'
@@ -272,6 +273,40 @@ describe('a file of a delivery', () => {
         sha256,
       ]),
     ).toBe(1)
+  })
+
+  /**
+   * Files larger together than a delivery may unpack to are refused when the
+   * import is started, by the sizes stored with them, before anything of
+   * them is loaded into the process.
+   */
+  it('is refused when its files together are larger than a delivery may unpack to', async () => {
+    const parts = ['V 011026 Teil eins', 'V 011026 Teil zwei'].map((part) =>
+      new TextEncoder().encode(part),
+    )
+    const named = []
+
+    for (const [index, part] of parts.entries()) {
+      named.push({ name: `teil${String(index + 1)}.001`, sha256: await upload(part) })
+    }
+
+    const hashes = named.map((file) => file.sha256)
+
+    await admin.query(
+      'update files set size_bytes = $1 where tenant_id = $2 and sha256 = any($3)',
+      [largestUnpackedBytes / 2 + 1, north.id, hashes],
+    )
+
+    try {
+      const refused = await send('post', `/suppliers/${hansa}/imports`, { files: named }, 422)
+
+      expect(refused.message).toBe(deliveryTooLarge)
+    } finally {
+      await admin.query(
+        'update files set size_bytes = $1 where tenant_id = $2 and sha256 = any($3)',
+        [parts[0]?.length ?? 0, north.id, hashes],
+      )
+    }
   })
 
   it('is refused without the rights of an import, with a hash of other bytes, and empty', async () => {

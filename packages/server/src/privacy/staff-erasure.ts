@@ -324,29 +324,44 @@ export async function takeStaffYear(
   const touched: StaffTouched[] = []
 
   if (year.userId !== null) {
-    const { rows } = await tx.execute<{ id: string }>(sql`
-      select id from time_entries where user_id = ${year.userId} and time_entry_year(id) = ${year.year}`)
-    let left = rows.map((row) => row.id)
+    // How far each entry of the year stands from the end of its chain of
+    // corrections: 0 for one nothing corrects, one more for each correction
+    // after it. Worked out once, and the entries go a level at a time, the
+    // end of every chain first: the trigger works the year of a correction
+    // out of the entry it corrects, which has to be there still. Each level
+    // names its own entries only; a round per link with every id left grew
+    // with the square of the length of a chain.
+    const { rows } = await tx.execute<{ id: string; height: number }>(sql`
+      with recursive year_entries as (
+        select id, corrects_entry_id from time_entries
+         where user_id = ${year.userId} and time_entry_year(id) = ${year.year}
+      ), heights as (
+        select e.id, e.corrects_entry_id, 0 as height from year_entries e
+         where not exists (select 1 from year_entries c where c.corrects_entry_id = e.id)
+        union all
+        select p.id, p.corrects_entry_id, h.height + 1
+          from heights h join year_entries p on p.id = h.corrects_entry_id
+      )
+      select id, max(height)::int as height from heights group by id`)
+    const levels = new Map<number, string[]>()
+
+    for (const row of rows) {
+      const level = levels.get(row.height) ?? []
+
+      level.push(row.id)
+      levels.set(row.height, level)
+    }
+
     const gone: string[] = []
 
-    // A correction names the entry it corrects, so the end of a chain goes first.
-    while (left.length > 0) {
+    for (const height of [...levels.keys()].sort((one, other) => one - other)) {
       const round = await taken(
         tx,
         'time_entries',
-        sql`delete from time_entries t
-             where t.id = any(${uuids(left)})
-               and not exists (select 1 from time_entries c where c.corrects_entry_id = t.id)
-            returning t.id`,
+        sql`delete from time_entries where id = any(${uuids(levels.get(height) ?? [])}) returning id`,
       )
 
-      if (round.ids.length === 0) {
-        throw new Error('A chain of corrections would not come apart')
-      }
-
       gone.push(...round.ids)
-      const done = new Set(round.ids)
-      left = left.filter((id) => !done.has(id))
     }
 
     touched.push({ table: 'time_entries', ids: gone })

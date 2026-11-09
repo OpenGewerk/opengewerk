@@ -67,6 +67,9 @@ function unfit(character: string): boolean {
 /** Makes each name it is given unique among those it made before. */
 export function nameMaker(): (raw: string) => string {
   const taken = new Set<string>()
+  // Where the count of each name stopped: a hundredth "Foto.jpg" tries
+  // "Foto (100).jpg" first and not every number from 2 again.
+  const counters = new Map<string, number>()
 
   return (raw) => {
     const name = raw
@@ -85,14 +88,16 @@ export function nameMaker(): (raw: string) => string {
     const slash = fallback.lastIndexOf('/')
     const [stem, extension] =
       dot > slash + 1 ? [fallback.slice(0, dot), fallback.slice(dot)] : [fallback, '']
+    const key = fallback.toLowerCase()
     let candidate = fallback
-    let counter = 2
+    let counter = counters.get(key) ?? 2
 
     while (taken.has(candidate.toLowerCase())) {
       candidate = `${stem} (${String(counter)})${extension}`
       counter += 1
     }
 
+    counters.set(key, counter)
     taken.add(candidate.toLowerCase())
 
     return candidate

@@ -16,6 +16,23 @@ describe('the names in an archive', () => {
     ).toEqual(['dateien/Foto.jpg', 'dateien/foto (2).JPG', 'dateien/Foto (3).jpg', 'Plan'])
   })
 
+  it('count on from where they stopped, around a name that is taken already', () => {
+    expect(uniqueNames(['a.txt', 'a (2).txt', 'a.txt', 'A.txt'])).toEqual([
+      'a.txt',
+      'a (2).txt',
+      'a (3).txt',
+      'A (4).txt',
+    ])
+
+    // Twenty thousand times the same name, each one looked at once.
+    const started = performance.now()
+    const names = uniqueNames(Array.from({ length: 20_000 }, () => 'dateien/Foto.jpg'))
+
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(names.at(-1)).toBe('dateien/Foto (20000).jpg')
+    expect(new Set(names).size).toBe(20_000)
+  })
+
   it('lose control characters and what Windows refuses', () => {
     expect(uniqueNames([`dateien/Rech${String.fromCharCode(0)}nung: 1?.pdf`])).toEqual([
       'dateien/Rech_nung_ 1_.pdf',
