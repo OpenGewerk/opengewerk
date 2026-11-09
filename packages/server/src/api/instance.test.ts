@@ -107,8 +107,8 @@ beforeAll(async () => {
     // The second factor is the session's (opengewerk-haustechnik#360): the one
     // the header stands for, as if signed in with the code where there is one.
     await admin.query(
-      `insert into auth_sessions (id, token, user_id, expires_at, second_factor)
-         values ($1, $1, $2, now() + interval '1 day', $3)`,
+      `insert into auth_sessions (credential_generation, id, token, user_id, expires_at, second_factor)
+         values (0, $1, $1, $2, now() + interval '1 day', $3)`,
       [`test-session-${userId}`, userId, person.secondFactor],
     )
     await database.forTenant({ tenantId: first, reason: 'membership.create' }, (tx) =>

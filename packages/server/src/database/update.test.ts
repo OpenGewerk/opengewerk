@@ -753,6 +753,52 @@ describe('the sessions from before 0081', () => {
 })
 
 /**
+ * 0137 gives every session the count of its account's credentials, which a
+ * session written after they were taken back does not have. A session from
+ * before gets the count its account starts with and stays signed in; one
+ * written after with a count the account no longer has is refused.
+ */
+describe('the sessions from before 0137', () => {
+  const before = () =>
+    readMigrationIndex().findIndex((entry) => entry.tag === '0137_credential_generation')
+
+  it('carry the count of their account and stay, and a stale count is refused', async () => {
+    expect(before()).toBeGreaterThan(0)
+
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), releaseFolder(before()))
+    await admin.query(
+      `insert into auth_users (id, name, email)
+         values ('anna', 'Anna Alt', 'anna@example.de'), ('otto', 'Otto Alt', 'otto@example.de')`,
+    )
+    await admin.query(
+      `insert into auth_sessions (id, token, user_id, expires_at)
+         values ('anna-here', 't1', 'anna', now() + interval '1 day'),
+                ('anna-there', 't2', 'anna', now() + interval '1 day'),
+                ('otto-here', 't3', 'otto', now() + interval '1 day')`,
+    )
+
+    await runMigrations(ownerDatabaseUrl())
+
+    const { rows } = await admin.query<{ id: string; generation: number | null }>(
+      'select id, credential_generation as generation from auth_sessions order by id',
+    )
+
+    expect(rows).toEqual([
+      { id: 'anna-here', generation: 0 },
+      { id: 'anna-there', generation: 0 },
+      { id: 'otto-here', generation: 0 },
+    ])
+    await expect(
+      admin.query(
+        `insert into auth_sessions (credential_generation, id, token, user_id, expires_at)
+           values (-1, 'anna-late', 't4', 'anna', now() + interval '1 day')`,
+      ),
+    ).rejects.toMatchObject({ code: 'OG015' })
+  })
+})
+
+/**
  * 0082 gives a conflict the person whose change it was
  * (opengewerk-haustechnik#360). A conflict from before kept only its device;
  * the person comes from the stretches of work in the business that chose that

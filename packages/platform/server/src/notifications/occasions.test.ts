@@ -215,8 +215,8 @@ async function aDevice() {
   const session = `session-lena-${newId()}`
 
   await admin.query(
-    `insert into auth_sessions (id, token, user_id, expires_at, active_tenant_id, created_at, updated_at)
-       values ($1, $1, 'lena', '2038-01-01', $2, now(), now())`,
+    `insert into auth_sessions (credential_generation, id, token, user_id, expires_at, active_tenant_id, created_at, updated_at)
+       values (0, $1, $1, 'lena', '2038-01-01', $2, now(), now())`,
     [session, north.id],
   )
   await database.forTenant({ tenantId: north.id }, (tx) =>

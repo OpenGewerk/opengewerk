@@ -33,6 +33,7 @@ import { beforeItsEnd, hasEnded, refuseWithoutLastDay, stillWorks } from './last
 import type { AddressMail } from './notices.js'
 import { holdRoles, leadsItsTenant, rolesOfTenant } from './roles.js'
 import { removeSecondFactor } from './second-factor.js'
+import { revokeCredentials } from './credentials.js'
 
 /**
  * Who works in one tenant, and everything whoever leads it can do about it.
@@ -946,11 +947,13 @@ export async function removeAccountData(
   }
 
   return database.forInstance(async (tx) => {
-    await tx.delete(authSessions).where(eq(authSessions.userId, userId))
+    // The sessions and every sign in under way go, and the count of the
+    // credentials goes up (`credentials.ts`): a sign in that read the
+    // password before it went is refused as it writes its session.
+    await revokeCredentials(tx, userId)
     await tx.delete(authPasskeys).where(eq(authPasskeys.userId, userId))
     await tx.delete(authTwoFactors).where(eq(authTwoFactors.userId, userId))
     await tx.delete(authAccounts).where(eq(authAccounts.userId, userId))
-    await tx.delete(authVerifications).where(eq(authVerifications.value, userId))
     await tx
       .update(authUsers)
       .set({

@@ -70,8 +70,8 @@ async function aSession(person: Person): Promise<string> {
   const id = `session-${person}-${String(Math.random()).slice(2)}`
 
   await admin.query(
-    `insert into auth_sessions (id, token, user_id, expires_at, active_tenant_id, created_at, updated_at)
-       values ($1, $1, $2, '2038-01-01', $3, now(), now())`,
+    `insert into auth_sessions (credential_generation, id, token, user_id, expires_at, active_tenant_id, created_at, updated_at)
+       values (0, $1, $1, $2, '2038-01-01', $3, now(), now())`,
     [id, person, people[person].tenant],
   )
 

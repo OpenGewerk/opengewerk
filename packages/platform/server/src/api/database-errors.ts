@@ -48,7 +48,8 @@ const foundationConflicts: Readonly<Record<string, string>> = {
   OG006: 'Dieser Wert lässt sich nicht schwärzen.',
 }
 
-function databaseCode(error: unknown): string | undefined {
+/** The code PostgreSQL answered with, from the error or the one drizzle wraps. */
+export function databaseCode(error: unknown): string | undefined {
   // Drizzle wraps the driver error and keeps the original as the cause.
   const candidates = [error, (error as { cause?: unknown }).cause]
 

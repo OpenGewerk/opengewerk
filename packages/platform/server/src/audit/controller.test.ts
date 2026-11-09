@@ -169,8 +169,8 @@ beforeAll(async () => {
 
   // One browser a device of Mia's signed in with, still signed in.
   await admin.query(
-    `insert into auth_sessions (id, token, user_id, expires_at, user_agent, device_id)
-     values ('session-mia', 'token-mia', 'mia', now() + interval '1 day',
+    `insert into auth_sessions (credential_generation, id, token, user_id, expires_at, user_agent, device_id)
+     values (0, 'session-mia', 'token-mia', 'mia', now() + interval '1 day',
              'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/129.0 Mobile Safari/537.36',
              'device-mia')`,
   )

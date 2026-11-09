@@ -24,8 +24,8 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
-    "@better-auth/passkey": "1.7.11",
-    "@better-auth/utils": "0.5.0",
+    "@better-auth/passkey": "1.7.18",
+    "@better-auth/utils": "0.5.1",
     "@cantoo/pdf-lib": "2.11.1",
     "@fontsource/inter": "5.3.0",
     "@nestjs/common": "12.3.3",
@@ -35,7 +35,7 @@
     "@opengewerk/domain": "workspace:*",
     "@opengewerk/gewerk-elektro": "workspace:*",
     "@opengewerk/platform-server": "workspace:*",
-    "better-auth": "1.7.11",
+    "better-auth": "1.7.18",
     "drizzle-orm": "0.45.2",
     "express": "5.2.1",
     "libxml2-wasm": "0.7.2",

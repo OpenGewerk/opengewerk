@@ -335,7 +335,7 @@ describe('adding a passkey', () => {
       .expect(403)
   })
 
-  it('refuses a passkey that was not confirmed on the device, naming the application', async () => {
+  it('refuses a passkey that was not confirmed on the device', async () => {
     const cookies = await sessionToChange(worker.email)
     const userId = userIds.get(worker.email) ?? ''
     const count = (await passkeyRows(userId)).length
@@ -346,11 +346,10 @@ describe('adding a passkey', () => {
       userVerified: false,
     })
 
+    // The plugin refuses it itself in better-auth 1.7.18, before the check
+    // of our own behind it is asked; the screen words its code.
     expect(refused.status).toBe(400)
-    expect((refused.body as { message: string }).message).toBe(
-      'Ohne Bestätigung am Gerät, mit Fingerabdruck, Gesicht oder PIN, legt Probewerk keinen ' +
-        'Passkey an.',
-    )
+    expect((refused.body as { code: string }).code).toBe('FAILED_TO_VERIFY_REGISTRATION')
     expect(await passkeyRows(userId)).toHaveLength(count)
     expect(
       (await logged(north.id, 'name')).some((entry) => entry.new_value === 'Schlüssel ohne PIN'),
@@ -698,8 +697,9 @@ describe('signing in with a passkey', () => {
 
     const refused = await passkeySignIn(authenticator, { userVerified: false })
 
-    expect(refused.status).toBe(401)
-    expect((refused.body as { message: string }).message).toContain('Bestätigung am Gerät')
+    // Refused by the plugin itself, see the registration above.
+    expect(refused.status).toBe(400)
+    expect((refused.body as { code: string }).code).toBe('AUTHENTICATION_FAILED')
     expect(cookiesOf(refused)).not.toContain('session_token')
   })
 

@@ -267,8 +267,8 @@ describe('taking a second factor away from the command line', () => {
       [userId],
     )
     await admin.query(
-      `insert into auth_sessions (id, token, user_id, expires_at, created_at, updated_at, second_factor)
-       values ('sitzung-von-anna', 'token-von-anna', $1, now() + interval '1 hour', now(), now(), true)`,
+      `insert into auth_sessions (credential_generation, id, token, user_id, expires_at, created_at, updated_at, second_factor)
+       values (0, 'sitzung-von-anna', 'token-von-anna', $1, now() + interval '1 hour', now(), now(), true)`,
       [userId],
     )
 

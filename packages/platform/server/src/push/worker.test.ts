@@ -95,8 +95,8 @@ async function aDevice(person: Person) {
   const tenantId = people[person].tenant
 
   await admin.query(
-    `insert into auth_sessions (id, token, user_id, expires_at, active_tenant_id, created_at, updated_at)
-       values ($1, $1, $2, '2038-01-01', $3, now(), now())`,
+    `insert into auth_sessions (credential_generation, id, token, user_id, expires_at, active_tenant_id, created_at, updated_at)
+       values (0, $1, $1, $2, '2038-01-01', $3, now(), now())`,
     [session, person, tenantId],
   )
   await database.forTenant({ tenantId }, (tx) =>

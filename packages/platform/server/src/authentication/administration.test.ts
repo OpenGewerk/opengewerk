@@ -1669,6 +1669,17 @@ describe('removing what an access that has ended no longer needs', () => {
     await passkey(ole, north.id)
     await lastDay(ole, north.id, -1)
 
+    const generation = async () =>
+      Number(
+        (
+          await admin.query<{ generation: number }>(
+            'select credential_generation as generation from auth_users where id = $1',
+            [idOf(ole)],
+          )
+        ).rows[0]?.generation,
+      )
+    const before = await generation()
+
     expect(
       await removeAccountData(probeAccess, instance.database, as(north.id), idOf(ole)),
     ).toEqual({
@@ -1680,6 +1691,10 @@ describe('removing what an access that has ended no longer needs', () => {
     expect(await countOf('auth_passkeys', ole)).toBe(0)
     expect(await countOf('auth_accounts', ole)).toBe(0)
     expect(await countOf('auth_two_factors', ole)).toBe(0)
+    // And the count of its credentials went up (`credentials.ts`): a sign in
+    // that checked the password before it went is refused as it writes its
+    // session.
+    expect(await generation()).toBe(before + 1)
     // The membership stays with its last day, as a block stays: what the
     // person signed resolves to it and to the name.
     expect(await countOf('memberships', ole, `and tenant_id = '${north.id}'`)).toBe(1)
