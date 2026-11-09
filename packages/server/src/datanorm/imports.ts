@@ -506,7 +506,7 @@ export class ArticleImports {
   private async bytesOf(importer: Importer, row: ImportRow): Promise<readonly DeliveredFile[]> {
     const stored = await this.database.forTenant({ ...importer, reason: 'article.import' }, (tx) =>
       tx
-        .select({ sizeBytes: files.sizeBytes })
+        .select({ sha256: files.sha256, sizeBytes: files.sizeBytes })
         .from(files)
         .where(
           inArray(
@@ -515,8 +515,14 @@ export class ArticleImports {
           ),
         ),
     )
+    const sizes = new Map(stored.map((file) => [file.sha256, file.sizeBytes]))
 
-    if (stored.reduce((sum, file) => sum + file.sizeBytes, 0) > largestUnpackedBytes) {
+    // Counted for every name, since every name is loaded on its own: an
+    // import from before the start refused a file named twice named one up
+    // to twenty times.
+    if (
+      row.files.reduce((sum, file) => sum + (sizes.get(file.sha256) ?? 0), 0) > largestUnpackedBytes
+    ) {
       throw new ZipRefused(deliveryTooLarge)
     }
 

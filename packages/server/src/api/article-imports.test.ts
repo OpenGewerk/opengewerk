@@ -1223,6 +1223,49 @@ describe('the options of a preview', () => {
 
     await send('post', `/suppliers/${hansa}/imports/${read.id}/discard`, {}, 200)
   })
+
+  it('count a file an import from before named twice for every name', async () => {
+    const bytes = cp850([header('011026'), 'A;N;9100003;00;Klemme;;1;0;Stck;50;;;;'])
+    const read = await preview([{ name: 'DATANORM.004', bytes }])
+    const sha256 = read.files[0]?.sha256 ?? ''
+
+    // As an import from before the start refused a file named twice: the
+    // same file under a second name, each under the limit, together above.
+    await admin.query(
+      `update article_imports set files = files || jsonb_build_array(
+         jsonb_build_object('name', 'KOPIE.004', 'sha256', $1::text, 'bytes', $2::bigint))
+       where id = $3`,
+      [sha256, largestUnpackedBytes / 2 + 1, read.id],
+    )
+    await admin.query('update files set size_bytes = $1 where tenant_id = $2 and sha256 = $3', [
+      largestUnpackedBytes / 2 + 1,
+      north.id,
+      sha256,
+    ])
+
+    try {
+      await send(
+        'patch',
+        `/suppliers/${hansa}/imports/${read.id}`,
+        { charset: 'windows-1252' },
+        202,
+      )
+      await imports.settled()
+
+      expect(await get(`/suppliers/${hansa}/imports/${read.id}`)).toMatchObject({
+        status: 'failed',
+        problem: deliveryTooLarge,
+      })
+    } finally {
+      await admin.query('update files set size_bytes = $1 where tenant_id = $2 and sha256 = $3', [
+        bytes.length,
+        north.id,
+        sha256,
+      ])
+    }
+
+    await send('post', `/suppliers/${hansa}/imports/${read.id}/discard`, {}, 200)
+  })
 })
 
 describe('an import that cannot start or run', () => {

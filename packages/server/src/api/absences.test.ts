@@ -414,6 +414,42 @@ describe('one’s own leave', () => {
     expect(rows).toEqual([{ note: null }])
   })
 
+  /**
+   * The office changes a request while somebody else decides it: the change
+   * finds it decided and writes nothing onto it.
+   */
+  it('is not changed once it was decided meanwhile', async () => {
+    const asked = await send('post', '/absences/mine', days('2027-06-14', '2027-06-15'), anna)
+    const held = await admin.connect()
+
+    try {
+      await held.query('begin')
+      await held.query("update absences set state = 'rejected', decided_at = now() where id = $1", [
+        asked.id,
+      ])
+
+      const answer = http()
+        .patch(`/absences/${asked.id}`)
+        .set('x-test-identity', office)
+        .send({ note: 'Bitte mit Übergabe' })
+        .then((response) => response.status)
+
+      await waitingForALock('update "absences"')
+      await held.query('commit')
+
+      expect(await answer).toBe(400)
+    } finally {
+      held.release()
+    }
+
+    const { rows } = await admin.query<{ note: string | null; state: string }>(
+      'select note, state from absences where id = $1',
+      [asked.id],
+    )
+
+    expect(rows).toEqual([{ note: null, state: 'rejected' }])
+  })
+
   it('is always leave: a person cannot report themself sick or ask with a note on a sickness', async () => {
     const asked = await send(
       'post',
