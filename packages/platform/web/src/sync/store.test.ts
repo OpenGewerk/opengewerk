@@ -266,10 +266,12 @@ describe('what waits on a device for nobody', () => {
     await late.queue(aNote('op-unseen', 'Nicht gezeigt'))
     late.close()
 
-    await anna.adoptUnowned(
-      shown.operations.map((operation) => operation.id),
-      shown.files.map((file) => file.sha256),
-    )
+    expect(
+      await anna.adoptUnowned(
+        shown.operations.map((operation) => operation.id),
+        shown.files.map((file) => file.sha256),
+      ),
+    ).toEqual({ operations: ['op-early', 'op-late'], files: [photo.sha256] })
 
     expect((await anna.readOutbox()).map((operation) => operation.id).sort()).toEqual([
       'op-early',
@@ -364,10 +366,12 @@ describe('what waits on a device for nobody', () => {
     // stale tab clicks on the list it showed before.
     const again = await openLocalStore(tenant, 'anna')
 
-    await stale.adoptUnowned(
-      shown.operations.map((operation) => operation.id),
-      shown.files.map((file) => file.sha256),
-    )
+    expect(
+      await stale.adoptUnowned(
+        shown.operations.map((operation) => operation.id),
+        shown.files.map((file) => file.sha256),
+      ),
+    ).toEqual({ operations: [], files: [] })
 
     expect(await again.readOutbox()).toEqual([])
     expect(await again.waitingFiles()).toEqual([])

@@ -50,7 +50,14 @@ export type { FormField } from './record-form.js'
 
 // Where a device keeps it all.
 export { deleteLocalStore, openLocalStore, storesOnDevice, waitingIn } from './store.js'
-export type { LocalStore, StoredFile, StoredRecord, UnownedChanges, WaitingFile } from './store.js'
+export type {
+  AdoptedChanges,
+  LocalStore,
+  StoredFile,
+  StoredRecord,
+  UnownedChanges,
+  WaitingFile,
+} from './store.js'
 
 // The way to the server: the four calls of an exchange, a change at the route
 // that owns a record, and every other request of a page, which names the

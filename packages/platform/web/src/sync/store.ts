@@ -44,6 +44,12 @@ export interface StoredFile {
   readonly mediaType: string
 }
 
+/** What the store recorded for its person when they took a list on. */
+export interface AdoptedChanges {
+  readonly operations: readonly OperationId[]
+  readonly files: readonly string[]
+}
+
 /** A file made here that waits for its upload, without its bytes. */
 export interface WaitingFile {
   readonly sha256: string
@@ -117,9 +123,13 @@ export interface LocalStore {
    * The named changes and files, recorded for the person the store is open
    * for, who said they made them: from now on they go out with theirs. Only
    * those still without a person, and only while the store is still that
-   * person's (`StoreTakenOver`).
+   * person's (`StoreTakenOver`). Answers with what it recorded, so that the
+   * caller need not read the store again to know it.
    */
-  adoptUnowned(operations: readonly OperationId[], files: readonly string[]): Promise<void>
+  adoptUnowned(
+    operations: readonly OperationId[],
+    files: readonly string[],
+  ): Promise<AdoptedChanges>
   /**
    * The named changes and files off this device, as signing out would take
    * them. Only those still without a person: what somebody has adopted in
@@ -767,7 +777,7 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
 
     async adoptUnowned(operations, files) {
       if (owner === undefined) {
-        return
+        return { operations: [], files: [] }
       }
 
       // One transaction that asks whose the store is and writes: a tab of
@@ -780,19 +790,27 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
         Promise.all(files.map((sha256) => promised<UploadRow | undefined>(uploads.get(sha256)))),
       ])
 
-      for (const row of queued) {
+      const taken: { operations: OperationId[]; files: string[] } = { operations: [], files: [] }
+
+      operations.forEach((id, at) => {
+        const row = queued[at]
+
         if (row !== undefined && nobodys(row)) {
           outbox.put({ ...(row as object), owner })
+          taken.operations.push(id)
         }
-      }
+      })
 
       for (const row of waiting) {
         if (row !== undefined && nobodys(row)) {
           uploads.put({ ...row, owner })
+          taken.files.push(row.sha256)
         }
       }
 
       await finished(transaction)
+
+      return taken
     },
 
     async dropUnowned(operations, files) {

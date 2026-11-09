@@ -1487,19 +1487,37 @@ export class SyncClient {
    */
   async adoptUnowned(): Promise<void> {
     const { operations, files } = this.snapshot.unowned
-    const named = new Set(operations.map((operation) => operation.id))
+    const taken = { operations: new Set<OperationId>(), files: 0 }
 
-    if (!(await this.onUnowned(() => this.store.adoptUnowned([...named], files.map(hashOf))))) {
+    if (
+      !(await this.onUnowned(async () => {
+        const adopted = await this.store.adoptUnowned(
+          operations.map((operation) => operation.id),
+          files.map(hashOf),
+        )
+
+        adopted.operations.forEach((id) => taken.operations.add(id))
+        taken.files = adopted.files.length
+      }))
+    ) {
       return
     }
 
+    // From what the store says it took on and the list that showed it, with
+    // nothing read in between. A read that failed after the store had taken
+    // them on left them out of the outbox here, and once the list was read
+    // anew they were nobody's on the screen and nobody's to send until the
+    // next start; the photos among them, with the count of files from
+    // before, would have gone after the versions that name them (`ready`).
     const held = new Set(this.outbox.map((operation) => operation.id))
-    const adopted = (await this.store.readOutbox()).filter(
-      (operation) => named.has(operation.id) && !held.has(operation.id),
-    )
 
-    this.outbox = inOutboxOrder([...this.outbox, ...adopted])
-    this.filesWaiting = await this.store.countWaitingFiles()
+    this.outbox = inOutboxOrder([
+      ...this.outbox,
+      ...operations.filter(
+        (operation) => taken.operations.has(operation.id) && !held.has(operation.id),
+      ),
+    ])
+    this.filesWaiting += taken.files
     this.regroup()
     this.publish({ pending: this.outbox.length })
 

@@ -1361,4 +1361,20 @@ describe('what waits on the device for nobody', () => {
     expect(server.sent.flat()).toEqual([])
     expect(await waitingIn(tenant)).toBe(0)
   })
+
+  it('says when the store could not be read, and keeps the card for another try', async () => {
+    const { started } = await withUnowned(false)
+
+    vi.spyOn(started, 'adoptUnowned').mockRejectedValueOnce(new Error('abgebrochen'))
+    inOffice(started)
+
+    const card = within(screen.getByRole('region', { name: '1 Änderung ohne Person' }))
+
+    await userEvent.setup().click(card.getByRole('button', { name: 'Das sind meine, senden' }))
+
+    expect((await card.findByRole('alert')).textContent).toBe(
+      'Die Ablage auf diesem Gerät ließ sich gerade nicht lesen. Bitte erneut versuchen.',
+    )
+    expect(card.getByRole('button', { name: 'Das sind meine, senden' })).toBeTruthy()
+  })
 })

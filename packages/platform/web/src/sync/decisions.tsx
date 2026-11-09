@@ -986,17 +986,29 @@ function UnownedCard({ unowned }: { readonly unowned: UnownedChanges }) {
   const { records: words } = useApplication()
   const entry = useEntry()
   const [working, setWorking] = useState(false)
+  const [failed, setFailed] = useState(false)
   const title = `${unownedSummary(unowned)} ohne Person`
 
+  // A store that could not be read leaves everything as it was (`adoptUnowned`),
+  // and the same button takes it on again.
   async function act(work: () => Promise<void>) {
     setWorking(true)
+    setFailed(false)
 
     try {
       await work()
+    } catch {
+      setFailed(true)
     } finally {
       setWorking(false)
     }
   }
+
+  const failure = failed ? (
+    <p role="alert" className="text-[14px] font-semibold text-conflict">
+      Die Ablage auf diesem Gerät ließ sich gerade nicht lesen. Bitte erneut versuchen.
+    </p>
+  ) : null
 
   const changes = unowned.operations.map((operation) => ({
     key: operation.id,
@@ -1064,6 +1076,7 @@ function UnownedCard({ unowned }: { readonly unowned: UnownedChanges }) {
           </ul>
         ) : null}
         <p className="text-[13px] text-ink-faint">{unownedAfter}</p>
+        {failure}
         <div className="flex flex-wrap gap-2">
           <Button tone="primary" disabled={working} onClick={adopt}>
             Das sind meine, senden
@@ -1108,6 +1121,7 @@ function UnownedCard({ unowned }: { readonly unowned: UnownedChanges }) {
           ))}
         </ul>
         <p className="text-[14px] leading-[1.45] text-ink-faint">{unownedAfter}</p>
+        {failure}
         <div className="mt-1.5 flex flex-col gap-2">
           <Button tone="dark" wide height={56} disabled={working} onClick={adopt}>
             Das sind meine, senden

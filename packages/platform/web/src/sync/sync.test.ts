@@ -2262,4 +2262,37 @@ describe('what waits on a device for nobody', () => {
     expect(client.status().unowned).toEqual({ operations: [], files: [] })
     expect(transport.sent.flat()).toEqual([])
   })
+
+  it('takes the list on with what the store says it recorded, and reads nothing more for it', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+    const store = await openLocalStore(tenant, 'anna')
+    let started = false
+
+    await queuedForNobody(tenant)
+    writer = new Writing()
+
+    // After the start, the outbox and the count of files cannot be read.
+    const unreadable = () =>
+      Promise.reject(new Error('Die lokale Ablage hat den Vorgang abgebrochen.'))
+    const client = await Client.start({
+      store: {
+        ...store,
+        readOutbox: () => (started ? unreadable() : store.readOutbox()),
+        countWaitingFiles: () => (started ? unreadable() : store.countWaitingFiles()),
+      },
+      transport,
+      writer,
+      rules,
+      deviceId: 'device',
+      entities,
+      onSignedOut: () => {},
+    })
+
+    started = true
+    await client.adoptUnowned()
+
+    expect(transport.sent.flat().map((operation) => operation.id)).toEqual(['op-before'])
+    expect(client.status().unowned).toEqual({ operations: [], files: [] })
+  })
 })
