@@ -51,7 +51,8 @@ async function waitingForALock(statement: string) {
   for (let tries = 0; tries < 250; tries += 1) {
     const { rows } = await admin.query<{ waiting: string }>(
       `select count(*) as waiting from pg_stat_activity
-        where wait_event_type = 'Lock' and query like $1`,
+        where wait_event_type = 'Lock' and datname = current_database()
+          and pid <> pg_backend_pid() and query like $1`,
       [`${statement}%`],
     )
 

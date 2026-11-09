@@ -211,10 +211,11 @@ describe('a device', () => {
       }),
     ])
 
-    // The tablet is handed to Britta: the same endpoint becomes hers.
+    // The tablet is handed to Britta: the same endpoint becomes hers, as a row
+    // of its own that takes nothing of Max's along.
     const again = await subscribe('britta', body)
 
-    expect((again.body as { id: string }).id).toBe((first.body as { id: string }).id)
+    expect((again.body as { id: string }).id).not.toBe((first.body as { id: string }).id)
     expect((await overview('max')).devices).toEqual([])
     expect((await overview('britta')).devices).toHaveLength(1)
   })
