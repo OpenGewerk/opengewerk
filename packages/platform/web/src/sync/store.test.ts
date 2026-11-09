@@ -118,16 +118,18 @@ describe('what a device holds of the server, with more than one person', () => {
     back.close()
   })
 
-  it('drops unowned cached credentials before the first account reads, then keeps its own cache', async () => {
+  it('stays for the account that pulled it, and a store from before goes to nobody', async () => {
     const tenant = aTenant()
     const before = await openLocalStore(tenant)
 
+    // A store of a version that did not yet say whose it is.
     await before.write('site_accesses', [{ id: 'z-1', value: '4711' }])
     await before.writeMeta('cursor', 42)
     await before.writeMeta('narrowed', '{"site_accesses":"previous-account"}')
     await before.writeMeta('narrowed-settled', '{"site_accesses":"previous-account"}')
     await before.writeMeta('entities', 'site_accesses')
     await before.keepFile(photo, false)
+    await before.queue(aNote('op-before', 'Leiter im Flur'))
     before.close()
 
     const anna = await openLocalStore(tenant, 'anna')
@@ -141,9 +143,11 @@ describe('what a device holds of the server, with more than one person', () => {
     await anna.write('site_accesses', [{ id: 'z-2', value: '0815' }])
     anna.close()
 
+    // What was waiting to be sent stays, and what Anna pulled is hers.
     const again = await openLocalStore(tenant, 'anna')
 
     expect(await again.readAll('site_accesses')).toEqual([{ id: 'z-2', value: '0815' }])
+    expect(await again.readOutbox()).toEqual([aNote('op-before', 'Leiter im Flur')])
     again.close()
   })
 

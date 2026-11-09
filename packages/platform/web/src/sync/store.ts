@@ -418,9 +418,11 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
    * kept for reading and the cursor gone and pulls anew; the outbox, the
    * files waiting to be sent and what the application keeps for itself, a
    * running stopwatch with the person it is of, stay (opengewerk-haustechnik#31).
-   * A store without a recorded account has no proof of whose records it
-   * holds, so its pulled data goes as well. Offline access resumes after a
-   * pull for the signed-in account.
+   * A store from before this was kept says for nobody whose it is, and is
+   * treated as another account's: handed to whoever opened it first after the
+   * update, it showed them what the server had sent the person before, the
+   * codes of sites among it. Its device pulls everything once more, and
+   * without a network shows nothing of it until it has one.
    */
   async function claimFor(person: string): Promise<void> {
     // Read and written in one transaction. Read in one of its own, two tabs
@@ -441,6 +443,7 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
       return
     }
 
+    // Another account's, or nobody's.
     transaction.objectStore(recordStore).clear()
     transaction.objectStore(conflictStore).clear()
     for (const key of pulledKeys) {
