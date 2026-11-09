@@ -21,7 +21,7 @@ import {
 } from '@opengewerk/platform-server'
 import { aMailServer, testKey } from '@opengewerk/platform-server/testing'
 import { sql } from 'drizzle-orm'
-import type { Pool } from 'pg'
+import { Client, type Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -591,6 +591,81 @@ describe('the instructions by mail', () => {
         )
       ).rows,
     ).toEqual([{ theirs: true }])
+  })
+
+  it('are not written for a job given to another customer while they were asked for', async () => {
+    const { job } = await aCall()
+    const other = await post(
+      '/customers',
+      {
+        kind: 'private',
+        name: 'Erna Ernst',
+        isBusiness: false,
+        email: 'erna@example.com',
+        ...invoiceable,
+      },
+      office(),
+    )
+    // The route has taken the address and is about to write the mail; it
+    // is held right there while the office gives the job to another customer.
+    const query = Client.prototype.query
+    let reached: () => void = () => undefined
+    let release: () => void = () => undefined
+    const atTheMail = new Promise<void>((resolve) => {
+      reached = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let armed = true
+
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const values = typeof config === 'string' ? args[1] : (config?.values ?? args[1])
+      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+      if (
+        armed &&
+        text.includes('"auth_users"') &&
+        JSON.stringify(values ?? []).includes('"test"')
+      ) {
+        armed = false
+        reached()
+
+        return released.then(forward)
+      }
+
+      return forward()
+    } as typeof query
+
+    let answer: request.Response
+
+    try {
+      const asking = http()
+        .post(`/jobs/${job}/instructions/mail`)
+        .set('x-test-identity', office())
+        .send({})
+        .then((response) => response)
+
+      await atTheMail
+      await admin.query('update jobs set customer_id = $1 where id = $2', [other, job])
+      release()
+      answer = await asking
+    } finally {
+      Client.prototype.query = query
+      release()
+    }
+
+    expect(answer.status).toBe(409)
+    expect(
+      (
+        await admin.query(
+          `select count(*)::int as n from mail_outbox where job_id = $1 and kind = 'job_instructions'`,
+          [job],
+        )
+      ).rows,
+    ).toEqual([{ n: 0 }])
   })
 
   it('are not sent by a technician, nor without an address, nor for a project', async () => {
