@@ -1,4 +1,4 @@
-import { Check, Clock, RefreshCw, TriangleAlert, WifiOff } from 'lucide-react'
+import { Check, Clock, RefreshCw, TriangleAlert, UserRound, WifiOff } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 
@@ -6,7 +6,7 @@ import { Button } from '../components/button.js'
 import { Panel } from '../components/panel.js'
 import { clockTime } from '../format.js'
 import { exchangeRefusal, noConnection } from '../sync/client.js'
-import { NothingToDecide, useDecisions } from '../sync/decisions.js'
+import { hasUnowned, NothingToDecide, unownedSummary, useDecisions } from '../sync/decisions.js'
 import { useSync, useSyncStatus } from '../sync/provider.js'
 import { PageHead, RecordColumns, Screen } from './kit.js'
 
@@ -44,10 +44,11 @@ function StateLine({
  */
 function SyncStateCard() {
   const status = useSyncStatus()
-  const { conflicts, refused, pending, lastSyncedAt } = status
+  const { conflicts, refused, pending, lastSyncedAt, unowned } = status
   const offline = noConnection(status)
   // The server answered and refused: its own sentence, as in the strip.
   const refusal = exchangeRefusal(status)
+  const nobodys = hasUnowned(unowned)
 
   return (
     <Panel title="Stand des Abgleichs">
@@ -86,7 +87,12 @@ function SyncStateCard() {
               : `${String(conflicts.length)} Konflikte, bitte entscheiden`}
           </StateLine>
         ) : null}
-        {pending === 0 && conflicts.length === 0 && !refused && !offline && !refusal ? (
+        {nobodys ? (
+          <StateLine icon={UserRound} tone="waiting">
+            {`${unownedSummary(unowned)} ohne Person`}
+          </StateLine>
+        ) : null}
+        {pending === 0 && conflicts.length === 0 && !refused && !offline && !refusal && !nobodys ? (
           <StateLine icon={Check} tone="done">
             Nichts wartet, nichts zu entscheiden
           </StateLine>

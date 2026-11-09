@@ -1,8 +1,9 @@
-import { TriangleAlert, WifiOff } from 'lucide-react'
+import { TriangleAlert, UserRound, WifiOff } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 import { Strip, stripAction } from '../components/strip.js'
 import { useEntry } from '../components/surface.js'
+import { hasUnowned, unownedSummary } from './decisions.js'
 import { useSync, useSyncStatus } from './provider.js'
 
 /**
@@ -97,6 +98,23 @@ export function SyncStatusBar({
     ) : (
       <Strip tone="wait" icon={WifiOff} actions={retry}>
         {waiting ? `${waiting} ${why}` : why}
+      </Strip>
+    )
+  }
+
+  // Last: what waits for nobody holds up nothing else, and only the person
+  // who made it can say so. The strip leads to the card that asks.
+  if (hasUnowned(status.unowned)) {
+    const summary = unownedSummary(status.unowned)
+    const look = conflictsLink?.(stripAction('plain', 'wait', entry))
+
+    return entry === 'site' ? (
+      <Strip tone="wait" icon={UserRound} detail={`${summary} auf dem Gerät.`} actions={look}>
+        Änderungen ohne Person.
+      </Strip>
+    ) : (
+      <Strip tone="wait" icon={UserRound} actions={look}>
+        {`Auf diesem Gerät warten ${summary} ohne Person.`}
       </Strip>
     )
   }

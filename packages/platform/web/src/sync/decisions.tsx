@@ -1,7 +1,14 @@
-import type { ConflictReason, SyncConflict, SyncValue } from '@opengewerk/platform-domain'
-import { Server, Smartphone } from 'lucide-react'
+import { isPicture } from '@opengewerk/platform-domain'
+import type {
+  ConflictReason,
+  Operation,
+  RecordState,
+  SyncConflict,
+  SyncValue,
+} from '@opengewerk/platform-domain'
+import { FileText, ImageIcon, Server, Smartphone } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { Fragment, useId, useState } from 'react'
+import { Fragment, useEffect, useId, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import { useApplication } from '../application.js'
@@ -12,8 +19,9 @@ import { Card, useEntry } from '../components/surface.js'
 import { Cell, Column } from '../components/table.js'
 import { moment } from '../format.js'
 import { refusalFor, refusalText } from './client.js'
-import type { RefusedOperation } from './client.js'
+import type { RefusedOperation, SyncClient } from './client.js'
 import { useSync, useSyncStatus } from './provider.js'
+import type { UnownedChanges, WaitingFile } from './store.js'
 
 /**
  * What somebody has to decide about the exchange, in both entries: the
@@ -824,6 +832,290 @@ function RefusedFrame({
   )
 }
 
+/**
+ * How much waits for nobody, as the strip, the state and the card say it:
+ * "3 Änderungen und 1 Datei". Empty when nothing does.
+ */
+export function unownedSummary(unowned: UnownedChanges): string {
+  const parts = [
+    unowned.operations.length === 0
+      ? null
+      : unowned.operations.length === 1
+        ? '1 Änderung'
+        : `${String(unowned.operations.length)} Änderungen`,
+    unowned.files.length === 0
+      ? null
+      : unowned.files.length === 1
+        ? '1 Datei'
+        : `${String(unowned.files.length)} Dateien`,
+  ].filter((part): part is string => part !== null)
+
+  return parts.join(' und ')
+}
+
+/** Whether anything waits for nobody. */
+export function hasUnowned(unowned: UnownedChanges): boolean {
+  return unowned.operations.length > 0 || unowned.files.length > 0
+}
+
+const unownedKind = 'Aus einer früheren Fassung'
+
+const unownedExplanation =
+  'Erfasst auf diesem Gerät, bevor es zu jeder Änderung festhielt, wer sie erfasst hat, und nie ' +
+  'gesendet. Hinaus gehen sie erst, wenn die angemeldete Person bestätigt, sie erfasst zu haben, ' +
+  'und dann unter ihrem Namen und mit ihren Rechten.'
+
+const unownedAfter =
+  'Wer sie erfasst hat, findet sie nach der eigenen Anmeldung auf diesem Gerät hier. Verwerfen ' +
+  'nimmt sie von diesem Gerät; im System waren sie nie.'
+
+/**
+ * The record a change is about, as far as the device can tell: what it holds
+ * of it, with what the change writes laid over it. A record the change
+ * creates is nowhere else, and after a pull for another account the device
+ * holds none of the others either.
+ */
+function recordOf(client: SyncClient, operation: Operation): RecordState {
+  return {
+    ...(client.get(operation.entity, operation.recordId) ?? {}),
+    ...Object.fromEntries(operation.patches.map((patch) => [patch.field, patch.to])),
+  }
+}
+
+/** What a change does, in a word or the fields it writes. */
+function changeOf(words: RecordWords, operation: Operation): string {
+  if (operation.kind === 'create') {
+    return 'Angelegt'
+  }
+
+  if (operation.kind === 'delete') {
+    return 'Gelöscht'
+  }
+
+  const fields = operation.patches.map((patch) => words.fieldLabel(patch.field))
+
+  return fields.length === 0 ? 'Geändert' : fields.join(', ')
+}
+
+/** "Foto" for a picture, "Datei" for anything else. */
+function fileKind(file: WaitingFile): string {
+  return isPicture(file.mediaType) ? 'Foto' : 'Datei'
+}
+
+/**
+ * The picture of a file that waits, from the device. A picture only: a file
+ * of another kind, or one the device cannot read, gets a symbol.
+ */
+function WaitingFilePreview({
+  file,
+  size,
+}: {
+  readonly file: WaitingFile
+  readonly size: 'S' | 'L'
+}) {
+  const client = useSync()
+  const [shown, setShown] = useState<{ readonly hash: string; readonly href: string } | null>(null)
+  const picture = isPicture(file.mediaType)
+
+  useEffect(() => {
+    if (!picture) {
+      return
+    }
+
+    let live = true
+    let made: string | null = null
+
+    void client
+      .readFile(file.sha256)
+      .then((stored) => {
+        if (!stored || !live) {
+          return
+        }
+
+        made = URL.createObjectURL(new Blob([stored.bytes], { type: stored.mediaType }))
+        setShown({ hash: file.sha256, href: made })
+      })
+      .catch(() => {
+        // A store taken over in another tab says so at the next exchange;
+        // here the symbol stays.
+      })
+
+    return () => {
+      live = false
+
+      if (made) {
+        URL.revokeObjectURL(made)
+      }
+    }
+  }, [client, file.sha256, picture])
+
+  // On site the board's 88 by 66, in the office 96 by 72.
+  const box = size === 'L' ? 'h-[72px] w-[96px]' : 'h-[66px] w-[88px]'
+  const Icon = picture ? ImageIcon : FileText
+
+  return shown && shown.hash === file.sha256 ? (
+    <img
+      src={shown.href}
+      alt=""
+      className={`${box} shrink-0 rounded-[4px] border border-line object-cover`}
+    />
+  ) : (
+    <div
+      className={`${box} flex shrink-0 items-center justify-center rounded-[4px] border border-line bg-sunken text-ink-faint`}
+    >
+      <Icon size={26} strokeWidth={1.8} aria-hidden="true" />
+    </div>
+  )
+}
+
+/**
+ * What waits on this device for nobody: changes and files queued before the
+ * device recorded whose they are, by a version before that. Nobody sends
+ * them on their own. Whoever is signed in and made them says so, and they go
+ * out under that name; or somebody lets them go, as signing out would. The
+ * boards "Abgleich mit Änderungen ohne Person" and "Konflikte mit Änderungen
+ * ohne Person".
+ */
+function UnownedCard({ unowned }: { readonly unowned: UnownedChanges }) {
+  const client = useSync()
+  const { records: words } = useApplication()
+  const entry = useEntry()
+  const [working, setWorking] = useState(false)
+  const title = `${unownedSummary(unowned)} ohne Person`
+
+  async function act(work: () => Promise<void>) {
+    setWorking(true)
+
+    try {
+      await work()
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  const changes = unowned.operations.map((operation) => ({
+    key: operation.id,
+    kind: words.entityLabel(operation.entity),
+    title: words.titleOf(operation.entity, recordOf(client, operation)),
+    change: changeOf(words, operation),
+    when: moment(operation.recordedAt),
+  }))
+  const files = unowned.files.map((file) => ({
+    file,
+    kind: fileKind(file),
+    when: `Erfasst ${moment(new Date(file.since))}`,
+  }))
+  const adopt = () => {
+    void act(() => client.adoptUnowned())
+  }
+  const discard = () => {
+    void act(() => client.discardUnowned())
+  }
+
+  if (entry === 'office') {
+    return (
+      <RefusedFrame kind={unownedKind} title={title}>
+        <p className="text-[14px] leading-[1.5] text-ink">{unownedExplanation}</p>
+        {changes.length > 0 ? (
+          <TablePanel
+            caption="Was auf diesem Gerät ohne Person wartet"
+            cards={changes.map((each) => ({
+              key: each.key,
+              title: each.title,
+              sub: `${each.kind} · ${each.change} · ${each.when}`,
+            }))}
+          >
+            <thead>
+              <tr>
+                <Column className="w-[110px]">Art</Column>
+                <Column>Eintrag</Column>
+                <Column className="w-[110px]">Änderung</Column>
+                <Column className="w-[150px]">Erfasst</Column>
+              </tr>
+            </thead>
+            <tbody>
+              {changes.map((each) => (
+                <tr key={each.key}>
+                  <FieldName>{each.kind}</FieldName>
+                  <Cell>{each.title}</Cell>
+                  <Cell>{each.change}</Cell>
+                  <Cell className="numeric">{each.when}</Cell>
+                </tr>
+              ))}
+            </tbody>
+          </TablePanel>
+        ) : null}
+        {files.length > 0 ? (
+          <ul aria-label="Dateien ohne Person" className="flex flex-wrap gap-x-6 gap-y-3">
+            {files.map((each) => (
+              <li key={each.file.sha256} className="flex items-center gap-3">
+                <WaitingFilePreview file={each.file} size="L" />
+                <div>
+                  <p className="text-[14px] font-semibold">{each.kind}</p>
+                  <p className="numeric text-[13px] text-ink-faint">{each.when}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <p className="text-[13px] text-ink-faint">{unownedAfter}</p>
+        <div className="flex flex-wrap gap-2">
+          <Button tone="primary" disabled={working} onClick={adopt}>
+            Das sind meine, senden
+          </Button>
+          <Button tone="secondary" disabled={working} onClick={discard}>
+            Verwerfen
+          </Button>
+        </div>
+      </RefusedFrame>
+    )
+  }
+
+  return (
+    <Panel>
+      <section aria-label={title} className="flex flex-col gap-2.5">
+        <div>
+          <SiteFieldHead>{unownedKind}</SiteFieldHead>
+          <h2 className="mt-0.5 text-[20px] font-bold [overflow-wrap:anywhere]">{title}</h2>
+        </div>
+        <p className="text-[16px] leading-[1.45]">{unownedExplanation}</p>
+        <ul aria-label="Was auf diesem Gerät ohne Person wartet">
+          {changes.map((each) => (
+            <li key={each.key} className="border-t border-line py-2.5">
+              <SiteFieldHead>{each.kind}</SiteFieldHead>
+              <p className="mt-0.5 text-[17px] leading-[1.3] font-semibold [overflow-wrap:anywhere]">
+                {each.title}
+              </p>
+              <p className="numeric mt-0.5 text-[15px] text-ink-muted">{`${each.change}, ${each.when}`}</p>
+            </li>
+          ))}
+          {files.map((each) => (
+            <li
+              key={each.file.sha256}
+              className="flex items-center gap-3 border-t border-line py-2.5"
+            >
+              <WaitingFilePreview file={each.file} size="S" />
+              <div>
+                <p className="text-[17px] leading-[1.3] font-semibold">{each.kind}</p>
+                <p className="numeric text-[15px] text-ink-muted">{each.when}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+        <p className="text-[14px] leading-[1.45] text-ink-faint">{unownedAfter}</p>
+        <div className="mt-1.5 flex flex-col gap-2">
+          <Button tone="dark" wide height={56} disabled={working} onClick={adopt}>
+            Das sind meine, senden
+          </Button>
+          <Button wide height={56} disabled={working} onClick={discard}>
+            Verwerfen
+          </Button>
+        </div>
+      </section>
+    </Panel>
+  )
+}
+
 /** The sentence for a list with nothing in it. */
 export function NothingToDecide() {
   return (
@@ -845,7 +1137,7 @@ export function useDecisions(): {
   readonly cards: ReactNode
   readonly empty: boolean
 } {
-  const { conflicts, refused } = useSyncStatus()
+  const { conflicts, refused, unowned } = useSyncStatus()
   const words = useApplication().records
   const way = words.otherWay
   const [made, setMade] = useState<readonly string[]>([])
@@ -885,8 +1177,9 @@ export function useDecisions(): {
             <Fragment key={conflict.id}>{own}</Fragment>
           )
         })}
+        {hasUnowned(unowned) ? <UnownedCard unowned={unowned} /> : null}
       </>
     ),
-    empty: conflicts.length === 0 && !refused,
+    empty: conflicts.length === 0 && !refused && !hasUnowned(unowned),
   }
 }

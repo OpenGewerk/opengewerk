@@ -215,3 +215,131 @@ describe('what a device holds of the server, with more than one person', () => {
     ben.close()
   })
 })
+
+describe('what waits on a device for nobody', () => {
+  /** A store of a version that did not yet say whose a change is, with two changes and a photo. */
+  async function storeFromBefore(tenant: string): Promise<void> {
+    const before = await openLocalStore(tenant)
+
+    await before.queue({
+      ...aNote('op-late', 'Typenschild'),
+      recordedAt: new Date('2026-10-12T08:14:00Z'),
+    })
+    await before.queue({
+      ...aNote('op-early', 'Leiter im Flur'),
+      recordedAt: new Date('2026-10-12T07:52:00Z'),
+    })
+    await before.keepFile(photo, true)
+    before.close()
+  }
+
+  it('is shown to the person signed in, oldest first, beside what is theirs', async () => {
+    const tenant = aTenant()
+
+    await storeFromBefore(tenant)
+
+    const anna = await openLocalStore(tenant, 'anna')
+
+    await anna.queue(aNote('op-anna', 'Zählerstand'))
+
+    const unowned = await anna.readUnowned()
+
+    expect(unowned.operations.map((operation) => operation.id)).toEqual(['op-early', 'op-late'])
+    expect(unowned.files).toEqual([
+      { sha256: photo.sha256, mediaType: 'image/jpeg', since: expect.any(Number) as number },
+    ])
+    expect((await anna.readOutbox()).map((operation) => operation.id)).toEqual(['op-anna'])
+    anna.close()
+  })
+
+  it('goes out for the person who said they made it, and only what they were shown', async () => {
+    const tenant = aTenant()
+
+    await storeFromBefore(tenant)
+
+    const anna = await openLocalStore(tenant, 'anna')
+    const shown = await anna.readUnowned()
+
+    // Queued for nobody after the list was shown, by a tab of a version before.
+    const late = await openLocalStore(tenant)
+
+    await late.queue(aNote('op-unseen', 'Nicht gezeigt'))
+    late.close()
+
+    await anna.adoptUnowned(
+      shown.operations.map((operation) => operation.id),
+      shown.files.map((file) => file.sha256),
+    )
+
+    expect((await anna.readOutbox()).map((operation) => operation.id).sort()).toEqual([
+      'op-early',
+      'op-late',
+    ])
+    expect((await anna.waitingFiles()).map((file) => file.sha256)).toEqual([photo.sha256])
+    expect((await anna.readUnowned()).operations.map((operation) => operation.id)).toEqual([
+      'op-unseen',
+    ])
+    anna.close()
+
+    // Adopted is Anna's, and nobody else sends it.
+    const ben = await openLocalStore(tenant, 'ben')
+
+    expect(await ben.readOutbox()).toEqual([])
+    expect(await ben.waitingFiles()).toEqual([])
+    expect((await ben.readUnowned()).operations.map((operation) => operation.id)).toEqual([
+      'op-unseen',
+    ])
+    ben.close()
+  })
+
+  it('is adopted by nobody from a tab of an account that no longer holds the store', async () => {
+    const tenant = aTenant()
+
+    await storeFromBefore(tenant)
+
+    const anna = await openLocalStore(tenant, 'anna')
+    const shown = await anna.readUnowned()
+    const ben = await openLocalStore(tenant, 'ben')
+
+    await expect(
+      anna.adoptUnowned(
+        shown.operations.map((operation) => operation.id),
+        shown.files.map((file) => file.sha256),
+      ),
+    ).rejects.toBeInstanceOf(StoreTakenOver)
+
+    expect((await ben.readUnowned()).operations).toHaveLength(2)
+    expect(await ben.readOutbox()).toEqual([])
+    anna.close()
+    ben.close()
+  })
+
+  it('leaves the device when let go, and takes nothing of anybody with it', async () => {
+    const tenant = aTenant()
+
+    await storeFromBefore(tenant)
+
+    const anna = await openLocalStore(tenant, 'anna')
+    const shown = await anna.readUnowned()
+    const own = { ...photo, sha256: 'c'.repeat(64) }
+
+    await anna.queue(aNote('op-anna', 'Zählerstand'))
+    await anna.keepFile(own, true)
+    // Another tab of Anna's took one of them on in the meantime.
+    await anna.adoptUnowned(['op-late' as unknown as OperationId], [])
+
+    await anna.dropUnowned(
+      shown.operations.map((operation) => operation.id),
+      shown.files.map((file) => file.sha256),
+    )
+
+    expect(await anna.readUnowned()).toEqual({ operations: [], files: [] })
+    expect(await anna.readFile(photo.sha256)).toBeNull()
+    expect((await anna.readOutbox()).map((operation) => operation.id).sort()).toEqual([
+      'op-anna',
+      'op-late',
+    ])
+    expect((await anna.waitingFiles()).map((file) => file.sha256)).toEqual([own.sha256])
+    anna.close()
+  })
+})

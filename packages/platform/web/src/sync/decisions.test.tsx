@@ -17,10 +17,11 @@ import { SyncScreen } from '../office/sync-screen.js'
 import { InProbe, probeApplication, probeRecords, probeRules } from '../probe-application.js'
 import { ConflictScreen } from '../site/conflicts.js'
 import { SyncClient } from './client.js'
+import { SyncStatusBar } from './bar.js'
 import { DecisionFrame } from './decisions.js'
 import type { DirectWriter } from './client.js'
 import { SyncProvider } from './provider.js'
-import { openLocalStore } from './store.js'
+import { openLocalStore, waitingIn } from './store.js'
 import type { PullResult, SyncTransport } from './transport.js'
 import { RequestRefused } from './transport.js'
 import { isLocked } from '../testing.js'
@@ -1253,5 +1254,111 @@ describe('"Konflikte" on site', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'Eintrag verwerfen' }))
 
     expect(await screen.findByRole('region', { name: 'Keine Konflikte' })).toBeTruthy()
+  })
+})
+
+describe('what waits on the device for nobody', () => {
+  /**
+   * A device whose store a version before kept a note and a photo in for
+   * nobody, opened now for Anna.
+   */
+  async function withUnowned(photo: boolean) {
+    const tenant = `decisions${String((counter += 1))}`
+    const before = await openLocalStore(tenant)
+
+    await before.queue({
+      id: 'op-before',
+      entity: 'notes',
+      recordId: 'n-before',
+      kind: 'create',
+      baseVersion: null,
+      patches: [{ field: 'text', from: null, to: 'Leiter im Flur fehlt' }],
+      recordedAt,
+      deviceId: 'device',
+    } as unknown as Operation)
+
+    if (photo) {
+      await before.keepFile(
+        { sha256: 'f'.repeat(64), bytes: new ArrayBuffer(4), mediaType: 'image/jpeg' },
+        true,
+      )
+    }
+
+    before.close()
+
+    const started = await SyncClient.start({
+      store: await openLocalStore(tenant, 'anna'),
+      transport: server,
+      writer: server,
+      rules: probeRules,
+      deviceId: 'device',
+      entities: ['notes'],
+      onSignedOut: () => {},
+    })
+
+    await started.synchronise()
+
+    return { started, tenant }
+  }
+
+  it('is shown in the office under a strip, and goes out once the person says it is theirs', async () => {
+    const { started } = await withUnowned(false)
+
+    render(
+      <InProbe>
+        <Shell entry="office">
+          <SyncProvider client={started}>
+            <SyncStatusBar conflictsLink={(className) => <a className={className}>Ansehen</a>} />
+            <SyncScreen />
+          </SyncProvider>
+        </Shell>
+      </InProbe>,
+    )
+
+    expect(screen.getByText('Auf diesem Gerät warten 1 Änderung ohne Person.')).toBeTruthy()
+
+    const card = within(screen.getByRole('region', { name: '1 Änderung ohne Person' }))
+    const state = within(screen.getByRole('region', { name: 'Stand des Abgleichs' }))
+
+    expect(row(/Leiter im Flur fehlt/)).toEqual([
+      'Leiter im Flur fehlt',
+      'Angelegt',
+      moment(recordedAt),
+    ])
+    expect(card.getByText('Notiz')).toBeTruthy()
+    expect(state.getByText('1 Änderung ohne Person')).toBeTruthy()
+    expect(state.queryByText('Nichts wartet, nichts zu entscheiden')).toBeNull()
+    expect(server.sent.flat()).toEqual([])
+
+    await userEvent.setup().click(card.getByRole('button', { name: 'Das sind meine, senden' }))
+
+    await waitFor(() => {
+      expect(server.operations()).toEqual([
+        { entity: 'notes', kind: 'create', values: { text: 'Leiter im Flur fehlt' } },
+      ])
+    })
+    expect(await screen.findByRole('region', { name: 'Keine Konflikte' })).toBeTruthy()
+    expect(screen.queryByText('Auf diesem Gerät warten 1 Änderung ohne Person.')).toBeNull()
+  })
+
+  it('is let go on site, with its photo, and none of it goes out', async () => {
+    const { started, tenant } = await withUnowned(true)
+
+    onSite(started)
+
+    const state = within(screen.getByRole('list', { name: 'Stand des Abgleichs' }))
+    const card = within(screen.getByRole('region', { name: '1 Änderung und 1 Datei ohne Person' }))
+
+    expect(state.getByText('1 Änderung und 1 Datei ohne Person warten auf dem Gerät.')).toBeTruthy()
+    expect(card.getByText('Leiter im Flur fehlt')).toBeTruthy()
+    expect(card.getByText(`Angelegt, ${moment(recordedAt)}`)).toBeTruthy()
+    expect(card.getByText('Foto')).toBeTruthy()
+
+    await userEvent.setup().click(card.getByRole('button', { name: 'Verwerfen' }))
+
+    expect(await screen.findByRole('region', { name: 'Keine Konflikte' })).toBeTruthy()
+    await started.synchronise()
+    expect(server.sent.flat()).toEqual([])
+    expect(await waitingIn(tenant)).toBe(0)
   })
 })

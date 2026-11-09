@@ -1,3 +1,4 @@
+import { inOutboxOrder } from '@opengewerk/platform-domain'
 import type { Operation, OperationId, RecordState, SyncConflict } from '@opengewerk/platform-domain'
 
 /**
@@ -41,6 +42,24 @@ export interface StoredFile {
   readonly sha256: string
   readonly bytes: ArrayBuffer
   readonly mediaType: string
+}
+
+/** A file made here that waits for its upload, without its bytes. */
+export interface WaitingFile {
+  readonly sha256: string
+  readonly mediaType: string
+  /** When the device kept it, in milliseconds since the epoch. */
+  readonly since: number
+}
+
+/**
+ * What waits on the device for nobody: changes and files queued before the
+ * store recorded whose they are (`sendableBy`). Nobody sends them until the
+ * person signed in says they made them.
+ */
+export interface UnownedChanges {
+  readonly operations: readonly Operation[]
+  readonly files: readonly WaitingFile[]
 }
 
 export interface LocalStore {
@@ -87,6 +106,26 @@ export interface LocalStore {
    * is gone, false when it stays or was never here.
    */
   dropFile(sha256: string): Promise<boolean>
+
+  /**
+   * The changes and files that wait here for nobody, oldest first. Nothing
+   * for a store opened without an owner, whose outbox answers with all of it
+   * anyway.
+   */
+  readUnowned(): Promise<UnownedChanges>
+  /**
+   * The named changes and files, recorded for the person the store is open
+   * for, who said they made them: from now on they go out with theirs. Only
+   * those still without a person, and only while the store is still that
+   * person's (`StoreTakenOver`).
+   */
+  adoptUnowned(operations: readonly OperationId[], files: readonly string[]): Promise<void>
+  /**
+   * The named changes and files off this device, as signing out would take
+   * them. Only those still without a person: what somebody has adopted in
+   * another tab meanwhile stays theirs.
+   */
+  dropUnowned(operations: readonly OperationId[], files: readonly string[]): Promise<void>
 
   /** The person the store was opened for, whose changes it sends; none for a count before a sign out. */
   readonly owner?: string
@@ -204,6 +243,18 @@ function sendableBy(row: unknown, owner: string | undefined): boolean {
   const recordedFor = (row as { owner?: string }).owner
 
   return owner === undefined || recordedFor === owner
+}
+
+/** A row of the list of uploads. */
+interface UploadRow {
+  readonly sha256: string
+  readonly since: number
+  readonly owner?: string
+}
+
+/** Whether a row of the outbox or the uploads says for nobody whose it is. */
+function nobodys(row: unknown): boolean {
+  return (row as { owner?: string }).owner === undefined
 }
 
 function upgrade(database: IDBDatabase): void {
@@ -684,6 +735,95 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
       await finished(transaction)
 
       return dropped
+    },
+
+    async readUnowned() {
+      if (owner === undefined) {
+        return { operations: [], files: [] }
+      }
+
+      const transaction = await held([outboxStore, uploadStore, fileStore], 'readonly')
+      const [queued, uploads] = await Promise.all([
+        promised<unknown[]>(transaction.objectStore(outboxStore).getAll()),
+        promised<UploadRow[]>(transaction.objectStore(uploadStore).getAll()),
+      ])
+      const waiting = uploads.filter(nobodys).sort((left, right) => left.since - right.since)
+      // Every request at once, before the transaction can commit.
+      const kept = await Promise.all(
+        waiting.map(({ sha256 }) =>
+          promised<StoredFile | undefined>(transaction.objectStore(fileStore).get(sha256)),
+        ),
+      )
+
+      return {
+        operations: inOutboxOrder(queued.filter(nobodys).map(fromStored)),
+        files: waiting.flatMap(({ sha256, since }, at) => {
+          const file = kept[at]
+
+          return file ? [{ sha256, since, mediaType: file.mediaType }] : []
+        }),
+      }
+    },
+
+    async adoptUnowned(operations, files) {
+      if (owner === undefined) {
+        return
+      }
+
+      // One transaction that asks whose the store is and writes: a tab of
+      // the account before must not hand what it showed to the one after.
+      const transaction = await held([outboxStore, uploadStore], 'readwrite')
+      const outbox = transaction.objectStore(outboxStore)
+      const uploads = transaction.objectStore(uploadStore)
+      const [queued, waiting] = await Promise.all([
+        Promise.all(operations.map((id) => promised<unknown>(outbox.get(id)))),
+        Promise.all(files.map((sha256) => promised<UploadRow | undefined>(uploads.get(sha256)))),
+      ])
+
+      for (const row of queued) {
+        if (row !== undefined && nobodys(row)) {
+          outbox.put({ ...(row as object), owner })
+        }
+      }
+
+      for (const row of waiting) {
+        if (row !== undefined && nobodys(row)) {
+          uploads.put({ ...row, owner })
+        }
+      }
+
+      await finished(transaction)
+    },
+
+    async dropUnowned(operations, files) {
+      if (owner === undefined) {
+        return
+      }
+
+      const transaction = await held([outboxStore, uploadStore, fileStore], 'readwrite')
+      const outbox = transaction.objectStore(outboxStore)
+      const uploads = transaction.objectStore(uploadStore)
+      const [queued, waiting] = await Promise.all([
+        Promise.all(operations.map((id) => promised<unknown>(outbox.get(id)))),
+        Promise.all(files.map((sha256) => promised<UploadRow | undefined>(uploads.get(sha256)))),
+      ])
+
+      operations.forEach((id, at) => {
+        const row = queued[at]
+
+        if (row !== undefined && nobodys(row)) {
+          outbox.delete(id)
+        }
+      })
+
+      for (const row of waiting) {
+        if (row !== undefined && nobodys(row)) {
+          uploads.delete(row.sha256)
+          transaction.objectStore(fileStore).delete(row.sha256)
+        }
+      }
+
+      await finished(transaction)
     },
 
     async clear() {
