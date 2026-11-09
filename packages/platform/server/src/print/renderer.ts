@@ -56,10 +56,13 @@ export function withPrintPolicy(html: string): string {
 /**
  * Where the opening tag of the head ends, `<head>` or `<head ...>` and never
  * `<header>`, or null. Only a head before anything else counts: after the
- * doctype, the opening tag of the page and comments. One inside a comment is
- * no head, and one behind the content of a page is one the browser does not
- * take as such either; the policy then stands at the start, where the browser
- * makes a head of its own. Read from the start and only as far as that, never
+ * doctype and the opening tag of the page. One behind the content of a page
+ * is one the browser does not take as such, and a comment before it is not
+ * read here at all: where a comment ends, `<!-->`, `--!>` and the rest of the
+ * rules of the parser decide, and a guess that differs from the browser's
+ * would put the policy into the body, where it counts for nothing. Null then,
+ * and the policy stands at the start, where the browser makes a head of its
+ * own and puts it in. Read from the start and only as far as that, never
  * matched with a pattern over the whole page, which is as long as its
  * embedded images.
  */
@@ -70,17 +73,6 @@ function endOfHead(html: string): number | null {
   for (;;) {
     while (at < lower.length && blank.includes(lower.charAt(at))) {
       at += 1
-    }
-
-    if (lower.startsWith('<!--', at)) {
-      const close = lower.indexOf('-->', at + 4)
-
-      if (close === -1) {
-        return null
-      }
-
-      at = close + 3
-      continue
     }
 
     if (lower.startsWith('<!doctype', at) || opensTag(lower, at, 'html')) {
