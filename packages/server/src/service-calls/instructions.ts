@@ -138,52 +138,41 @@ export interface EarlyStartRefusal {
   readonly fields: readonly string[]
 }
 
+/** What became of a request for an early start arriving from a device. */
+export type EarlyStartArrival =
+  | { readonly refusal: EarlyStartRefusal; readonly wording: null }
+  | { readonly refusal: null; readonly wording: EarlyStartWording }
+
 /**
  * Whether a request for an early start arriving from a device was signed under
  * what this server shows for its job, like a signature under a report
- * (`signatureRefusal`). The device sends the fingerprint of the sheets the
- * customer read; here they are put together again for the day of the
- * signature. Different, the office changed a wording or the customer in the
- * meantime, and the request is refused as a conflict rather than kept under
- * words the customer never saw. A job that is gone, no longer a service call
- * or whose customer is a business now is refused the same way.
+ * (`signatureRefusal`), and under which words. The device sends the
+ * fingerprint of the sheets the customer read; here they are put together
+ * again for the day of the signature. Different, the office changed a wording
+ * or the customer in the meantime, and the request is refused as a conflict
+ * rather than kept under words the customer never saw. A job that is gone, no
+ * longer a service call or whose customer is a business now is refused the
+ * same way. Let through, the words are those of this one read, the ones just
+ * compared: kept from it and not read again, they are the words whose
+ * fingerprint the device sent, whatever the settings say a moment later.
  */
-export async function earlyStartRefusal(
+export async function earlyStartArrival(
   tx: TenantTransaction,
   values: Readonly<Record<string, unknown>>,
-): Promise<EarlyStartRefusal | null> {
+): Promise<EarlyStartArrival> {
   const held = await instructionsForRequest(tx, values)
 
   if (!held) {
-    return { reason: 'record_missing', fields: ['jobId'] }
+    return { refusal: { reason: 'record_missing', fields: ['jobId'] }, wording: null }
   }
 
   if (held.refusal !== null) {
-    return { reason: 'changed_elsewhere', fields: ['jobId'] }
+    return { refusal: { reason: 'changed_elsewhere', fields: ['jobId'] }, wording: null }
   }
 
   return values['contentFingerprint'] === held.fingerprint
-    ? null
-    : { reason: 'changed_elsewhere', fields: ['contentFingerprint'] }
-}
-
-/**
- * What a request for an early start was signed under, kept with it (see
- * `EarlyStartWording`). Asked once `earlyStartRefusal` let the request
- * through, in the same transaction, so these are the words whose fingerprint
- * the device sent.
- */
-export async function earlyStartWording(
-  tx: TenantTransaction,
-  values: Readonly<Record<string, unknown>>,
-): Promise<EarlyStartWording> {
-  const held = await instructionsForRequest(tx, values)
-
-  if (!held || held.refusal !== null) {
-    throw new Error('A request for an early start landed without instructions to keep.')
-  }
-
-  return { sheets: held.sheets, request: held.request }
+    ? { refusal: null, wording: { sheets: held.sheets, request: held.request } }
+    : { refusal: { reason: 'changed_elsewhere', fields: ['contentFingerprint'] }, wording: null }
 }
 
 /** The instructions of the job of a request, for the day of its signature; null for a job that is gone. */

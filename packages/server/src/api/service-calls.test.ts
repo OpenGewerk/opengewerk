@@ -23,7 +23,7 @@ import { aMailServer, testKey } from '@opengewerk/platform-server/testing'
 import { sql } from 'drizzle-orm'
 import type { Pool } from 'pg'
 import request from 'supertest'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { documentAttachments, withCallInstructions } from '../mail/attachments.js'
@@ -96,21 +96,51 @@ async function instructions(jobId: string, who = technician()): Promise<View> {
 }
 
 /**
+ * A moment between the check of a request for an early start and its write,
+ * for the test that changes the settings in it. Empty, the check is the
+ * check as it is.
+ */
+const between = vi.hoisted(() => ({ check: null as (() => Promise<void>) | null }))
+
+vi.mock('../service-calls/instructions.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../service-calls/instructions.js')>()
+
+  return {
+    ...original,
+    earlyStartArrival: async (...args: Parameters<typeof original.earlyStartArrival>) => {
+      const arrival = await original.earlyStartArrival(...args)
+      const moment = between.check
+
+      between.check = null
+      await moment?.()
+
+      return arrival
+    },
+  }
+})
+
+const owner = () => as(north.id, 'owner')
+
+/** The id of one of the instructions in the settings, by its template. */
+async function instructionId(template: string): Promise<string> {
+  const entry = (
+    (await http().get('/settings/instructions').set('x-test-identity', owner()).expect(200))
+      .body as { id: string; template: string | null }[]
+  ).find((each) => each.template === template)
+
+  return entry?.id ?? ''
+}
+
+/**
  * Words the owner gives one of the instructions in the settings, for as long
  * as `during` runs, and the shipped ones again afterwards.
  */
 async function reworded(template: string, body: string, during: () => Promise<void>) {
-  const owner = as(north.id, 'owner')
-  const entry = (
-    (await http().get('/settings/instructions').set('x-test-identity', owner).expect(200)).body as {
-      id: string
-      template: string | null
-    }[]
-  ).find((each) => each.template === template)
+  const id = await instructionId(template)
 
   await http()
-    .patch(`/settings/instructions/${entry?.id ?? ''}`)
-    .set('x-test-identity', owner)
+    .patch(`/settings/instructions/${id}`)
+    .set('x-test-identity', owner())
     .send({ body })
     .expect(200)
 
@@ -118,8 +148,8 @@ async function reworded(template: string, body: string, during: () => Promise<vo
     await during()
   } finally {
     await http()
-      .post(`/settings/instructions/${entry?.id ?? ''}/restore`)
-      .set('x-test-identity', owner)
+      .post(`/settings/instructions/${id}/restore`)
+      .set('x-test-identity', owner())
       .expect(201)
   }
 }
@@ -678,6 +708,44 @@ describe('the instructions as a PDF', () => {
     )
 
     expect(rows).toEqual([{ id: kept.id, wording: { sheets, request } }])
+  })
+
+  /**
+   * The settings changed between the check of a request and its write: what
+   * is kept is what the check compared, not what a second look would find.
+   */
+  it('keep the words the check let a request through under, though the settings change before the write', async () => {
+    const { job } = await aCall()
+    const { fingerprint, sheets, request } = await instructions(job)
+    const signed = aRequest(job, fingerprint)
+    const id = await instructionId('withdrawal')
+
+    between.check = async () => {
+      await http()
+        .patch(`/settings/instructions/${id}`)
+        .set('x-test-identity', owner())
+        .send({ body: 'Dazwischen anders formuliert.' })
+        .expect(200)
+    }
+
+    try {
+      expect((await push(app, technician(), [signed.operation])).receipts[0]?.outcome).toBe(
+        'applied',
+      )
+    } finally {
+      between.check = null
+      await http()
+        .post(`/settings/instructions/${id}/restore`)
+        .set('x-test-identity', owner())
+        .expect(201)
+    }
+
+    const { rows } = await admin.query<{ wording: unknown }>(
+      'select wording from early_start_requests where id = $1',
+      [signed.id],
+    )
+
+    expect(rows).toEqual([{ wording: { sheets, request } }])
   })
 
   it('do not print a request of another job', async () => {
