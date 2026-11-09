@@ -125,8 +125,8 @@ beforeEach(async () => {
 
   for (const [userId, person] of Object.entries(people)) {
     await admin.query(
-      `insert into auth_sessions (id, token, user_id, expires_at, active_tenant_id, created_at, updated_at)
-         values ($1, $1, $2, now() + interval '1 day', $3, now(), now())`,
+      `insert into auth_sessions (credential_generation, id, token, user_id, expires_at, active_tenant_id, created_at, updated_at)
+         values (0, $1, $1, $2, now() + interval '1 day', $3, now(), now())`,
       [`session-${userId}`, userId, person.tenant],
     )
   }

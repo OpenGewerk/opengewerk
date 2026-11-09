@@ -107,8 +107,11 @@ function pluginWords(name: string): Readonly<Record<string, string>> {
     CHALLENGE_NOT_FOUND:
       'Die Anfrage an den Browser ist abgelaufen. Bitte noch einmal von vorn, sie gilt fünf Minuten.',
     PASSKEY_NOT_FOUND: `Diesen Passkey kennt ${name} nicht, vielleicht wurde er gelöscht. Die Anmeldung mit dem Passwort geht weiter.`,
-    AUTHENTICATION_FAILED: 'Die Anmeldung mit dem Passkey ging nicht durch.',
-    FAILED_TO_VERIFY_REGISTRATION: 'Der Passkey ließ sich nicht prüfen und ist nicht angelegt.',
+    // Also what the plugin answers when the person did not confirm on the
+    // device, the most likely reason, which is why the sentence names it.
+    AUTHENTICATION_FAILED:
+      'Die Anmeldung mit dem Passkey ging nicht durch. Ein Passkey meldet nur mit Bestätigung am Gerät an, mit Fingerabdruck, Gesicht oder PIN.',
+    FAILED_TO_VERIFY_REGISTRATION: `Der Passkey ließ sich nicht prüfen und ist nicht angelegt. Ohne Bestätigung am Gerät, mit Fingerabdruck, Gesicht oder PIN, legt ${name} keinen Passkey an.`,
     SESSION_REQUIRED: 'Die Anmeldung ist abgelaufen. Bitte neu anmelden.',
   }
 }
@@ -147,6 +150,9 @@ const ownCodes: ReadonlySet<string> = new Set([
   'PASSKEY_WITHOUT_SESSION',
   'PASSKEY_NOT_RECORDED',
   'PASSWORD_RECENTLY_RESET',
+  // A sign in or a session that a revocation overtook (`credentials.ts` of
+  // the server).
+  'SESSION_REVOKED',
 ])
 
 /**

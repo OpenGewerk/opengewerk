@@ -1,6 +1,8 @@
 -- Takes the block `setup.sql` back out. A tenant and an account that were
 -- created through it stay: this undoes the way in, not what somebody did with
 -- it.
+DROP TRIGGER IF EXISTS "auth_sessions_fit_their_credentials" ON "auth_sessions";--> statement-breakpoint
+DROP FUNCTION IF EXISTS "session_fits_its_credentials"();--> statement-breakpoint
 DROP FUNCTION IF EXISTS "every_tenant"();--> statement-breakpoint
 DROP FUNCTION IF EXISTS "files_held"(text[]);--> statement-breakpoint
 -- The trigger on the roles goes wherever it hangs, not wherever a list claims

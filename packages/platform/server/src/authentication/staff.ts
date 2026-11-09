@@ -4,10 +4,11 @@ import { and, eq } from 'drizzle-orm'
 import { uuidv7 } from 'uuidv7'
 
 import type { Database, StraddlingTransaction, TenantTransaction } from '../database/database.js'
-import { authAccounts, authSessions, authUsers, memberships } from '../schema.js'
+import { authAccounts, authUsers, memberships } from '../schema.js'
 import { addressUnconfirmed } from './address-confirmation.js'
 import type { Authentication } from './authentication.js'
 import { recordPasswordReset } from './password-resets.js'
+import { revokeCredentials } from './credentials.js'
 
 /** What better-auth hands out once it has read its own configuration. */
 export type AuthenticationContext = Awaited<Authentication['$context']>
@@ -217,11 +218,15 @@ export async function replacePassword(
   const hashed = await context.password.hash(person.password)
 
   const replaced = await database.forInstance(async (tx) => {
+    // The account first, under its lock, as every write of a password takes
+    // it (`writePassword`): two of them at once then wait for each other and
+    // never for the other's row.
     const [user] = await tx
       .select({ id: authUsers.id })
       .from(authUsers)
       .where(eq(authUsers.email, email))
       .limit(1)
+      .for('update')
 
     if (!user) {
       return null
@@ -246,7 +251,10 @@ export async function replacePassword(
       })
     }
 
-    await tx.delete(authSessions).where(eq(authSessions.userId, user.id))
+    // A new password ends every session, and counts the credentials up, so
+    // that a sign in with the old one written a moment later is refused
+    // (`credentials.ts`).
+    await revokeCredentials(tx, user.id)
 
     return user.id
   })

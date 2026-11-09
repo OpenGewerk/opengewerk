@@ -557,6 +557,18 @@ describe('what went wrong with a passkey', () => {
     ).toBe('Diesen Passkey gibt es nicht.')
   })
 
+  it('says that the credentials changed where a revocation overtook the sign in', () => {
+    const revoked = new RequestRefused(
+      401,
+      'Die Zugangsdaten dieses Kontos wurden geändert. Bitte noch einmal anmelden.',
+      { code: 'SESSION_REVOKED' },
+    )
+
+    expect(passkeyTrouble(revoked, fallback, application)).toBe(
+      'Die Zugangsdaten dieses Kontos wurden geändert. Bitte noch einmal anmelden.',
+    )
+  })
+
   it('names the application by the name it was given, and by no other', () => {
     const unknown = new RequestRefused(400, 'Passkey not found', { code: 'PASSKEY_NOT_FOUND' })
 

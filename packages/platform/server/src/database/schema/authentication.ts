@@ -58,6 +58,13 @@ export const authUsers = pgTable(
      * cannot be switched off for an account (ADR 0006).
      */
     twoFactorEnabled: boolean('two_factor_enabled').default(false),
+    /**
+     * The count of the account's credentials, one up with every revocation:
+     * a new password, a reset, a factor given up, the account removed
+     * (`credentials.ts`). A session carries the count it was signed in under
+     * and is over once the two differ.
+     */
+    credentialGeneration: integer('credential_generation').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -116,6 +123,15 @@ export const authSessions = pgTable(
      * moves as the session is refreshed and would stop answering the question.
      */
     longLived: boolean('long_lived').notNull().default(false),
+    /**
+     * The count of the account's credentials as the sign in began, before any
+     * of them was read (`credentials.ts`). Never from a client and without a
+     * default. The database refuses a count the account no longer has
+     * (`session_fits_its_credentials`) and takes a row without one, which a
+     * version from before writes while an update runs; the server writes none
+     * and lets none in (`revokedSince`).
+     */
+    credentialGeneration: integer('credential_generation'),
     /**
      * With what this session was signed in (#167). Set when the row is
      * written, from the route that writes it, and never by a client: a

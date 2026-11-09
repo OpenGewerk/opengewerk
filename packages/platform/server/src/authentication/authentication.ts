@@ -5,7 +5,7 @@ import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { APIError, createAuthMiddleware, getSessionFromCtx, isAPIError } from 'better-auth/api'
 import { twoFactor } from 'better-auth/plugins'
-import { and, eq, exists, ne } from 'drizzle-orm'
+import { and, eq, exists, ne, or } from 'drizzle-orm'
 
 import { clientAddressHeader } from '../api/client-address.js'
 import type { ServerApplication } from '../configuration.js'
@@ -27,6 +27,21 @@ import {
   type RecoveryCodesNotice,
   type SecondFactorNotice,
 } from './notices.js'
+import {
+  endRevokedSession,
+  refusingRevokedSessions,
+  generationOfAccount,
+  generationOfAddress,
+  generationOfPasskey,
+  revokeCredentials,
+  reinstateConfirmedApp,
+  revokedSince,
+  secondStepStands,
+  writePassword,
+  withdrawUnconfirmedApp,
+  sessionRevoked,
+  theSession,
+} from './credentials.js'
 import { endOtherSessions } from './other-sessions.js'
 import { markUsed, recordAdded, recordWithdrawn } from './passkeys.js'
 import { shortestPassword } from './password.js'
@@ -237,6 +252,32 @@ const twoFactorCookie = 'two_factor'
 const replacingSession = '/change-password'
 
 /**
+ * Where the count of the credentials taken as a request began waits for the
+ * session the request writes (`credentials.ts`): on the context better-auth
+ * hands the same to the hook before a route and to the hooks of its tables.
+ * Server side only; nothing a client sends reaches it.
+ */
+const generationAtStart = 'openGewerkCredentialGeneration'
+
+/** The route that answers with the session of the cookies, or with none. */
+const askingForTheSession = '/get-session'
+
+/** The route that sets a new password through a link. */
+const resettingPassword = '/reset-password'
+
+/** The account a link to a new password is for, from the hook before the route to the write. */
+const accountOfReset = 'openGewerkAccountOfReset'
+
+/** The count a new password was written with, for the session written in the place of the old one. */
+const generationOfNewPassword = 'openGewerkGenerationOfNewPassword'
+
+/** How better-auth names the row of a sign in that waits for its second code. */
+const secondStep = '2fa-'
+
+/** And the row beside it that counts the wrong codes, which names no account. */
+const secondStepAttempts = '2fa-attempts-'
+
+/**
  * The relying party a passkey is bound to: the host of the first trusted
  * origin, where the instance is reached. A passkey works on exactly that host
  * and its subdomains, so the origins it is checked against are the trusted
@@ -371,21 +412,23 @@ export function createAuthentication({
     // as before.
     ...(trustedOrigins[0] ? { baseURL: trustedOrigins[0] } : {}),
     trustedOrigins: [...trustedOrigins],
-    database: drizzleAdapter(database.authenticationHandle(), {
-      provider: 'pg',
-      // The library looks a table up by its own name for the model; these are
-      // ours. Written out rather than left to a convention, because a rename on
-      // either side would otherwise fail at the first sign in and not here.
-      schema: {
-        user: authUsers,
-        session: authSessions,
-        account: authAccounts,
-        verification: authVerifications,
-        twoFactor: authTwoFactors,
-        passkey: authPasskeys,
-        rateLimit: authRateLimits,
-      },
-    }),
+    database: refusingRevokedSessions(
+      drizzleAdapter(database.authenticationHandle(), {
+        provider: 'pg',
+        // The library looks a table up by its own name for the model; these are
+        // ours. Written out rather than left to a convention, because a rename on
+        // either side would otherwise fail at the first sign in and not here.
+        schema: {
+          user: authUsers,
+          session: authSessions,
+          account: authAccounts,
+          verification: authVerifications,
+          twoFactor: authTwoFactors,
+          passkey: authPasskeys,
+          rateLimit: authRateLimits,
+        },
+      }),
+    ),
     emailAndPassword: {
       enabled: true,
       // Nobody signs themselves up. A tenant adds its staff, and an instance
@@ -419,8 +462,20 @@ export function createAuthentication({
       // that a link was used, when and for whom, and never the link. Awaited:
       // should it fail, the route answers with an error rather than with a
       // reset the log does not know of.
+      //
+      // The password and its count were written together before
+      // (`writePassword`, in the hook of the accounts), whatever becomes of
+      // the log. A link that sets the first password of an account has no old
+      // one a sign in could have checked, and counts nothing.
       onPasswordReset: async ({ user }) => {
         await recordPasswordReset(database, user.id)
+      },
+    },
+    user: {
+      additionalFields: {
+        // The count of the account's credentials (`credentials.ts`), read on
+        // every request against the session's. Never from a client.
+        credentialGeneration: { type: 'number', required: false, input: false },
       },
     },
     session: {
@@ -468,6 +523,10 @@ export function createAuthentication({
         // would be a way past the second factor. Without a default here: the
         // hook below sets it on every new row, and the column has one.
         secondFactor: { type: 'boolean', required: false, input: false },
+        // The count of the account's credentials as the sign in began
+        // (`credentials.ts`), set below when the row is written. A client
+        // writing it would be a way past a revocation.
+        credentialGeneration: { type: 'number', required: false, input: false },
       },
     },
     databaseHooks: {
@@ -490,10 +549,24 @@ export function createAuthentication({
           before: async (session, context) => {
             const path = context?.path ?? ''
             const replaced = path === replacingSession ? context?.context.session : null
+            // The session written in the place of the old one at a new
+            // password carries the count the password was written with
+            // (`writePassword`, in the hook of the accounts below). Every other
+            // session carries the count its sign in began with, and one
+            // without is not written.
+            const counts = context?.context as Record<string, unknown> | undefined
+            const credentialGeneration = replaced
+              ? (counts?.[generationOfNewPassword] ?? null)
+              : (counts?.[generationAtStart] ?? null)
+
+            if (credentialGeneration === null) {
+              return false
+            }
 
             return {
               data: {
                 ...session,
+                credentialGeneration,
                 expiresAt: new Date(Date.now() + sessionLifetimes.ordinary * 1000),
                 signInMethod: path === passkeySignIn ? 'passkey' : 'password',
                 secondFactor:
@@ -508,9 +581,107 @@ export function createAuthentication({
           // signed in that way shows the sign in again rather than a setup that
           // is done. A passkey session stays, it carries a second factor of its
           // own.
-          after: async (session) => {
+          //
+          // Only setting the app up takes credentials back and counts up
+          // (`credentials.ts`); the request comes with a session there, and at
+          // a sign in it does not. A sign in with the app or a passkey leaves
+          // the count, an open link and a sign in waiting on another device
+          // alone.
+          after: async (session, context) => {
             if (session.secondFactor === true) {
-              await endSessionsWithoutSecondFactor(database, session.userId, session.id)
+              await endSessionsWithoutSecondFactor(
+                database,
+                session.userId,
+                session.id,
+                context?.path === confirmingTheApp && Boolean(context.context.session),
+              )
+            }
+          },
+        },
+      },
+      account: {
+        update: {
+          // A new password, at a change or through a link, is written here and
+          // not by better-auth: with the count, under the lock of the account,
+          // and at a change only while the account still has the count of the
+          // session that asks (`writePassword`). better-auth then writes
+          // nothing itself. A change that a revocation overtook is refused
+          // and writes nothing.
+          //
+          // better-auth runs both writes in a transaction of its own only with
+          // `transaction: true` on the adapter, which is not set: with it, the
+          // transaction here would wait for the rows that one holds, and that
+          // one for this.
+          before: async (account, context) => {
+            const hash = (account as { password?: unknown }).password
+            const path = context?.path ?? ''
+
+            if (
+              typeof hash !== 'string' ||
+              (path !== replacingSession && path !== resettingPassword)
+            ) {
+              return
+            }
+
+            const counts = context?.context as Record<string, unknown> | undefined
+            const asking = path === replacingSession ? context?.context.session : null
+            const userId = asking ? asking.user.id : counts?.[accountOfReset]
+
+            if (typeof userId !== 'string') {
+              throw new APIError('UNAUTHORIZED', {
+                code: 'SESSION_REVOKED',
+                message: sessionRevoked,
+              })
+            }
+
+            const generation = await writePassword(
+              database,
+              userId,
+              hash,
+              asking
+                ? ((asking.session as { credentialGeneration?: unknown }).credentialGeneration ??
+                    null)
+                : undefined,
+            )
+
+            if (generation === null) {
+              throw new APIError('UNAUTHORIZED', {
+                code: 'SESSION_REVOKED',
+                message: sessionRevoked,
+              })
+            }
+
+            if (counts) {
+              counts[generationOfNewPassword] = generation
+            }
+
+            return false
+          },
+        },
+      },
+      verification: {
+        create: {
+          // A sign in that waits for its second code stands only under the
+          // count its password step began with (`credentials.ts`); one that a
+          // revocation overtook is told to begin again. The row that counts
+          // the wrong codes names no account and is left alone.
+          after: async (verification, context) => {
+            if (
+              !verification.identifier.startsWith(secondStep) ||
+              verification.identifier.startsWith(secondStepAttempts)
+            ) {
+              return
+            }
+
+            const generation = (context?.context as Record<string, unknown> | undefined)?.[
+              generationAtStart
+            ]
+
+            if (!(await secondStepStands(database, verification, generation))) {
+              throw new APIError('UNAUTHORIZED', {
+                code: 'SESSION_REVOKED',
+                message: sessionRevoked,
+              })
             }
           },
         },
@@ -535,6 +706,63 @@ export function createAuthentication({
        * (`sign-in-codes.ts`).
        */
       before: createAuthMiddleware(async (ctx) => {
+        // A session whose credentials were taken back since it was signed in
+        // is over at every route of better-auth as well (`credentials.ts`):
+        // whoever holds it changes no password and registers no passkey with
+        // it. Asking for the session is answered as for none, the row being
+        // gone, and better-auth takes the cookie with it; the server asks
+        // that way too (`session-identity.ts`). Every other route refuses.
+        // A session that fits its account by the time it would go was read
+        // across a revocation that kept it (`endRevokedSession`), and stays.
+        const current = await getSessionFromCtx(ctx)
+
+        if (
+          current &&
+          revokedSince(current) &&
+          (await endRevokedSession(database, current.session.id))
+        ) {
+          if (ctx.path !== askingForTheSession) {
+            throw new APIError('UNAUTHORIZED', { code: 'SESSION_REVOKED', message: sessionRevoked })
+          }
+
+          ctx.context.session = null
+        }
+
+        // The count of the credentials as a sign in begins, before better-auth
+        // reads any of them; the session it writes carries it.
+        const generation = await generationAtSignIn(database, ctx, current)
+
+        if (generation !== null) {
+          ;(ctx.context as unknown as Record<string, unknown>)[generationAtStart] = generation
+        }
+
+        if (ctx.path === replacingSession) {
+          // A new password ends every other session, whatever a client asks
+          // for: one it left would be signed in with the old password.
+          return {
+            context: { body: { ...(ctx.body as object), revokeOtherSessions: true } },
+          }
+        }
+
+        if (ctx.path === resettingPassword) {
+          // The account the link is for, for the write of the password. The
+          // token as better-auth takes it: from the body, or else from the
+          // address.
+          const token =
+            (ctx.body as { token?: unknown } | undefined)?.token ||
+            (ctx.query as { token?: unknown } | undefined)?.token
+          const link =
+            typeof token === 'string'
+              ? await ctx.context.internalAdapter.findVerificationValue(`reset-password:${token}`)
+              : null
+
+          if (link) {
+            ;(ctx.context as unknown as Record<string, unknown>)[accountOfReset] = link.value
+          }
+
+          return
+        }
+
         if (codesAtSignIn.has(ctx.path)) {
           // Only at a sign in: no session yet, but the cookie better-auth set
           // after the password, which names the account. Where the app is set
@@ -663,8 +891,30 @@ export function createAuthentication({
             // code that confirms it makes a new one; at a sign in there was
             // none yet.
             if (ctx.path === confirmingTheApp && ctx.context.session) {
-              await afterAppSetUp(ctx.context.newSession.user)
+              const { session, user } = ctx.context.newSession
+
+              // A second confirmation sent together with this one may have
+              // taken the app back (`reinstateConfirmedApp`). Switched on
+              // again, it ends what setting it up ends.
+              if (await reinstateConfirmedApp(database, user.id)) {
+                await endSessionsWithoutSecondFactor(database, user.id, session.id, true)
+              }
+
+              await afterAppSetUp(user)
             }
+          }
+
+          // A setup of the app that a revocation overtook leaves no account
+          // half switched over (`withdrawUnconfirmedApp`).
+          const returned = ctx.context.returned
+
+          if (
+            ctx.path === confirmingTheApp &&
+            ctx.context.session &&
+            isAPIError(returned) &&
+            (returned.body as { code?: unknown } | undefined)?.code === 'SESSION_REVOKED'
+          ) {
+            await withdrawUnconfirmedApp(database, ctx.context.session.user.id)
           }
 
           return
@@ -818,9 +1068,12 @@ export function createAuthentication({
        * in with it a second factor, which is what Moritz decided on
        * 24.09.2026 (#190).
        *
-       * The plugin asks the browser for that confirmation but takes an answer
-       * without it; `requireUserVerification` is false in its code. So the
-       * two checks after the plugin's own are ours, and they refuse.
+       * The plugin asks the browser for that confirmation, and with
+       * `userVerification: 'required'` it refuses an answer without it itself
+       * in better-auth 1.7.18, unlike 1.7.11, with a code of its own that the
+       * screen words (`passkeys.ts` of the web). The two checks after the
+       * plugin's own were the only ones before that and stay as a second
+       * line.
        */
       passkey({
         rpID: party.id,
@@ -989,19 +1242,74 @@ function routesOf(api: object): RegExp[] {
 }
 
 /**
+ * The count of the credentials as a sign in begins (`credentials.ts`), for
+ * each route that writes a session after a credential: the password, a
+ * passkey, a code after the password. Null for every other route, and for a
+ * sign in whose account cannot be found, which then fails by itself.
+ */
+async function generationAtSignIn(
+  database: Database,
+  ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0],
+  current: { readonly user: object } | null,
+): Promise<number | null> {
+  const body = (ctx.body ?? {}) as { email?: unknown; response?: { id?: unknown } }
+
+  if (ctx.path === '/sign-in/email') {
+    return typeof body.email === 'string' ? generationOfAddress(database, body.email) : null
+  }
+
+  if (ctx.path === passkeySignIn) {
+    return typeof body.response?.id === 'string'
+      ? generationOfPasskey(database, body.response.id)
+      : null
+  }
+
+  if (!codesAtSignIn.has(ctx.path)) {
+    return null
+  }
+
+  // Where the app is set up there is a session, and its account is the one.
+  if (current) {
+    const count = (current.user as { readonly credentialGeneration?: unknown }).credentialGeneration
+
+    return typeof count === 'number' ? count : null
+  }
+
+  // At a sign in, the cookie better-auth set after the password names the
+  // account. Its row stands only under the count the password step began
+  // with (`secondStepStands`), and a revocation since then ended it: the
+  // count the account has now is that one.
+  const challenge = await ctx.getSignedCookie(
+    ctx.context.createAuthCookie(twoFactorCookie).name,
+    ctx.context.secret,
+  )
+  const verification = challenge
+    ? await ctx.context.internalAdapter.findVerificationValue(challenge)
+    : null
+
+  return verification ? generationOfAccount(database, verification.value) : null
+}
+
+/**
  * Ends every session of an account that carries no second factor, apart from
  * the one named, once the account has the app (opengewerk-haustechnik#360).
  * As a new password ends the other sessions: the rows go, and with them the
  * cookies they stood behind.
+ *
+ * Where the app was just set up, that is a revocation: the count goes up, so
+ * that a sign in with the password alone that began before the app was there
+ * is refused as it writes its session (`credentials.ts`), and the sessions
+ * that stay take the new count. Anywhere else only the rows go.
  */
 async function endSessionsWithoutSecondFactor(
   database: Database,
   userId: string,
   keep: string,
+  appSetUp: boolean,
 ): Promise<void> {
-  await database.forInstance(
-    (tx) =>
-      tx.delete(authSessions).where(
+  await database.forInstance(async (tx) => {
+    if (!appSetUp) {
+      await tx.delete(authSessions).where(
         and(
           eq(authSessions.userId, userId),
           ne(authSessions.id, keep),
@@ -1013,7 +1321,24 @@ async function endSessionsWithoutSecondFactor(
               .where(and(eq(authUsers.id, userId), eq(authUsers.twoFactorEnabled, true))),
           ),
         ),
-      ),
-    userId,
-  )
+      )
+
+      return
+    }
+
+    const [account] = await tx
+      .select({ app: authUsers.twoFactorEnabled })
+      .from(authUsers)
+      .where(eq(authUsers.id, userId))
+
+    if (account?.app !== true) {
+      return
+    }
+
+    await revokeCredentials(
+      tx,
+      userId,
+      or(theSession(keep), eq(authSessions.secondFactor, true)) ?? theSession(keep),
+    )
+  }, userId)
 }

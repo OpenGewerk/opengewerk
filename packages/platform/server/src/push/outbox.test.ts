@@ -42,8 +42,8 @@ async function aSession(person: Person, over: { readonly ended?: boolean } = {})
   const id = `session-${person}-${newId()}`
 
   await admin.query(
-    `insert into auth_sessions (id, token, user_id, expires_at, active_tenant_id, created_at, updated_at)
-       values ($1, $1, $2, $3, $4, now(), now())`,
+    `insert into auth_sessions (credential_generation, id, token, user_id, expires_at, active_tenant_id, created_at, updated_at)
+       values (0, $1, $1, $2, $3, $4, now(), now())`,
     [id, person, over.ended ? '2001-01-01' : '2038-01-01', people[person].tenant],
   )
 

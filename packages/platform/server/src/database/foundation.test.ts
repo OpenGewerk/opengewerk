@@ -131,6 +131,7 @@ describe('the foundation, built from its building blocks alone', () => {
       'record_attachment_uploader',
       'record_change',
       'record_instance_change',
+      'session_fits_its_credentials',
       'stamp_sync_columns',
       'tenant_role_stays_whole',
       'tenants_with_leads',

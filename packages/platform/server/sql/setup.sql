@@ -182,6 +182,39 @@ BEGIN
 END;
 $$;--> statement-breakpoint
 
+-- A session is written only under the credentials it was signed in with:
+-- its count of them, taken as the sign in began, has to be the account's. The
+-- account is read under a lock, so that a revocation, which counts it up in
+-- the transaction that ends the sessions, either waits for this session and
+-- then ends it, or comes first and this one is refused.
+--
+-- A session without a count is taken. It is what a version of an application
+-- from before the count writes in the moment an update runs, before its image
+-- is replaced; the server does not let it in at its first request, and writes
+-- none itself.
+CREATE FUNCTION "session_fits_its_credentials"() RETURNS trigger
+	LANGUAGE plpgsql
+	SET search_path = pg_catalog, public
+AS $$
+DECLARE
+	standing integer;
+BEGIN
+	SELECT u.credential_generation INTO standing
+	  FROM public.auth_users u
+	 WHERE u.id = NEW.user_id
+	   FOR SHARE;
+
+	IF NEW.credential_generation IS NOT NULL
+	   AND (standing IS NULL OR NEW.credential_generation <> standing) THEN
+		RAISE EXCEPTION 'Die Anmeldung begann vor einer Änderung der Zugangsdaten und gilt nicht. Bitte noch einmal anmelden.'
+			USING ERRCODE = 'OG015';
+	END IF;
+
+	RETURN NEW;
+END;
+$$;--> statement-breakpoint
+CREATE TRIGGER "auth_sessions_fit_their_credentials" BEFORE INSERT OR UPDATE OF "credential_generation" ON "auth_sessions"
+	FOR EACH ROW EXECUTE FUNCTION "session_fits_its_credentials"();--> statement-breakpoint
 -- EXECUTE belongs to everybody by default, which for these four would mean
 -- every role in the cluster. Taken away first and given back to the one role
 -- that calls them, so that a role added later for something else does not
