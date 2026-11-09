@@ -26,7 +26,11 @@ import request from 'supertest'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
-import { documentAttachments, withCallInstructions } from '../mail/attachments.js'
+import {
+  documentAttachments,
+  reassignedCustomerMail,
+  withCallInstructions,
+} from '../mail/attachments.js'
 import { runMailCycle } from '../mail/worker.js'
 import { legacyInstructionsFingerprint, unsignedWording } from '../service-calls/instructions.js'
 import { ApiModule } from './api.module.js'
@@ -555,6 +559,85 @@ describe('the instructions by mail', () => {
 
     expect(sent.filter((mail) => mail.subject.startsWith('Belehrungen'))).toEqual([])
     expect((await instructions(job, office())).mails).toEqual([])
+  })
+
+  it('are not printed for a job given to another customer after the pass looked at it', async () => {
+    const { job } = await aCall()
+    const { fingerprint } = await instructions(job)
+
+    // What the job sent before goes out first, so that this pass carries only
+    // the instructions.
+    await cycle(recording().transport)
+    await push(app, technician(), [aRequest(job, fingerprint).operation])
+
+    const other = await post(
+      '/customers',
+      {
+        kind: 'private',
+        name: 'Erna Ernst',
+        isBusiness: false,
+        email: 'erna@example.com',
+        ...invoiceable,
+      },
+      office(),
+    )
+    // The pass reads the job with its customer twice: once writing the mail,
+    // once printing what it carries, after the worker found the job still the
+    // first customer's. The second read is held right there while the office
+    // gives the job to another customer.
+    const query = Client.prototype.query
+    let reached: () => void = () => undefined
+    let release: () => void = () => undefined
+    const atThePrint = new Promise<void>((resolve) => {
+      reached = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let reads = 0
+
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const values = typeof config === 'string' ? args[1] : (config?.values ?? args[1])
+      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+      if (text.includes('inner join "customers"') && JSON.stringify(values ?? []).includes(job)) {
+        reads += 1
+
+        if (reads === 2) {
+          reached()
+
+          return released.then(forward)
+        }
+      }
+
+      return forward()
+    } as typeof query
+
+    const { sent, transport } = recording()
+
+    try {
+      const passing = cycle(transport)
+
+      await atThePrint
+      await admin.query('update jobs set customer_id = $1 where id = $2', [other, job])
+      release()
+      await passing
+    } finally {
+      Client.prototype.query = query
+      release()
+    }
+
+    expect(sent.filter((mail) => mail.subject.startsWith('Belehrungen'))).toEqual([])
+    expect(
+      (
+        await admin.query(
+          `select status, last_error from mail_outbox where job_id = $1 and kind = 'job_instructions'`,
+          [job],
+        )
+      ).rows,
+    ).toEqual([{ status: 'failed', last_error: `ECUSTOMER: ${reassignedCustomerMail}` }])
   })
 
   it('are sent from the office for a call taken on the phone, once at a time', async () => {
