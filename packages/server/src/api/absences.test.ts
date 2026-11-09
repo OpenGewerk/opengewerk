@@ -403,6 +403,8 @@ describe('one’s own leave', () => {
 
       expect(await answer).toBe(404)
     } finally {
+      // A transaction a failed step left open would keep its lock on the row.
+      await held.query('rollback').catch(() => undefined)
       held.release()
     }
 
@@ -439,6 +441,8 @@ describe('one’s own leave', () => {
 
       expect(await answer).toBe(400)
     } finally {
+      // A transaction a failed step left open would keep its lock on the row.
+      await held.query('rollback').catch(() => undefined)
       held.release()
     }
 
