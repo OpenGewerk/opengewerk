@@ -418,9 +418,9 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
    * kept for reading and the cursor gone and pulls anew; the outbox, the
    * files waiting to be sent and what the application keeps for itself, a
    * running stopwatch with the person it is of, stay (opengewerk-haustechnik#31).
-   * A store from before this was kept goes to whoever opens it first, so that
-   * no device has to pull everything again after an update, maybe without a
-   * network.
+   * A store without a recorded account has no proof of whose records it
+   * holds, so its pulled data goes as well. Offline access resumes after a
+   * pull for the signed-in account.
    */
   async function claimFor(person: string): Promise<void> {
     // Read and written in one transaction. Read in one of its own, two tabs
@@ -441,25 +441,23 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
       return
     }
 
-    if (kept !== undefined) {
-      transaction.objectStore(recordStore).clear()
-      transaction.objectStore(conflictStore).clear()
-      for (const key of pulledKeys) {
-        transaction.objectStore(metaStore).delete(key)
-      }
+    transaction.objectStore(recordStore).clear()
+    transaction.objectStore(conflictStore).clear()
+    for (const key of pulledKeys) {
+      transaction.objectStore(metaStore).delete(key)
+    }
 
-      const waiting = new Set(
-        (await promised<IDBValidKey[]>(transaction.objectStore(uploadStore).getAllKeys())).map(
-          String,
-        ),
-      )
+    const waiting = new Set(
+      (await promised<IDBValidKey[]>(transaction.objectStore(uploadStore).getAllKeys())).map(
+        String,
+      ),
+    )
 
-      for (const key of await promised<IDBValidKey[]>(
-        transaction.objectStore(fileStore).getAllKeys(),
-      )) {
-        if (!waiting.has(String(key))) {
-          transaction.objectStore(fileStore).delete(key)
-        }
+    for (const key of await promised<IDBValidKey[]>(
+      transaction.objectStore(fileStore).getAllKeys(),
+    )) {
+      if (!waiting.has(String(key))) {
+        transaction.objectStore(fileStore).delete(key)
       }
     }
 
