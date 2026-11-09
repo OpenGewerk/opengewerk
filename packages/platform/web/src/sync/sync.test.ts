@@ -2295,4 +2295,46 @@ describe('what waits on a device for nobody', () => {
     expect(transport.sent.flat().map((operation) => operation.id)).toEqual(['op-before'])
     expect(client.status().unowned).toEqual({ operations: [], files: [] })
   })
+
+  it('sends nothing another tab let go of after the list was shown', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+
+    await queuedForNobody(tenant)
+
+    const client = await startFor(tenant, transport)
+    const other = await openLocalStore(tenant, 'anna')
+
+    // Another tab of Anna shows the same card, and lets it go.
+    await other.dropUnowned([operationId('op-before')], [])
+    other.close()
+
+    await client.adoptUnowned()
+
+    expect(transport.sent.flat()).toEqual([])
+    expect(client.status().pending).toBe(0)
+  })
+
+  it('sends nothing another account took on in between, when the store is back with this one', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+
+    await queuedForNobody(tenant)
+
+    const client = await startFor(tenant, transport)
+    const ben = await openLocalStore(tenant, 'ben')
+
+    await ben.adoptUnowned([operationId('op-before')], [])
+    ben.close()
+
+    // Anna signs in again in another tab; the store is hers again, and the
+    // tab that showed the list clicks on it.
+    const again = await openLocalStore(tenant, 'anna')
+
+    await client.adoptUnowned()
+    again.close()
+
+    expect(transport.sent.flat()).toEqual([])
+    expect(client.status().pending).toBe(0)
+  })
 })
