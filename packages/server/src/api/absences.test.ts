@@ -1,7 +1,7 @@
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import { Database, newId } from '@opengewerk/platform-server'
-import type { Pool } from 'pg'
+import { Client, type Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -296,6 +296,162 @@ describe('one’s own leave', () => {
 
       expect(rows).toEqual([stands])
     }
+  })
+
+  /**
+   * Two requests of the same person for overlapping days at once: the first
+   * has checked the days and is about to write when the second checks them.
+   * The second waits for the first and then finds its days taken.
+   */
+  it('is asked for twice at once on the same days, and the second finds them taken', async () => {
+    const query = Client.prototype.query
+    let reached: () => void = () => undefined
+    let release: () => void = () => undefined
+    const atTheWrite = new Promise<void>((resolve) => {
+      reached = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let armed = true
+
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+      if (armed && /^insert into "absences"/i.test(text.trim())) {
+        armed = false
+        reached()
+
+        return released.then(forward)
+      }
+
+      return forward()
+    } as typeof query
+
+    const statuses: number[] = []
+
+    try {
+      const ask = (firstDay: string, lastDay: string) =>
+        http()
+          .post('/absences/mine')
+          .set('x-test-identity', anna)
+          .send(days(firstDay, lastDay))
+          .then((answer) => {
+            statuses.push(answer.status)
+          })
+      const first = ask('2027-05-03', '2027-05-07')
+
+      await atTheWrite
+
+      const second = ask('2027-05-06', '2027-05-10')
+
+      // Until the second waits for the first, or, without the lock, is done.
+      for (let tries = 0; tries < 250 && statuses.length === 0; tries += 1) {
+        const { rows } = await admin.query<{ waiting: string }>(
+          `select count(*) as waiting from pg_stat_activity
+            where datname = current_database() and wait_event_type = 'Lock'
+              and query like 'select pg_advisory_xact_lock%'`,
+        )
+
+        if (Number(rows[0]?.waiting) > 0) {
+          break
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+
+      release()
+      await Promise.all([first, second])
+    } finally {
+      Client.prototype.query = query
+      release()
+    }
+
+    expect(statuses.sort()).toEqual([201, 409])
+
+    const { rows } = await admin.query<{ n: string }>(
+      `select count(*) as n from absences
+        where deleted_at is null and first_day <= '2027-05-10' and last_day >= '2027-05-03'`,
+    )
+
+    expect(Number(rows[0]?.n)).toBe(1)
+  })
+
+  /**
+   * The office changes the days of a request while the person takes it back:
+   * the change finds it gone and writes nothing onto it. The taking back is
+   * held open on a connection of its own until the change waits for it.
+   */
+  it('is not changed once it was taken out meanwhile', async () => {
+    const asked = await send('post', '/absences/mine', days('2027-06-07', '2027-06-08'), anna)
+    const held = await admin.connect()
+
+    try {
+      await held.query('begin')
+      await held.query('update absences set deleted_at = now() where id = $1', [asked.id])
+
+      const answer = http()
+        .patch(`/absences/${asked.id}`)
+        .set('x-test-identity', office)
+        .send({ note: 'Bitte mit Übergabe' })
+        .then((response) => response.status)
+
+      await waitingForALock('update "absences"')
+      await held.query('commit')
+
+      expect(await answer).toBe(404)
+    } finally {
+      // A transaction a failed step left open would keep its lock on the row.
+      await held.query('rollback').catch(() => undefined)
+      held.release()
+    }
+
+    const { rows } = await admin.query<{ note: string | null }>(
+      'select note from absences where id = $1',
+      [asked.id],
+    )
+
+    expect(rows).toEqual([{ note: null }])
+  })
+
+  /**
+   * The office changes a request while somebody else decides it: the change
+   * finds it decided and writes nothing onto it.
+   */
+  it('is not changed once it was decided meanwhile', async () => {
+    const asked = await send('post', '/absences/mine', days('2027-06-14', '2027-06-15'), anna)
+    const held = await admin.connect()
+
+    try {
+      await held.query('begin')
+      await held.query("update absences set state = 'rejected', decided_at = now() where id = $1", [
+        asked.id,
+      ])
+
+      const answer = http()
+        .patch(`/absences/${asked.id}`)
+        .set('x-test-identity', office)
+        .send({ note: 'Bitte mit Übergabe' })
+        .then((response) => response.status)
+
+      await waitingForALock('update "absences"')
+      await held.query('commit')
+
+      expect(await answer).toBe(400)
+    } finally {
+      // A transaction a failed step left open would keep its lock on the row.
+      await held.query('rollback').catch(() => undefined)
+      held.release()
+    }
+
+    const { rows } = await admin.query<{ note: string | null; state: string }>(
+      'select note, state from absences where id = $1',
+      [asked.id],
+    )
+
+    expect(rows).toEqual([{ note: null, state: 'rejected' }])
   })
 
   it('is always leave: a person cannot report themself sick or ask with a note on a sickness', async () => {

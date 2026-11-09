@@ -212,7 +212,14 @@ export async function callInstructionsMail(
     const call = await callOf(tx, notification.jobId)
 
     // A customer restricted on a request for deletion gets no mail (#845).
-    if (!call || (await customerRestricted(tx, call.customerId))) {
+    // Nor does the address of a customer the job no longer belongs to: the
+    // route took it in a transaction before this one, and a job given to
+    // another customer in between sent that one's details to it.
+    if (
+      !call ||
+      call.customerId !== notification.customerId ||
+      (await customerRestricted(tx, call.customerId))
+    ) {
       return []
     }
 

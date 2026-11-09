@@ -461,7 +461,10 @@ export class ArticleImports {
     let session: PlanningSession | null = null
 
     try {
-      const planning = await startPlanning(await this.bytesOf(row), row.charset ?? undefined)
+      const planning = await startPlanning(
+        await this.bytesOf(importer, row),
+        row.charset ?? undefined,
+      )
 
       session = planning
 
@@ -493,7 +496,44 @@ export class ArticleImports {
     }
   }
 
-  private async bytesOf(row: ImportRow): Promise<readonly DeliveredFile[]> {
+  /**
+   * The files of a delivery, refused by the sizes stored with them before a
+   * byte is read, as its start does: also where an import is read again with
+   * other options or taken over. An import that failed before its start asked
+   * them, larger than a delivery may unpack to, loaded all of it into the one
+   * process when it was read again.
+   */
+  private async bytesOf(importer: Importer, row: ImportRow): Promise<readonly DeliveredFile[]> {
+    const stored = await this.database.forTenant({ ...importer, reason: 'article.import' }, (tx) =>
+      tx
+        .select({ sha256: files.sha256, sizeBytes: files.sizeBytes })
+        .from(files)
+        .where(
+          inArray(
+            files.sha256,
+            row.files.map((file) => file.sha256),
+          ),
+        ),
+    )
+    const sizes = new Map(stored.map((file) => [file.sha256, file.sizeBytes]))
+    // A file whose row is gone has no size to count, and is refused as its
+    // start refuses one that was never uploaded; counted as nothing, it was
+    // loaded all the same.
+    const unsized = row.files.find((file) => !sizes.has(file.sha256))
+
+    if (unsized) {
+      throw new StoredFileMissingError(`Die Datei ${unsized.name} ist nicht mehr gespeichert.`)
+    }
+
+    // Counted for every name, since every name is loaded on its own: an
+    // import from before the start refused a file named twice named one up
+    // to twenty times.
+    if (
+      row.files.reduce((sum, file) => sum + (sizes.get(file.sha256) ?? 0), 0) > largestUnpackedBytes
+    ) {
+      throw new ZipRefused(deliveryTooLarge)
+    }
+
     return Promise.all(
       row.files.map(async (file) => ({
         name: file.name,
@@ -590,7 +630,10 @@ export class ArticleImports {
     try {
       // Read in its own thread before the transaction begins, so that the
       // transaction is not held open while the files are read.
-      const planning = await startPlanning(await this.bytesOf(row), row.charset ?? undefined)
+      const planning = await startPlanning(
+        await this.bytesOf(importer, row),
+        row.charset ?? undefined,
+      )
 
       session = planning
 

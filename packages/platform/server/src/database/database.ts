@@ -182,12 +182,18 @@ export class Database {
   /**
    * Runs the work for one tenant. Commits when it returns, rolls back when it
    * throws.
+   *
+   * Read committed, spelled out rather than left to the server's default, as
+   * in `forInstanceAndTenant`: a write that takes a lock and then reads what
+   * it checks (the absences of a person, a row read `for share`, the count of
+   * the credentials) reads what was committed while it waited. Under a
+   * stricter default it read a snapshot from before the wait.
    */
   async forTenant<Result>(
     actor: Actor,
     work: (tx: TenantTransaction) => Promise<Result>,
   ): Promise<Result> {
-    return this.inTenant(actor, work, 'begin')
+    return this.inTenant(actor, work, 'begin isolation level read committed')
   }
 
   /**
@@ -295,7 +301,8 @@ export class Database {
     let broken: Error | undefined
 
     try {
-      await client.query('begin')
+      // Read committed, for the reason given at `forTenant`.
+      await client.query('begin isolation level read committed')
       // The tenant is set to the empty string rather than left alone. A
       // connection comes back from the pool with nothing on it, so the two are
       // the same today; writing it down keeps them the same if that ever

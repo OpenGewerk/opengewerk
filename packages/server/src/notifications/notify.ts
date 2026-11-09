@@ -167,6 +167,8 @@ export type Notification =
       readonly kind: 'job_instructions'
       readonly jobId: JobId
       readonly request: string
+      /** The customer the address was taken from; the mail is written only for that one. */
+      readonly customerId: string
       readonly to: { readonly address: string; readonly name: string | null }
       readonly requestedBy: string
     }

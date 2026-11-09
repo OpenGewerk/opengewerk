@@ -15,7 +15,7 @@ import {
   UploadLimits,
 } from '@opengewerk/platform-server'
 import { aMailServer, testKey } from '@opengewerk/platform-server/testing'
-import type { Pool } from 'pg'
+import { Client, type Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -401,6 +401,86 @@ describe('a confirmation of an appointment (#315)', () => {
       },
       { id: kept, status: 'sent', last_error: null },
     ])
+  })
+
+  /**
+   * The calendar file is made as the mail goes, after the worker found the job
+   * still the first customer's. Made from a job given to another customer in
+   * between, it would carry the other's place to the address of the first.
+   */
+  it('carries no calendar file of a job given to another customer after the pass looked at it', async () => {
+    const first = await aCustomer()
+    const other = await aCustomer({ name: 'Familie Lehmann', email: 'lehmann@example.de' })
+    const job = await aJob(first)
+    const appointment = await anAppointment(job)
+
+    // What went before goes out first, so that this pass carries only this mail.
+    await cycle()
+
+    const { rows: written } = await admin.query<{ id: string }>(
+      `insert into mail_outbox
+         (tenant_id, kind, cause, sender_name, recipient_address, recipient_name, subject, body,
+          appointment_id, job_id, customer_id)
+       values ($1, 'appointment_confirmation', $2, 'Elektro Nord GmbH', 'arslan@example.de',
+               'Familie Arslan', 'Ihr Termin, gleich bei anderen', 'Text', $3, $4, $5)
+       returning id`,
+      [north.id, `appointment_confirmation:${appointment.id}:held`, appointment.id, job, first],
+    )
+    // Held right where the file reads the appointment with its job, while the
+    // office gives the job to another customer.
+    const query = Client.prototype.query
+    let reached: () => void = () => undefined
+    let release: () => void = () => undefined
+    const atTheFile = new Promise<void>((resolve) => {
+      reached = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let armed = true
+
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const values = typeof config === 'string' ? args[1] : (config?.values ?? args[1])
+      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+      if (
+        armed &&
+        text.includes('from "appointments" inner join "jobs"') &&
+        JSON.stringify(values ?? []).includes(appointment.id)
+      ) {
+        armed = false
+        reached()
+
+        return released.then(forward)
+      }
+
+      return forward()
+    } as typeof query
+
+    let sent: OutgoingMail[]
+
+    try {
+      const passing = cycle()
+
+      await atTheFile
+      await admin.query('update jobs set customer_id = $1 where id = $2', [other, job])
+      release()
+      sent = await passing
+    } finally {
+      Client.prototype.query = query
+      release()
+    }
+
+    expect(sent.map((mail) => mail.subject)).not.toContain('Ihr Termin, gleich bei anderen')
+
+    const { rows } = await admin.query<{ status: string; last_error: string | null }>(
+      'select status, last_error from mail_outbox where id = $1',
+      [written[0]?.id],
+    )
+
+    expect(rows).toEqual([{ status: 'failed', last_error: `ECUSTOMER: ${reassignedCustomerMail}` }])
   })
 
   it('goes to nobody for a customer without an address, and not about one that is over', async () => {

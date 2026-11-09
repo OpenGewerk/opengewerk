@@ -315,7 +315,12 @@ export async function appointmentInvitation(
   tenantId: TenantId,
   appointmentId: AppointmentId,
   attendee: CalendarParty,
-): Promise<{ readonly text: string; readonly method: 'REQUEST' | 'CANCEL' } | null> {
+): Promise<{
+  readonly text: string
+  readonly method: 'REQUEST' | 'CANCEL'
+  /** The customer of the job the file was made from, read with what it carries. */
+  readonly customerId: string
+} | null> {
   const [row] = await tx
     .select({
       id: appointments.id,
@@ -329,6 +334,7 @@ export async function appointmentInvitation(
       exdates: appointments.exdates,
       number: jobs.number,
       designation: jobs.designation,
+      customerId: jobs.customerId,
       street: sites.street,
       houseNumber: sites.houseNumber,
       postalCode: sites.postalCode,
@@ -352,6 +358,7 @@ export async function appointmentInvitation(
 
   return {
     method: cancelled ? 'CANCEL' : 'REQUEST',
+    customerId: row.customerId,
     text: invitationOf(
       {
         uid: row.id,

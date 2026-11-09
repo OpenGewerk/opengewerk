@@ -12,7 +12,11 @@ import type { DocumentFiles, MailedFile } from '../api/document-files.js'
 import { appointments, documents, jobs } from '../database/schema/index.js'
 import { customerRestricted } from '../privacy/customer-erasure.js'
 import { appointmentInvitation } from '../notifications/confirmation-mail.js'
-import { CallInstructionsRefused, callPrintFacts } from '../service-calls/instructions.js'
+import {
+  CallCustomerChanged,
+  CallInstructionsRefused,
+  callPrintFacts,
+} from '../service-calls/instructions.js'
 import type { OutboxRow } from './outbox.js'
 
 /** Where the files a message carries come from. Handed to the job, so a test can bring its own. */
@@ -100,6 +104,12 @@ export function documentAttachments(files: DocumentFiles): AttachmentSource {
  * or of the day the office asked. A call that gets none any more, or whose
  * letterhead lacks what the words need, will not print an hour later either,
  * and the message is given up on with the reason.
+ *
+ * Printed only for the customer the message was written for. The worker asks
+ * that before (`refuseWithheldCustomerMail`), in a transaction of its own; a
+ * job given to another customer right after would print the new customer's
+ * name and address for the first one's. So it is asked again on the very row
+ * the PDF is printed from.
  */
 export function withCallInstructions(
   files: DocumentFiles,
@@ -131,7 +141,13 @@ export function withCallInstructions(
 
     try {
       const facts = await database.forTenant({ tenantId: row.tenantId, reason: 'mail' }, (tx) =>
-        callPrintFacts(tx, jobId, row.earlyStartRequestId, berlinClock(row.createdAt).day),
+        callPrintFacts(
+          tx,
+          jobId,
+          row.earlyStartRequestId,
+          berlinClock(row.createdAt).day,
+          row.customerId,
+        ),
       )
 
       return [
@@ -142,6 +158,10 @@ export function withCallInstructions(
         },
       ]
     } catch (error) {
+      if (error instanceof CallCustomerChanged) {
+        throw new MailDeliveryError(reassignedCustomerMail, 'ECUSTOMER', null, { permanent: true })
+      }
+
       const final = error instanceof CallInstructionsRefused
 
       throw new MailDeliveryError(
@@ -159,6 +179,11 @@ export function withCallInstructions(
  * beside the others: made when the confirmation goes out, from the
  * appointment as it is then, so that a calendar holds what the board holds.
  * An appointment there is no trace of any more gives up the message.
+ *
+ * Made only for the customer the message was written for, asked on the read
+ * the file is made from: the worker asks before, in a transaction of its own,
+ * and a job given to another customer right after would carry the other's
+ * place to the first one's address.
  */
 export function withAppointmentInvitation(
   database: Database,
@@ -190,6 +215,10 @@ export function withAppointmentInvitation(
           permanent: true,
         },
       )
+    }
+
+    if (row.customerId !== null && file.customerId !== row.customerId) {
+      throw new MailDeliveryError(reassignedCustomerMail, 'ECUSTOMER', null, { permanent: true })
     }
 
     return [

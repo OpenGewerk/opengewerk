@@ -251,22 +251,35 @@ export const unsignedWording =
 /** Why the instructions of a call cannot be printed, as the sentence the office or the mail shows. */
 export class CallInstructionsRefused extends Error {}
 
+/** The job of the instructions belongs to another customer than the one they were to be printed for. */
+export class CallCustomerChanged extends Error {}
+
 /**
  * What the PDF of a call's instructions prints (#292): the words of the day
  * of the request signed at the door, with that request, or of `day` for the
  * sheets alone. Refused when the job gets none or the letterhead lacks what
  * the words need, with that sentence.
+ *
+ * With `forCustomer`, printed only while the job is still that customer's:
+ * checked on the row the recipient is read from, so that what is printed and
+ * what was checked are one read. A job given to another customer is refused
+ * with `CallCustomerChanged`.
  */
 export async function callPrintFacts(
   tx: TenantTransaction,
   jobId: JobId,
   requestId: string | null,
   day: IsoDate,
+  forCustomer: string | null = null,
 ): Promise<CallInstructionsPrint> {
   const call = await callOf(tx, jobId)
 
   if (!call) {
     throw new CallInstructionsRefused('Den Auftrag gibt es nicht mehr.')
+  }
+
+  if (forCustomer !== null && call.customerId !== forCustomer) {
+    throw new CallCustomerChanged('Der Auftrag gehört inzwischen zu einem anderen Kunden.')
   }
 
   const [request] = requestId

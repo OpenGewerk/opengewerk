@@ -263,7 +263,7 @@ export class CallInstructionsController {
         )
       }
 
-      return { jobId: call.id, address, name: call.customerName }
+      return { jobId: call.id, customerId: call.customerId, address, name: call.customerName }
     })
 
     const [id] = await notify(
@@ -272,6 +272,7 @@ export class CallInstructionsController {
       {
         kind: 'job_instructions',
         jobId: wish.jobId,
+        customerId: wish.customerId,
         request: randomUUID(),
         to: { address: wish.address, name: wish.name },
         requestedBy: identity.userId,
@@ -284,7 +285,10 @@ export class CallInstructionsController {
     )
 
     if (!written) {
-      throw new ConflictException('Die Nachricht ließ sich nicht anlegen.')
+      throw new ConflictException(
+        'Die Nachricht ließ sich nicht anlegen. Gehört der Auftrag inzwischen einem anderen ' +
+          'Kunden, bitte neu öffnen.',
+      )
     }
 
     return shown(written, await accountsOf(this.database, [identity.userId], identity.userId))
