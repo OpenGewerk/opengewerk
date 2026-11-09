@@ -23,7 +23,7 @@ import {
   refusalText,
 } from './client.js'
 import { byRecord, project } from './projection.js'
-import { type LocalStore, openLocalStore, waitingIn } from './store.js'
+import { type LocalStore, openLocalStore, StoreTakenOver, waitingIn } from './store.js'
 import { updatesHeld } from '../shell/updates.js'
 import type { ChangedRows, PullResult, SyncTransport } from './transport.js'
 import { RequestRefused } from './transport.js'
@@ -2227,5 +2227,39 @@ describe('what waits on a device for nobody', () => {
       'op-before',
     ])
     ben.close()
+  })
+
+  it('signs a tab out whose store another account takes over right after it took the list on', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+    const store = await openLocalStore(tenant, 'anna')
+    let reads = 0
+    let signedOut = 0
+
+    await queuedForNobody(tenant)
+    writer = new Writing()
+
+    // The second read of the list comes after another account took the store over.
+    const client = await Client.start({
+      store: {
+        ...store,
+        readUnowned: () =>
+          (reads += 1) > 1 ? Promise.reject(new StoreTakenOver()) : store.readUnowned(),
+      },
+      transport,
+      writer,
+      rules,
+      deviceId: 'device',
+      entities,
+      onSignedOut: () => {
+        signedOut += 1
+      },
+    })
+
+    await client.adoptUnowned()
+
+    expect(signedOut).toBe(1)
+    expect(client.status().unowned).toEqual({ operations: [], files: [] })
+    expect(transport.sent.flat()).toEqual([])
   })
 })

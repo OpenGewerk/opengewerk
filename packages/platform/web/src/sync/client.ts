@@ -1501,9 +1501,24 @@ export class SyncClient {
     this.outbox = inOutboxOrder([...this.outbox, ...adopted])
     this.filesWaiting = await this.store.countWaitingFiles()
     this.regroup()
-    this.publish({ pending: this.outbox.length, unowned: await this.store.readUnowned() })
+    this.publish({ pending: this.outbox.length })
+
+    if (!(await this.reloadUnowned())) {
+      return
+    }
 
     await this.synchronise()
+  }
+
+  /**
+   * The list read again after it changed. Another account may take the store
+   * over between that change and this read, and then this tab signs out as
+   * well, instead of keeping the list it showed.
+   */
+  private reloadUnowned(): Promise<boolean> {
+    return this.onUnowned(async () => {
+      this.publish({ unowned: await this.store.readUnowned() })
+    })
   }
 
   /**
@@ -1524,7 +1539,7 @@ export class SyncClient {
       return
     }
 
-    this.publish({ unowned: await this.store.readUnowned() })
+    await this.reloadUnowned()
   }
 
   /**
