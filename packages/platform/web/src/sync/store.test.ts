@@ -68,7 +68,7 @@ describe('the outbox of a device with more than one person', () => {
     back.close()
   })
 
-  it('goes to whoever opens it next, for a change from before the person was kept', async () => {
+  it('is sent by nobody, for a change from before the person was kept, and still counted', async () => {
     const tenant = aTenant()
     const before = await openLocalStore(tenant)
 
@@ -77,8 +77,14 @@ describe('the outbox of a device with more than one person', () => {
 
     const ben = await openLocalStore(tenant, 'ben')
 
-    expect((await ben.readOutbox()).map((operation) => operation.id)).toEqual(['op-before'])
+    expect(await ben.readOutbox()).toEqual([])
     ben.close()
+
+    // Counting before a sign out still finds it.
+    const counting = await openLocalStore(tenant)
+
+    expect((await counting.readOutbox()).map((operation) => operation.id)).toEqual(['op-before'])
+    counting.close()
   })
 })
 
@@ -143,11 +149,11 @@ describe('what a device holds of the server, with more than one person', () => {
     await anna.write('site_accesses', [{ id: 'z-2', value: '0815' }])
     anna.close()
 
-    // What was waiting to be sent stays, and what Anna pulled is hers.
+    // What Anna pulled is hers; the change of nobody waits, for nobody.
     const again = await openLocalStore(tenant, 'anna')
 
     expect(await again.readAll('site_accesses')).toEqual([{ id: 'z-2', value: '0815' }])
-    expect(await again.readOutbox()).toEqual([aNote('op-before', 'Leiter im Flur')])
+    expect(await again.readOutbox()).toEqual([])
     again.close()
   })
 

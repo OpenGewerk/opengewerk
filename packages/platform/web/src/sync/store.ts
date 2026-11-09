@@ -194,13 +194,16 @@ function fromStored(row: unknown): Operation {
 
 /**
  * Whether an operation in the outbox is one the person the store is open for
- * may send. One from before the person was recorded has nobody, and goes to
- * whoever opens the store first, which is what it did before.
+ * may send. One from before the person was recorded, before version 0.5.0,
+ * says for nobody whose it is, and nobody sends it: whoever opened the store
+ * next sent it with their own name and rights on it. It waits on the device,
+ * where counting before a sign out still finds it, and goes with the sign
+ * out. Opened without an owner, the store answers with everything.
  */
 function sendableBy(row: unknown, owner: string | undefined): boolean {
   const recordedFor = (row as { owner?: string }).owner
 
-  return owner === undefined || recordedFor === undefined || recordedFor === owner
+  return owner === undefined || recordedFor === owner
 }
 
 function upgrade(database: IDBDatabase): void {
