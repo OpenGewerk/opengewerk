@@ -371,6 +371,52 @@ describe('the count of the credentials of an account', () => {
     expect(await secondStepsOf(userId)).toBe(0)
   })
 
+  it('takes the app back when a revocation overtakes its setup', async () => {
+    const email = 'einrichten@nord.example.de'
+    const userId = await person(email)
+    const cookies = cookiesOf(
+      await post('/sign-in/email').send({ email, password: first }).expect(200),
+    )
+    const enabled = await post('/two-factor/enable', cookies)
+      .send({ password: first, method: 'totp' })
+      .expect(200)
+    const code = await currentCode((enabled.body as { totpURI: string }).totpURI)
+    let answer: Response | undefined
+    let confirming: Promise<void> = Promise.resolve()
+
+    await instance.database.forInstance(async (tx) => {
+      await revokeCredentials(tx, userId)
+
+      const { rows } = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`)
+
+      // The code is right, and better-auth marks the account as having the
+      // app; that waits for the revocation, and the session it writes after
+      // carries the count from before.
+      confirming = post('/two-factor/verify-totp', cookies)
+        .send({ code })
+        .then((received) => {
+          answer = received
+        })
+      await blockedBy(Number(rows[0]?.pid), () => answer !== undefined)
+    }, userId)
+    await confirming
+
+    expect(answer?.status).toBe(401)
+    expect((answer?.body as { code?: string } | undefined)?.code).toBe('SESSION_REVOKED')
+
+    const { rows } = await admin.query<{ app: boolean }>(
+      'select two_factor_enabled as app from auth_users where id = $1',
+      [userId],
+    )
+
+    expect(rows[0]?.app).toBe(false)
+
+    // Signed in with the password alone, as before the setup.
+    const again = await post('/sign-in/email').send({ email, password: first }).expect(200)
+
+    expect((again.body as { twoFactorRedirect?: boolean }).twoFactorRedirect).toBeUndefined()
+  })
+
   it('ends a sign in that waits for its second code', async () => {
     const email = 'zweiter@nord.example.de'
     const userId = await person(email)

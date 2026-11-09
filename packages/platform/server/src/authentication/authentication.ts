@@ -36,6 +36,7 @@ import {
   revokeCredentials,
   revokedSince,
   secondStepStands,
+  withdrawUnconfirmedApp,
   sessionRevoked,
   theSession,
 } from './credentials.js'
@@ -840,6 +841,19 @@ export function createAuthentication({
             if (ctx.path === confirmingTheApp && ctx.context.session) {
               await afterAppSetUp(ctx.context.newSession.user)
             }
+          }
+
+          // A setup of the app that a revocation overtook leaves no account
+          // half switched over (`withdrawUnconfirmedApp`).
+          const returned = ctx.context.returned
+
+          if (
+            ctx.path === confirmingTheApp &&
+            ctx.context.session &&
+            isAPIError(returned) &&
+            (returned.body as { code?: unknown } | undefined)?.code === 'SESSION_REVOKED'
+          ) {
+            await withdrawUnconfirmedApp(database, ctx.context.session.user.id)
           }
 
           return

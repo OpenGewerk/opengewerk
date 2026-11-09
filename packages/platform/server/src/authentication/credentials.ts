@@ -1,10 +1,16 @@
 import { APIError } from 'better-auth/api'
 import type { drizzleAdapter } from 'better-auth/adapters/drizzle'
-import { and, eq, not, sql, type SQL } from 'drizzle-orm'
+import { and, eq, not, notExists, sql, type SQL } from 'drizzle-orm'
 
 import { databaseCode } from '../api/database-errors.js'
 import type { Database } from '../database/database.js'
-import { authPasskeys, authSessions, authUsers, authVerifications } from '../schema.js'
+import {
+  authPasskeys,
+  authSessions,
+  authTwoFactors,
+  authUsers,
+  authVerifications,
+} from '../schema.js'
 
 /**
  * The count of an account's credentials, against a session written after
@@ -162,6 +168,37 @@ export async function secondStepStands(
 
     return false
   }, waiting.value)
+}
+
+/**
+ * Takes an app back that was being set up when a revocation overtook it.
+ * better-auth marks the account as having the app before it writes the
+ * session that confirms it, and the app is confirmed only after that session:
+ * refused by the count, it left an account that asks for a code its app was
+ * never confirmed for, and so could not sign in with it. The account goes
+ * back to how it was before the setup, and an app that was confirmed already
+ * stays.
+ */
+export async function withdrawUnconfirmedApp(database: Database, userId: string): Promise<void> {
+  await database.forInstance(
+    (tx) =>
+      tx
+        .update(authUsers)
+        .set({ twoFactorEnabled: false })
+        .where(
+          and(
+            eq(authUsers.id, userId),
+            eq(authUsers.twoFactorEnabled, true),
+            notExists(
+              tx
+                .select({ id: authTwoFactors.id })
+                .from(authTwoFactors)
+                .where(and(eq(authTwoFactors.userId, userId), eq(authTwoFactors.verified, true))),
+            ),
+          ),
+        ),
+    userId,
+  )
 }
 
 /** Takes a session whose credentials were taken back out of the database. */
