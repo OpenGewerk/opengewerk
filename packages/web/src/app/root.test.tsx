@@ -44,7 +44,7 @@ let counter = 0
 /** A business whose jobs are already on this device, from an earlier day with a network. */
 async function businessOnTheDevice(): Promise<TenantId> {
   const tenantId = `root${String((counter += 1))}` as TenantId
-  const store = await openLocalStore(tenantId)
+  const store = await openLocalStore(tenantId, account.userId)
   const quiet = {
     push: (_device: string, operations: readonly Operation[]) =>
       Promise.resolve(
