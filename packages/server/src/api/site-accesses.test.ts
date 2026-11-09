@@ -2,13 +2,14 @@ import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import type { RoleKey, TenantId } from '@opengewerk/domain'
 import { Database, newId, SecretKey } from '@opengewerk/platform-server'
-import { Client, type Pool } from 'pg'
+import type { Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
 import { withAccessStates } from './sync-routes.js'
+import { holdQuery } from './test-hold.js'
 import { type Somebody, testIdentities as identities } from './test-identity.js'
 import { created, push } from './test-structure.js'
 
@@ -246,80 +247,46 @@ describe('an access to a site', () => {
     const id = String(access['id'])
     // The reveal has read its row and is about to read the value; it is held
     // right there while the office sets a new one.
-    const query = Client.prototype.query
-    let reached: () => void = () => undefined
-    let release: () => void = () => undefined
-    const atTheValue = new Promise<void>((resolve) => {
-      reached = resolve
-    })
-    const released = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    let armed = true
-
-    Client.prototype.query = function (this: Client, ...args: unknown[]) {
-      const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
-      const text = typeof config === 'string' ? config : (config?.text ?? '')
-      const values = (typeof config === 'string' ? args[1] : (config?.values ?? args[1])) as
-        unknown[] | undefined
-      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
-
-      if (
-        armed &&
-        /^select/i.test(text.trim()) &&
-        text.includes('"secrets"') &&
-        values?.includes(id)
-      ) {
-        armed = false
-        reached()
-
-        return released.then(forward)
-      }
-
-      return forward()
-    } as typeof query
-
-    let shown: request.Response
+    const value = holdQuery(
+      (text, values) =>
+        /^select/i.test(text.trim()) && text.includes('"secrets"') && values.includes(id),
+    )
     let changed: request.Response | undefined
+    const revealing = http()
+      .post(`/sites/${site}/accesses/${id}/reveal`)
+      .set('x-test-identity', office())
+      .then((answer) => answer)
 
-    try {
-      const revealing = http()
-        .post(`/sites/${site}/accesses/${id}/reveal`)
-        .set('x-test-identity', office())
-        .then((answer) => answer)
+    await value.reached
 
-      await atTheValue
+    const changing = http()
+      .patch(`/sites/${site}/accesses/${id}`)
+      .set('x-test-identity', office())
+      .send({ value: 'Code 2222' })
+      .then((answer) => {
+        changed = answer
+      })
 
-      const changing = http()
-        .patch(`/sites/${site}/accesses/${id}`)
-        .set('x-test-identity', office())
-        .send({ value: 'Code 2222' })
-        .then((answer) => {
-          changed = answer
-        })
+    // Until the change waits for the reveal, or, without the lock, is done.
+    for (let tries = 0; tries < 250 && changed === undefined; tries += 1) {
+      const { rows } = await admin.query<{ waiting: string }>(
+        `select count(*) as waiting from pg_stat_activity
+          where datname = current_database() and wait_event_type = 'Lock'
+            and query ilike '%for no key update%'`,
+      )
 
-      // Until the change waits for the reveal, or, without the lock, is done.
-      for (let tries = 0; tries < 250 && changed === undefined; tries += 1) {
-        const { rows } = await admin.query<{ waiting: string }>(
-          `select count(*) as waiting from pg_stat_activity
-            where datname = current_database() and wait_event_type = 'Lock'
-              and query ilike '%for no key update%'`,
-        )
-
-        if (Number(rows[0]?.waiting) > 0) {
-          break
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (Number(rows[0]?.waiting) > 0) {
+        break
       }
 
-      release()
-      shown = await revealing
-      await changing
-    } finally {
-      Client.prototype.query = query
-      release()
+      await new Promise((resolve) => setTimeout(resolve, 20))
     }
+
+    value.release()
+
+    const shown = await revealing
+
+    await changing
 
     const { rows } = await admin.query<{ value_set_at: Date }>(
       'select value_set_at from site_access_reveals where site_access_id = $1',

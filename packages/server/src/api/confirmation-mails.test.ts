@@ -15,7 +15,7 @@ import {
   UploadLimits,
 } from '@opengewerk/platform-server'
 import { aMailServer, testKey } from '@opengewerk/platform-server/testing'
-import { Client, type Pool } from 'pg'
+import type { Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -28,6 +28,7 @@ import {
 import { runMailCycle } from '../mail/worker.js'
 import { ApiModule } from './api.module.js'
 import { DocumentFiles } from './document-files.js'
+import { holdQuery } from './test-hold.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { invoiceable, readyToInvoice } from './test-invoice.js'
 
@@ -428,50 +429,17 @@ describe('a confirmation of an appointment (#315)', () => {
     )
     // Held right where the file reads the appointment with its job, while the
     // office gives the job to another customer.
-    const query = Client.prototype.query
-    let reached: () => void = () => undefined
-    let release: () => void = () => undefined
-    const atTheFile = new Promise<void>((resolve) => {
-      reached = resolve
-    })
-    const released = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    let armed = true
+    const file = holdQuery(
+      (text, values) =>
+        text.includes('from "appointments" inner join "jobs"') && values.includes(appointment.id),
+    )
+    const passing = cycle()
 
-    Client.prototype.query = function (this: Client, ...args: unknown[]) {
-      const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
-      const text = typeof config === 'string' ? config : (config?.text ?? '')
-      const values = typeof config === 'string' ? args[1] : (config?.values ?? args[1])
-      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+    await file.reached
+    await admin.query('update jobs set customer_id = $1 where id = $2', [other, job])
+    file.release()
 
-      if (
-        armed &&
-        text.includes('from "appointments" inner join "jobs"') &&
-        JSON.stringify(values ?? []).includes(appointment.id)
-      ) {
-        armed = false
-        reached()
-
-        return released.then(forward)
-      }
-
-      return forward()
-    } as typeof query
-
-    let sent: OutgoingMail[]
-
-    try {
-      const passing = cycle()
-
-      await atTheFile
-      await admin.query('update jobs set customer_id = $1 where id = $2', [other, job])
-      release()
-      sent = await passing
-    } finally {
-      Client.prototype.query = query
-      release()
-    }
+    const sent = await passing
 
     expect(sent.map((mail) => mail.subject)).not.toContain('Ihr Termin, gleich bei anderen')
 

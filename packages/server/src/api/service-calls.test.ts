@@ -21,7 +21,7 @@ import {
 } from '@opengewerk/platform-server'
 import { aMailServer, testKey } from '@opengewerk/platform-server/testing'
 import { sql } from 'drizzle-orm'
-import { Client, type Pool } from 'pg'
+import type { Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -35,6 +35,7 @@ import { runMailCycle } from '../mail/worker.js'
 import { legacyInstructionsFingerprint, unsignedWording } from '../service-calls/instructions.js'
 import { ApiModule } from './api.module.js'
 import { fingerprintAsHeld } from './test-signing.js'
+import { holdQuery } from './test-hold.js'
 import { DocumentFiles } from './document-files.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { invoiceable, readyToInvoice } from './test-invoice.js'
@@ -585,49 +586,17 @@ describe('the instructions by mail', () => {
     // once printing what it carries, after the worker found the job still the
     // first customer's. The second read is held right there while the office
     // gives the job to another customer.
-    const query = Client.prototype.query
-    let reached: () => void = () => undefined
-    let release: () => void = () => undefined
-    const atThePrint = new Promise<void>((resolve) => {
-      reached = resolve
-    })
-    const released = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    let reads = 0
-
-    Client.prototype.query = function (this: Client, ...args: unknown[]) {
-      const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
-      const text = typeof config === 'string' ? config : (config?.text ?? '')
-      const values = typeof config === 'string' ? args[1] : (config?.values ?? args[1])
-      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
-
-      if (text.includes('inner join "customers"') && JSON.stringify(values ?? []).includes(job)) {
-        reads += 1
-
-        if (reads === 2) {
-          reached()
-
-          return released.then(forward)
-        }
-      }
-
-      return forward()
-    } as typeof query
-
+    const print = holdQuery(
+      (text, values) => text.includes('inner join "customers"') && values.includes(job),
+      2,
+    )
     const { sent, transport } = recording()
+    const passing = cycle(transport)
 
-    try {
-      const passing = cycle(transport)
-
-      await atThePrint
-      await admin.query('update jobs set customer_id = $1 where id = $2', [other, job])
-      release()
-      await passing
-    } finally {
-      Client.prototype.query = query
-      release()
-    }
+    await print.reached
+    await admin.query('update jobs set customer_id = $1 where id = $2', [other, job])
+    print.release()
+    await passing
 
     expect(sent.filter((mail) => mail.subject.startsWith('Belehrungen'))).toEqual([])
     expect(
@@ -691,54 +660,20 @@ describe('the instructions by mail', () => {
     )
     // The route has taken the address and is about to write the mail; it
     // is held right there while the office gives the job to another customer.
-    const query = Client.prototype.query
-    let reached: () => void = () => undefined
-    let release: () => void = () => undefined
-    const atTheMail = new Promise<void>((resolve) => {
-      reached = resolve
-    })
-    const released = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    let armed = true
+    const mail = holdQuery(
+      (text, values) => text.includes('"auth_users"') && values.includes('test'),
+    )
+    const asking = http()
+      .post(`/jobs/${job}/instructions/mail`)
+      .set('x-test-identity', office())
+      .send({})
+      .then((response) => response)
 
-    Client.prototype.query = function (this: Client, ...args: unknown[]) {
-      const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
-      const text = typeof config === 'string' ? config : (config?.text ?? '')
-      const values = typeof config === 'string' ? args[1] : (config?.values ?? args[1])
-      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+    await mail.reached
+    await admin.query('update jobs set customer_id = $1 where id = $2', [other, job])
+    mail.release()
 
-      if (
-        armed &&
-        text.includes('"auth_users"') &&
-        JSON.stringify(values ?? []).includes('"test"')
-      ) {
-        armed = false
-        reached()
-
-        return released.then(forward)
-      }
-
-      return forward()
-    } as typeof query
-
-    let answer: request.Response
-
-    try {
-      const asking = http()
-        .post(`/jobs/${job}/instructions/mail`)
-        .set('x-test-identity', office())
-        .send({})
-        .then((response) => response)
-
-      await atTheMail
-      await admin.query('update jobs set customer_id = $1 where id = $2', [other, job])
-      release()
-      answer = await asking
-    } finally {
-      Client.prototype.query = query
-      release()
-    }
+    const answer = await asking
 
     expect(answer.status).toBe(409)
     expect(
