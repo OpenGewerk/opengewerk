@@ -516,6 +516,14 @@ export class ArticleImports {
         ),
     )
     const sizes = new Map(stored.map((file) => [file.sha256, file.sizeBytes]))
+    // A file whose row is gone has no size to count, and is refused as its
+    // start refuses one that was never uploaded; counted as nothing, it was
+    // loaded all the same.
+    const unsized = row.files.find((file) => !sizes.has(file.sha256))
+
+    if (unsized) {
+      throw new StoredFileMissingError(`Die Datei ${unsized.name} ist nicht mehr gespeichert.`)
+    }
 
     // Counted for every name, since every name is loaded on its own: an
     // import from before the start refused a file named twice named one up

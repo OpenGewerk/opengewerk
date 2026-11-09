@@ -644,6 +644,10 @@ export async function decide(
   answer: unknown,
   now: Date,
 ): Promise<Row> {
+  // Read under the lock of the person's absences, as `change` does: read
+  // before it, an approval checked the days a change had just moved.
+  await holdAbsencesOf(tx, (await absenceOf(tx, id)).personId)
+
   const row = await absenceOf(tx, id)
 
   if (row.state !== 'requested') {

@@ -1224,6 +1224,35 @@ describe('the options of a preview', () => {
     await send('post', `/suppliers/${hansa}/imports/${read.id}/discard`, {}, 200)
   })
 
+  it('read nothing of a file whose stored row is gone', async () => {
+    const bytes = cp850([header('011026'), 'A;N;9100004;00;Klemme;;1;0;Stck;50;;;;'])
+    const read = await preview([{ name: 'DATANORM.004', bytes }])
+    const sha256 = read.files[0]?.sha256 ?? ''
+    const held = await admin.connect()
+
+    // As the removal of an attachment with the same bytes takes the row, the
+    // way its trigger does; the bytes stay in the store until the sweep.
+    try {
+      await held.query('begin')
+      await held.query("select set_config('app.taking_file', $1, true)", [`${north.id}/${sha256}`])
+      await held.query('delete from files where tenant_id = $1 and sha256 = $2', [north.id, sha256])
+      await held.query('commit')
+    } finally {
+      await held.query('rollback').catch(() => undefined)
+      held.release()
+    }
+
+    await send('patch', `/suppliers/${hansa}/imports/${read.id}`, { charset: 'windows-1252' }, 202)
+    await imports.settled()
+
+    expect(await get(`/suppliers/${hansa}/imports/${read.id}`)).toMatchObject({
+      status: 'failed',
+      problem: 'Die Datei DATANORM.004 ist nicht mehr gespeichert.',
+    })
+
+    await send('post', `/suppliers/${hansa}/imports/${read.id}/discard`, {}, 200)
+  })
+
   it('count a file an import from before named twice for every name', async () => {
     const bytes = cp850([header('011026'), 'A;N;9100003;00;Klemme;;1;0;Stck;50;;;;'])
     const read = await preview([{ name: 'DATANORM.004', bytes }])
