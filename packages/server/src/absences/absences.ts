@@ -630,6 +630,8 @@ export async function decide(
     await refuseOverlap(tx, row.personId, { ...spanOf(row), state: 'approved' }, row.id)
   }
 
+  // Still requested at the moment of the write: taken back or decided by
+  // somebody else in between, it is not decided over again.
   const [decided] = await tx
     .update(absences)
     .set({
@@ -638,10 +640,17 @@ export async function decide(
       decidedBy: userId,
       decidedAt: now,
     })
-    .where(eq(absences.id, row.id))
+    .where(stillRequested(row.id))
     .returning()
 
-  return decided ?? row
+  if (!decided) {
+    // Taken back, which says the request is gone, or decided.
+    await absenceOf(tx, id)
+
+    throw new AbsenceRefused('Über diesen Antrag ist schon entschieden.')
+  }
+
+  return decided
 }
 
 /** The days of leave of a person for a year and what came over, in half days. */
@@ -734,12 +743,34 @@ export async function withdraw(
   }
 
   if (row.state !== 'requested') {
-    throw new AbsenceRefused(
-      'Über diesen Antrag ist schon entschieden; zurückziehen kann ihn nur das Büro.',
-    )
+    throw new AbsenceRefused(withdrawnTooLate)
   }
 
-  await tx.update(absences).set({ deletedAt: now }).where(eq(absences.id, row.id))
+  // Still requested at the moment of the write, not only when it was read: a
+  // decision of the office in between would otherwise be taken out with it.
+  const [taken] = await tx
+    .update(absences)
+    .set({ deletedAt: now })
+    .where(stillRequested(row.id))
+    .returning({ id: absences.id })
+
+  if (!taken) {
+    await absenceOf(tx, id)
+
+    throw new AbsenceRefused(withdrawnTooLate)
+  }
+}
+
+const withdrawnTooLate =
+  'Über diesen Antrag ist schon entschieden; zurückziehen kann ihn nur das Büro.'
+
+/** A request nobody decided and nobody took back, as it stands when a statement writes it. */
+function stillRequested(id: string) {
+  return and(
+    eq(absences.id, id as AbsenceId),
+    eq(absences.state, 'requested'),
+    isNull(absences.deletedAt),
+  )
 }
 
 /** Who is away when, for whoever plans: the kind only for whoever keeps absences. */

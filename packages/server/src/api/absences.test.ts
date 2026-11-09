@@ -46,6 +46,25 @@ const planner = JSON.stringify({
 
 let annasFile = ''
 
+/** Until a statement starting like that waits for a lock another connection holds. */
+async function waitingForALock(statement: string) {
+  for (let tries = 0; tries < 250; tries += 1) {
+    const { rows } = await admin.query<{ waiting: string }>(
+      `select count(*) as waiting from pg_stat_activity
+        where wait_event_type = 'Lock' and query like $1`,
+      [`${statement}%`],
+    )
+
+    if (Number(rows[0]?.waiting) > 0) {
+      return
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+
+  throw new Error(`Nothing came to wait: ${statement}`)
+}
+
 function http() {
   return request(app.getHttpServer())
 }
@@ -221,6 +240,61 @@ describe('one’s own leave', () => {
 
     await send('post', `/absences/${asked.id}/approve`, {}, office)
     await send('post', `/absences/${asked.id}/approve`, {}, office, 400)
+  })
+
+  /**
+   * The person takes a request back while the office decides it, or the
+   * other way round: the second write finds it decided or gone, and neither
+   * undoes the other. The first write is held open on a connection of its
+   * own until the second waits for it.
+   */
+  it('is taken back or decided once, and whichever comes second is refused', async () => {
+    const cases = [
+      {
+        first: "update absences set state = 'approved', decided_at = now() where id = $1",
+        second: (id: string) => http().delete(`/absences/mine/${id}`).set('x-test-identity', anna),
+        refused: 400,
+        stands: { state: 'approved', gone: false },
+      },
+      {
+        first: 'update absences set deleted_at = now() where id = $1',
+        second: (id: string) =>
+          http().post(`/absences/${id}/approve`).set('x-test-identity', office).send({}),
+        refused: 404,
+        stands: { state: 'requested', gone: true },
+      },
+    ]
+
+    for (const [index, { first, second, refused, stands }] of cases.entries()) {
+      const asked = await send(
+        'post',
+        '/absences/mine',
+        days(`2027-03-0${String(index * 3 + 1)}`, `2027-03-0${String(index * 3 + 2)}`),
+        anna,
+      )
+      const held = await admin.connect()
+
+      try {
+        await held.query('begin')
+        await held.query(first, [asked.id])
+
+        const answer = second(asked.id).then((response) => response.status)
+
+        await waitingForALock('update "absences"')
+        await held.query('commit')
+
+        expect(await answer).toBe(refused)
+      } finally {
+        held.release()
+      }
+
+      const { rows } = await admin.query<{ state: string; gone: boolean }>(
+        'select state, deleted_at is not null as gone from absences where id = $1',
+        [asked.id],
+      )
+
+      expect(rows).toEqual([stands])
+    }
   })
 
   it('is always leave: a person cannot report themself sick or ask with a note on a sickness', async () => {
