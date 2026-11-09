@@ -31,6 +31,21 @@ const text = [
 ].join('\n')
 
 describe('a text read into its blocks', () => {
+  /**
+   * Opening brackets without the rest of a link cost a look each, not a look
+   * to the end of the line, both when the text is read and when it is checked.
+   */
+  it('reads and checks a line full of opening brackets in one pass', () => {
+    const line = '['.repeat(50_000) + '[a](/x'.repeat(20_000)
+    const started = performance.now()
+    const pieces = readInline(line)
+    const problems = markdownProblems(line)
+
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(pieces).toEqual([{ kind: 'text', text: line }])
+    expect(problems).toEqual([])
+  })
+
   it('reads headings of three levels, paragraphs and both kinds of list', () => {
     expect(readMarkdown(text).map((block) => block.kind)).toEqual([
       'heading',

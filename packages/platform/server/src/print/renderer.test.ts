@@ -310,6 +310,24 @@ describe('the policy of a printed page', () => {
     )
   })
 
+  it('counts no head after a comment or behind the content of a page, and then stands first', () => {
+    // Where a comment ends is the parser's to say: "<!-->" is one already,
+    // and "--!>" ends one as well. Before any of them the browser puts the
+    // policy into the head it makes itself.
+    for (const comment of ['<!-- <head> -->', '<!--><p>Etikett</p><!-- -->', '<!-- --!><p>x</p>']) {
+      expect(withPrintPolicy(`<!doctype html>${comment}<head><title>x</title></head>`)).toBe(
+        `<!doctype html>${policyTag}${comment}<head><title>x</title></head>`,
+      )
+    }
+
+    expect(withPrintPolicy('<!doctype html><!-- <head> --><p>Etikett</p>')).toBe(
+      `<!doctype html>${policyTag}<!-- <head> --><p>Etikett</p>`,
+    )
+    expect(withPrintPolicy('<!doctype html><p>Etikett</p><head></head>')).toBe(
+      `<!doctype html>${policyTag}<p>Etikett</p><head></head>`,
+    )
+  })
+
   it('stands at the start of a page without a head, and never in a header', () => {
     expect(withPrintPolicy('<!doctype html><header>Kopf</header>')).toBe(
       `<!doctype html>${policyTag}<header>Kopf</header>`,

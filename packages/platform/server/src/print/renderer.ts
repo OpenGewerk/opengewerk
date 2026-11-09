@@ -55,31 +55,59 @@ export function withPrintPolicy(html: string): string {
 
 /**
  * Where the opening tag of the head ends, `<head>` or `<head ...>` and never
- * `<header>`, or null. Searched and not matched with a pattern: a pattern with
- * a run of anything up to ">" goes back over a page full of "<head" again and
- * again, and a page is as long as its embedded images.
+ * `<header>`, or null. Only a head before anything else counts: after the
+ * doctype and the opening tag of the page. One behind the content of a page
+ * is one the browser does not take as such, and a comment before it is not
+ * read here at all: where a comment ends, `<!-->`, `--!>` and the rest of the
+ * rules of the parser decide, and a guess that differs from the browser's
+ * would put the policy into the body, where it counts for nothing. Null then,
+ * and the policy stands at the start, where the browser makes a head of its
+ * own and puts it in. Read from the start and only as far as that, never
+ * matched with a pattern over the whole page, which is as long as its
+ * embedded images.
  */
 function endOfHead(html: string): number | null {
   const lower = html.toLowerCase()
+  let at = 0
 
-  for (let at = lower.indexOf('<head'); at !== -1; at = lower.indexOf('<head', at + 5)) {
-    const next = lower.charAt(at + 5)
+  for (;;) {
+    while (at < lower.length && blank.includes(lower.charAt(at))) {
+      at += 1
+    }
 
-    if (
-      next === '>' ||
-      next === ' ' ||
-      next === '\t' ||
-      next === '\n' ||
-      next === '\r' ||
-      next === '\f'
-    ) {
+    if (lower.startsWith('<!doctype', at) || opensTag(lower, at, 'html')) {
+      const close = lower.indexOf('>', at)
+
+      if (close === -1) {
+        return null
+      }
+
+      at = close + 1
+      continue
+    }
+
+    if (opensTag(lower, at, 'head')) {
       const close = lower.indexOf('>', at + 5)
 
       return close === -1 ? null : close + 1
     }
+
+    return null
+  }
+}
+
+/** The characters HTML reads as space between tags and their attributes. */
+const blank = ' \t\n\r\f'
+
+/** Whether an opening tag of that name starts there: `<head>` or `<head ...>`, never `<header>`. */
+function opensTag(lower: string, at: number, name: string): boolean {
+  if (!lower.startsWith(`<${name}`, at)) {
+    return false
   }
 
-  return null
+  const next = lower.charAt(at + name.length + 1)
+
+  return next === '>' || blank.includes(next)
 }
 
 /** The four margins of a page, as CSS lengths: `20mm`. */

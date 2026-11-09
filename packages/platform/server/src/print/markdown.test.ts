@@ -10,6 +10,19 @@ import { inlineHtml, markdownHtml, markdownPrintJob } from './markdown.js'
  * typed, escaped with `plainInMarkdown`, comes out as exactly that text.
  */
 describe('a document made as Markdown', () => {
+  /**
+   * Opening brackets without the rest of a link cost a look each, not a look
+   * to the end of the line: tens of thousands of them are read in a moment.
+   */
+  it('reads a line full of opening brackets in one pass', () => {
+    const line = '['.repeat(50_000) + '[a](https://'.repeat(20_000)
+    const started = performance.now()
+    const html = inlineHtml(line)
+
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(html).toBe(text(line))
+  })
+
   it('reads the marks of a line and escapes every character of text', () => {
     expect(inlineHtml('**Zusage:** `audit_entries` und <b>&')).toBe(
       '<strong>Zusage:</strong> <code>audit_entries</code> und &lt;b&gt;&amp;',

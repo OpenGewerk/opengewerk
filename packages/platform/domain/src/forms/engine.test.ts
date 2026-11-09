@@ -354,6 +354,26 @@ describe('the values of a filled form', () => {
     expect(
       engine.valuesProblem(inspection, { ...filled, signature: { ...signature, name: ' ' } }),
     ).toBe('Der Name dessen, der unterschreibt.')
+
+    // A moment and nothing else: the day of it stands on the printed protocol.
+    // Hour 24 is the next day already, which the protocol would not print.
+    for (const signedAt of [
+      '2026-10-04<!--',
+      'gestern',
+      '2026-02-30T10:00:00Z',
+      '2026-10-04T24:00:00Z',
+    ]) {
+      expect(
+        engine.valuesProblem(inspection, { ...filled, signature: { ...signature, signedAt } }),
+      ).toBe('Unterschrift: wann unterschrieben wurde, als Zeitpunkt.')
+    }
+
+    expect(
+      engine.valuesProblem(inspection, {
+        ...filled,
+        signature: { ...signature, signedAt: '2026-10-04T10:00:00.000Z' },
+      }),
+    ).toBeNull()
   })
 
   it('take a day of the calendar for a date, and refuse one that is not on it', () => {
