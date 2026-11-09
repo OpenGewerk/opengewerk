@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 
 import { Strip, stripAction } from '../components/strip.js'
 import { useEntry } from '../components/surface.js'
-import { hasUnowned, unownedSummary } from './decisions.js'
+import { hasUnowned, unownedSummary, unownedVerb } from './decisions.js'
 import { useSync, useSyncStatus } from './provider.js'
 
 /**
@@ -114,7 +114,7 @@ export function SyncStatusBar({
       </Strip>
     ) : (
       <Strip tone="wait" icon={UserRound} actions={look}>
-        {`Auf diesem Gerät warten ${summary} ohne Person.`}
+        {`Auf diesem Gerät ${unownedVerb(status.unowned)} ${summary} ohne Person.`}
       </Strip>
     )
   }

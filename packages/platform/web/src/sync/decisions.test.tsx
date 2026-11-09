@@ -1315,7 +1315,7 @@ describe('what waits on the device for nobody', () => {
       </InProbe>,
     )
 
-    expect(screen.getByText('Auf diesem Gerät warten 1 Änderung ohne Person.')).toBeTruthy()
+    expect(screen.getByText('Auf diesem Gerät wartet 1 Änderung ohne Person.')).toBeTruthy()
 
     const card = within(screen.getByRole('region', { name: '1 Änderung ohne Person' }))
     const state = within(screen.getByRole('region', { name: 'Stand des Abgleichs' }))
@@ -1338,7 +1338,7 @@ describe('what waits on the device for nobody', () => {
       ])
     })
     expect(await screen.findByRole('region', { name: 'Keine Konflikte' })).toBeTruthy()
-    expect(screen.queryByText('Auf diesem Gerät warten 1 Änderung ohne Person.')).toBeNull()
+    expect(screen.queryByText('Auf diesem Gerät wartet 1 Änderung ohne Person.')).toBeNull()
   })
 
   it('is let go on site, with its photo, and none of it goes out', async () => {

@@ -2157,4 +2157,75 @@ describe('what waits on a device for nobody', () => {
     ])
     ben.close()
   })
+
+  /** A change a tab of a version before queues for nobody after the list was shown. */
+  async function queuedLate(tenant: string): Promise<void> {
+    const late = await openLocalStore(tenant)
+
+    await late.queue({
+      id: operationId('op-unseen'),
+      entity: 'notes',
+      recordId: 'n-unseen',
+      kind: 'create',
+      baseVersion: null,
+      patches: [{ field: 'text', from: null, to: 'Nicht gezeigt' }],
+      recordedAt: new Date('2026-10-12T07:53:00Z'),
+      deviceId: 'device',
+    })
+    late.close()
+  }
+
+  it('goes out as far as the list showed, and not with what was queued for nobody since', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+
+    await queuedForNobody(tenant)
+
+    const client = await startFor(tenant, transport)
+
+    await queuedLate(tenant)
+    await client.adoptUnowned()
+
+    expect(transport.sent.flat().map((operation) => operation.id)).toEqual(['op-before'])
+    expect(client.status().unowned.operations.map((operation) => operation.id)).toEqual([
+      'op-unseen',
+    ])
+  })
+
+  it('is let go as far as the list showed, and keeps what was queued for nobody since', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+
+    await queuedForNobody(tenant)
+
+    const client = await startFor(tenant, transport)
+
+    await queuedLate(tenant)
+    await client.discardUnowned()
+
+    expect(client.status().unowned.operations.map((operation) => operation.id)).toEqual([
+      'op-unseen',
+    ])
+  })
+
+  it('is let go by nobody from a tab whose store another account took over', async () => {
+    const tenant = `t${String((counter += 1))}`
+    const transport = new Recorded()
+    let signedOut = 0
+
+    await queuedForNobody(tenant)
+
+    const client = await startFor(tenant, transport, () => {
+      signedOut += 1
+    })
+    const ben = await openLocalStore(tenant, 'ben')
+
+    await client.discardUnowned()
+
+    expect(signedOut).toBe(1)
+    expect((await ben.readUnowned()).operations.map((operation) => operation.id)).toEqual([
+      'op-before',
+    ])
+    ben.close()
+  })
 })

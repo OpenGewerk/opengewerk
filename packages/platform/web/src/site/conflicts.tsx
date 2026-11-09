@@ -7,7 +7,13 @@ import { Button } from '../components/button.js'
 import { Panel } from '../components/panel.js'
 import { clockTime } from '../format.js'
 import { exchangeRefusal, noConnection } from '../sync/client.js'
-import { hasUnowned, NothingToDecide, unownedSummary, useDecisions } from '../sync/decisions.js'
+import {
+  hasUnowned,
+  NothingToDecide,
+  unownedSummary,
+  unownedVerb,
+  useDecisions,
+} from '../sync/decisions.js'
 import { useSync, useSyncStatus } from '../sync/provider.js'
 
 /** One line of the state on site: a symbol and a sentence, 16 pixels. */
@@ -100,7 +106,7 @@ export function ConflictScreen() {
           ) : null}
           {hasUnowned(unowned) ? (
             <SiteStateLine icon={UserRound} tone="waiting">
-              {`${unownedSummary(unowned)} ohne Person warten auf dem Gerät.`}
+              {`${unownedSummary(unowned)} ohne Person ${unownedVerb(unowned)} auf dem Gerät.`}
             </SiteStateLine>
           ) : null}
         </ul>

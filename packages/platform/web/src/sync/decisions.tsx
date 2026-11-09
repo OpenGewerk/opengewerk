@@ -853,6 +853,11 @@ export function unownedSummary(unowned: UnownedChanges): string {
   return parts.join(' und ')
 }
 
+/** "wartet" for one change or file, "warten" for more. */
+export function unownedVerb(unowned: UnownedChanges): string {
+  return unowned.operations.length + unowned.files.length === 1 ? 'wartet' : 'warten'
+}
+
 /** Whether anything waits for nobody. */
 export function hasUnowned(unowned: UnownedChanges): boolean {
   return unowned.operations.length > 0 || unowned.files.length > 0

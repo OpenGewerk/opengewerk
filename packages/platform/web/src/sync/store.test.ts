@@ -342,4 +342,64 @@ describe('what waits on a device for nobody', () => {
     expect((await anna.waitingFiles()).map((file) => file.sha256)).toEqual([own.sha256])
     anna.close()
   })
+
+  it('is taken on by nobody from a stale tab, once another account said it was theirs', async () => {
+    const tenant = aTenant()
+
+    await storeFromBefore(tenant)
+
+    // A tab of Anna shows the list.
+    const stale = await openLocalStore(tenant, 'anna')
+    const shown = await stale.readUnowned()
+    const ben = await openLocalStore(tenant, 'ben')
+
+    // Ben says the changes and the photo are his.
+    await ben.adoptUnowned(
+      shown.operations.map((operation) => operation.id),
+      shown.files.map((file) => file.sha256),
+    )
+    ben.close()
+
+    // Anna signs in again in another tab, and the store is hers again; the
+    // stale tab clicks on the list it showed before.
+    const again = await openLocalStore(tenant, 'anna')
+
+    await stale.adoptUnowned(
+      shown.operations.map((operation) => operation.id),
+      shown.files.map((file) => file.sha256),
+    )
+
+    expect(await again.readOutbox()).toEqual([])
+    expect(await again.waitingFiles()).toEqual([])
+    stale.close()
+    again.close()
+  })
+
+  it('is let go by nobody from a stale tab, once another account said it was theirs', async () => {
+    const tenant = aTenant()
+
+    await storeFromBefore(tenant)
+
+    const stale = await openLocalStore(tenant, 'anna')
+    const shown = await stale.readUnowned()
+    const ben = await openLocalStore(tenant, 'ben')
+
+    await ben.adoptUnowned(
+      shown.operations.map((operation) => operation.id),
+      shown.files.map((file) => file.sha256),
+    )
+    ben.close()
+
+    const again = await openLocalStore(tenant, 'anna')
+
+    await stale.dropUnowned(
+      shown.operations.map((operation) => operation.id),
+      shown.files.map((file) => file.sha256),
+    )
+
+    // Ben's two changes and his photo wait for him.
+    expect(await waitingIn(tenant)).toBe(3)
+    stale.close()
+    again.close()
+  })
 })
