@@ -179,6 +179,17 @@ export function instructionSheetsFingerprint(
 }
 
 /**
+ * What a customer read before signing a request for an early start: the
+ * sheets and the request as the server put them together for the day of the
+ * signature. Kept with the request, so that a wording changed later in the
+ * settings is never printed above a signature given for another.
+ */
+export interface EarlyStartWording {
+  readonly sheets: readonly InstructionSheet[]
+  readonly request: string | null
+}
+
+/**
  * The request for an early start, signed on the device at the door (#292):
  * the customer asks that the work begin within the fourteen days and confirms
  * knowing that the right of withdrawal ends once it is done (§ 356 (5) no. 2,
@@ -201,6 +212,12 @@ export interface EarlyStartRequest extends Synced {
   readonly path: string
   /** What was signed under, see `instructionSheetsFingerprint`. */
   readonly contentFingerprint: string
+  /**
+   * The words of that, as the server put them together when the request
+   * landed. Set by the server, never sent by a device; none on a request
+   * from before they were kept.
+   */
+  readonly wording: EarlyStartWording | null
 }
 
 /** What is wrong with the name and the signature of a request, or null when nothing is. */

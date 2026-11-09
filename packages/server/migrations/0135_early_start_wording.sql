@@ -1,0 +1,1 @@
+ALTER TABLE "early_start_requests" ADD COLUMN "wording" jsonb;

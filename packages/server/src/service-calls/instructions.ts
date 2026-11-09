@@ -3,6 +3,7 @@ import {
   type ConflictReason,
   type CustomerId,
   type EarlyStartRequestId,
+  type EarlyStartWording,
   type InstructionSheet,
   instructionSheetsFingerprint,
   type IsoDate,
@@ -137,39 +138,115 @@ export interface EarlyStartRefusal {
   readonly fields: readonly string[]
 }
 
+/** What became of a request for an early start arriving from a device. */
+export type EarlyStartArrival =
+  | { readonly refusal: EarlyStartRefusal; readonly wording: null }
+  | { readonly refusal: null; readonly wording: EarlyStartWording }
+
 /**
  * Whether a request for an early start arriving from a device was signed under
  * what this server shows for its job, like a signature under a report
- * (`signatureRefusal`). The device sends the fingerprint of the sheets the
- * customer read; here they are put together again for the day of the
- * signature. Different, the office changed a wording or the customer in the
- * meantime, and the request is refused as a conflict rather than kept under
- * words the customer never saw. A job that is gone, no longer a service call
- * or whose customer is a business now is refused the same way.
+ * (`signatureRefusal`), and under which words. The device sends the
+ * fingerprint of the sheets the customer read; here they are put together
+ * again for the day of the signature. Different, the office changed a wording
+ * or the customer in the meantime, and the request is refused as a conflict
+ * rather than kept under words the customer never saw. A job that is gone, no
+ * longer a service call or whose customer is a business now is refused the
+ * same way. Let through, the words are those of this one read, the ones just
+ * compared: kept from it and not read again, they are the words whose
+ * fingerprint the device sent, whatever the settings say a moment later.
  */
-export async function earlyStartRefusal(
+export async function earlyStartArrival(
   tx: TenantTransaction,
   values: Readonly<Record<string, unknown>>,
-): Promise<EarlyStartRefusal | null> {
+): Promise<EarlyStartArrival> {
+  const held = await instructionsForRequest(tx, values)
+
+  if (!held) {
+    return { refusal: { reason: 'record_missing', fields: ['jobId'] }, wording: null }
+  }
+
+  if (held.refusal !== null) {
+    return { refusal: { reason: 'changed_elsewhere', fields: ['jobId'] }, wording: null }
+  }
+
+  return values['contentFingerprint'] === held.fingerprint
+    ? { refusal: null, wording: { sheets: held.sheets, request: held.request } }
+    : { refusal: { reason: 'changed_elsewhere', fields: ['contentFingerprint'] }, wording: null }
+}
+
+/** The instructions of the job of a request, for the day of its signature; null for a job that is gone. */
+async function instructionsForRequest(
+  tx: TenantTransaction,
+  values: Readonly<Record<string, unknown>>,
+): Promise<CallInstructions | null> {
   const call = await callOf(tx, String(values['jobId'] ?? '') as JobId)
 
   if (!call) {
-    return { reason: 'record_missing', fields: ['jobId'] }
+    return null
   }
 
   const signedAt = values['signedAt']
   const moment = signedAt instanceof Date ? signedAt : new Date(String(signedAt))
-  const on = berlinClock(Number.isNaN(moment.getTime()) ? new Date() : moment).day
-  const held = await callInstructions(tx, call, on)
 
-  if (held.refusal !== null) {
-    return { reason: 'changed_elsewhere', fields: ['jobId'] }
+  return callInstructions(
+    tx,
+    call,
+    berlinClock(Number.isNaN(moment.getTime()) ? new Date() : moment).day,
+  )
+}
+
+/**
+ * The fingerprint of the instructions in the form a request signed before
+ * SHA-256 carries: FNV-1a over the UTF-16 code units, with the length beside
+ * it. Only compared, to tell whether such a request still matches the
+ * settings; nothing is marked with it any more.
+ */
+export function legacyInstructionsFingerprint(
+  sheets: readonly InstructionSheet[],
+  request: string | null,
+): string {
+  const text = JSON.stringify([
+    sheets.map((sheet) => [sheet.template, sheet.title, sheet.text]),
+    request,
+  ])
+  let hash = 0x811c9dc5
+
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193) >>> 0
   }
 
-  return values['contentFingerprint'] === held.fingerprint
-    ? null
-    : { reason: 'changed_elsewhere', fields: ['contentFingerprint'] }
+  return `fnv1a32:${hash.toString(16).padStart(8, '0')}:${String(text.length)}`
 }
+
+/**
+ * The words a request was signed under: kept with it since it lands, or, for
+ * a request from before, those of the settings for its day while they still
+ * have its fingerprint. Otherwise its signature is printed under none at all,
+ * rather than under words the customer never read.
+ */
+function signedWording(
+  request: { readonly contentFingerprint: string; readonly wording: EarlyStartWording | null },
+  held: CallInstructions,
+): EarlyStartWording {
+  if (request.wording) {
+    return request.wording
+  }
+
+  if (
+    request.contentFingerprint === held.fingerprint ||
+    request.contentFingerprint === legacyInstructionsFingerprint(held.sheets, held.request)
+  ) {
+    return { sheets: held.sheets, request: held.request }
+  }
+
+  throw new CallInstructionsRefused(unsignedWording)
+}
+
+/** Why a request from before its wording was kept cannot be printed any more. */
+export const unsignedWording =
+  'Die Belehrungen sind seit der Unterschrift anders formuliert worden. Das Verlangen wird deshalb nicht unter dem heutigen Wortlaut gedruckt.'
 
 /** Why the instructions of a call cannot be printed, as the sentence the office or the mail shows. */
 export class CallInstructionsRefused extends Error {}
@@ -198,6 +275,8 @@ export async function callPrintFacts(
           signerName: earlyStartRequests.signerName,
           signedAt: earlyStartRequests.signedAt,
           path: earlyStartRequests.path,
+          contentFingerprint: earlyStartRequests.contentFingerprint,
+          wording: earlyStartRequests.wording,
         })
         .from(earlyStartRequests)
         .where(
@@ -215,13 +294,21 @@ export async function callPrintFacts(
   const on = request ? berlinClock(request.signedAt).day : day
   const held = await callInstructions(tx, call, on)
 
-  if (held.refusal !== null) {
-    throw new CallInstructionsRefused(held.refusal)
+  // Words kept with a request are printed as they are: whatever the job or
+  // the letterhead lack today, they were complete when the customer signed.
+  // Only words put together now have to be complete now.
+  if (!request?.wording) {
+    if (held.refusal !== null) {
+      throw new CallInstructionsRefused(held.refusal)
+    }
+
+    if (held.gaps.length > 0) {
+      throw new CallInstructionsRefused(held.gaps.join(' '))
+    }
   }
 
-  if (held.gaps.length > 0) {
-    throw new CallInstructionsRefused(held.gaps.join(' '))
-  }
+  // The words the customer signed under, not those of today's settings.
+  const wording = request ? signedWording(request, held) : null
 
   return {
     issuer: await issuerOf(tx, call.tenantId),
@@ -235,11 +322,12 @@ export async function callPrintFacts(
     },
     call: { number: call.number, designation: call.designation },
     on,
-    sheets: held.sheets,
+    sheets: wording?.sheets ?? held.sheets,
     signed:
-      request && held.request !== null
+      // An empty request is still the one signed, and its signature stands.
+      request && wording && wording.request !== null
         ? {
-            request: held.request,
+            request: wording.request,
             signerName: request.signerName,
             signedAt: request.signedAt.toISOString(),
             path: request.path,

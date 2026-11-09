@@ -463,6 +463,7 @@ export const auditTables: Readonly<Record<string, AuditTableWords>> = {
       device_info: 'Gerät',
       path: 'Unterschrift',
       content_fingerprint: 'Fingerabdruck der Belehrungen',
+      wording: 'Wortlaut der Belehrungen',
       created_by: 'Auf dem Gerät von',
     },
   },

@@ -151,6 +151,7 @@ export const syncFieldNames: Readonly<Record<string, string>> = {
   deviceInfo: 'Gerät',
   path: 'Unterschrift',
   contentFingerprint: 'Unterschriebener Stand',
+  wording: 'Wortlaut der Belehrungen',
   location: 'Ort',
   distributionBoardId: 'Verteiler',
   boardSectionId: 'Feld',

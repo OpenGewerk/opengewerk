@@ -220,7 +220,7 @@ export const syncPolicies: Readonly<Record<string, SyncPolicy>> = {
    * changed afterwards. The server checks what it was signed under and sends
    * it to the customer.
    */
-  early_start_requests: { create: true, change: 'never', reserved: ['createdBy'] },
+  early_start_requests: { create: true, change: 'never', reserved: ['createdBy', 'wording'] },
   /**
    * The times of the on-call plan (#293), kept in the office at its routes;
    * a device reads those of its person and writes none.

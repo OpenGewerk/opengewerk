@@ -1,6 +1,7 @@
 import {
   type CustomerId,
   type DocumentStatus,
+  type EarlyStartWording,
   formRecordProblem,
   formSubjectProblem,
   isAllowed,
@@ -32,7 +33,7 @@ import {
 
 import type { FoundIdentity } from '../api/identity.js'
 import { signatureRefusal } from '../documents/signing.js'
-import { earlyStartRefusal } from '../service-calls/instructions.js'
+import { earlyStartArrival } from '../service-calls/instructions.js'
 import { onCallRefusal } from '../service-calls/on-call.js'
 import { consentGiven, correctionRefusal } from '../time/entries.js'
 import { proposedTreatment } from '../documents/treatment.js'
@@ -101,10 +102,24 @@ const earlyStart: Check = async ({ tx, operation, values }) => {
     return null
   }
 
-  const refusal = await earlyStartRefusal(tx, values)
+  const { refusal, wording } = await earlyStartArrival(tx, values)
 
-  return refusal ? { kind: 'conflict', reason: refusal.reason, fields: refusal.fields } : null
+  if (refusal) {
+    return { kind: 'conflict', reason: refusal.reason, fields: refusal.fields }
+  }
+
+  wordingsLetThrough.set(operation, wording)
+
+  return null
 }
+
+/**
+ * The words a request for an early start was let through under, from the one
+ * read of its check (`earlyStartArrival`), until `complete` keeps them with it.
+ * A second read could see the settings changed in between and keep words
+ * whose fingerprint was never compared.
+ */
+const wordingsLetThrough = new WeakMap<object, EarlyStartWording>()
 
 /**
  * A service call made on call (#293) by somebody without `job.write`: only
@@ -490,6 +505,28 @@ async function withJobNumber(
 }
 
 /**
+ * A request for an early start keeps what it was signed under (see
+ * `EarlyStartWording`): the words `earlyStart` let it through under. A device
+ * cannot send them, the field is reserved.
+ */
+function withEarlyStartWording(
+  operation: Parameters<Check>[0]['operation'],
+  values: Record<string, unknown>,
+): Record<string, unknown> {
+  if (operation.kind !== 'create' || operation.entity !== 'early_start_requests') {
+    return values
+  }
+
+  const wording = wordingsLetThrough.get(operation)
+
+  if (!wording) {
+    throw new Error('A request for an early start reached the database without its check.')
+  }
+
+  return { ...values, wording }
+}
+
+/**
  * The sync on the server of this application, for the routes a device syncs
  * through and for the tests that read the stream of a business.
  */
@@ -523,14 +560,17 @@ export const sync = serverSync<FoundIdentity>({
     draftDeletion,
   ],
   complete: async ({ tx, tenantId, operation, values, current, sender }) =>
-    withJobNumber(
-      tx,
-      tenantId,
+    withEarlyStartWording(
       operation,
-      await withProposedTreatment(
+      await withJobNumber(
         tx,
+        tenantId,
         operation,
-        withCreator(operation, withLineTotal(operation.entity, values, current), sender),
+        await withProposedTreatment(
+          tx,
+          operation,
+          withCreator(operation, withLineTotal(operation.entity, values, current), sender),
+        ),
       ),
     ),
 })
