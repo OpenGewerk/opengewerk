@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import type { Pool } from 'pg'
+import { Client, type Pool } from 'pg'
 import type { Response } from 'supertest'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
@@ -284,6 +284,67 @@ describe('the count of the credentials of an account', () => {
     await http().get('/auth/tenants').set('cookie', elsewhere).expect(401)
   })
 
+  it('keeps the session a revocation kept, where the session was read across it', async () => {
+    const email = 'quer@nord.example.de'
+    const userId = await person(email)
+    const here = await instance.signIn(email, first)
+
+    await instance.signIn(email, first)
+
+    const kept = await sessionOf(here)
+    // better-auth reads a session and then its account, in two queries. The
+    // query for the account is held back until the revocation is in.
+    const query = Client.prototype.query
+    let reached: () => void = () => undefined
+    let release: () => void = () => undefined
+    const atTheAccount = new Promise<void>((resolve) => {
+      reached = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let armed = true
+
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const values = (typeof config === 'string' ? args[1] : (config?.values ?? args[1])) as
+        unknown[] | undefined
+      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+      if (
+        armed &&
+        /^select/i.test(text.trim()) &&
+        text.includes('"auth_users"') &&
+        values?.includes(userId)
+      ) {
+        armed = false
+        reached()
+
+        return released.then(forward)
+      }
+
+      return forward()
+    } as typeof query
+
+    try {
+      const asking = http().get('/auth/tenants').set('cookie', here)
+      const answered = asking.then((answer) => answer)
+
+      await atTheAccount
+      await endOtherSessions(instance.database, userId, kept, 'passkey.remove')
+      release()
+
+      expect((await answered).status).toBe(200)
+    } finally {
+      Client.prototype.query = query
+      release()
+    }
+
+    expect(await sessionOf(here)).toBe(kept)
+    await http().get('/auth/tenants').set('cookie', here).expect(200)
+  })
+
   it('goes up when a password is replaced on the command line', async () => {
     const email = 'befehl@nord.example.de'
     const userId = await person(email)
@@ -323,6 +384,36 @@ describe('the count of the credentials of an account', () => {
       .send({ token: links.at(-1)?.token ?? '', newPassword: second })
       .expect(200)
 
+    expect(await generationOf(userId)).toBe(1)
+  })
+
+  it('goes up as the password is set through a link, even where its log then fails', async () => {
+    const email = 'protokoll@nord.example.de'
+    const userId = await person(email)
+
+    await post('/request-password-reset').send({ email }).expect(200)
+    await vi.waitFor(() => {
+      expect(links.at(-1)?.email).toBe(email)
+    })
+
+    const token = links.at(-1)?.token ?? ''
+
+    await admin.query(`create function fail_reset_log() returns trigger language plpgsql as $$
+      begin raise exception 'The log of the reset fails here.'; end $$`)
+    await admin.query(
+      'create trigger fail_reset_log before insert on password_resets for each row execute function fail_reset_log()',
+    )
+
+    try {
+      const answer = await post('/reset-password').send({ token, newPassword: second })
+
+      expect(answer.status).toBeGreaterThanOrEqual(500)
+    } finally {
+      await admin.query('drop trigger if exists fail_reset_log on password_resets')
+      await admin.query('drop function if exists fail_reset_log()')
+    }
+
+    // The password is new, and so is the count.
     expect(await generationOf(userId)).toBe(1)
   })
 

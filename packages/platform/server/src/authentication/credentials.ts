@@ -234,9 +234,27 @@ export async function reinstateConfirmedApp(database: Database, userId: string):
   return switched.length > 0
 }
 
-/** Takes a session whose credentials were taken back out of the database. */
-export async function endRevokedSession(database: Database, sessionId: string): Promise<void> {
-  await database.forInstance((tx) => tx.delete(authSessions).where(theSession(sessionId)))
+/**
+ * Takes a session whose credentials were taken back out of the database, and
+ * says whether it went. Asked again as it is deleted: better-auth reads a
+ * session and its account in two queries, and a revocation that keeps the
+ * session and gives it the new count can come in between. Such a session
+ * fits its account at the time it would go, and stays.
+ */
+export async function endRevokedSession(database: Database, sessionId: string): Promise<boolean> {
+  const ended = await database.forInstance((tx) =>
+    tx
+      .delete(authSessions)
+      .where(
+        and(
+          theSession(sessionId),
+          sql`${authSessions.credentialGeneration} is distinct from (select ${authUsers.credentialGeneration} from ${authUsers} where ${authUsers.id} = ${authSessions.userId})`,
+        ),
+      )
+      .returning({ id: authSessions.id }),
+  )
+
+  return ended.length > 0
 }
 
 /** What somebody is told whose session ended with a change of the credentials. */

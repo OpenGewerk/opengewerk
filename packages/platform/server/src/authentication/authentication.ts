@@ -258,12 +258,6 @@ const replacingSession = '/change-password'
  */
 const generationAtStart = 'openGewerkCredentialGeneration'
 
-/** The account a link to a new password is for, from the hook before the route to the one after. */
-const accountOfReset = 'openGewerkAccountOfReset'
-
-/** The route that sets a new password through a link. */
-const resettingPassword = '/reset-password'
-
 /** The route that answers with the session of the cookies, or with none. */
 const askingForTheSession = '/get-session'
 
@@ -458,7 +452,13 @@ export function createAuthentication({
       // that a link was used, when and for whom, and never the link. Awaited:
       // should it fail, the route answers with an error rather than with a
       // reset the log does not know of.
+      //
+      // First the count of the credentials goes up (`credentials.ts`), right
+      // as the password is set, whatever becomes of the log: better-auth ended
+      // the sessions a moment ago, and a sign in that checked the old password
+      // in between is refused as it writes its session.
       onPasswordReset: async ({ user }) => {
+        await database.forInstance((tx) => revokeCredentials(tx, user.id), user.id)
         await recordPasswordReset(database, user.id)
       },
     },
@@ -653,11 +653,15 @@ export function createAuthentication({
         // it. Asking for the session is answered as for none, the row being
         // gone, and better-auth takes the cookie with it; the server asks
         // that way too (`session-identity.ts`). Every other route refuses.
+        // A session that fits its account by the time it would go was read
+        // across a revocation that kept it (`endRevokedSession`), and stays.
         const current = await getSessionFromCtx(ctx)
 
-        if (current && revokedSince(current)) {
-          await endRevokedSession(database, current.session.id)
-
+        if (
+          current &&
+          revokedSince(current) &&
+          (await endRevokedSession(database, current.session.id))
+        ) {
           if (ctx.path !== askingForTheSession) {
             throw new APIError('UNAUTHORIZED', { code: 'SESSION_REVOKED', message: sessionRevoked })
           }
@@ -679,25 +683,6 @@ export function createAuthentication({
           return {
             context: { body: { ...(ctx.body as object), revokeOtherSessions: true } },
           }
-        }
-
-        if (ctx.path === resettingPassword) {
-          // The account the link is for, for the count after the route. The
-          // token as better-auth takes it: from the body, or else from the
-          // address.
-          const token =
-            (ctx.body as { token?: unknown } | undefined)?.token ||
-            (ctx.query as { token?: unknown } | undefined)?.token
-          const link =
-            typeof token === 'string'
-              ? await ctx.context.internalAdapter.findVerificationValue(`reset-password:${token}`)
-              : null
-
-          if (link) {
-            ;(ctx.context as unknown as Record<string, unknown>)[accountOfReset] = link.value
-          }
-
-          return
         }
 
         if (codesAtSignIn.has(ctx.path)) {
@@ -819,18 +804,6 @@ export function createAuthentication({
        * (`SessionIdentitySource`).
        */
       after: createAuthMiddleware(async (ctx) => {
-        if (ctx.path === resettingPassword) {
-          // better-auth ended the sessions with the new password; the count
-          // follows, for a session written in between (`credentials.ts`).
-          const account = (ctx.context as unknown as Record<string, unknown>)[accountOfReset]
-
-          if (typeof account === 'string' && !isAPIError(ctx.context.returned)) {
-            await database.forInstance((tx) => revokeCredentials(tx, account), account)
-          }
-
-          return
-        }
-
         if (codesAtSignIn.has(ctx.path)) {
           // A right code, at a sign in or where the app is set up.
           if (!isAPIError(ctx.context.returned) && ctx.context.newSession) {
