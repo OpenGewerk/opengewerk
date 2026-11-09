@@ -1,12 +1,13 @@
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import { Database, newId } from '@opengewerk/platform-server'
-import { Client, type Pool } from 'pg'
+import type { Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
+import { holdQuery } from './test-hold.js'
 import { as, testIdentities as identities } from './test-identity.js'
 
 /**
@@ -304,70 +305,39 @@ describe('one’s own leave', () => {
    * The second waits for the first and then finds its days taken.
    */
   it('is asked for twice at once on the same days, and the second finds them taken', async () => {
-    const query = Client.prototype.query
-    let reached: () => void = () => undefined
-    let release: () => void = () => undefined
-    const atTheWrite = new Promise<void>((resolve) => {
-      reached = resolve
-    })
-    const released = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    let armed = true
-
-    Client.prototype.query = function (this: Client, ...args: unknown[]) {
-      const config = args[0] as string | { text?: string } | undefined
-      const text = typeof config === 'string' ? config : (config?.text ?? '')
-      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
-
-      if (armed && /^insert into "absences"/i.test(text.trim())) {
-        armed = false
-        reached()
-
-        return released.then(forward)
-      }
-
-      return forward()
-    } as typeof query
-
+    const write = holdQuery((text) => /^insert into "absences"/i.test(text.trim()))
     const statuses: number[] = []
+    const ask = (firstDay: string, lastDay: string) =>
+      http()
+        .post('/absences/mine')
+        .set('x-test-identity', anna)
+        .send(days(firstDay, lastDay))
+        .then((answer) => {
+          statuses.push(answer.status)
+        })
+    const first = ask('2027-05-03', '2027-05-07')
 
-    try {
-      const ask = (firstDay: string, lastDay: string) =>
-        http()
-          .post('/absences/mine')
-          .set('x-test-identity', anna)
-          .send(days(firstDay, lastDay))
-          .then((answer) => {
-            statuses.push(answer.status)
-          })
-      const first = ask('2027-05-03', '2027-05-07')
+    await write.reached
 
-      await atTheWrite
+    const second = ask('2027-05-06', '2027-05-10')
 
-      const second = ask('2027-05-06', '2027-05-10')
+    // Until the second waits for the first, or, without the lock, is done.
+    for (let tries = 0; tries < 250 && statuses.length === 0; tries += 1) {
+      const { rows } = await admin.query<{ waiting: string }>(
+        `select count(*) as waiting from pg_stat_activity
+          where datname = current_database() and wait_event_type = 'Lock'
+            and query like 'select pg_advisory_xact_lock%'`,
+      )
 
-      // Until the second waits for the first, or, without the lock, is done.
-      for (let tries = 0; tries < 250 && statuses.length === 0; tries += 1) {
-        const { rows } = await admin.query<{ waiting: string }>(
-          `select count(*) as waiting from pg_stat_activity
-            where datname = current_database() and wait_event_type = 'Lock'
-              and query like 'select pg_advisory_xact_lock%'`,
-        )
-
-        if (Number(rows[0]?.waiting) > 0) {
-          break
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 20))
+      if (Number(rows[0]?.waiting) > 0) {
+        break
       }
 
-      release()
-      await Promise.all([first, second])
-    } finally {
-      Client.prototype.query = query
-      release()
+      await new Promise((resolve) => setTimeout(resolve, 20))
     }
+
+    write.release()
+    await Promise.all([first, second])
 
     expect(statuses.sort()).toEqual([201, 409])
 
