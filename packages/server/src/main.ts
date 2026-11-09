@@ -35,11 +35,7 @@ import { ApiModule } from './api/api.module.js'
 import { access, createAuthentication, SessionIdentitySource } from './authentication/access.js'
 import { application as opengewerk, readConfiguration } from './configuration.js'
 import { DocumentFiles } from './api/document-files.js'
-import {
-  documentAttachments,
-  withAppointmentInvitation,
-  withCallInstructions,
-} from './mail/attachments.js'
+import { mailAttachments } from './mail/attachments.js'
 import { accountMessages } from './mail/account-messages.js'
 import { endInterruptedImports } from './datanorm/imports.js'
 import { SellingPrices } from './pricing/selling-prices.js'
@@ -298,10 +294,7 @@ async function start(): Promise<void> {
       connect: mail.connect,
       key: mail.key,
       origin,
-      attachments: withAppointmentInvitation(
-        database,
-        withCallInstructions(printing, database, documentAttachments(printing)),
-      ),
+      attachments: mailAttachments(printing, database),
       invitationLinks: invitationLinks(database, origin),
     })
   }

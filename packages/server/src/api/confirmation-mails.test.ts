@@ -21,10 +21,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import {
-  documentAttachments,
-  withAppointmentInvitation,
-  withCallInstructions,
+  mailAttachments,
+  restrictedCustomerMail,
+  withoutRestrictedCustomers,
 } from '../mail/attachments.js'
+import type { OutboxRow } from '../mail/outbox.js'
 import { runMailCycle } from '../mail/worker.js'
 import { ApiModule } from './api.module.js'
 import { DocumentFiles } from './document-files.js'
@@ -95,10 +96,8 @@ async function cycle() {
     connect: () => transport,
     key: testKey,
     origin: 'https://opengewerk.example.de',
-    attachments: withAppointmentInvitation(
-      database,
-      withCallInstructions(files, database, documentAttachments(files)),
-    ),
+    // The chain a running instance gives its worker.
+    attachments: mailAttachments(files, database),
     now: () => new Date(Date.now() + 1_000),
   })
 
@@ -274,6 +273,53 @@ describe('a confirmation of an appointment (#315)', () => {
     expect(calendarOf(afterCancel[0])).toContain('SEQUENCE:2\r\n')
     // And nothing twice.
     expect(await cycle()).toEqual([])
+  })
+
+  /**
+   * A message to a customer restricted since it was written is held back as
+   * it leaves, found through its appointment or its job. A confirmation is
+   * written in the pass that sends it and asks the restriction then already,
+   * so the link is asked here with rows as they would wait.
+   */
+  it('are held back as they leave once the customer is restricted, found through the appointment or the job', async () => {
+    const customerId = await aCustomer()
+    const job = await aJob(customerId)
+    const made = await anAppointment(job)
+    const waiting = (names: Partial<OutboxRow>) =>
+      ({
+        tenantId: north.id,
+        documentId: null,
+        jobId: null,
+        appointmentId: null,
+        earlyStartRequestId: null,
+        ...names,
+      }) as OutboxRow
+    const passed = () => Promise.resolve([])
+    const asked = withoutRestrictedCustomers(database, passed)
+
+    await expect(asked(waiting({ appointmentId: made.id } as Partial<OutboxRow>))).resolves.toEqual(
+      [],
+    )
+
+    const recorded = await http()
+      .post('/privacy/requests')
+      .set('x-test-identity', office())
+      .send({ customerId, receivedOn: new Date().toISOString().slice(0, 10), channel: 'email' })
+      .expect(201)
+
+    await admin.query(
+      `update erasure_requests set status = 'restricted', restricted_at = now() where id = $1`,
+      [(recorded.body as { request: { id: string } }).request.id],
+    )
+
+    for (const names of [{ appointmentId: made.id }, { jobId: job }]) {
+      await expect(asked(waiting(names as Partial<OutboxRow>))).rejects.toThrow(
+        restrictedCustomerMail,
+      )
+    }
+
+    // A message to somebody in the business names none of them and goes.
+    await expect(asked(waiting({}))).resolves.toEqual([])
   })
 
   it('goes to nobody for a customer without an address, and not about one that is over', async () => {
