@@ -15,7 +15,7 @@ import {
 } from '@opengewerk/platform-server'
 
 import { occasions } from '../notifications/occasions.js'
-import type { AttachmentSource } from './attachments.js'
+import { type AttachmentSource, refuseRestrictedCustomer } from './attachments.js'
 import { outbox, type OutboxRow } from './outbox.js'
 import { mailServersOfBusinesses } from './server-settings.js'
 
@@ -62,6 +62,10 @@ const sentences = {
  * of a service call for a consumer its instructions (#315).
  */
 async function attachmentsOf(job: MailJob, row: OutboxRow): Promise<readonly MailAttachment[]> {
+  // Every message, with a file or without: whether its customer was
+  // restricted since it was written.
+  await refuseRestrictedCustomer(job.database, row)
+
   const carries =
     row.kind === 'document' ||
     row.kind === 'job_instructions' ||

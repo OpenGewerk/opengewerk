@@ -1,8 +1,16 @@
 import { ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common'
-import { type AppointmentId, berlinClock, RuleError } from '@opengewerk/domain'
-import { type Database, type MailAttachment, MailDeliveryError } from '@opengewerk/platform-server'
+import { type AppointmentId, berlinClock, type JobId, RuleError } from '@opengewerk/domain'
+import {
+  type Database,
+  type MailAttachment,
+  MailDeliveryError,
+  type TenantTransaction,
+} from '@opengewerk/platform-server'
+import { eq } from 'drizzle-orm'
 
 import type { DocumentFiles, MailedFile } from '../api/document-files.js'
+import { appointments, documents, jobs } from '../database/schema/index.js'
+import { customerRestricted } from '../privacy/customer-erasure.js'
 import { appointmentInvitation } from '../notifications/confirmation-mail.js'
 import { CallInstructionsRefused, callPrintFacts } from '../service-calls/instructions.js'
 import type { OutboxRow } from './outbox.js'
@@ -192,4 +200,96 @@ export function withAppointmentInvitation(
       },
     ]
   }
+}
+
+/** Why a message to a customer restricted since it was written stays unsent. */
+export const restrictedCustomerMail =
+  'Der Kunde ist auf einen Antrag auf Löschung eingeschränkt. Die Nachricht geht deshalb nicht mehr hinaus.'
+
+/**
+ * A message to a customer restricted on a request for deletion since it was
+ * written does not go out (Art. 18 DSGVO). Raising a message asks the
+ * restriction already (#845); a message written before it would otherwise
+ * still go. Asked by the worker of every message as it leaves, with a file or
+ * without, before any file of it is made, and given up on with the reason,
+ * like a message whose document has no file to give.
+ */
+export async function refuseRestrictedCustomer(database: Database, row: OutboxRow): Promise<void> {
+  const restricted = await database.forTenant(
+    { tenantId: row.tenantId, reason: 'mail' },
+    async (tx) => {
+      const customerId = await customerOfMessage(tx, row)
+
+      return customerId !== null && (await customerRestricted(tx, customerId))
+    },
+  )
+
+  if (restricted) {
+    throw new MailDeliveryError(restrictedCustomerMail, 'ERESTRICTED', null, { permanent: true })
+  }
+}
+
+/** The cause of a reminder to a customer: `customer_reminder:<kind>:<customer>:<…>`. */
+const reminderCause = /^customer_reminder:[^:]+:([0-9a-f-]{36}):/
+
+/**
+ * The customer a message is about, through what it names: its document, its
+ * job or its appointment, and for a reminder its cause, which is all a
+ * reminder names. Null for a message to somebody in the business, which
+ * names none of them.
+ */
+async function customerOfMessage(tx: TenantTransaction, row: OutboxRow): Promise<string | null> {
+  if (row.kind === 'customer_reminder') {
+    return reminderCause.exec(row.cause)?.[1] ?? null
+  }
+
+  if (row.documentId !== null) {
+    const [found] = await tx
+      .select({ customerId: documents.customerId })
+      .from(documents)
+      .where(eq(documents.id, row.documentId))
+
+    return found?.customerId ?? null
+  }
+
+  const jobId = row.jobId ?? (await jobOfMessage(tx, row))
+
+  if (jobId === null) {
+    return null
+  }
+
+  const [job] = await tx
+    .select({ customerId: jobs.customerId })
+    .from(jobs)
+    .where(eq(jobs.id, jobId as JobId))
+
+  return job?.customerId ?? null
+}
+
+/**
+ * The job of a message that names its appointment instead. One about a request
+ * for an early start names its job as well.
+ */
+async function jobOfMessage(tx: TenantTransaction, row: OutboxRow): Promise<string | null> {
+  if (row.appointmentId !== null) {
+    const [found] = await tx
+      .select({ jobId: appointments.jobId })
+      .from(appointments)
+      .where(eq(appointments.id, row.appointmentId))
+
+    return found?.jobId ?? null
+  }
+
+  return null
+}
+
+/**
+ * The files of every message this application sends: what the worker of a
+ * running instance is given, and a test that wants all of it.
+ */
+export function mailAttachments(files: DocumentFiles, database: Database): AttachmentSource {
+  return withAppointmentInvitation(
+    database,
+    withCallInstructions(files, database, documentAttachments(files)),
+  )
 }

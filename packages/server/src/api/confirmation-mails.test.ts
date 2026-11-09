@@ -20,11 +20,7 @@ import request from 'supertest'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
-import {
-  documentAttachments,
-  withAppointmentInvitation,
-  withCallInstructions,
-} from '../mail/attachments.js'
+import { mailAttachments, restrictedCustomerMail } from '../mail/attachments.js'
 import { runMailCycle } from '../mail/worker.js'
 import { ApiModule } from './api.module.js'
 import { DocumentFiles } from './document-files.js'
@@ -95,10 +91,8 @@ async function cycle() {
     connect: () => transport,
     key: testKey,
     origin: 'https://opengewerk.example.de',
-    attachments: withAppointmentInvitation(
-      database,
-      withCallInstructions(files, database, documentAttachments(files)),
-    ),
+    // The chain a running instance gives its worker.
+    attachments: mailAttachments(files, database),
     now: () => new Date(Date.now() + 1_000),
   })
 
@@ -274,6 +268,69 @@ describe('a confirmation of an appointment (#315)', () => {
     expect(calendarOf(afterCancel[0])).toContain('SEQUENCE:2\r\n')
     // And nothing twice.
     expect(await cycle()).toEqual([])
+  })
+
+  /**
+   * Messages written before their customer was restricted, waiting as a
+   * mail server that did not answer leaves them: a confirmation of a job,
+   * which carries no file to a business, and a reminder, which names its
+   * customer only in its cause. The pass gives both up with the reason.
+   */
+  it('wait unsent once their customer is restricted, with a file or without', async () => {
+    const customerId = await aCustomer()
+    const job = await aJob(customerId)
+    const made = await anAppointment(job)
+    const waiting = async (
+      kind: string,
+      cause: string,
+      names: { jobId?: string; appointmentId?: string } = {},
+    ) => {
+      const { rows } = await admin.query<{ id: string }>(
+        `insert into mail_outbox
+           (tenant_id, kind, cause, sender_name, recipient_address, recipient_name, subject, body,
+            job_id, appointment_id)
+         values ($1, $2, $3, 'Elektro Nord GmbH', 'arslan@example.de', 'Familie Arslan', 'Betreff',
+                 'Text', $4, $5)
+         returning id`,
+        [north.id, kind, cause, names.jobId ?? null, names.appointmentId ?? null],
+      )
+
+      return rows[0]?.id ?? ''
+    }
+    const received = await waiting('job_received', `job_received:${job}:waiting`, { jobId: job })
+    const reminded = await waiting(
+      'customer_reminder',
+      `customer_reminder:e_check:${customerId}:${job}:2031-11-07`,
+    )
+    // Names its appointment and not its job.
+    const confirmed = await waiting('appointment_confirmation', `appointment:${made.id}:waiting`, {
+      appointmentId: made.id,
+    })
+    const recorded = await http()
+      .post('/privacy/requests')
+      .set('x-test-identity', office())
+      .send({ customerId, receivedOn: new Date().toISOString().slice(0, 10), channel: 'email' })
+      .expect(201)
+
+    await admin.query(
+      `update erasure_requests set status = 'restricted', restricted_at = now() where id = $1`,
+      [(recorded.body as { request: { id: string } }).request.id],
+    )
+
+    expect(await cycle()).toEqual([])
+
+    const { rows } = await admin.query<{ id: string; status: string; last_error: string | null }>(
+      'select id, status, last_error from mail_outbox where id = any($1) order by id',
+      [[received, reminded, confirmed]],
+    )
+
+    expect(rows).toEqual(
+      [received, reminded, confirmed].map((id) => ({
+        id,
+        status: 'failed',
+        last_error: expect.stringContaining(restrictedCustomerMail) as unknown,
+      })),
+    )
   })
 
   it('goes to nobody for a customer without an address, and not about one that is over', async () => {

@@ -22,7 +22,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { aMailServer, testKey } from '@opengewerk/platform-server/testing'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
-import { documentAttachments } from '../mail/attachments.js'
+import { documentAttachments, restrictedCustomerMail } from '../mail/attachments.js'
 import { runMailCycle } from '../mail/worker.js'
 import { ApiModule } from './api.module.js'
 import { DocumentFiles } from './document-files.js'
@@ -314,6 +314,40 @@ describe('an issued invoice', () => {
     await sending(id).expect(202)
 
     expect((await messagesOf(id)).map((message) => message.status)).toEqual(['pending', 'sent'])
+  })
+
+  /**
+   * Restricted on a request for deletion after the message was written, the
+   * customer gets it no more (Art. 18 DSGVO): it is given up on with the
+   * reason, and nothing goes out.
+   */
+  it('stays unsent once its customer is restricted after it was written', async () => {
+    const customerId = await customer(person)
+    const id = await issuedInvoice(customerId)
+
+    await sending(id).expect(202)
+    // Recorded by the office and answered with a restriction, as whoever
+    // leads does it.
+    const recorded = await http()
+      .post('/privacy/requests')
+      .set('x-test-identity', office())
+      .send({ customerId, receivedOn: new Date().toISOString().slice(0, 10), channel: 'email' })
+      .expect(201)
+
+    await admin.query(
+      `update erasure_requests set status = 'restricted', restricted_at = now() where id = $1`,
+      [(recorded.body as { request: { id: string } }).request.id],
+    )
+
+    const post = recording()
+
+    expect(await cycle(post.transport)).toMatchObject({ sent: 0 })
+    expect(post.sent).toEqual([])
+
+    const [message] = await messagesOf(id)
+
+    expect(message?.status).toBe('failed')
+    expect(message?.lastError).toContain(restrictedCustomerMail)
   })
 
   it('waits while the renderer is down, and goes once it is back', async () => {
