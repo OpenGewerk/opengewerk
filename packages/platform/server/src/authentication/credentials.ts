@@ -1,6 +1,6 @@
 import { APIError } from 'better-auth/api'
 import type { drizzleAdapter } from 'better-auth/adapters/drizzle'
-import { and, eq, not, notExists, sql, type SQL } from 'drizzle-orm'
+import { and, eq, exists, not, notExists, sql, type SQL } from 'drizzle-orm'
 
 import { databaseCode } from '../api/database-errors.js'
 import type { Database } from '../database/database.js'
@@ -199,6 +199,39 @@ export async function withdrawUnconfirmedApp(database: Database, userId: string)
         ),
     userId,
   )
+}
+
+/**
+ * Switches an app back on whose secret is confirmed, and says whether it was
+ * off. Two confirmations of the same setup sent together (a second click, a
+ * retry) raced: the setup of the one counted up past the session of the
+ * other, which took the app back (`withdrawUnconfirmedApp`) before
+ * better-auth confirmed the secret for the first. The confirmation that ends
+ * with success puts it right, after its secret is confirmed.
+ */
+export async function reinstateConfirmedApp(database: Database, userId: string): Promise<boolean> {
+  const switched = await database.forInstance(
+    (tx) =>
+      tx
+        .update(authUsers)
+        .set({ twoFactorEnabled: true })
+        .where(
+          and(
+            eq(authUsers.id, userId),
+            eq(authUsers.twoFactorEnabled, false),
+            exists(
+              tx
+                .select({ id: authTwoFactors.id })
+                .from(authTwoFactors)
+                .where(and(eq(authTwoFactors.userId, userId), eq(authTwoFactors.verified, true))),
+            ),
+          ),
+        )
+        .returning({ id: authUsers.id }),
+    userId,
+  )
+
+  return switched.length > 0
 }
 
 /** Takes a session whose credentials were taken back out of the database. */

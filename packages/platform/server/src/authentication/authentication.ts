@@ -34,6 +34,7 @@ import {
   generationOfAddress,
   generationOfPasskey,
   revokeCredentials,
+  reinstateConfirmedApp,
   revokedSince,
   secondStepStands,
   withdrawUnconfirmedApp,
@@ -839,7 +840,16 @@ export function createAuthentication({
             // code that confirms it makes a new one; at a sign in there was
             // none yet.
             if (ctx.path === confirmingTheApp && ctx.context.session) {
-              await afterAppSetUp(ctx.context.newSession.user)
+              const { session, user } = ctx.context.newSession
+
+              // A second confirmation sent together with this one may have
+              // taken the app back (`reinstateConfirmedApp`). Switched on
+              // again, it ends what setting it up ends.
+              if (await reinstateConfirmedApp(database, user.id)) {
+                await endSessionsWithoutSecondFactor(database, user.id, session.id, true)
+              }
+
+              await afterAppSetUp(user)
             }
           }
 

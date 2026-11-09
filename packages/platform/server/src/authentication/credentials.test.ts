@@ -422,6 +422,121 @@ describe('the count of the credentials of an account', () => {
     expect((again.body as { twoFactorRedirect?: boolean }).twoFactorRedirect).toBeUndefined()
   })
 
+  it('keeps the app on where two confirmations of its setup were sent together', async () => {
+    const email = 'doppelt@nord.example.de'
+    const userId = await person(email)
+    const cookies = cookiesOf(
+      await post('/sign-in/email').send({ email, password: first }).expect(200),
+    )
+    const enabled = await post('/two-factor/enable', cookies)
+      .send({ password: first, method: 'totp' })
+      .expect(200)
+    const code = await currentCode((enabled.body as { totpURI: string }).totpURI)
+
+    // Holds, each until the test lets go: the first switch of the account to
+    // the app, so that both confirmations read it without; the first session
+    // written, behind which the other confirmation counts up; and the
+    // confirmation of the secret.
+    const holds = [
+      `create function hold_first_switch() returns trigger language plpgsql as $$ begin
+         if new.two_factor_enabled and not old.two_factor_enabled then perform pg_advisory_xact_lock(4801); end if;
+         return new; end $$`,
+      'create trigger hold_first_switch before update on auth_users for each row execute function hold_first_switch()',
+      `create function hold_first_session() returns trigger language plpgsql as $$ begin
+         if pg_try_advisory_xact_lock(4804) then perform pg_advisory_xact_lock(4802); end if;
+         return new; end $$`,
+      'create trigger aa_hold_first_session before insert on auth_sessions for each row execute function hold_first_session()',
+      `create function hold_verified() returns trigger language plpgsql as $$ begin
+         if new.verified and not old.verified then perform pg_advisory_xact_lock(4803); end if;
+         return new; end $$`,
+      'create trigger hold_verified before update on auth_two_factors for each row execute function hold_verified()',
+    ]
+    const holder = await admin.connect()
+    // Who waits for the holder, or for one that waits for it: the second
+    // confirmation can wait on the row the first is switching.
+    const waitingOn = async (backend: number, count: number, over: () => boolean) => {
+      for (let tries = 0; tries < 750 && !over(); tries += 1) {
+        const { rows } = await admin.query<{ waiting: string }>(
+          `with held as (select pid from pg_stat_activity where $1 = any(pg_blocking_pids(pid)))
+           select count(*) as waiting from pg_stat_activity a
+            where a.pid in (select pid from held)
+               or exists (select 1 from held h where h.pid = any(pg_blocking_pids(a.pid)))`,
+          [backend],
+        )
+
+        if (Number(rows[0]?.waiting) >= count) {
+          return
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+
+      if (!over()) {
+        throw new Error(`Fewer than ${count} confirmations reached their holds.`)
+      }
+    }
+
+    for (const statement of holds) {
+      await admin.query(statement)
+    }
+
+    try {
+      await holder.query(
+        'select pg_advisory_lock(4801), pg_advisory_lock(4802), pg_advisory_lock(4803)',
+      )
+
+      const held = Number(
+        (await holder.query<{ pid: number }>('select pg_backend_pid() as pid')).rows[0]?.pid,
+      )
+      const answers: Response[] = []
+      const confirm = () =>
+        post('/two-factor/verify-totp', cookies)
+          .send({ code })
+          .then((received) => {
+            answers.push(received)
+          })
+      const first = confirm()
+
+      await waitingOn(held, 1, () => answers.length > 0)
+
+      const second = confirm()
+
+      await waitingOn(held, 2, () => answers.length > 0)
+      await holder.query('select pg_advisory_unlock(4801)')
+      // One waits with its session, the other, which counted up past it,
+      // with the confirmation of the secret.
+      await waitingOn(held, 2, () => answers.length > 0)
+      await holder.query('select pg_advisory_unlock(4802)')
+      await Promise.race([first, second])
+      await holder.query('select pg_advisory_unlock(4803)')
+      await Promise.all([first, second])
+
+      expect(answers.map((answer) => answer.status).sort()).toEqual([200, 401])
+    } finally {
+      await holder.query('select pg_advisory_unlock_all()')
+      holder.release()
+      await admin.query('drop trigger if exists hold_first_switch on auth_users')
+      await admin.query('drop trigger if exists aa_hold_first_session on auth_sessions')
+      await admin.query('drop trigger if exists hold_verified on auth_two_factors')
+      await admin.query('drop function if exists hold_first_switch()')
+      await admin.query('drop function if exists hold_first_session()')
+      await admin.query('drop function if exists hold_verified()')
+    }
+
+    const { rows } = await admin.query<{ app: boolean; verified: boolean }>(
+      `select u.two_factor_enabled as app, t.verified
+         from auth_users u join auth_two_factors t on t.user_id = u.id where u.id = $1`,
+      [userId],
+    )
+
+    expect(rows[0]).toEqual({ app: true, verified: true })
+
+    // And the next sign in asks for the code.
+    const again = await post('/sign-in/email').send({ email, password: first }).expect(200)
+
+    expect((again.body as { twoFactorRedirect?: boolean }).twoFactorRedirect).toBe(true)
+  })
+
   it('ends a sign in that waits for its second code', async () => {
     const email = 'zweiter@nord.example.de'
     const userId = await person(email)
