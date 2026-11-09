@@ -140,6 +140,11 @@ async function blockedBy(backend: number, over: () => boolean): Promise<void> {
 
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
+
+  // Neither a wait nor an answer: the race was never run as the test meant.
+  if (!over()) {
+    throw new Error('No connection waited for the lock, and no answer came.')
+  }
 }
 
 beforeAll(async () => {
