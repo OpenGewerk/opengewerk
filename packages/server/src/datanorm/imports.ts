@@ -42,7 +42,7 @@ import { ImportRefused } from './plan.js'
 import { type PlanningSession, startPlanning } from './planner.js'
 import type { DeliveredFile } from './read.js'
 import { rowsOf, takeOver } from './take-over.js'
-import { ZipRefused } from './zip.js'
+import { deliveryTooLarge, largestUnpackedBytes, ZipRefused } from './zip.js'
 
 /**
  * Imports from DATANORM (#297), from the files to the takeover.
@@ -343,6 +343,14 @@ export class ArticleImports {
           sha256: file.sha256,
           bytes: sizes.get(file.sha256) ?? 0,
         }))
+
+        // Refused by the sizes stored with the files, before a byte of them is
+        // loaded: an archive is no larger than what it unpacks to, so files
+        // larger together than a delivery may unpack to are too large as
+        // well. Reading them first loaded all of it into the one process.
+        if (imported.reduce((sum, file) => sum + file.bytes, 0) > largestUnpackedBytes) {
+          throw new UnprocessableEntityException(deliveryTooLarge)
+        }
 
         const [created] = await tx
           .insert(articleImports)
