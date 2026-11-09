@@ -194,8 +194,8 @@ function fromStored(row: unknown): Operation {
 
 /**
  * Whether an operation in the outbox is one the person the store is open for
- * may send. One from before the person was recorded, before version 0.5.0,
- * says for nobody whose it is, and nobody sends it: whoever opened the store
+ * may send. One queued before the store recorded the person with it says
+ * for nobody whose it is, and nobody sends it: whoever opened the store
  * next sent it with their own name and rights on it. It waits on the device,
  * where counting before a sign out still finds it, and goes with the sign
  * out. Opened without an owner, the store answers with everything.
