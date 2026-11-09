@@ -15,7 +15,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common'
 import { type Id, longestDeviceLabel } from '@opengewerk/platform-domain'
-import { and, asc, count, eq, ne } from 'drizzle-orm'
+import { and, asc, count, eq, ne, sql } from 'drizzle-orm'
 
 import { RequiresPermission } from '../api/authorization.js'
 import { CurrentIdentity, type RequestIdentity } from '../api/identity.js'
@@ -239,6 +239,15 @@ function pushController<Right extends string>(rights: PushRights<Right>): Type<u
       const { pushSubscriptions } = this.tables
       const now = new Date()
       const [row] = await this.database.forTenant(identity, async (tx) => {
+        // Two people signing up the same browser at once take turns, for as
+        // long as the transaction runs: the second then finds the row of the
+        // first and takes nothing of theirs along. Without it neither found
+        // the other's row, and the second took the first's over, its id and
+        // the messages waiting on it with it.
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext('opengewerk.push_endpoint'), hashtext(${`${identity.tenantId}:${endpoint}`}))`,
+        )
+
         // Each device of a person is a row the job sends to and a value bound
         // into its statements; without a number, one person could make the
         // statements of the whole business too large to run.

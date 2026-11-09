@@ -96,6 +96,25 @@ function as(person: Person): string {
   return JSON.stringify(identity)
 }
 
+/** Until a statement of the application waits for a lock another connection holds. */
+async function waitingForALock() {
+  for (let tries = 0; tries < 250; tries += 1) {
+    const { rows } = await admin.query<{ waiting: string }>(
+      `select count(*) as waiting from pg_stat_activity
+        where wait_event_type = 'Lock'
+          and (query like 'select pg_advisory_xact_lock%' or query like 'insert into "push_subscriptions"%')`,
+    )
+
+    if (Number(rows[0]?.waiting) > 0) {
+      return
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+
+  throw new Error('Nothing came to wait')
+}
+
 function http(on: INestApplication = app) {
   return request(on.getHttpServer())
 }
@@ -293,6 +312,57 @@ describe('a device', () => {
     expect((await overview('lena')).devices).toHaveLength(1)
     expect(
       (await admin.query("select id from push_outbox where cause = 'waiting-for-mia'")).rows,
+    ).toEqual([])
+  })
+
+  /**
+   * Mia and Lena sign up the same browser at the same moment. Mia's comes
+   * first, with a message waiting on it, and is held open until Lena's waits
+   * for it: Lena's then finds Mia's row and takes nothing of hers along.
+   */
+  it('signed up by two at once takes them one after the other, and the second takes nothing of the first', async () => {
+    const endpoint = 'https://fcm.googleapis.com/fcm/send/zugleich:abc'
+    const { body } = subscription(endpoint)
+    const held = await admin.connect()
+    let mias: string
+
+    try {
+      await held.query('begin')
+      // Mia's sign up as the route makes it, its turn taken.
+      await held.query(
+        `select pg_advisory_xact_lock(hashtext('opengewerk.push_endpoint'), hashtext($1))`,
+        [`${north.id}:${endpoint}`],
+      )
+      mias = String(
+        (
+          await held.query<{ id: string }>(
+            `insert into push_subscriptions (tenant_id, user_id, entry, label, endpoint, p256dh, auth)
+             values ($1, 'mia', 'front', 'Chrome auf Windows', $2, $3, $4) returning id`,
+            [north.id, endpoint, body.keys.p256dh, body.keys.auth],
+          )
+        ).rows[0]?.id,
+      )
+      await held.query(
+        `insert into push_outbox (tenant_id, kind, cause, subscription_id, title, body, url, expires_at)
+         values ($1, 'parcel_waiting', 'zugleich-for-mia', $2, 'Für Mia', 'Nur für Mia', '/', now() + interval '1 day')`,
+        [north.id, mias],
+      )
+
+      const lenas = subscribe('lena', body).then((answer) => answer)
+
+      await waitingForALock()
+      await held.query('commit')
+
+      const answer = await lenas
+
+      expect(answer.status).toBe(200)
+      expect((answer.body as { id: string }).id).not.toBe(mias)
+    } finally {
+      held.release()
+    }
+
+    expect(
+      (await admin.query("select id from push_outbox where cause = 'zugleich-for-mia'")).rows,
     ).toEqual([])
   })
 
