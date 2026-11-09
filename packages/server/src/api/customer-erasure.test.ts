@@ -161,6 +161,14 @@ async function vossberg(): Promise<Fixture> {
      insert into mail_outbox (tenant_id, kind, cause, sender_name, recipient_address, recipient_name, subject, body, document_id)
        values ('${north}', 'document', 'document:${invoice}', 'Elektro Nord', 'ingrid@${family.toLowerCase()}.example', 'Ingrid ${family}',
                'Ihre Rechnung', 'Hallo Frau ${family}', '${invoice}');
+     -- Reminders name no document, job or deadline (opengewerk#896): one that
+     -- keeps its customer, and one written before that, its customer only in
+     -- its cause.
+     insert into mail_outbox (tenant_id, kind, cause, sender_name, recipient_address, recipient_name, subject, body, customer_id)
+       values ('${north}', 'customer_reminder', 'kept-with-its-customer:${customer}', 'Elektro Nord',
+               'ingrid@${family.toLowerCase()}.example', 'Ingrid ${family}', 'Ihre Prüfung', 'Hallo Frau ${family}', '${customer}'),
+              ('${north}', 'customer_reminder', 'customer_reminder:e_check:${customer}:before:2018-01-01', 'Elektro Nord',
+               'ingrid@${family.toLowerCase()}.example', 'Ingrid ${family}', 'Ihre Prüfung', 'Hallo Frau ${family}', null);
      commit;`,
   )
   // Closed in 2019; the trigger that stamps the day a job closes knows only today.
@@ -718,7 +726,9 @@ describe('deleting a customer (#845)', () => {
     // The outbox is the foundation's: the mail stays, empty, and goes nowhere.
     expect(
       (await admin.query('select recipient_address, subject, status from mail_outbox')).rows,
-    ).toEqual([{ recipient_address: '', subject: '', status: 'failed' }])
+    ).toEqual(
+      Array.from({ length: 3 }, () => ({ recipient_address: '', subject: '', status: 'failed' })),
+    )
 
     // The request is done, and the chain of the log checks out.
     expect(

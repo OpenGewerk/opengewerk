@@ -302,6 +302,10 @@ export async function emptyCustomer(
            last_error = case when status = 'pending' then 'Kunde gelöscht' else last_error end
      where document_id in ${documentsOf} or job_id in ${jobsOf} or appointment_id in ${appointmentsOf}
         or early_start_request_id in ${requestsOf} or deadline_id in ${deadlinesOf}
+        or customer_id = ${k}
+        -- A reminder written before its customer was kept with it names the
+        -- customer in its cause and nothing else (opengewerk#896).
+        or (kind = 'customer_reminder' and cause like 'customer_reminder:%:' || ${k} || ':%')
     returning id`,
   )
 

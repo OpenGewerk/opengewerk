@@ -514,6 +514,16 @@ describe('the instructions by mail', () => {
 
     expect(ours).toHaveLength(1)
     expect(ours[0]?.to).toEqual({ name: 'Klaus Lehmann', address: 'klaus.lehmann@example.com' })
+    // Whose it is, for the deletion of the customer and the pass that sends it.
+    expect(
+      (
+        await admin.query(
+          `select o.customer_id = j.customer_id as theirs from mail_outbox o
+             join jobs j on j.id = o.job_id where o.job_id = $1 and o.kind = 'job_instructions'`,
+          [job],
+        )
+      ).rows,
+    ).toEqual([{ theirs: true }])
     expect(ours[0]?.text).toContain('auf unserem Gerät unterschrieben hat')
     expect(ours[0]?.attachments?.map((attachment) => attachment.filename)).toEqual([
       'Belehrungen.pdf',
@@ -571,6 +581,16 @@ describe('the instructions by mail', () => {
 
     expect(ours).toHaveLength(1)
     expect(ours[0]?.text).toContain('Vordruck für das Verlangen')
+    // Whose it is, for the deletion of the customer and the pass that sends it.
+    expect(
+      (
+        await admin.query(
+          `select o.customer_id = j.customer_id as theirs from mail_outbox o
+             join jobs j on j.id = o.job_id where o.job_id = $1 and o.kind = 'job_instructions'`,
+          [job],
+        )
+      ).rows,
+    ).toEqual([{ theirs: true }])
   })
 
   it('are not sent by a technician, nor without an address, nor for a project', async () => {

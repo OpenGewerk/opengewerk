@@ -206,26 +206,50 @@ export function withAppointmentInvitation(
 export const restrictedCustomerMail =
   'Der Kunde ist auf einen Antrag auf Löschung eingeschränkt. Die Nachricht geht deshalb nicht mehr hinaus.'
 
+/** Why a message about a job that belongs to another customer now stays unsent. */
+export const reassignedCustomerMail =
+  'Der Auftrag gehört inzwischen zu einem anderen Kunden. Die Nachricht geht deshalb nicht mehr hinaus.'
+
 /**
- * A message to a customer restricted on a request for deletion since it was
- * written does not go out (Art. 18 DSGVO). Raising a message asks the
- * restriction already (#845); a message written before it would otherwise
- * still go. Asked by the worker of every message as it leaves, with a file or
- * without, before any file of it is made, and given up on with the reason,
+ * Whether a message to a customer may still go, asked by the worker of every
+ * message as it leaves, with a file or without, before any file of it is
+ * made. Not when its customer was restricted on a request for deletion since
+ * it was written (Art. 18 DSGVO): raising a message asks that already
+ * (#845). And not when what it is about belongs to another customer now: a
+ * job given to somebody else after the mail was written, whose details its
+ * file would carry to the address of the first. Given up on with the reason,
  * like a message whose document has no file to give.
  */
-export async function refuseRestrictedCustomer(database: Database, row: OutboxRow): Promise<void> {
-  const restricted = await database.forTenant(
+export async function refuseWithheldCustomerMail(
+  database: Database,
+  row: OutboxRow,
+): Promise<void> {
+  const reason = await database.forTenant(
     { tenantId: row.tenantId, reason: 'mail' },
     async (tx) => {
-      const customerId = await customerOfMessage(tx, row)
+      const current = await customerOfMessage(tx, row)
+
+      // A mail from before the customer was kept with it names none; its
+      // customer is the one of what it is about.
+      if (row.customerId !== null && current !== null && current !== row.customerId) {
+        return reassignedCustomerMail
+      }
+
+      const customerId = row.customerId ?? current
 
       return customerId !== null && (await customerRestricted(tx, customerId))
+        ? restrictedCustomerMail
+        : null
     },
   )
 
-  if (restricted) {
-    throw new MailDeliveryError(restrictedCustomerMail, 'ERESTRICTED', null, { permanent: true })
+  if (reason !== null) {
+    throw new MailDeliveryError(
+      reason,
+      reason === restrictedCustomerMail ? 'ERESTRICTED' : 'ECUSTOMER',
+      null,
+      { permanent: true },
+    )
   }
 }
 

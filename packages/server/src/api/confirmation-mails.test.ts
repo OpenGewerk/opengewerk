@@ -20,7 +20,11 @@ import request from 'supertest'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
-import { mailAttachments, restrictedCustomerMail } from '../mail/attachments.js'
+import {
+  mailAttachments,
+  reassignedCustomerMail,
+  restrictedCustomerMail,
+} from '../mail/attachments.js'
 import { runMailCycle } from '../mail/worker.js'
 import { ApiModule } from './api.module.js'
 import { DocumentFiles } from './document-files.js'
@@ -81,6 +85,16 @@ function recording() {
   }
 
   return { sent, transport }
+}
+
+/** The customers the mails about a record keep, one for each mail. */
+async function customersOfMails(column: 'appointment_id' | 'job_id', id: string) {
+  const { rows } = await admin.query<{ customer_id: string | null }>(
+    `select customer_id from mail_outbox where ${column} = $1 order by created_at`,
+    [id],
+  )
+
+  return [...new Set(rows.map((row) => row.customer_id))]
 }
 
 async function cycle() {
@@ -225,9 +239,13 @@ describe('a confirmation of an appointment (#315)', () => {
   })
 
   it('goes out when arranged, moved and cancelled, each with its calendar file', async () => {
-    const job = await aJob(await aCustomer())
+    const customerId = await aCustomer()
+    const job = await aJob(customerId)
     const made = await anAppointment(job)
     const arranged = await cycle()
+
+    // Whose it is, for the deletion of the customer and the pass that sends it.
+    expect(await customersOfMails('appointment_id', made.id)).toEqual([customerId])
 
     expect(arranged.map((mail) => [mail.to, mail.subject])).toEqual([
       [
@@ -333,6 +351,58 @@ describe('a confirmation of an appointment (#315)', () => {
     )
   })
 
+  /**
+   * A mail written about a job for one customer, the job given to another
+   * before it went: what it carries would name the other, so it does not go
+   * to the address of the first. A mail about a job that stayed goes.
+   */
+  it('waits unsent once its job belongs to another customer, and goes while it stays', async () => {
+    const first = await aCustomer({ name: 'Familie Arslan' })
+    const other = await aCustomer({ name: 'Familie Lehmann', email: 'lehmann@example.de' })
+    const moved = await aJob(first)
+    const stayed = await aJob(first)
+    const written = async (jobId: string, subject: string) => {
+      const { rows } = await admin.query<{ id: string }>(
+        `insert into mail_outbox
+           (tenant_id, kind, cause, sender_name, recipient_address, recipient_name, subject, body,
+            job_id, customer_id)
+         values ($1, 'job_received', $2, 'Elektro Nord GmbH', 'arslan@example.de', 'Familie Arslan',
+                 $3, 'Text', $4, $5)
+         returning id`,
+        [north.id, `job_received:${jobId}:written`, subject, jobId, first],
+      )
+
+      return rows[0]?.id ?? ''
+    }
+    const away = await written(moved, 'Ihr Auftrag, nun bei anderen')
+    const kept = await written(stayed, 'Ihr Auftrag, unverändert')
+
+    await http()
+      .patch(`/jobs/${moved}`)
+      .set('x-test-identity', office())
+      .send({ customerId: other })
+      .expect(200)
+
+    const sent = await cycle()
+
+    expect(sent.map((mail) => mail.subject)).toContain('Ihr Auftrag, unverändert')
+    expect(sent.map((mail) => mail.subject)).not.toContain('Ihr Auftrag, nun bei anderen')
+
+    const { rows } = await admin.query<{ id: string; status: string; last_error: string | null }>(
+      'select id, status, last_error from mail_outbox where id = any($1) order by id',
+      [[away, kept]],
+    )
+
+    expect(rows).toEqual([
+      {
+        id: away,
+        status: 'failed',
+        last_error: expect.stringContaining(reassignedCustomerMail) as unknown,
+      },
+      { id: kept, status: 'sent', last_error: null },
+    ])
+  })
+
   it('goes to nobody for a customer without an address, and not about one that is over', async () => {
     await anAppointment(await aJob(await aCustomer({ email: null })))
 
@@ -381,8 +451,11 @@ describe('a confirmation of a service call (#315)', () => {
   })
 
   it('goes out once, with the instructions for a consumer', async () => {
-    const job = await aJob(await aCustomer(), 'service')
+    const customerId = await aCustomer()
+    const job = await aJob(customerId, 'service')
     const [mail, ...more] = await cycle()
+
+    expect(await customersOfMails('job_id', job)).toEqual([customerId])
 
     expect(more).toEqual([])
     expect(mail?.subject).toMatch(/^Ihr Auftrag AU-\d{4}-\d{4} Heizung ohne Strom$/)

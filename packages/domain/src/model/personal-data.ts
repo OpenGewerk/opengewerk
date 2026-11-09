@@ -248,6 +248,7 @@ export const personalDataCatalogue: Readonly<Record<string, PersonalData>> = {
       'body',
       'attachment',
       'requested_by',
+      'customer_id',
       'document_id',
       'job_id',
       'appointment_id',

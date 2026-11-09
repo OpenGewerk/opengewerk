@@ -951,6 +951,11 @@ const crossings: readonly {
     key: 'mail_outbox_appointment_in_tenant',
     write: (own, other) => repoint('mail_outbox', 'appointment_id', own.mail, other.appointment),
   },
+  // Whose a mail to a customer is (opengewerk#896).
+  {
+    key: 'mail_outbox_customer_in_tenant',
+    write: (own, other) => repoint('mail_outbox', 'customer_id', own.mail, other.customer),
+  },
   // A time of the on-call plan, made at the route as an insert (#293).
   {
     key: 'on_call_shifts_person_works_here',
