@@ -966,7 +966,7 @@ function WaitingFilePreview({
     />
   ) : (
     <div
-      className={`${box} flex shrink-0 items-center justify-center rounded-[4px] border border-line bg-sunken text-ink-faint`}
+      className={`${box} flex shrink-0 items-center justify-center rounded-[4px] border border-line bg-surface-sunken text-ink-faint`}
     >
       <Icon size={26} strokeWidth={1.8} aria-hidden="true" />
     </div>
