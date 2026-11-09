@@ -294,12 +294,17 @@ export async function callPrintFacts(
   const on = request ? berlinClock(request.signedAt).day : day
   const held = await callInstructions(tx, call, on)
 
-  if (held.refusal !== null) {
-    throw new CallInstructionsRefused(held.refusal)
-  }
+  // Words kept with a request are printed as they are: whatever the job or
+  // the letterhead lack today, they were complete when the customer signed.
+  // Only words put together now have to be complete now.
+  if (!request?.wording) {
+    if (held.refusal !== null) {
+      throw new CallInstructionsRefused(held.refusal)
+    }
 
-  if (held.gaps.length > 0) {
-    throw new CallInstructionsRefused(held.gaps.join(' '))
+    if (held.gaps.length > 0) {
+      throw new CallInstructionsRefused(held.gaps.join(' '))
+    }
   }
 
   // The words the customer signed under, not those of today's settings.
@@ -319,7 +324,8 @@ export async function callPrintFacts(
     on,
     sheets: wording?.sheets ?? held.sheets,
     signed:
-      request && wording?.request
+      // An empty request is still the one signed, and its signature stands.
+      request && wording && wording.request !== null
         ? {
             request: wording.request,
             signerName: request.signerName,

@@ -6,12 +6,17 @@
 --
 -- Run as the superuser, like every rollback.
 
+-- The table is locked first and stays locked until the column is gone, in
+-- one transaction: a request that lands meanwhile waits, and one being
+-- written as the rollback starts is through before the check looks.
 DO $$
 BEGIN
+	LOCK TABLE "early_start_requests" IN ACCESS EXCLUSIVE MODE;
+
 	IF EXISTS (SELECT 1 FROM "early_start_requests" WHERE "wording" IS NOT NULL) THEN
 		RAISE EXCEPTION 'Ein Verlangen auf vorzeitigen Beginn trägt den Wortlaut, unter dem es unterschrieben wurde. Die Rücknahme würde ihn löschen und hält an.';
 	END IF;
+
+	ALTER TABLE "early_start_requests" DROP COLUMN "wording";
 END
 $$;
-
-ALTER TABLE "early_start_requests" DROP COLUMN "wording";

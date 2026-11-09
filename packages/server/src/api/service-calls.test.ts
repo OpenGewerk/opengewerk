@@ -748,6 +748,56 @@ describe('the instructions as a PDF', () => {
     expect(rows).toEqual([{ wording: { sheets, request } }])
   })
 
+  /**
+   * The words kept with a request were complete when the customer signed:
+   * a letterhead that lacks something today stops new words, not those.
+   */
+  it('print the kept words although the letterhead lacks what words put together now would need', async () => {
+    const { job } = await aCall()
+    const { fingerprint } = await instructions(job)
+    const signed = aRequest(job, fingerprint)
+
+    await push(app, technician(), [signed.operation])
+    await admin.query('update letterheads set email = null where tenant_id = $1', [north.id])
+
+    try {
+      await http()
+        .get(`/jobs/${job}/instructions/pdf?request=${signed.id}`)
+        .set('x-test-identity', office())
+        .expect(200)
+
+      expect(printed.at(-1)?.html).toContain(scribble)
+
+      // The sheets alone are put together now and refused.
+      await http().get(`/jobs/${job}/instructions/pdf`).set('x-test-identity', office()).expect(422)
+    } finally {
+      await admin.query(
+        "update letterheads set email = 'info@nord.example.de' where tenant_id = $1",
+        [north.id],
+      )
+    }
+  })
+
+  it('print the signature under a request whose words came out empty', async () => {
+    const { job } = await aCall()
+    const { sheets } = await instructions(job)
+    const id = newId<'early-start-request'>()
+
+    await admin.query(
+      `insert into early_start_requests
+         (tenant_id, id, job_id, signer_name, signed_at, path, content_fingerprint, wording)
+         values ($1, $2, $3, 'Klaus Lehmann', now(), $4, 'kept', $5::jsonb)`,
+      [north.id, id, job, scribble, JSON.stringify({ sheets, request: '' })],
+    )
+
+    await http()
+      .get(`/jobs/${job}/instructions/pdf?request=${id}`)
+      .set('x-test-identity', office())
+      .expect(200)
+
+    expect(printed.at(-1)?.html).toContain(scribble)
+  })
+
   it('do not print a request of another job', async () => {
     const one = await aCall()
     const other = await aCall()
