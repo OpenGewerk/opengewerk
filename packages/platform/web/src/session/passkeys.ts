@@ -150,6 +150,9 @@ const ownCodes: ReadonlySet<string> = new Set([
   'PASSKEY_WITHOUT_SESSION',
   'PASSKEY_NOT_RECORDED',
   'PASSWORD_RECENTLY_RESET',
+  // A sign in or a session that a revocation overtook (`credentials.ts` of
+  // the server).
+  'SESSION_REVOKED',
 ])
 
 /**
