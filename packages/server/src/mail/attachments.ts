@@ -210,38 +210,39 @@ export const restrictedCustomerMail =
  * A message to a customer restricted on a request for deletion since it was
  * written does not go out (Art. 18 DSGVO). Raising a message asks the
  * restriction already (#845); a message written before it would otherwise
- * still go, with the document it carries. Asked as the message leaves, before
- * any file of it is made, and given up on with the reason, like a message
- * whose document has no file to give.
+ * still go. Asked by the worker of every message as it leaves, with a file or
+ * without, before any file of it is made, and given up on with the reason,
+ * like a message whose document has no file to give.
  */
-export function withoutRestrictedCustomers(
-  database: Database,
-  others: AttachmentSource,
-): AttachmentSource {
-  return async (row) => {
-    const restricted = await database.forTenant(
-      { tenantId: row.tenantId, reason: 'mail' },
-      async (tx) => {
-        const customerId = await customerOfMessage(tx, row)
+export async function refuseRestrictedCustomer(database: Database, row: OutboxRow): Promise<void> {
+  const restricted = await database.forTenant(
+    { tenantId: row.tenantId, reason: 'mail' },
+    async (tx) => {
+      const customerId = await customerOfMessage(tx, row)
 
-        return customerId !== null && (await customerRestricted(tx, customerId))
-      },
-    )
+      return customerId !== null && (await customerRestricted(tx, customerId))
+    },
+  )
 
-    if (restricted) {
-      throw new MailDeliveryError(restrictedCustomerMail, 'ERESTRICTED', null, { permanent: true })
-    }
-
-    return others(row)
+  if (restricted) {
+    throw new MailDeliveryError(restrictedCustomerMail, 'ERESTRICTED', null, { permanent: true })
   }
 }
 
+/** The cause of a reminder to a customer: `customer_reminder:<kind>:<customer>:<…>`. */
+const reminderCause = /^customer_reminder:[^:]+:([0-9a-f-]{36}):/
+
 /**
  * The customer a message is about, through what it names: its document, its
- * job or its appointment. Null for a message to somebody in the business,
- * which names none of them.
+ * job or its appointment, and for a reminder its cause, which is all a
+ * reminder names. Null for a message to somebody in the business, which
+ * names none of them.
  */
 async function customerOfMessage(tx: TenantTransaction, row: OutboxRow): Promise<string | null> {
+  if (row.kind === 'customer_reminder') {
+    return reminderCause.exec(row.cause)?.[1] ?? null
+  }
+
   if (row.documentId !== null) {
     const [found] = await tx
       .select({ customerId: documents.customerId })
@@ -283,16 +284,12 @@ async function jobOfMessage(tx: TenantTransaction, row: OutboxRow): Promise<stri
 }
 
 /**
- * The files of every message this application sends, and before them the
- * question whether it may still go: what the worker of a running instance is
- * given, and a test that wants all of it.
+ * The files of every message this application sends: what the worker of a
+ * running instance is given, and a test that wants all of it.
  */
 export function mailAttachments(files: DocumentFiles, database: Database): AttachmentSource {
-  return withoutRestrictedCustomers(
+  return withAppointmentInvitation(
     database,
-    withAppointmentInvitation(
-      database,
-      withCallInstructions(files, database, documentAttachments(files)),
-    ),
+    withCallInstructions(files, database, documentAttachments(files)),
   )
 }

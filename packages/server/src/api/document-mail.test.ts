@@ -22,11 +22,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { aMailServer, testKey } from '@opengewerk/platform-server/testing'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
-import {
-  documentAttachments,
-  restrictedCustomerMail,
-  withoutRestrictedCustomers,
-} from '../mail/attachments.js'
+import { documentAttachments, restrictedCustomerMail } from '../mail/attachments.js'
 import { runMailCycle } from '../mail/worker.js'
 import { ApiModule } from './api.module.js'
 import { DocumentFiles } from './document-files.js'
@@ -157,7 +153,7 @@ function cycle(transport: MailTransport) {
     connect: () => transport,
     key: testKey,
     origin: 'https://opengewerk.example.de',
-    attachments: withoutRestrictedCustomers(database, documentAttachments(files)),
+    attachments: documentAttachments(files),
     // A moment ahead, so that a message written by the test is due.
     now: () => new Date(Date.now() + 1_000),
   })
