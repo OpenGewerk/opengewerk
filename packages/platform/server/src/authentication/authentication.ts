@@ -5,7 +5,7 @@ import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { APIError, createAuthMiddleware, getSessionFromCtx, isAPIError } from 'better-auth/api'
 import { twoFactor } from 'better-auth/plugins'
-import { eq, or } from 'drizzle-orm'
+import { and, eq, exists, ne, or } from 'drizzle-orm'
 
 import { clientAddressHeader } from '../api/client-address.js'
 import type { ServerApplication } from '../configuration.js'
@@ -580,9 +580,20 @@ export function createAuthentication({
           // signed in that way shows the sign in again rather than a setup that
           // is done. A passkey session stays, it carries a second factor of its
           // own.
-          after: async (session) => {
+          //
+          // Only setting the app up takes credentials back and counts up
+          // (`credentials.ts`); the request comes with a session there, and at
+          // a sign in it does not. A sign in with the app or a passkey leaves
+          // the count, an open link and a sign in waiting on another device
+          // alone.
+          after: async (session, context) => {
             if (session.secondFactor === true) {
-              await endSessionsWithoutSecondFactor(database, session.userId, session.id)
+              await endSessionsWithoutSecondFactor(
+                database,
+                session.userId,
+                session.id,
+                context?.path === confirmingTheApp && Boolean(context.context.session),
+              )
             }
           },
         },
@@ -1209,17 +1220,37 @@ async function generationAtSignIn(
  * the one named, once the account has the app (opengewerk-haustechnik#360).
  * As a new password ends the other sessions: the rows go, and with them the
  * cookies they stood behind.
+ *
+ * Where the app was just set up, that is a revocation: the count goes up, so
+ * that a sign in with the password alone that began before the app was there
+ * is refused as it writes its session (`credentials.ts`), and the sessions
+ * that stay take the new count. Anywhere else only the rows go.
  */
 async function endSessionsWithoutSecondFactor(
   database: Database,
   userId: string,
   keep: string,
+  appSetUp: boolean,
 ): Promise<void> {
-  // A revocation of the sessions without a second factor: the count goes up,
-  // so that a sign in with the password alone that began before the app was
-  // there is refused as it writes its session (`credentials.ts`). The
-  // sessions that stay take the new count.
   await database.forInstance(async (tx) => {
+    if (!appSetUp) {
+      await tx.delete(authSessions).where(
+        and(
+          eq(authSessions.userId, userId),
+          ne(authSessions.id, keep),
+          eq(authSessions.secondFactor, false),
+          exists(
+            tx
+              .select({ id: authUsers.id })
+              .from(authUsers)
+              .where(and(eq(authUsers.id, userId), eq(authUsers.twoFactorEnabled, true))),
+          ),
+        ),
+      )
+
+      return
+    }
+
     const [account] = await tx
       .select({ app: authUsers.twoFactorEnabled })
       .from(authUsers)

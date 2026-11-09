@@ -99,6 +99,16 @@ async function waitingOf(userId: string): Promise<number> {
   return Number(rows[0]?.n)
 }
 
+/** The rows of the account that wait for a second code. */
+async function secondStepsOf(userId: string): Promise<number> {
+  const { rows } = await admin.query<{ n: string }>(
+    `select count(*) as n from auth_verifications where value = $1 and identifier like '2fa-%'`,
+    [userId],
+  )
+
+  return Number(rows[0]?.n)
+}
+
 /** Sets the app up for the account, and hands back what it was fed. */
 async function withSecondFactor(email: string): Promise<string> {
   const cookies = cookiesOf(
@@ -324,6 +334,36 @@ describe('the count of the credentials of an account', () => {
       .expect(200)
 
     expect(await generationOf(userId)).toBe(1)
+  })
+
+  it('goes up when the app is set up, and not when somebody signs in with it', async () => {
+    const email = 'alltag@nord.example.de'
+    const userId = await person(email)
+    const totpUri = await withSecondFactor(email)
+
+    expect(await generationOf(userId)).toBe(1)
+
+    // A link asked for, and a sign in waiting for its code on another device.
+    await post('/request-password-reset').send({ email }).expect(200)
+    await vi.waitFor(() => {
+      expect(links.at(-1)?.email).toBe(email)
+    })
+
+    const token = links.at(-1)?.token ?? ''
+    const elsewhere = await post('/sign-in/email').send({ email, password: first }).expect(200)
+
+    expect((elsewhere.body as { twoFactorRedirect?: boolean }).twoFactorRedirect).toBe(true)
+
+    // Signing in here, with the app.
+    const here = await post('/sign-in/email').send({ email, password: first }).expect(200)
+
+    await post('/two-factor/verify-totp', cookiesOf(here))
+      .send({ code: await currentCode(totpUri) })
+      .expect(200)
+
+    expect(await generationOf(userId)).toBe(1)
+    expect(await secondStepsOf(userId)).toBe(1)
+    await post('/reset-password').send({ token, newPassword: second }).expect(200)
   })
 
   it('ends a sign in that waits for its second code', async () => {
