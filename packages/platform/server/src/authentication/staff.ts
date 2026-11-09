@@ -218,11 +218,15 @@ export async function replacePassword(
   const hashed = await context.password.hash(person.password)
 
   const replaced = await database.forInstance(async (tx) => {
+    // The account first, under its lock, as every write of a password takes
+    // it (`writePassword`): two of them at once then wait for each other and
+    // never for the other's row.
     const [user] = await tx
       .select({ id: authUsers.id })
       .from(authUsers)
       .where(eq(authUsers.email, email))
       .limit(1)
+      .for('update')
 
     if (!user) {
       return null

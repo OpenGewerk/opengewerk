@@ -30,6 +30,7 @@ import { currentCode } from './test-authenticator.js'
 const north = { id: newId<'tenant'>(), name: 'Mandant Nord' }
 const first = 'das-erste-lange-passwort'
 const second = 'das-zweite-lange-passwort'
+const third = 'das-dritte-lange-passwort'
 
 let foundation: ProbeFoundation
 let admin: Pool
@@ -343,6 +344,71 @@ describe('the count of the credentials of an account', () => {
 
     expect(await sessionOf(here)).toBe(kept)
     await http().get('/auth/tenants').set('cookie', here).expect(200)
+  })
+
+  it('refuses a change of password that a revocation overtook, and writes nothing', async () => {
+    const email = 'eingeholt@nord.example.de'
+    const userId = await person(email)
+    const here = await instance.signIn(email, first)
+    // The change has checked the old password and is about to write the new
+    // one under the lock of the account; it is held back right there until
+    // the command line has replaced the password.
+    const query = Client.prototype.query
+    let reached: () => void = () => undefined
+    let release: () => void = () => undefined
+    const atTheWrite = new Promise<void>((resolve) => {
+      reached = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let armed = true
+
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const values = (typeof config === 'string' ? args[1] : (config?.values ?? args[1])) as
+        unknown[] | undefined
+      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+      if (
+        armed &&
+        text.includes('"auth_users"') &&
+        /for update/i.test(text) &&
+        values?.includes(userId)
+      ) {
+        armed = false
+        reached()
+
+        return released.then(forward)
+      }
+
+      return forward()
+    } as typeof query
+
+    let answer: Response
+
+    try {
+      const changing = post('/change-password', here)
+        .send({ currentPassword: first, newPassword: third })
+        .then((received) => received)
+
+      await atTheWrite
+      await replacePassword(instance.authentication, instance.database, { email, password: second })
+      release()
+      answer = await changing
+    } finally {
+      Client.prototype.query = query
+      release()
+    }
+
+    expect(answer.status).toBe(401)
+    expect((answer.body as { code?: string }).code).toBe('SESSION_REVOKED')
+    expect(await generationOf(userId)).toBe(1)
+    expect(await sessionsOf(userId)).toBe(0)
+    // The password of the command line stands, the one of the change was never written.
+    expect(await instance.signIn(email, third)).toBe('')
+    expect(await instance.signIn(email, second)).not.toBe('')
   })
 
   it('goes up when a password is replaced on the command line', async () => {

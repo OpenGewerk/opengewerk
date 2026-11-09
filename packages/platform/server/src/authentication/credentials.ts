@@ -5,6 +5,7 @@ import { and, eq, exists, not, notExists, sql, type SQL } from 'drizzle-orm'
 import { databaseCode } from '../api/database-errors.js'
 import type { Database } from '../database/database.js'
 import {
+  authAccounts,
   authPasskeys,
   authSessions,
   authTwoFactors,
@@ -73,6 +74,50 @@ export async function revokeCredentials(
   await tx.delete(authVerifications).where(eq(authVerifications.value, userId))
 
   return { generation, ended }
+}
+
+/**
+ * Writes a new password of an account and counts its credentials up, in one
+ * transaction under the lock of the account, and hands back the new count;
+ * null where nothing was written.
+ *
+ * better-auth checks the old password of a change and hashes the new one
+ * before it writes, two runs of argon2 long, and asks nothing after that: a
+ * revocation in between, a link from a mail or the command line, was written
+ * over, and the change got its session. So the write happens here, and at a
+ * change only while the account still has `asking`, the count of the
+ * session that asks for it. A link from a mail asks without one, `undefined`:
+ * whoever holds the link sets the password, whatever came before.
+ */
+export async function writePassword(
+  database: Database,
+  userId: string,
+  hash: string,
+  asking: unknown,
+): Promise<number | null> {
+  return database.forInstance(async (tx) => {
+    const [account] = await tx
+      .select({ generation: authUsers.credentialGeneration })
+      .from(authUsers)
+      .where(eq(authUsers.id, userId))
+      .for('update')
+
+    if (!account || (asking !== undefined && asking !== account.generation)) {
+      return null
+    }
+
+    const written = await tx
+      .update(authAccounts)
+      .set({ password: hash, updatedAt: new Date() })
+      .where(and(eq(authAccounts.userId, userId), eq(authAccounts.providerId, 'credential')))
+      .returning({ id: authAccounts.id })
+
+    if (written.length === 0) {
+      return null
+    }
+
+    return (await revokeCredentials(tx, userId)).generation
+  }, userId)
 }
 
 /** The session that is named, as what `keep` takes. */

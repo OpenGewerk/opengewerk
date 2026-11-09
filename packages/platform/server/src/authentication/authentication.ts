@@ -37,6 +37,7 @@ import {
   reinstateConfirmedApp,
   revokedSince,
   secondStepStands,
+  writePassword,
   withdrawUnconfirmedApp,
   sessionRevoked,
   theSession,
@@ -261,6 +262,15 @@ const generationAtStart = 'openGewerkCredentialGeneration'
 /** The route that answers with the session of the cookies, or with none. */
 const askingForTheSession = '/get-session'
 
+/** The route that sets a new password through a link. */
+const resettingPassword = '/reset-password'
+
+/** The account a link to a new password is for, from the hook before the route to the write. */
+const accountOfReset = 'openGewerkAccountOfReset'
+
+/** The count a new password was written with, for the session written in the place of the old one. */
+const generationOfNewPassword = 'openGewerkGenerationOfNewPassword'
+
 /** How better-auth names the row of a sign in that waits for its second code. */
 const secondStep = '2fa-'
 
@@ -453,12 +463,11 @@ export function createAuthentication({
       // should it fail, the route answers with an error rather than with a
       // reset the log does not know of.
       //
-      // First the count of the credentials goes up (`credentials.ts`), right
-      // as the password is set, whatever becomes of the log: better-auth ended
-      // the sessions a moment ago, and a sign in that checked the old password
-      // in between is refused as it writes its session.
+      // The password and its count were written together before
+      // (`writePassword`, in the hook of the accounts), whatever becomes of
+      // the log. A link that sets the first password of an account has no old
+      // one a sign in could have checked, and counts nothing.
       onPasswordReset: async ({ user }) => {
-        await database.forInstance((tx) => revokeCredentials(tx, user.id), user.id)
         await recordPasswordReset(database, user.id)
       },
     },
@@ -540,25 +549,15 @@ export function createAuthentication({
           before: async (session, context) => {
             const path = context?.path ?? ''
             const replaced = path === replacingSession ? context?.context.session : null
-            // A new password is a revocation of its own: the count goes up as
-            // the session that takes the place of the old one is written, and
-            // that one carries it. Every other session carries the count its
-            // sign in began with, and one without is not written.
-            //
-            // better-auth writes the session of a new password in a
-            // transaction of its own only with `transaction: true` on the
-            // adapter, which is not set: with it, the revocation here, in a
-            // transaction of its own, would wait for the sessions that one
-            // deleted, and the request for the revocation.
+            // The session written in the place of the old one at a new
+            // password carries the count the password was written with
+            // (`writePassword`, in the hook of the accounts below). Every other
+            // session carries the count its sign in began with, and one
+            // without is not written.
+            const counts = context?.context as Record<string, unknown> | undefined
             const credentialGeneration = replaced
-              ? (
-                  await database.forInstance(
-                    (tx) => revokeCredentials(tx, session.userId),
-                    session.userId,
-                  )
-                ).generation
-              : ((context?.context as Record<string, unknown> | undefined)?.[generationAtStart] ??
-                null)
+              ? (counts?.[generationOfNewPassword] ?? null)
+              : (counts?.[generationAtStart] ?? null)
 
             if (credentialGeneration === null) {
               return false
@@ -597,6 +596,66 @@ export function createAuthentication({
                 context?.path === confirmingTheApp && Boolean(context.context.session),
               )
             }
+          },
+        },
+      },
+      account: {
+        update: {
+          // A new password, at a change or through a link, is written here and
+          // not by better-auth: with the count, under the lock of the account,
+          // and at a change only while the account still has the count of the
+          // session that asks (`writePassword`). better-auth then writes
+          // nothing itself. A change that a revocation overtook is refused
+          // and writes nothing.
+          //
+          // better-auth runs both writes in a transaction of its own only with
+          // `transaction: true` on the adapter, which is not set: with it, the
+          // transaction here would wait for the rows that one holds, and that
+          // one for this.
+          before: async (account, context) => {
+            const hash = (account as { password?: unknown }).password
+            const path = context?.path ?? ''
+
+            if (
+              typeof hash !== 'string' ||
+              (path !== replacingSession && path !== resettingPassword)
+            ) {
+              return
+            }
+
+            const counts = context?.context as Record<string, unknown> | undefined
+            const asking = path === replacingSession ? context?.context.session : null
+            const userId = asking ? asking.user.id : counts?.[accountOfReset]
+
+            if (typeof userId !== 'string') {
+              throw new APIError('UNAUTHORIZED', {
+                code: 'SESSION_REVOKED',
+                message: sessionRevoked,
+              })
+            }
+
+            const generation = await writePassword(
+              database,
+              userId,
+              hash,
+              asking
+                ? ((asking.session as { credentialGeneration?: unknown }).credentialGeneration ??
+                    null)
+                : undefined,
+            )
+
+            if (generation === null) {
+              throw new APIError('UNAUTHORIZED', {
+                code: 'SESSION_REVOKED',
+                message: sessionRevoked,
+              })
+            }
+
+            if (counts) {
+              counts[generationOfNewPassword] = generation
+            }
+
+            return false
           },
         },
       },
@@ -683,6 +742,25 @@ export function createAuthentication({
           return {
             context: { body: { ...(ctx.body as object), revokeOtherSessions: true } },
           }
+        }
+
+        if (ctx.path === resettingPassword) {
+          // The account the link is for, for the write of the password. The
+          // token as better-auth takes it: from the body, or else from the
+          // address.
+          const token =
+            (ctx.body as { token?: unknown } | undefined)?.token ||
+            (ctx.query as { token?: unknown } | undefined)?.token
+          const link =
+            typeof token === 'string'
+              ? await ctx.context.internalAdapter.findVerificationValue(`reset-password:${token}`)
+              : null
+
+          if (link) {
+            ;(ctx.context as unknown as Record<string, unknown>)[accountOfReset] = link.value
+          }
+
+          return
         }
 
         if (codesAtSignIn.has(ctx.path)) {
