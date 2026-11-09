@@ -258,7 +258,7 @@ describe('the account', () => {
 })
 
 describe('a device', () => {
-  it('is taken, and the same browser again updates its row', async () => {
+  it('is taken, the same browser again updates its row, and one handed on starts afresh', async () => {
     const { body } = subscription()
     const first = await subscribe('mia', { ...body, entry: 'back' })
 
@@ -272,12 +272,28 @@ describe('a device', () => {
       }),
     ])
 
-    // The tablet is handed to Lena: the same endpoint becomes hers.
+    // A message is waiting for Mia on it.
+    await admin.query(
+      `insert into push_outbox (tenant_id, kind, cause, subscription_id, title, body, url, expires_at)
+       values ($1, 'parcel_waiting', 'waiting-for-mia', $2, 'Für Mia', 'Nur für Mia', '/', now() + interval '1 day')`,
+      [north.id, (first.body as { id: string }).id],
+    )
+
+    // Mia again: the same row.
+    const same = await subscribe('mia', body)
+
+    expect((same.body as { id: string }).id).toBe((first.body as { id: string }).id)
+
+    // The tablet is handed to Lena: the same endpoint becomes hers, as a row of
+    // its own, and the message waiting for Mia does not go along.
     const again = await subscribe('lena', body)
 
-    expect((again.body as { id: string }).id).toBe((first.body as { id: string }).id)
+    expect((again.body as { id: string }).id).not.toBe((first.body as { id: string }).id)
     expect((await overview('mia')).devices).toEqual([])
     expect((await overview('lena')).devices).toHaveLength(1)
+    expect(
+      (await admin.query("select id from push_outbox where cause = 'waiting-for-mia'")).rows,
+    ).toEqual([])
   })
 
   /**

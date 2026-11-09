@@ -259,6 +259,19 @@ function pushController<Right extends string>(rights: PushRights<Right>): Type<u
           )
         }
 
+        // A browser somebody else signed up before is handed on, and nothing of
+        // theirs goes along: their row goes, and with it, through the key,
+        // every message still waiting for them. The new person gets a row of
+        // their own; the same person again keeps theirs.
+        await tx
+          .delete(pushSubscriptions)
+          .where(
+            and(
+              eq(pushSubscriptions.endpoint, endpoint),
+              ne(pushSubscriptions.userId, identity.userId),
+            ),
+          )
+
         return tx
           .insert(pushSubscriptions)
           .values({
