@@ -11,6 +11,7 @@ import {
   rememberedAccount,
   rememberedTenants,
   rememberTenants,
+  signedInBesides,
 } from './remembered.js'
 import {
   type Account,
@@ -364,6 +365,131 @@ describe('signing in and out', () => {
 
     expect(await currentAccount()).toBeNull()
     expect(asked.at(-1)).toMatchObject({ path: '/auth/sign-out', method: 'POST' })
+  })
+
+  /**
+   * A tab still open for Anna after Ben signed in on the browser
+   * (opengewerk#905): what the browser keeps of his sign in stays, his
+   * account, his tenants and the id of his session, and no sign out is kept
+   * for the next start.
+   */
+  it('leaves what the browser keeps of the account signed in since in another tab', async () => {
+    answers = () => aSession('s-ben', 'ben', -60_000)
+
+    expect(await currentAccount()).toMatchObject({ userId: 'ben' })
+    rememberTenants([choice])
+
+    answers = () => new TypeError('Failed to fetch')
+
+    await expect(signOut('anna')).rejects.toThrow(TypeError)
+
+    expect(rememberedAccount()?.userId).toBe('ben')
+    expect(rememberedTenants()?.map((each) => each.id)).toEqual([tenantId])
+    expect(globalThis.localStorage.getItem('opengewerk.session')).toBe('s-ben')
+    expect(globalThis.localStorage.getItem('opengewerk.signedOut')).toBeNull()
+
+    // A sign out of the account the browser keeps forgets it, as ever.
+    await expect(signOut('ben')).rejects.toThrow(TypeError)
+
+    expect(rememberedAccount()).toBeNull()
+    expect(rememberedTenants()).toBeNull()
+  })
+
+  /**
+   * Who is signed in stays known without a tenant kept to open with
+   * (opengewerk#905): before a tenant is chosen, and after another was chosen
+   * without a network. The server saying nobody is signed in ends it.
+   */
+  it('knows who signed in since without a tenant, until the server says nobody is', async () => {
+    answers = () =>
+      json({
+        user: { id: 'ben', email: 'ben@example.de', name: 'Ben' },
+        session: { id: 's-ben', activeTenantId: null },
+      })
+
+    expect(await currentAccount()).toMatchObject({ userId: 'ben', tenantId: null })
+    expect(signedInBesides('anna')).toBe('ben')
+    expect(signedInBesides('ben')).toBeNull()
+
+    answers = () => new TypeError('Failed to fetch')
+
+    await expect(chooseTenant(tenantId)).rejects.toThrow(TypeError)
+
+    expect(rememberedAccount()).toBeNull()
+    expect(signedInBesides('anna')).toBe('ben')
+
+    answers = () => json(null)
+
+    expect(await currentAccount()).toBeNull()
+    expect(signedInBesides('anna')).toBeNull()
+  })
+
+  /**
+   * A tab of a build from before this one changes who is signed in without
+   * keeping it (opengewerk#905): Ben signs out there, Anna signs in. The hint
+   * that Ben is signed in was kept with his session, which is not the
+   * browser's any more, and a sign out of Anna without a network is kept for
+   * the next start as ever, which ends her session.
+   */
+  it('takes no hint of somebody else signed in that a build from before outdated', async () => {
+    answers = () => aSession('s-ben', 'ben', -60_000)
+
+    expect(await currentAccount()).toMatchObject({ userId: 'ben' })
+
+    // The build from before: his sign out, her sign in, nothing of the hint.
+    globalThis.localStorage.removeItem('opengewerk.account')
+    globalThis.localStorage.removeItem('opengewerk.session')
+    rememberAccount({ ...account, userId: 'anna' })
+    globalThis.localStorage.setItem('opengewerk.session', 's-anna')
+
+    expect(signedInBesides('anna')).toBeNull()
+
+    answers = () => new TypeError('Failed to fetch')
+
+    await expect(signOut('anna')).rejects.toThrow(TypeError)
+
+    expect(globalThis.localStorage.getItem('opengewerk.signedOut')).not.toBeNull()
+
+    asked = []
+    answers = (path) =>
+      path.endsWith('/get-session') ? aSession('s-anna', 'anna', -1_000) : json({})
+
+    expect(await currentAccount()).toBeNull()
+    expect(asked.at(-1)).toMatchObject({ path: '/auth/sign-out', method: 'POST' })
+  })
+
+  /**
+   * Ben signed in in another tab and has no tenant yet; what the device opens
+   * with is still Anna's (opengewerk#905). The answer naming Ben lets go of
+   * it, and so does her sign out beside him, where nothing has asked since.
+   */
+  it('forgets what the person before kept to open with once somebody else is signed in', async () => {
+    answers = () => aSession('s-anna', 'anna', -10 * 60_000)
+
+    expect(await currentAccount()).toMatchObject({ userId: 'anna' })
+    rememberTenants([choice])
+
+    answers = () =>
+      json({
+        user: { id: 'ben', email: 'ben@example.de', name: 'Ben' },
+        session: { id: 's-ben', activeTenantId: null },
+      })
+
+    expect(await currentAccount()).toMatchObject({ userId: 'ben', tenantId: null })
+    expect(rememberedAccount()).toBeNull()
+    expect(globalThis.localStorage.getItem(keptTenantsKey)).toBeNull()
+
+    // Her sign out beside him, with her account still kept: nothing opens as her.
+    rememberAccount({ ...account, userId: 'anna' })
+    rememberTenants([choice])
+    answers = () => new TypeError('Failed to fetch')
+
+    await expect(signOut('anna')).rejects.toThrow(TypeError)
+
+    expect(rememberedAccount()).toBeNull()
+    expect(globalThis.localStorage.getItem(keptTenantsKey)).toBeNull()
+    expect(signedInBesides('anna')).toBe('ben')
+    await expect(currentAccount()).rejects.toThrow(TypeError)
   })
 
   it('keeps a session of somebody else after a second sign out without a network', async () => {

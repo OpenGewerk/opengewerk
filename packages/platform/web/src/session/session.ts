@@ -13,11 +13,15 @@ import { accountHeader, isOtherAccount, pageAccount, request } from '../sync/tra
 
 import {
   forgetAccount,
+  forgetOpeningAccount,
   forgetSignIn,
   rememberAccount,
   rememberedAccount,
   rememberedTenants,
+  rememberSignedIn,
   rememberTenants,
+  sessionKey,
+  signedInBesides,
   unreachable,
 } from './remembered.js'
 
@@ -129,12 +133,6 @@ interface SessionAnswer {
     readonly id?: unknown
   }
 }
-
-/**
- * The session this browser last opened, by the id the server gives it. A
- * sign out keeps it as the one it signed out of.
- */
-const sessionKey = 'opengewerk.session'
 
 /**
  * The sign out of this browser the server has not confirmed: the session it
@@ -321,8 +319,23 @@ export async function currentAccount(): Promise<Account | null> {
     deviceId: typeof deviceId === 'string' && deviceId !== '' ? deviceId : null,
   }
 
+  // Somebody else than the person kept to open with (opengewerk#905): what
+  // was kept of the one before goes now, also where this one has no tenant
+  // yet and nothing of theirs takes its place. A device opened without a
+  // network after that opened as the person before.
+  const before = rememberedAccount()
+
+  if (before !== null && before.userId !== account.userId) {
+    forgetOpeningAccount()
+  }
+
   rememberAccount(account)
-  keep(sessionKey, typeof answer?.session?.id === 'string' ? answer.session.id : null)
+  // Also without a tenant, and left alone when another is chosen: a sign out
+  // in the tab of the person before asks it (opengewerk#905).
+  const session = typeof answer?.session?.id === 'string' ? answer.session.id : null
+
+  rememberSignedIn(account.userId, session)
+  keep(sessionKey, session)
 
   return account
 }
@@ -593,6 +606,35 @@ export async function revokeDevice(sessionId: string): Promise<void> {
  * browser any more, and the other one is not this sign out's to end.
  */
 export async function signOut(account: string | null = pageAccount()): Promise<void> {
+  // Another account signed in on this browser since (opengewerk#905): the
+  // account kept, its tenants and the id of its session are theirs, and so is
+  // the cookie. Nothing of it is forgotten, and no sign out is kept for the
+  // next start, which would end a sign in of this account made since. The
+  // server is asked all the same: it refuses for the other session
+  // (opengewerk#882), and ends this account's where the cookie is its own
+  // again before the page has heard of it.
+  if (signedInBesides(account) !== null) {
+    // Except where what is kept to open with is still this account's: the
+    // one signed in since has no tenant yet, and nothing of theirs replaced
+    // it. A start without a network opened as this account after its sign out.
+    if (rememberedAccount()?.userId === account) {
+      forgetOpeningAccount()
+    }
+
+    try {
+      await request('/auth/sign-out', {
+        method: 'POST',
+        headers: accountHeader(account ?? undefined),
+      })
+    } catch (error) {
+      if (!isOtherAccount(error)) {
+        throw error
+      }
+    }
+
+    return
+  }
+
   // First, so that a sign out without a network still leaves nothing for the
   // next start to open on its own (#123), nor the roles of whoever it was (#184).
   const signedIn = rememberedAccount() !== null
