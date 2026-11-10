@@ -7,6 +7,7 @@ import { rememberedAccount, rememberedTenants } from '../session/remembered.js'
 import { signOut } from '../session/session.js'
 import type { SyncClient } from '../sync/client.js'
 import { deleteLocalStore, storesOnDevice, waitingIn } from '../sync/store.js'
+import { pageAccount } from '../sync/transport.js'
 
 /** "1 Änderung" or "3 Änderungen". */
 function changes(count: number): string {
@@ -84,7 +85,13 @@ export function SignOutButton({
     return [...(kept ? [kept] : []), ...(rememberedTenants() ?? []).map((tenant) => tenant.id)]
   }
 
-  async function leave() {
+  /**
+   * `account` is the one the page worked for when the person asked to sign
+   * out (opengewerk#882). Sending the outbox first may end with the answer
+   * that another account is signed in on the browser, and the page then moves
+   * on to that one; the sign out stays the one that was asked for.
+   */
+  async function leave(account: string | null) {
     setBusy(true)
     setTrouble(null)
 
@@ -119,11 +126,13 @@ export function SignOutButton({
     // same: nothing is left here, and `signOut` keeps when it happened, so
     // that the next start ends the session at the server before it opens
     // anything (`currentAccount`), or it runs out.
-    await signOut().catch(() => undefined)
+    await signOut(account).catch(() => undefined)
     onSignedOut()
   }
 
   async function ask() {
+    const account = pageAccount()
+
     setBusy(true)
     setTrouble(null)
 
@@ -146,7 +155,7 @@ export function SignOutButton({
       return
     }
 
-    await leave()
+    await leave(account)
   }
 
   if (waiting !== null) {
@@ -166,7 +175,12 @@ export function SignOutButton({
           >
             Angemeldet bleiben
           </Button>
-          <Button tone="danger" wide={wide} disabled={busy} onClick={() => void leave()}>
+          <Button
+            tone="danger"
+            wide={wide}
+            disabled={busy}
+            onClick={() => void leave(pageAccount())}
+          >
             Trotzdem abmelden
           </Button>
         </div>

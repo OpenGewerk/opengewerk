@@ -9,7 +9,7 @@ import {
   type TenantId,
 } from '@opengewerk/platform-domain'
 
-import { request } from '../sync/transport.js'
+import { accountHeader, isOtherAccount, pageAccount, request } from '../sync/transport.js'
 
 import {
   forgetAccount,
@@ -149,6 +149,13 @@ const signedOutKey = 'opengewerk.signedOut'
 interface SignedOut {
   /** The id of the session signed out of, when this browser knew it. */
   readonly session: string | null
+  /**
+   * The account the page signed out of, when it named one (opengewerk#882).
+   * The id of the session is kept where every tab of the browser keeps it,
+   * and a tab still open for the person before found the id of the next
+   * person's session there: its sign out would have ended theirs.
+   */
+  readonly account: string | null
 }
 
 function kept(key: string): string | null {
@@ -196,9 +203,12 @@ function signedOut(): SignedOut | null {
       return null
     }
 
-    const { session } = raw as { session?: unknown }
+    const { session, account } = raw as { session?: unknown; account?: unknown }
 
-    return { session: typeof session === 'string' && session !== '' ? session : null }
+    return {
+      session: typeof session === 'string' && session !== '' ? session : null,
+      account: typeof account === 'string' && account !== '' ? account : null,
+    }
   } catch {
     return null
   }
@@ -213,10 +223,19 @@ function signedOut(): SignedOut | null {
  * kept ids, takes the session it finds for the one signed out of. Ended once
  * too often is a sign in to make again; opened once too often is the work of
  * somebody else.
+ *
+ * A sign out that names its account ends a session of that account alone
+ * (opengewerk#882): a session of another is somebody else's sign in since,
+ * whatever id the browser kept.
  */
-function signedOutOf(session: SessionAnswer['session'], pending: SignedOut): boolean {
+function signedOutOf(
+  session: SessionAnswer['session'],
+  userId: string,
+  pending: SignedOut,
+): boolean {
   return (
-    pending.session === null || typeof session?.id !== 'string' || session.id === pending.session
+    (pending.account === null || pending.account === userId) &&
+    (pending.session === null || typeof session?.id !== 'string' || session.id === pending.session)
   )
 }
 
@@ -245,20 +264,31 @@ export async function currentAccount(): Promise<Account | null> {
   const pending = signedOut()
 
   if (pending !== null && user && typeof user.id === 'string') {
-    if (signedOutOf(answer?.session, pending)) {
+    if (signedOutOf(answer?.session, user.id, pending)) {
       // The session of whoever signed out here, which the server never
       // heard about: ended now, and nobody is signed in. Without an answer
       // it stays to be ended at the next start.
       forgetSignIn()
 
       try {
-        await request('/auth/sign-out', { method: 'POST' })
+        await request('/auth/sign-out', {
+          method: 'POST',
+          headers: accountHeader(pending.account ?? undefined),
+        })
         keep(signedOutKey, null)
-      } catch {
-        // Asked again next time.
-      }
 
-      return null
+        return null
+      } catch (error) {
+        if (!isOtherAccount(error)) {
+          // Asked again next time.
+          return null
+        }
+
+        // The page names another account than the session's (opengewerk#882),
+        // for a sign out kept without one: the session is somebody else's
+        // sign in since, and not this sign out's to end. Who it is goes on
+        // below.
+      }
     }
   }
 
@@ -553,7 +583,15 @@ export async function revokeDevice(sessionId: string): Promise<void> {
   await request(`/auth/devices/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
 }
 
-export async function signOut(): Promise<void> {
+/**
+ * Signs `account` out, by default the account the page works for now. The
+ * caller names it where the page may move on to another account while the
+ * sign out is under way (`SignOutButton`, opengewerk#882): the sign out is of
+ * the account whose screen asked for it, and the server refuses it for any
+ * other. Refused so, the account signed out of has no session on this
+ * browser any more, and the other one is not this sign out's to end.
+ */
+export async function signOut(account: string | null = pageAccount()): Promise<void> {
   // First, so that a sign out without a network still leaves nothing for the
   // next start to open on its own (#123), nor the roles of whoever it was (#184).
   const signedIn = rememberedAccount() !== null
@@ -567,11 +605,22 @@ export async function signOut(): Promise<void> {
   // one of somebody who had signed in since among them. The browser holds one
   // cookie, and it is still the one of the session signed out of first.
   if (signedIn || signedOut() === null) {
-    keep(signedOutKey, JSON.stringify({ session } satisfies SignedOut))
+    keep(signedOutKey, JSON.stringify({ session, account } satisfies SignedOut))
   }
 
   keep(sessionKey, null)
-  await request('/auth/sign-out', { method: 'POST' })
+
+  try {
+    await request('/auth/sign-out', {
+      method: 'POST',
+      headers: accountHeader(account ?? undefined),
+    })
+  } catch (error) {
+    if (!isOtherAccount(error)) {
+      throw error
+    }
+  }
+
   keep(signedOutKey, null)
 }
 

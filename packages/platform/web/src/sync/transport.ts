@@ -194,6 +194,11 @@ export function workAs(userId: string | null): void {
   workingAs = userId
 }
 
+/** The account this page works for now, or null where it names none (`workAs`). */
+export function pageAccount(): string | null {
+  return workingAs
+}
+
 /**
  * The headers that name the tenant this page works in and the account it
  * works for, for the requests that do not go through `request`.

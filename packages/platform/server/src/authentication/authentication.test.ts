@@ -508,8 +508,10 @@ describe('a tab that works for the account signed in before', () => {
       })
 
     // better-auth's own answer to a wrong password, and not the refusal above.
-    expect(own.status).toBeGreaterThanOrEqual(400)
-    expect(own.status).not.toBe(409)
+    expect({ status: own.status, body: own.body as unknown }).toMatchObject({
+      status: 400,
+      body: { code: 'INVALID_PASSWORD' },
+    })
   })
 })
 

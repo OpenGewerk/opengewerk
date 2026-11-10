@@ -202,4 +202,58 @@ describe('the account a page works for', () => {
     stop()
     unsubscribe()
   })
+
+  /**
+   * The refusal may come from within the question itself, from the sign out
+   * it ends: asked over again on every refusal, it asked and was refused
+   * without end.
+   */
+  it('is asked once while the question is under way, however many refusals come meanwhile', async () => {
+    const client = new QueryClient()
+    let asked = 0
+    let answer: (account: unknown) => void = () => {}
+
+    client.setQueryDefaults(['account'], {
+      queryFn: () => {
+        asked += 1
+
+        return new Promise((resolve) => {
+          answer = resolve
+        })
+      },
+    })
+    // Known, and being asked again: a page that came back into view.
+    client.setQueryData(['account'], someone('anna'))
+
+    const observer = new QueryObserver(client, { queryKey: ['account'], staleTime: Infinity })
+    const unsubscribe = observer.subscribe(() => {})
+    const stop = askAgainOnOtherAccount(client)
+
+    void client.refetchQueries({ queryKey: ['account'] })
+    expect(asked).toBe(1)
+
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ code: 'other_account', message: 'Anderes Konto.' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    )
+
+    for (let refusal = 0; refusal < 3; refusal += 1) {
+      await expect(request('/auth/sign-out', { method: 'POST' })).rejects.toBeInstanceOf(
+        RequestRefused,
+      )
+    }
+
+    answer(someone('bert'))
+    await vi.waitFor(() => {
+      expect(client.getQueryData<{ userId: string }>(['account'])?.userId).toBe('bert')
+    })
+    expect(asked).toBe(1)
+
+    stop()
+    unsubscribe()
+  })
 })

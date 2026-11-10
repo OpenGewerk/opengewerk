@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 
-import type { OperationId, TenantId } from '@opengewerk/platform-domain'
+import { type OperationId, type TenantId, workingAsHeader } from '@opengewerk/platform-domain'
 import { render, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -11,6 +11,7 @@ import { rememberAccount, rememberTenants } from '../session/remembered.js'
 import { SyncClient } from '../sync/client.js'
 import { deleteLocalStore, openLocalStore, storesOnDevice } from '../sync/store.js'
 import { TestServer } from '../sync/test-server.js'
+import { workAs } from '../sync/transport.js'
 import { SignOutButton } from './sign-out.js'
 
 /**
@@ -230,6 +231,48 @@ describe('signing out', () => {
     expect(server.operations()).toHaveLength(1)
     expect(screen.queryByRole('alert')).toBeNull()
     expect(await storesOnDevice()).toEqual([])
+  })
+
+  /**
+   * Sending the outbox first may end with the answer that another account
+   * is signed in on the browser, and the page moves on to it (opengewerk#882).
+   * The sign out is still the one of the account whose screen asked for it,
+   * and the server refuses it for the other.
+   */
+  it('names the account the page worked for when asked, after the page moved on', async () => {
+    const named: (string | undefined)[] = []
+    const signedOut = vi.fn()
+    const moving = {
+      synchronise: () => {
+        workAs('u-2')
+
+        return Promise.resolve()
+      },
+      stop: () => {},
+    } as unknown as SyncClient
+
+    vi.stubGlobal('fetch', (path: string, init?: RequestInit) => {
+      if (path === '/auth/sign-out') {
+        named.push((init?.headers as Record<string, string>)[workingAsHeader])
+      }
+
+      return Promise.resolve(
+        new Response('{}', { headers: { 'Content-Type': 'application/json' } }),
+      )
+    })
+    workAs('u-1')
+
+    try {
+      button(signedOut, { client: moving })
+      await userEvent.click(screen.getByRole('button', { name: 'Abmelden' }))
+
+      await waitFor(() => {
+        expect(signedOut).toHaveBeenCalled()
+      })
+      expect(named).toEqual(['u-1'])
+    } finally {
+      workAs(null)
+    }
   })
 })
 

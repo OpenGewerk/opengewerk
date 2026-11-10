@@ -117,10 +117,14 @@ export function forgetOnAccountChange(client: QueryClient): () => void {
  * to the one signed in now, as a look at the tab would have: the gate takes
  * the screens of the one before away and names the new one (`Boot`).
  * Returns the way to stop hearing.
+ *
+ * A question already under way is not asked over again: the refusal may come
+ * from within it, from a sign out it ends, and asking over again on every
+ * refusal would ask and be refused without end.
  */
 export function askAgainOnOtherAccount(client: QueryClient): () => void {
   return onOtherAccount(() => {
-    void client.invalidateQueries({ queryKey: accountQuery.queryKey })
+    void client.invalidateQueries({ queryKey: accountQuery.queryKey }, { cancelRefetch: false })
   })
 }
 
