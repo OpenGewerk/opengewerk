@@ -871,9 +871,17 @@ export async function openLocalStore(
           continue
         }
 
-        for (const row of await promised<RecordRow[]>(records.index('entity').getAll(at(kind)))) {
+        // Each side read once, not a request for every row: this runs at every
+        // start of a page, and the transaction holds the other tabs back.
+        const [ours, others] = await Promise.all([
+          promised<RecordRow[]>(records.index('entity').getAll(inSection(kind))),
+          promised<RecordRow[]>(records.index('entity').getAll(at(kind))),
+        ])
+        const mineById = new Map(ours.map((row) => [row.id, row]))
+
+        for (const row of others) {
           const key = keyOf(inSection(kind), row.id)
-          const mine = await promised<RecordRow | undefined>(records.get(key))
+          const mine = mineById.get(row.id)
 
           if (mine === undefined || versionOf(mine.values) < versionOf(row.values)) {
             records.put({ ...row, key, entity: inSection(kind) } satisfies RecordRow)
