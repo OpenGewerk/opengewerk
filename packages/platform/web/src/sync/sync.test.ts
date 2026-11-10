@@ -1429,6 +1429,62 @@ describe('a device handed to somebody who sees less, or more', () => {
   })
 
   /**
+   * Two tabs of one build, the narrowing unchanged, the most common case
+   * (opengewerk#899): one moved the cursor of the store on since the other
+   * read it. The page of the other is refused, and it takes the cursor and the
+   * rows of the store over and asks on from there, instead of asking from its
+   * own cursor again and again and showing nothing new.
+   */
+  it('goes on from the cursor of the store when another tab of its build moved it on', async () => {
+    const name = 'moved-on-by-another'
+    const later = row({ id: 's-2', name: 'Loft', kind: 'wood' })
+    const latest = row({ id: 's-3', name: 'Keller', kind: 'metal' })
+    let upTo = 5
+    const answering = () => {
+      const server = new Recorded()
+
+      server.pull = (since: number) => {
+        server.asked.push(since)
+
+        return Promise.resolve(
+          since < 5
+            ? { changes: [{ entity: 'shelves', rows: [shelf] }], cursor: 5, hasMore: false }
+            : since < upTo
+              ? {
+                  changes: [{ entity: 'shelves', rows: [later, latest] }],
+                  cursor: upTo,
+                  hasMore: false,
+                }
+              : { changes: [], cursor: since, hasMore: false },
+        )
+      }
+
+      return server
+    }
+    const first = await aTabOf(name, ['shelves'], answering())
+
+    await first.synchronise()
+
+    const secondServer = answering()
+    const second = await aTabOf(name, ['shelves'], secondServer)
+
+    // The first moves the cursor of the store on, from 5 to 8.
+    upTo = 8
+    await first.synchronise()
+    await second.synchronise()
+
+    expect(secondServer.asked).toEqual([5, 8])
+    expect(
+      second
+        .list('shelves')
+        .map((entry) => entry['id'])
+        .sort(),
+    ).toEqual(['s-1', 's-2', 's-3'])
+    first.stop()
+    second.stop()
+  })
+
+  /**
    * A tab of an older build stays one until it is loaded again, or until a
    * tab of its build keeps the store for its kinds again (opengewerk#899). The
    * next round does not take the reason to load the page away while it runs:
