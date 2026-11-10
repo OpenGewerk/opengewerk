@@ -232,6 +232,125 @@ describe('what a device holds of the server, with more than one person', () => {
     any.close()
   })
 
+  /**
+   * The office and the site of one browser, which the server narrows apart
+   * (opengewerk#907): the records and the bookkeeping of the pulls are each
+   * section's; what waits to be sent and what the application keeps are the
+   * store's.
+   */
+  it('keeps the records and the pulls of the office apart from the site, and shares what waits', async () => {
+    const tenant = aTenant()
+    const site = await openLocalStore(tenant, 'anna')
+    const office = await openLocalStore(tenant, 'anna', 'office')
+
+    await site.write('site_accesses', [{ id: 'z-1', value: '0815' }])
+    await site.writeMeta('cursor', 9)
+    await office.write('site_accesses', [{ id: 'z-1' }])
+    // The office starts again for its narrowing, and the site keeps its own.
+    await office.restartPull(['site_accesses'], '{"site_accesses":"bare"}')
+
+    expect(await site.readAll('site_accesses')).toEqual([{ id: 'z-1', value: '0815' }])
+    expect(await office.readAll('site_accesses')).toEqual([])
+    expect(await site.readMeta('cursor')).toBe(9)
+    expect(await office.readMeta('cursor')).toBe(0)
+    expect(await site.readMeta('narrowed')).toBeNull()
+
+    await office.queue(aNote('op-office', 'Leiter im Flur'))
+    await site.writeMeta('stopwatch', '{"userId":"anna"}')
+
+    expect((await site.readOutbox()).map((operation) => operation.id)).toEqual(['op-office'])
+    expect(await office.readMeta('stopwatch')).toBe('{"userId":"anna"}')
+    site.close()
+    office.close()
+  })
+
+  /**
+   * After the update the office section has never pulled (opengewerk#907): it
+   * begins with what the store pulled before, and opens it without a network.
+   */
+  it('begins a section that never pulled with what the store pulled before it had sections', async () => {
+    const tenant = aTenant()
+    const before = await openLocalStore(tenant, 'anna')
+
+    await before.write('visits', [{ id: 'v-1', version: 1 }])
+    await before.writeMeta('entities', 'visits')
+    await before.writeMeta('cursor', 9)
+    await before.writeMeta('narrowed', '{"visits":"all"}')
+    before.close()
+
+    // Another section's rows are not what the store pulled before.
+    const other = await openLocalStore(tenant, 'anna', 'other')
+
+    await other.write('visits', [{ id: 'v-9', version: 1 }])
+    other.close()
+
+    const office = await openLocalStore(tenant, 'anna', 'office')
+
+    // At once, for an application that reads the store before its client starts.
+    expect(await office.readAll('visits')).toEqual([{ id: 'v-1', version: 1 }])
+
+    const pulled = await office.beginPull(['visits'])
+
+    expect(pulled.cursor).toBe(9)
+    expect(pulled.narrowed).toBe('{"visits":"all"}')
+    expect(pulled.rows.get('visits')).toEqual([{ id: 'v-1', version: 1 }])
+
+    // Once only: what the office lets go of from then on is its own, also
+    // when it is opened again.
+    await office.restartPull(['visits'], '{"visits":"own"}')
+    office.close()
+
+    const again = await openLocalStore(tenant, 'anna', 'office')
+
+    expect(await again.readAll('visits')).toEqual([])
+    again.close()
+
+    // Nor are the rows of another section copied, where nothing would read them.
+    const raw = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(`opengewerk.${tenant}`)
+
+      request.onsuccess = () => {
+        resolve(request.result)
+      }
+      request.onerror = () => {
+        reject(request.error ?? new Error('not opened'))
+      }
+    })
+    const kinds = await new Promise<string[]>((resolve) => {
+      const request = raw.transaction('records').objectStore('records').getAll()
+
+      request.onsuccess = () => {
+        resolve((request.result as { entity: string }[]).map((row) => row.entity))
+      }
+    })
+
+    raw.close()
+    expect(kinds.filter((kind) => kind.startsWith('office/other'))).toEqual([])
+
+    const site = await openLocalStore(tenant, 'anna')
+
+    expect(await site.readAll('visits')).toEqual([{ id: 'v-1', version: 1 }])
+    expect(await site.readMeta('cursor')).toBe(9)
+    site.close()
+  })
+
+  it('lets go of the pulls of every section when another account takes the store over', async () => {
+    const tenant = aTenant()
+    const anna = await openLocalStore(tenant, 'anna', 'office')
+
+    await anna.write('site_accesses', [{ id: 'z-1' }])
+    await anna.writeMeta('cursor', 9)
+
+    const ben = await openLocalStore(tenant, 'ben')
+    const bensOffice = await openLocalStore(tenant, 'ben', 'office')
+
+    expect(await bensOffice.readMeta('cursor')).toBeNull()
+    expect(await bensOffice.readAll('site_accesses')).toEqual([])
+    anna.close()
+    ben.close()
+    bensOffice.close()
+  })
+
   it('reads and writes nothing more of the server for a tab still open for the account before', async () => {
     const tenant = aTenant()
     const anna = await openLocalStore(tenant, 'anna')

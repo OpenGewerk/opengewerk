@@ -1429,6 +1429,59 @@ describe('a device handed to somebody who sees less, or more', () => {
   })
 
   /**
+   * The office and the site of one browser, which the server narrows apart
+   * (opengewerk#907): the site holds the values of the ways into its sites,
+   * the office does not. Each pulls into its own section of the store, and
+   * neither takes the narrowing of the other for a changed one: before, every
+   * exchange of the office started the site again from 0 and took its values
+   * off the device until the site exchanged again.
+   */
+  it('pulls the office and the site of one browser apart, where the server narrows them apart', async () => {
+    const name = 'office-and-site'
+    const narrowedTo = (values: boolean) => {
+      const server = new Recorded()
+
+      server.pull = (since: number) => {
+        server.asked.push(since)
+
+        return Promise.resolve({
+          changes: since < 9 ? [{ entity: 'visits', rows: [mine] }] : [],
+          cursor: 9,
+          hasMore: false,
+          narrowed: { visits: values ? 'user:u-road:values' : 'user:u-road:bare' },
+        })
+      }
+
+      return server
+    }
+    const siteServer = narrowedTo(true)
+    const site = await aTabOf(name, ['shelves', 'visits'], siteServer)
+
+    await site.synchronise()
+
+    const office = await Client.start({
+      store: await openLocalStore(name, undefined, 'office'),
+      transport: narrowedTo(false),
+      writer: new Writing(),
+      rules,
+      deviceId: 'tablet',
+      entities: ['shelves', 'visits'],
+      onSignedOut: () => {},
+    })
+
+    await office.synchronise()
+    siteServer.asked.length = 0
+    await site.synchronise()
+
+    // The site asks on from its own cursor and keeps its rows.
+    expect(siteServer.asked).toEqual([9])
+    expect(site.list('visits').map((entry) => entry['id'])).toEqual(['v-2'])
+    expect(office.list('visits').map((entry) => entry['id'])).toEqual(['v-2'])
+    site.stop()
+    office.stop()
+  })
+
+  /**
    * Two tabs of one build, the narrowing unchanged, the most common case
    * (opengewerk#899): one moved the cursor of the store on since the other
    * read it. The page of the other is refused, and it takes the cursor and the

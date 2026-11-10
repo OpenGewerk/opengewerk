@@ -373,24 +373,33 @@ function cursorStands(known: string | number | undefined, entities: readonly str
  * the cursor at 0, as the cursor of the last checked write too, under the
  * narrowing it keeps, and nothing settled.
  */
-function claimIn(meta: IDBObjectStore, list: string, narrowed: MetaRow | undefined): void {
-  meta.put({ key: entitiesKey, value: list } satisfies MetaRow)
-  meta.put({ key: cursorKey, value: 0 } satisfies MetaRow)
-  meta.put({ key: checkedKey, value: 0 } satisfies MetaRow)
-  meta.put({ key: checkedForKey, value: narrowed?.value ?? '' } satisfies MetaRow)
-  meta.put({ key: settledKey, value: '' } satisfies MetaRow)
+function claimIn(
+  meta: IDBObjectStore,
+  list: string,
+  narrowed: MetaRow | undefined,
+  key: (name: string) => string,
+): void {
+  meta.put({ key: key(entitiesKey), value: list } satisfies MetaRow)
+  meta.put({ key: key(cursorKey), value: 0 } satisfies MetaRow)
+  meta.put({ key: key(checkedKey), value: 0 } satisfies MetaRow)
+  meta.put({ key: key(checkedForKey), value: narrowed?.value ?? '' } satisfies MetaRow)
+  meta.put({ key: key(settledKey), value: '' } satisfies MetaRow)
 }
 
-/** The rows of each named kind, deleted rows included, read in `transaction`. */
+/**
+ * The rows of each named kind, deleted rows included, read in `transaction`,
+ * each kind as the section of the store names it (`kind`).
+ */
 async function pulledRows(
   transaction: IDBTransaction,
   entities: readonly string[],
+  kind: (entity: string) => string,
 ): Promise<ReadonlyMap<string, readonly StoredRecord[]>> {
   const index = transaction.objectStore(recordStore).index('entity')
   const rows = new Map<string, readonly StoredRecord[]>()
 
   for (const entity of entities) {
-    const found = await promised<RecordRow[]>(index.getAll(entity))
+    const found = await promised<RecordRow[]>(index.getAll(kind(entity)))
 
     rows.set(
       entity,
@@ -676,8 +685,22 @@ export class StoreTakenOver extends Error {
  * its person signs in again. Opened without an owner, the outbox answers with
  * everything, which is what counting before a sign out needs: a change of
  * somebody else that waits here is lost with the sign out all the same.
+ *
+ * `section` is the part of the store the records pulled and the bookkeeping
+ * of their pulls belong to (opengewerk#907). The office and the site of one
+ * browser share the store, and the server narrows them apart: the site holds
+ * the values of the ways into its sites, the office does not. In one section
+ * each took the narrowing of the other for a changed one, started again from
+ * 0 and dropped the rows of the other. What waits to be sent, the files, the
+ * conflicts and what an application keeps for the device stay the store's,
+ * whichever entry wrote them. Without a section the store is as it was
+ * before, which the site keeps: a device in a cellar opens what it pulled.
  */
-export async function openLocalStore(tenantId: string, owner?: string): Promise<LocalStore> {
+export async function openLocalStore(
+  tenantId: string,
+  owner?: string,
+  section?: string,
+): Promise<LocalStore> {
   // Listed before it is opened, so that a store that exists is never missing from the list.
   keepOpened([...openedStores(), tenantId])
 
@@ -707,8 +730,63 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     return database.transaction([...names], mode)
   }
 
+  /** A kind of record as this section of the store keeps it (`section`). */
+  function inSection(name: string): string {
+    return section === undefined ? name : `${section}/${name}`
+  }
+
+  /** A key of the meta store: the bookkeeping of the pulls is the section's, any other key the store's. */
+  function metaKey(key: string): string {
+    return pulledKeys.includes(key) ? inSection(key) : key
+  }
+
   if (owner !== undefined) {
     await claimFor(owner)
+  }
+
+  if (section !== undefined) {
+    await adoptUnsectioned()
+  }
+
+  /**
+   * A section that never pulled begins with what the store pulled before it
+   * had sections (opengewerk#907), so that the office opens without a network
+   * what it showed before the update. What came in under another narrowing
+   * goes at its first exchange, as at any change of it. Asked and copied in
+   * one transaction, for the account of the store; once the section has begun
+   * a pull (`entitiesKey`), never again.
+   */
+  async function adoptUnsectioned(): Promise<void> {
+    const transaction = await held([recordStore, metaStore], 'readwrite')
+    const meta = transaction.objectStore(metaStore)
+
+    if ((await promised<MetaRow | undefined>(meta.get(metaKey(entitiesKey)))) !== undefined) {
+      await finished(transaction)
+
+      return
+    }
+
+    const records = transaction.objectStore(recordStore)
+
+    for (const row of await promised<RecordRow[]>(records.getAll())) {
+      if (!row.entity.includes('/')) {
+        records.put({
+          ...row,
+          key: keyOf(inSection(row.entity), row.id),
+          entity: inSection(row.entity),
+        } satisfies RecordRow)
+      }
+    }
+
+    for (const key of pulledKeys) {
+      const row = await promised<MetaRow | undefined>(meta.get(key))
+
+      if (row !== undefined) {
+        meta.put({ key: inSection(key), value: row.value } satisfies MetaRow)
+      }
+    }
+
+    await finished(transaction)
   }
 
   /**
@@ -776,8 +854,14 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     // Another account's, or nobody's.
     transaction.objectStore(recordStore).clear()
     transaction.objectStore(conflictStore).clear()
-    for (const key of pulledKeys) {
-      transaction.objectStore(metaStore).delete(key)
+    // Of every section (opengewerk#907): the records of all of them are gone,
+    // and a section whose cursor stayed would never pull them again.
+    for (const key of await promised<IDBValidKey[]>(
+      transaction.objectStore(metaStore).getAllKeys(),
+    )) {
+      if (pulledKeys.some((pulled) => key === pulled || String(key).endsWith(`/${pulled}`))) {
+        transaction.objectStore(metaStore).delete(key)
+      }
     }
 
     const waiting = new Set(
@@ -804,7 +888,7 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     async readAll(entity) {
       const transaction = await held([recordStore], 'readonly')
       const rows = await promised<RecordRow[]>(
-        transaction.objectStore(recordStore).index('entity').getAll(entity),
+        transaction.objectStore(recordStore).index('entity').getAll(inSection(entity)),
       )
 
       return rows.map((row) => row.values)
@@ -817,7 +901,12 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
       for (const values of records) {
         const id = String(values['id'])
 
-        store.put({ key: keyOf(entity, id), entity, id, values } satisfies RecordRow)
+        store.put({
+          key: keyOf(inSection(entity), id),
+          entity: inSection(entity),
+          id,
+          values,
+        } satisfies RecordRow)
       }
 
       await finished(transaction)
@@ -826,7 +915,9 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     async drop(entity) {
       const transaction = await held([recordStore], 'readwrite')
       const store = transaction.objectStore(recordStore)
-      const keys = await promised<IDBValidKey[]>(store.index('entity').getAllKeys(entity))
+      const keys = await promised<IDBValidKey[]>(
+        store.index('entity').getAllKeys(inSection(entity)),
+      )
 
       for (const key of keys) {
         store.delete(key)
@@ -839,11 +930,11 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     async writePulled(page) {
       const transaction = await held([recordStore, metaStore], 'readwrite')
       const meta = transaction.objectStore(metaStore)
-      const kinds = await promised<MetaRow | undefined>(meta.get(entitiesKey))
-      const cursor = await promised<MetaRow | undefined>(meta.get(cursorKey))
-      const checked = await promised<MetaRow | undefined>(meta.get(checkedKey))
-      const checkedFor = await promised<MetaRow | undefined>(meta.get(checkedForKey))
-      const narrowed = await promised<MetaRow | undefined>(meta.get(narrowedKey))
+      const kinds = await promised<MetaRow | undefined>(meta.get(metaKey(entitiesKey)))
+      const cursor = await promised<MetaRow | undefined>(meta.get(metaKey(cursorKey)))
+      const checked = await promised<MetaRow | undefined>(meta.get(metaKey(checkedKey)))
+      const checkedFor = await promised<MetaRow | undefined>(meta.get(metaKey(checkedForKey)))
+      const narrowed = await promised<MetaRow | undefined>(meta.get(metaKey(narrowedKey)))
       const kept = kindsOf(kinds?.value)
       const known = kindsOf(page.entities)
       const stands = cursor?.value ?? 0
@@ -870,16 +961,21 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
         for (const values of rows) {
           const id = String(values['id'])
 
-          records.put({ key: keyOf(entity, id), entity, id, values } satisfies RecordRow)
+          records.put({
+            key: keyOf(inSection(entity), id),
+            entity: inSection(entity),
+            id,
+            values,
+          } satisfies RecordRow)
         }
       }
 
-      meta.put({ key: cursorKey, value: page.to } satisfies MetaRow)
-      meta.put({ key: checkedKey, value: page.to } satisfies MetaRow)
-      meta.put({ key: checkedForKey, value: narrowed?.value ?? '' } satisfies MetaRow)
+      meta.put({ key: metaKey(cursorKey), value: page.to } satisfies MetaRow)
+      meta.put({ key: metaKey(checkedKey), value: page.to } satisfies MetaRow)
+      meta.put({ key: metaKey(checkedForKey), value: narrowed?.value ?? '' } satisfies MetaRow)
 
       if (page.settled !== null) {
-        meta.put({ key: settledKey, value: page.settled } satisfies MetaRow)
+        meta.put({ key: metaKey(settledKey), value: page.settled } satisfies MetaRow)
       }
 
       await finished(transaction)
@@ -891,9 +987,9 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     async claimPull(entities) {
       const transaction = await held([metaStore], 'readwrite')
       const meta = transaction.objectStore(metaStore)
-      const narrowed = await promised<MetaRow | undefined>(meta.get(narrowedKey))
+      const narrowed = await promised<MetaRow | undefined>(meta.get(metaKey(narrowedKey)))
 
-      claimIn(meta, entities, narrowed)
+      claimIn(meta, entities, narrowed, metaKey)
 
       await finished(transaction)
     },
@@ -902,24 +998,25 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     async beginPull(entities) {
       const transaction = await held([recordStore, metaStore], 'readwrite')
       const meta = transaction.objectStore(metaStore)
-      const kinds = await promised<MetaRow | undefined>(meta.get(entitiesKey))
-      const cursor = await promised<MetaRow | undefined>(meta.get(cursorKey))
-      const checked = await promised<MetaRow | undefined>(meta.get(checkedKey))
-      const narrowed = await promised<MetaRow | undefined>(meta.get(narrowedKey))
-      const settled = await promised<MetaRow | undefined>(meta.get(settledKey))
+
+      const kinds = await promised<MetaRow | undefined>(meta.get(metaKey(entitiesKey)))
+      const cursor = await promised<MetaRow | undefined>(meta.get(metaKey(cursorKey)))
+      const checked = await promised<MetaRow | undefined>(meta.get(metaKey(checkedKey)))
+      const narrowed = await promised<MetaRow | undefined>(meta.get(metaKey(narrowedKey)))
+      const settled = await promised<MetaRow | undefined>(meta.get(metaKey(settledKey)))
       const list = [...entities].sort().join(',')
       const stands = cursorStands(kinds?.value, entities)
 
       if (!stands) {
-        claimIn(meta, list, narrowed)
+        claimIn(meta, list, narrowed, metaKey)
       } else if (kinds?.value !== list) {
         // A shorter list too: a build that knows less moves the cursor past
         // the rows it drops, and the next longer list must not find a record
         // that says otherwise.
-        meta.put({ key: entitiesKey, value: list } satisfies MetaRow)
+        meta.put({ key: metaKey(entitiesKey), value: list } satisfies MetaRow)
       }
 
-      const rows = await pulledRows(transaction, entities)
+      const rows = await pulledRows(transaction, entities, inSection)
 
       await finished(transaction)
 
@@ -938,7 +1035,7 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
       const meta = transaction.objectStore(metaStore)
 
       if (before !== undefined) {
-        const kept = await promised<MetaRow | undefined>(meta.get(narrowedKey))
+        const kept = await promised<MetaRow | undefined>(meta.get(metaKey(narrowedKey)))
 
         if ((kept?.value ?? null) !== before) {
           transaction.abort()
@@ -950,18 +1047,20 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
       const records = transaction.objectStore(recordStore)
 
       for (const entity of entities) {
-        const keys = await promised<IDBValidKey[]>(records.index('entity').getAllKeys(entity))
+        const keys = await promised<IDBValidKey[]>(
+          records.index('entity').getAllKeys(inSection(entity)),
+        )
 
         for (const key of keys) {
           records.delete(key)
         }
       }
 
-      meta.put({ key: settledKey, value: '' } satisfies MetaRow)
-      meta.put({ key: cursorKey, value: 0 } satisfies MetaRow)
-      meta.put({ key: checkedKey, value: 0 } satisfies MetaRow)
-      meta.put({ key: checkedForKey, value: narrowed } satisfies MetaRow)
-      meta.put({ key: narrowedKey, value: narrowed } satisfies MetaRow)
+      meta.put({ key: metaKey(settledKey), value: '' } satisfies MetaRow)
+      meta.put({ key: metaKey(cursorKey), value: 0 } satisfies MetaRow)
+      meta.put({ key: metaKey(checkedKey), value: 0 } satisfies MetaRow)
+      meta.put({ key: metaKey(checkedForKey), value: narrowed } satisfies MetaRow)
+      meta.put({ key: metaKey(narrowedKey), value: narrowed } satisfies MetaRow)
 
       await finished(transaction)
 
@@ -972,11 +1071,11 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     async readPulled(entities) {
       const transaction = await held([recordStore, metaStore], 'readonly')
       const meta = transaction.objectStore(metaStore)
-      const cursor = await promised<MetaRow | undefined>(meta.get(cursorKey))
-      const checked = await promised<MetaRow | undefined>(meta.get(checkedKey))
-      const narrowed = await promised<MetaRow | undefined>(meta.get(narrowedKey))
-      const settled = await promised<MetaRow | undefined>(meta.get(settledKey))
-      const rows = await pulledRows(transaction, entities)
+      const cursor = await promised<MetaRow | undefined>(meta.get(metaKey(cursorKey)))
+      const checked = await promised<MetaRow | undefined>(meta.get(metaKey(checkedKey)))
+      const narrowed = await promised<MetaRow | undefined>(meta.get(metaKey(narrowedKey)))
+      const settled = await promised<MetaRow | undefined>(meta.get(metaKey(settledKey)))
+      const rows = await pulledRows(transaction, entities, inSection)
 
       return {
         cursor: typeof cursor?.value === 'number' ? cursor.value : null,
@@ -1113,7 +1212,9 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
 
     async readMeta(key) {
       const transaction = await held([metaStore], 'readonly')
-      const row = await promised<MetaRow | undefined>(transaction.objectStore(metaStore).get(key))
+      const row = await promised<MetaRow | undefined>(
+        transaction.objectStore(metaStore).get(metaKey(key)),
+      )
 
       return row?.value ?? null
     },
@@ -1121,9 +1222,11 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     async writeMeta(key, value) {
       const transaction = await held([metaStore], 'readwrite')
 
-      transaction
-        .objectStore(metaStore)
-        .put({ key, value, ...(owner === undefined ? {} : { owner }) } satisfies MetaRow)
+      transaction.objectStore(metaStore).put({
+        key: metaKey(key),
+        value,
+        ...(owner === undefined ? {} : { owner }),
+      } satisfies MetaRow)
 
       await finished(transaction)
     },
