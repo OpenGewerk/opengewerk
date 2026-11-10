@@ -1455,6 +1455,62 @@ describe('a device handed to somebody who sees less, or more', () => {
   })
 
   /**
+   * The tab of the build that checks nothing hears a new narrowing first,
+   * starts again and pulls up to the checked cursor again, past the shelves it
+   * does not know (opengewerk#899). The cursor is the checked one; the
+   * narrowing it was checked for is not, and the tab of this build starts the
+   * store again.
+   */
+  it('takes the store back when a tab that checks nothing started again up to the same cursor', async () => {
+    const first = { shelves: 'user:u-road', visits: 'all' }
+    const then = { shelves: 'all', visits: 'all' }
+    let narrowing = first
+    const server = new Recorded()
+
+    server.pull = (since: number) => {
+      server.asked.push(since)
+
+      return Promise.resolve({
+        changes:
+          since < 12
+            ? [
+                { entity: 'visits', rows: [mine] },
+                { entity: 'shelves', rows: [shelf] },
+              ]
+            : [],
+        cursor: 12,
+        hasMore: false,
+        narrowed: narrowing,
+      })
+    }
+
+    const newer = await aTabOf('started-again-unchecked', ['shelves', 'visits'], server)
+
+    await newer.synchronise()
+
+    // The tab from before hears the new narrowing first and does what its
+    // code did: start again, drop the shelves, pull the visits up to 12.
+    const before = await openLocalStore('started-again-unchecked')
+
+    await before.writeMeta('narrowed-settled', '')
+    await before.writeMeta('cursor', 0)
+    await before.drop('shelves')
+    await before.writeMeta('narrowed', JSON.stringify(then))
+    await before.write('visits', [mine])
+    await before.writeMeta('cursor', 12)
+    await before.writeMeta('narrowed-settled', JSON.stringify(then))
+    before.close()
+
+    narrowing = then
+    server.asked.length = 0
+    await newer.synchronise()
+
+    expect(server.asked).toEqual([12, 12, 0])
+    expect(newer.list('shelves').map((entry) => entry['id'])).toEqual(['s-1'])
+    newer.stop()
+  })
+
+  /**
    * A store an earlier version kept, opened by this one (opengewerk#899). Its
    * cursor is taken as checked once, so that no device pulls everything again
    * after the update.
@@ -2568,7 +2624,14 @@ describe('what a device keeps for itself', () => {
   })
 
   it('cannot take a name the client keeps its own bookkeeping under', async () => {
-    for (const name of ['cursor', 'entities', 'narrowed', 'narrowed-settled']) {
+    for (const name of [
+      'cursor',
+      'entities',
+      'narrowed',
+      'narrowed-settled',
+      'cursor-checked',
+      'cursor-checked-for',
+    ]) {
       await expect(keeping(`kept-${name}`, [name]), name).rejects.toThrow(
         /keeps its own bookkeeping under this name/,
       )

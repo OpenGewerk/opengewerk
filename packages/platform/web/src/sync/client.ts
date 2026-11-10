@@ -19,6 +19,8 @@ import { uuidv7 } from 'uuidv7'
 import { holdUpdates } from '../shell/updates.js'
 import { byRecord, project, recordKey } from './projection.js'
 import {
+  checkedForKey,
+  checkedKey,
   cursorKey,
   entitiesKey,
   type LocalStore,
@@ -204,7 +206,14 @@ export type Draft = Readonly<Record<string, unknown>>
  * application has the device keep for itself. A value kept under one of them
  * would overwrite the cursor, so such a name is refused at the start.
  */
-const bookkeeping: readonly string[] = [cursorKey, narrowedKey, settledKey, entitiesKey]
+const bookkeeping: readonly string[] = [
+  cursorKey,
+  narrowedKey,
+  settledKey,
+  entitiesKey,
+  checkedKey,
+  checkedForKey,
+]
 
 /**
  * Whether the cursor in the store can be trusted by this build.

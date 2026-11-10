@@ -323,6 +323,50 @@ describe('the bar above every screen', () => {
     }
   })
 
+  it('says to load the page again beside a conflict, which keeps its way to a decision', async () => {
+    const server = new Quiet()
+    const name = `bar${String((counter += 1))}`
+
+    server.open = [conflict]
+
+    const client = await SyncClient.start({
+      store: await openLocalStore(name),
+      transport: server,
+      writer: server,
+      rules: syncRules(probePolicies),
+      deviceId: 'device',
+      entities: ['shelves', 'notes'],
+      onSignedOut: () => {},
+    })
+    const newer = await openLocalStore(name)
+
+    await newer.writeMeta('entities', 'letters,notes,shelves')
+    newer.close()
+    await client.synchronise()
+
+    expect(client.status().state).toBe('conflict')
+    expect(client.status().troubleKind).toBe('outdated')
+
+    render(
+      <SyncProvider client={client}>
+        <SyncStatusBar
+          conflictsLink={(className) => (
+            <a className={className} href="/konflikte">
+              Konflikte
+            </a>
+          )}
+        />
+      </SyncProvider>,
+    )
+
+    const strip = screen.getByRole('alert')
+
+    expect(strip.textContent).toContain('Ein Konflikt wartet')
+    expect(strip.textContent).toContain('Bitte diese Seite neu laden.')
+    expect(screen.getByRole('link', { name: 'Konflikte' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Neu laden' })).toBeDefined()
+  })
+
   it('says nothing about the connection while a change is on its way (#223)', async () => {
     const server = new Quiet()
     const client = await withClient(server)

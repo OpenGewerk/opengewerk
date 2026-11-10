@@ -274,11 +274,27 @@ export const entitiesKey = 'entities'
 export const checkedKey = 'cursor-checked'
 
 /**
+ * The narrowing the last checked write left the store with, as JSON, empty
+ * for none (opengewerk#899). A tab of a build from before that went back to
+ * the start for a new narrowing and pulled up to the checked cursor again
+ * leaves the cursor as it was and the narrowing changed, with the rows of the
+ * kinds it does not know gone.
+ */
+export const checkedForKey = 'cursor-checked-for'
+
+/**
  * What the meta store holds of the pulls, and goes with the records for
  * another account. Everything else in it the application keeps for itself
  * (`SyncClient.keep`), and each such value says itself whose it is.
  */
-const pulledKeys: readonly string[] = [cursorKey, narrowedKey, settledKey, entitiesKey, checkedKey]
+const pulledKeys: readonly string[] = [
+  cursorKey,
+  narrowedKey,
+  settledKey,
+  entitiesKey,
+  checkedKey,
+  checkedForKey,
+]
 const fileStore = 'files'
 const uploadStore = 'uploads'
 
@@ -683,6 +699,7 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
       const kinds = await promised<MetaRow | undefined>(meta.get(entitiesKey))
       const cursor = await promised<MetaRow | undefined>(meta.get(cursorKey))
       const checked = await promised<MetaRow | undefined>(meta.get(checkedKey))
+      const checkedFor = await promised<MetaRow | undefined>(meta.get(checkedForKey))
       const narrowed = await promised<MetaRow | undefined>(meta.get(narrowedKey))
       const kept = kindsOf(kinds?.value)
       const known = kindsOf(page.entities)
@@ -691,7 +708,8 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
         ? 'newerBuild'
         : [...known].some((kind) => !kept.has(kind))
           ? 'fewerKinds'
-          : checked !== undefined && checked.value !== stands
+          : (checked !== undefined && checked.value !== stands) ||
+              (checkedFor !== undefined && checkedFor.value !== (narrowed?.value ?? ''))
             ? 'unchecked'
             : stands !== page.from || (page.narrowed !== null && narrowed?.value !== page.narrowed)
               ? 'moved'
@@ -715,6 +733,7 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
 
       meta.put({ key: cursorKey, value: page.to } satisfies MetaRow)
       meta.put({ key: checkedKey, value: page.to } satisfies MetaRow)
+      meta.put({ key: checkedForKey, value: narrowed?.value ?? '' } satisfies MetaRow)
 
       if (page.settled !== null) {
         meta.put({ key: settledKey, value: page.settled } satisfies MetaRow)
@@ -729,10 +748,12 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     async claimPull(entities) {
       const transaction = await held([metaStore], 'readwrite')
       const meta = transaction.objectStore(metaStore)
+      const narrowed = await promised<MetaRow | undefined>(meta.get(narrowedKey))
 
       meta.put({ key: entitiesKey, value: entities } satisfies MetaRow)
       meta.put({ key: cursorKey, value: 0 } satisfies MetaRow)
       meta.put({ key: checkedKey, value: 0 } satisfies MetaRow)
+      meta.put({ key: checkedForKey, value: narrowed?.value ?? '' } satisfies MetaRow)
       meta.put({ key: settledKey, value: '' } satisfies MetaRow)
 
       await finished(transaction)
@@ -766,6 +787,7 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
       meta.put({ key: settledKey, value: '' } satisfies MetaRow)
       meta.put({ key: cursorKey, value: 0 } satisfies MetaRow)
       meta.put({ key: checkedKey, value: 0 } satisfies MetaRow)
+      meta.put({ key: checkedForKey, value: narrowed } satisfies MetaRow)
       meta.put({ key: narrowedKey, value: narrowed } satisfies MetaRow)
 
       await finished(transaction)

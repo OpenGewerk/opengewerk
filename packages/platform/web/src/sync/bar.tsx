@@ -26,6 +26,23 @@ export function SyncStatusBar({
   const client = useSync()
   const status = useSyncStatus()
   const entry = useEntry()
+  // A tab of a newer build pulls for the store of this browser
+  // (opengewerk#899): trying again changes nothing, loading the page does.
+  // Said beside a conflict or a refused entry as well, which keep their way
+  // to a decision; what waits on the device stays in the store through the
+  // reload.
+  const outdated = status.troubleKind === 'outdated'
+  const reload = (tone: 'conflict' | 'wait') => (
+    <button
+      type="button"
+      className={stripAction('plain', tone, entry)}
+      onClick={() => {
+        globalThis.location.reload()
+      }}
+    >
+      Neu laden
+    </button>
+  )
 
   // Louder than a conflict, and ahead of one: until the refused entry is
   // decided, nothing queued behind it leaves the device, a decision on a
@@ -36,8 +53,17 @@ export function SyncStatusBar({
         tone="conflict"
         icon={TriangleAlert}
         urgent
-        detail="Bis sie entschieden ist, geht nichts hinaus."
-        actions={conflictsLink?.(stripAction('plain', 'conflict', entry))}
+        detail={
+          outdated
+            ? `Bis sie entschieden ist, geht nichts hinaus. ${status.trouble ?? ''}`
+            : 'Bis sie entschieden ist, geht nichts hinaus.'
+        }
+        actions={
+          <>
+            {conflictsLink?.(stripAction('plain', 'conflict', entry))}
+            {outdated ? reload('conflict') : null}
+          </>
+        }
       >
         Der Server nimmt eine Änderung nicht an.
       </Strip>
@@ -52,7 +78,13 @@ export function SyncStatusBar({
         tone="conflict"
         icon={TriangleAlert}
         urgent
-        actions={conflictsLink?.(stripAction('plain', 'conflict', entry))}
+        {...(outdated && status.trouble !== null ? { detail: status.trouble } : {})}
+        actions={
+          <>
+            {conflictsLink?.(stripAction('plain', 'conflict', entry))}
+            {outdated ? reload('conflict') : null}
+          </>
+        }
       >
         {count === 1
           ? 'Ein Konflikt wartet auf eine Entscheidung.'
@@ -71,20 +103,8 @@ export function SyncStatusBar({
       status.pending > 0
         ? `${String(status.pending)} Änderung${status.pending === 1 ? '' : 'en'} auf dem Gerät.`
         : null
-    // A tab of a newer build pulls for the store of this browser
-    // (opengewerk#899): trying again changes nothing, loading the page does.
-    // What waits on the device stays in the store through the reload.
-    const outdated = status.troubleKind === 'outdated'
     const retry = outdated ? (
-      <button
-        type="button"
-        className={stripAction('plain', 'wait', entry)}
-        onClick={() => {
-          globalThis.location.reload()
-        }}
-      >
-        Neu laden
-      </button>
+      reload('wait')
     ) : (
       <button
         type="button"
