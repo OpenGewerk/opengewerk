@@ -68,12 +68,43 @@ export interface UnownedChanges {
   readonly files: readonly WaitingFile[]
 }
 
+/** One page of a pull, as the sync client writes it down (`writePulled`). */
+export interface PulledPage {
+  /** The rows of each kind the page brought, of the kinds the client knows. */
+  readonly changes: readonly { readonly entity: string; readonly rows: readonly StoredRecord[] }[]
+  /** The cursor the pull asked from. */
+  readonly from: number
+  /** The cursor the page ends at. */
+  readonly to: number
+  /** What the answer said it narrowed the rows to, as JSON, or null where it said nothing. */
+  readonly narrowed: string | null
+}
+
 export interface LocalStore {
   /** Everything of one kind, deleted rows included. Filtering is the caller's. */
   readAll(entity: string): Promise<readonly StoredRecord[]>
   write(entity: string, records: readonly StoredRecord[]): Promise<void>
   /** Every row of one kind, gone; the outbox keeps what it holds of it. */
   drop(entity: string): Promise<void>
+  /**
+   * The rows of one page of a pull and the cursor it ends at, in one
+   * transaction, while the store still stands where the pull began
+   * (opengewerk#899): its cursor is `from`, and the narrowing it keeps is the
+   * one the answer named. The tabs of a browser share the store and its
+   * cursor; a tab that pulled from a cursor another tab has moved since, back
+   * to the start after a change of the narrowing among them, wrote a later
+   * one over rows that never arrived. False, with nothing written, where the
+   * store stands elsewhere.
+   */
+  writePulled(page: PulledPage): Promise<boolean>
+  /**
+   * A pull back to the start, in one transaction: the rows of the named
+   * kinds gone, the cursor at 0, nothing settled (`settledKey`), and
+   * `narrowed` kept as what the rows are pulled for from now on. In one, so
+   * that neither a page closed halfway nor another tab writing a page in
+   * between finds a cursor with rows missing behind it.
+   */
+  restartPull(entities: readonly string[], narrowed: string): Promise<void>
 
   /** What waits to be sent: of the person the store is open for, or all of it without one. */
   readOutbox(): Promise<readonly Operation[]>
@@ -565,6 +596,61 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
       for (const key of keys) {
         store.delete(key)
       }
+
+      await finished(transaction)
+    },
+
+    /** See `LocalStore.writePulled`: cursor and narrowing asked in the transaction that writes. */
+    async writePulled(page) {
+      const transaction = await held([recordStore, metaStore], 'readwrite')
+      const meta = transaction.objectStore(metaStore)
+      const cursor = await promised<MetaRow | undefined>(meta.get(cursorKey))
+      const narrowed = await promised<MetaRow | undefined>(meta.get(narrowedKey))
+
+      if (
+        (cursor?.value ?? 0) !== page.from ||
+        (page.narrowed !== null && narrowed?.value !== page.narrowed)
+      ) {
+        transaction.abort()
+
+        return false
+      }
+
+      const records = transaction.objectStore(recordStore)
+
+      for (const { entity, rows } of page.changes) {
+        for (const values of rows) {
+          const id = String(values['id'])
+
+          records.put({ key: keyOf(entity, id), entity, id, values } satisfies RecordRow)
+        }
+      }
+
+      meta.put({ key: cursorKey, value: page.to } satisfies MetaRow)
+
+      await finished(transaction)
+
+      return true
+    },
+
+    /** See `LocalStore.restartPull`: rows, cursor, settled and narrowing in one transaction. */
+    async restartPull(entities, narrowed) {
+      const transaction = await held([recordStore, metaStore], 'readwrite')
+      const records = transaction.objectStore(recordStore)
+
+      for (const entity of entities) {
+        const keys = await promised<IDBValidKey[]>(records.index('entity').getAllKeys(entity))
+
+        for (const key of keys) {
+          records.delete(key)
+        }
+      }
+
+      const meta = transaction.objectStore(metaStore)
+
+      meta.put({ key: settledKey, value: '' } satisfies MetaRow)
+      meta.put({ key: cursorKey, value: 0 } satisfies MetaRow)
+      meta.put({ key: narrowedKey, value: narrowed } satisfies MetaRow)
 
       await finished(transaction)
     },

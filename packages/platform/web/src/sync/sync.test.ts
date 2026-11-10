@@ -115,6 +115,7 @@ class Writing implements DirectWriter {
   readonly accounts: (string | undefined)[] = []
   refuse: Error | null = null
 
+  /** Records the change and the account it named, or refuses it with `refuse`. */
   patch(entity: string, id: string, values: Readonly<Record<string, unknown>>, account?: string) {
     this.accounts.push(account)
 
@@ -127,6 +128,7 @@ class Writing implements DirectWriter {
     return Promise.resolve(undefined)
   }
 
+  /** Records the removal and the account it named. */
   remove(entity: string, id: string, account?: string) {
     this.accounts.push(account)
     this.removed.push(`${entity}/${id}`)
@@ -817,11 +819,12 @@ describe('a device handed to somebody who sees less, or more', () => {
   })
 
   /**
-   * The page is closed, or the phone locks, halfway through letting go
-   * (opengewerk-haustechnik#31). The next start does the whole of it again,
-   * because the new answer is written down only once it is done.
+   * The page is closed, or the phone locks, while letting go
+   * (opengewerk-haustechnik#31). Letting go is one transaction of the store
+   * (opengewerk#899), so none of it is written, and the next start does the
+   * whole of it again.
    */
-  it('lets go of everything at the next start, when the page closed halfway through', async () => {
+  it('lets go of everything at the next start, when the page closed while letting go', async () => {
     const desk = await startOn('cut-tablet')
 
     transport.pulls = [
@@ -838,16 +841,11 @@ describe('a device handed to somebody who sees less, or more', () => {
     await desk.synchronise()
     desk.stop()
 
-    // The second of the two kinds to let go of is where the page closes.
+    // Letting go is where the page closes: the transaction never commits.
     const store = await openLocalStore('cut-tablet')
-    let dropped = 0
     const closing: LocalStore = {
       ...store,
-      drop: (entity) => {
-        dropped += 1
-
-        return dropped === 2 ? Promise.reject(new Error('Die Seite ist zu.')) : store.drop(entity)
-      },
+      restartPull: () => Promise.reject(new Error('Die Seite ist zu.')),
     }
     const road = await Client.start({
       store: closing,
@@ -878,11 +876,145 @@ describe('a device handed to somebody who sees less, or more', () => {
     ]
     await again.synchronise()
 
-    // The cursor went back before anything was let go of, so the next start
-    // asks from the start at once, and once more for the new narrowing.
-    expect(transport.asked).toEqual([0, 0])
+    // Nothing of it was written: the next start asks from where it stood,
+    // hears the new narrowing and lets go of the whole of it then.
+    expect(transport.asked).toEqual([9, 0])
     expect(again.list('visits').map((entry) => entry['id'])).toEqual(['v-2'])
     expect(again.list('shelves')).toEqual([])
+  })
+
+  /**
+   * Two tabs of one browser share the store (opengewerk#899). The first hears
+   * a new narrowing, goes back to the start and is closed after its first
+   * page; the second still stands at its own cursor from before. It asked
+   * from there and wrote a later cursor over the rows the first never
+   * reached, and the device went on without them.
+   */
+  it('loses no row when another tab went back to the start and was closed halfway', async () => {
+    const narrower = { visits: 'user:u-road' }
+    const later = row({ id: 'v-3', userId: 'u-road' })
+    const first = await startOn('two-tabs')
+
+    transport.pulls = [
+      {
+        changes: [{ entity: 'visits', rows: [theirs, mine] }],
+        cursor: 9,
+        hasMore: false,
+        narrowed: { visits: 'all' },
+      },
+    ]
+    await first.synchronise()
+
+    const second = new Recorded()
+    const other = await Client.start({
+      store: await openLocalStore('two-tabs'),
+      transport: second,
+      writer: new Writing(),
+      rules,
+      deviceId: 'tablet',
+      entities: ['shelves', 'visits'],
+      onSignedOut: () => {},
+    })
+
+    // The first tab: the new narrowing, the first page from the start, and
+    // then the page is closed before the next answer comes.
+    const pull = transport.pull.bind(transport)
+    let pages = 0
+
+    transport.pulls = [
+      { changes: [], cursor: 9, hasMore: false, narrowed: narrower },
+      {
+        changes: [{ entity: 'visits', rows: [mine] }],
+        cursor: 4,
+        hasMore: true,
+        narrowed: narrower,
+      },
+    ]
+    transport.pull = (since: number) => {
+      pages += 1
+
+      return pages > 2 ? new Promise<never>(() => {}) : pull(since)
+    }
+    void first.synchronise()
+    await vi.waitFor(() => {
+      expect(pages).toBe(3)
+    })
+    first.stop()
+
+    // The second tab asks from its own cursor; the server has the row the
+    // first never reached behind 4.
+    second.pulls = [
+      { changes: [], cursor: 12, hasMore: false, narrowed: narrower },
+      {
+        changes: [{ entity: 'visits', rows: [later] }],
+        cursor: 12,
+        hasMore: false,
+        narrowed: narrower,
+      },
+    ]
+    await other.synchronise()
+
+    expect(second.asked).toEqual([9, 4])
+    // What the second shows is what the store holds now, without the row the
+    // first let go of.
+    expect(
+      other
+        .list('visits')
+        .map((entry) => entry['id'])
+        .sort(),
+    ).toEqual(['v-2', 'v-3'])
+    other.stop()
+
+    const again = await startOn('two-tabs')
+
+    expect(
+      again
+        .list('visits')
+        .map((entry) => entry['id'])
+        .sort(),
+    ).toEqual(['v-2', 'v-3'])
+    again.stop()
+  })
+
+  /**
+   * A tab that holds nothing yet keeps the first narrowing it is told; the
+   * store it shares may stand further on by then, pulled by another tab from
+   * a server that named no narrowing (opengewerk#899). It starts the store
+   * from the beginning too, rather than keeping a cursor with rows gone
+   * behind it.
+   */
+  it('starts the store from the beginning when it keeps the first narrowing, whatever another tab pulled', async () => {
+    const empty = await startOn('fresh-and-other')
+    const second = new Recorded()
+    const other = await Client.start({
+      store: await openLocalStore('fresh-and-other'),
+      transport: second,
+      writer: new Writing(),
+      rules,
+      deviceId: 'tablet',
+      entities: ['shelves', 'visits'],
+      onSignedOut: () => {},
+    })
+
+    second.pulls = [
+      { changes: [{ entity: 'visits', rows: [theirs, mine] }], cursor: 9, hasMore: false },
+    ]
+    await other.synchronise()
+    other.stop()
+
+    transport.pulls = [
+      {
+        changes: [{ entity: 'visits', rows: [mine] }],
+        cursor: 9,
+        hasMore: false,
+        narrowed: { visits: 'user:u-road' },
+      },
+    ]
+    await empty.synchronise()
+
+    expect(transport.asked).toEqual([0])
+    expect(empty.list('visits').map((entry) => entry['id'])).toEqual(['v-2'])
+    empty.stop()
   })
 
   it('keeps everything while the server narrows the same way, or says nothing', async () => {

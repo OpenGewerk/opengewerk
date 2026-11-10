@@ -1142,35 +1142,59 @@ export class SyncClient {
     return operation ? { operation, message: error.message } : null
   }
 
+  /**
+   * Pulls what changed since the cursor, page by page, until the server has
+   * nothing more, and writes each page down with the cursor it ends at while
+   * the store still stands where it began (opengewerk#899).
+   */
   private async pullChanges(): Promise<void> {
     let guard = 0
 
     for (;;) {
-      const answer = await this.transport.pull(this.cursor, this.store.owner)
+      const from = this.cursor
+      const answer = await this.transport.pull(from, this.store.owner)
 
       if (await this.narrowedElsewhere(answer.narrowed)) {
         continue
       }
 
-      for (const change of answer.changes) {
+      // An entity this build does not know about is left out. Not an error:
+      // an older client talking to a newer server is the ordinary case during
+      // an update, and it has no screen for those rows anyway.
+      const known = answer.changes.filter((change) => this.records.has(change.entity))
+
+      // Rows and cursor together, and only while the store stands where this
+      // pull began (opengewerk#899). The store is shared by the tabs of the
+      // browser, and they do not take turns: a tab that pulled from its own
+      // cursor after another had gone back to the start for a new narrowing
+      // wrote a later cursor over rows that never arrived. The page is let go
+      // of, and the client asks again from where the store stands.
+      const written = await this.store.writePulled({
+        changes: known,
+        from,
+        to: answer.cursor,
+        narrowed: answer.narrowed ? JSON.stringify(answer.narrowed) : null,
+      })
+
+      if (!written) {
+        await this.catchUp()
+
+        if ((guard += 1) > 100) {
+          return
+        }
+
+        continue
+      }
+
+      for (const change of known) {
         const byId = this.records.get(change.entity)
 
-        if (!byId) {
-          // An entity this build does not know about. Not an error: an older
-          // client talking to a newer server is the ordinary case during an
-          // update, and it has no screen for those rows anyway.
-          continue
-        }
-
         for (const row of change.rows) {
-          byId.set(String(row['id']), row)
+          byId?.set(String(row['id']), row)
         }
-
-        await this.store.write(change.entity, change.rows)
       }
 
       this.cursor = answer.cursor
-      await this.store.writeMeta(cursorKey, this.cursor)
 
       if (!answer.hasMore && answer.narrowed) {
         await this.settle(answer.narrowed)
@@ -1229,12 +1253,15 @@ export class SyncClient {
       this.cursor === 0 &&
       ![...this.records.values()].some((rows) => rows.size > 0)
 
+    // Both in one transaction of the store (`restartPull`): the rows gone, the
+    // cursor at 0, nothing settled and the new answer kept, or none of it. A
+    // page closed halfway found the new answer kept with the rows of somebody
+    // else (opengewerk-haustechnik#31), or rows gone behind a cursor that would
+    // never bring them back; another tab of the browser that wrote a page in
+    // between found the same (opengewerk#899). The cursor of the store goes
+    // back to 0 on a fresh device as well: another tab may have moved it.
     if (fresh) {
-      for (const entity of Object.keys(narrowed)) {
-        await this.store.drop(entity)
-      }
-
-      await this.store.writeMeta(narrowedKey, said)
+      await this.store.restartPull(Object.keys(narrowed), said)
 
       return false
     }
@@ -1244,28 +1271,51 @@ export class SyncClient {
       (entity) => before[entity] !== narrowed[entity],
     )
 
+    await this.store.restartPull(changed, said)
+
     // What the device holds is a part now, until the pull from the start has
     // run through, and also after a start in between.
     this.narrowedNow = null
-    await this.store.writeMeta(settledKey, '')
-    // The cursor back before anything goes: a page closed between the two
-    // found rows gone behind a cursor that would never bring them back.
     this.cursor = 0
-    await this.store.writeMeta(cursorKey, 0)
 
     for (const entity of changed) {
-      await this.store.drop(entity)
       this.records.get(entity)?.clear()
     }
 
-    // The new answer last, as the proof that everything it asks for is done
-    // (opengewerk-haustechnik#31). Written first, a page closed in between
-    // found it kept at the next start and went on with the rows of somebody
-    // else, behind a cursor that would never bring the dropped ones back.
-    await this.store.writeMeta(narrowedKey, said)
     this.publish({})
 
     return true
+  }
+
+  /**
+   * Takes the cursor and the rows from the store as they stand, after another
+   * tab of this browser moved them while this one pulled (opengewerk#899).
+   * The cursor first: a page that tab writes in between leaves this one
+   * behind the store, and its next page is refused and taken again, where the
+   * other order would leave it ahead of rows it never read.
+   */
+  private async catchUp(): Promise<void> {
+    const cursor = await this.store.readMeta(cursorKey)
+
+    this.cursor = typeof cursor === 'number' ? cursor : 0
+
+    for (const [entity, byId] of this.records) {
+      const rows = await this.store.readAll(entity)
+
+      byId.clear()
+
+      for (const row of rows) {
+        byId.set(String(row['id']), row)
+      }
+    }
+
+    const settled = await this.store.readMeta(settledKey)
+
+    this.narrowedNow =
+      typeof settled === 'string' && settled !== ''
+        ? (JSON.parse(settled) as Record<string, string>)
+        : null
+    this.publish({})
   }
 
   /**

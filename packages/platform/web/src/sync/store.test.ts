@@ -214,6 +214,120 @@ describe('what a device holds of the server, with more than one person', () => {
     anna.close()
     ben.close()
   })
+
+  it('takes no page of a pull and no start from the beginning for a tab still open for the account before', async () => {
+    const tenant = aTenant()
+    const anna = await openLocalStore(tenant, 'anna')
+    const ben = await openLocalStore(tenant, 'ben')
+
+    await expect(
+      anna.writePulled({
+        changes: [{ entity: 'site_accesses', rows: [{ id: 'z-1', value: '4711' }] }],
+        from: 0,
+        to: 5,
+        narrowed: null,
+      }),
+    ).rejects.toThrow(StoreTakenOver)
+    await expect(anna.restartPull(['site_accesses'], '{"site_accesses":"all"}')).rejects.toThrow(
+      StoreTakenOver,
+    )
+
+    expect(await ben.readAll('site_accesses')).toEqual([])
+    expect(await ben.readMeta('cursor')).toBeNull()
+    expect(await ben.readMeta('narrowed')).toBeNull()
+    anna.close()
+    ben.close()
+  })
+})
+
+/**
+ * The tabs of a browser share the store and its cursor, and do not take turns
+ * pulling (opengewerk#899). A page of a pull is written only while the store
+ * stands where the pull began, and going back to the start is all or nothing.
+ */
+describe('the pulls of the tabs of one browser', () => {
+  const visit = (id: string) => ({ id, version: 1 })
+
+  it('writes a page only while the cursor of the store is the one the pull asked from', async () => {
+    const store = await openLocalStore(aTenant(), 'anna')
+
+    expect(
+      await store.writePulled({
+        changes: [{ entity: 'visits', rows: [visit('v-1')] }],
+        from: 0,
+        to: 5,
+        narrowed: null,
+      }),
+    ).toBe(true)
+
+    // Another tab asked from 0 as well, before this page was in.
+    expect(
+      await store.writePulled({
+        changes: [{ entity: 'visits', rows: [visit('v-2')] }],
+        from: 0,
+        to: 9,
+        narrowed: null,
+      }),
+    ).toBe(false)
+
+    expect(await store.readAll('visits')).toEqual([visit('v-1')])
+    expect(await store.readMeta('cursor')).toBe(5)
+    store.close()
+  })
+
+  it('writes a page only while the store keeps the narrowing the answer named', async () => {
+    const store = await openLocalStore(aTenant(), 'anna')
+
+    await store.restartPull([], '{"visits":"all"}')
+
+    // An answer from before the narrowing changed, written after the start
+    // from the beginning that another tab made for the new one.
+    expect(
+      await store.writePulled({
+        changes: [{ entity: 'visits', rows: [visit('v-1')] }],
+        from: 0,
+        to: 5,
+        narrowed: '{"visits":"user:u-1"}',
+      }),
+    ).toBe(false)
+    expect(await store.readAll('visits')).toEqual([])
+    expect(await store.readMeta('cursor')).toBe(0)
+
+    expect(
+      await store.writePulled({
+        changes: [{ entity: 'visits', rows: [visit('v-1')] }],
+        from: 0,
+        to: 5,
+        narrowed: '{"visits":"all"}',
+      }),
+    ).toBe(true)
+    expect(await store.readMeta('cursor')).toBe(5)
+    store.close()
+  })
+
+  it('goes back to the start for a new narrowing with the named kinds, and nothing settled', async () => {
+    const store = await openLocalStore(aTenant(), 'anna')
+
+    await store.writePulled({
+      changes: [
+        { entity: 'visits', rows: [visit('v-1')] },
+        { entity: 'shelves', rows: [visit('s-1')] },
+      ],
+      from: 0,
+      to: 9,
+      narrowed: null,
+    })
+    await store.writeMeta('narrowed-settled', '{"visits":"all"}')
+
+    await store.restartPull(['visits'], '{"visits":"user:u-1"}')
+
+    expect(await store.readAll('visits')).toEqual([])
+    expect(await store.readAll('shelves')).toEqual([visit('s-1')])
+    expect(await store.readMeta('cursor')).toBe(0)
+    expect(await store.readMeta('narrowed-settled')).toBe('')
+    expect(await store.readMeta('narrowed')).toBe('{"visits":"user:u-1"}')
+    store.close()
+  })
 })
 
 describe('what waits on a device for nobody', () => {
