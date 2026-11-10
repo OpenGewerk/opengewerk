@@ -991,10 +991,15 @@ export async function openLocalStore(
     // Another account's, or nobody's.
     transaction.objectStore(recordStore).clear()
     transaction.objectStore(conflictStore).clear()
-    // The bookkeeping of a section goes when the section is opened next, for
-    // an account it was not begun for (`adoptUnsectioned`, opengewerk#907).
-    for (const key of pulledKeys) {
-      transaction.objectStore(metaStore).delete(key)
+    // Of every section (opengewerk#907): the records of all of them are gone,
+    // and a section whose cursor stayed would ask on from it over rows that
+    // are missing, also when the account it was begun for comes back.
+    for (const key of await promised<IDBValidKey[]>(
+      transaction.objectStore(metaStore).getAllKeys(),
+    )) {
+      if (pulledKeys.some((pulled) => key === pulled || String(key).endsWith(`/${pulled}`))) {
+        transaction.objectStore(metaStore).delete(key)
+      }
     }
 
     const waiting = new Set(

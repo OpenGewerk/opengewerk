@@ -521,6 +521,33 @@ describe('what a device holds of the server, with more than one person', () => {
     ben.close()
   })
 
+  /**
+   * Anna in the office, Ben on the site of the same browser, Anna in the
+   * office again (opengewerk#907): every takeover lets go of all records, and
+   * the cursor of her office goes with them, though the section was begun
+   * for her and Ben never opened it.
+   */
+  it('lets go of the pull of a section when the account it was begun for comes back after another', async () => {
+    const tenant = aTenant()
+    const office = await openLocalStore(tenant, 'anna', 'office')
+
+    await office.beginPull(['visits'])
+    await office.writeMeta('cursor', 9)
+    await office.writeMeta('cursor-checked', 9)
+    await office.write('visits', [{ id: 'v-1', version: 1 }])
+    office.close()
+
+    const ben = await openLocalStore(tenant, 'ben')
+
+    ben.close()
+
+    const back = await openLocalStore(tenant, 'anna', 'office')
+
+    expect(await back.readAll('visits')).toEqual([])
+    expect((await back.beginPull(['visits'])).cursor).toBe(0)
+    back.close()
+  })
+
   it('lets go of the pulls of every section when another account takes the store over', async () => {
     const tenant = aTenant()
     const anna = await openLocalStore(tenant, 'anna', 'office')
