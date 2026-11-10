@@ -114,9 +114,11 @@ export function SignOutButton({
     // while there is a session to take it off with, as the row a push
     // message would be sent to (#284). Never longer than a few seconds and
     // never in the way: a server sends nothing to a device whose session has
-    // ended anyway.
+    // ended anyway. For the account signing out, as the sign out itself.
+    const before = application.beforeSignOut
+
     await Promise.race([
-      quietly(application.beforeSignOut),
+      quietly(before ? () => before(account) : undefined),
       new Promise((resolve) => {
         setTimeout(resolve, 3_000)
       }),

@@ -237,10 +237,12 @@ describe('signing out', () => {
    * Sending the outbox first may end with the answer that another account
    * is signed in on the browser, and the page moves on to it (opengewerk#882).
    * The sign out is still the one of the account whose screen asked for it,
-   * and the server refuses it for the other.
+   * what the application ends for the device included, and the server
+   * refuses it for the other.
    */
   it('names the account the page worked for when asked, after the page moved on', async () => {
     const named: (string | undefined)[] = []
+    const endedFor: (string | null)[] = []
     const signedOut = vi.fn()
     const moving = {
       synchronise: () => {
@@ -263,12 +265,22 @@ describe('signing out', () => {
     workAs('u-1')
 
     try {
-      button(signedOut, { client: moving })
+      button(signedOut, {
+        client: moving,
+        application: probeApplication({
+          beforeSignOut: (account) => {
+            endedFor.push(account)
+
+            return Promise.resolve()
+          },
+        }),
+      })
       await userEvent.click(screen.getByRole('button', { name: 'Abmelden' }))
 
       await waitFor(() => {
         expect(signedOut).toHaveBeenCalled()
       })
+      expect(endedFor).toEqual(['u-1'])
       expect(named).toEqual(['u-1'])
     } finally {
       workAs(null)

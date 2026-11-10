@@ -98,8 +98,13 @@ export interface InterfaceApplication {
    * What the application ends for this device while there is still a session
    * to end it with. Given a few seconds and never in the way: whatever it
    * does or fails to do, the sign out goes on.
+   *
+   * Handed the account signing out, where the page named one: the page may
+   * have moved on to another account since (opengewerk#882), and what is
+   * ended here is the one of the account signing out, asked for under its
+   * name (`accountHeader`), as `leavePush` does.
    */
-  readonly beforeSignOut?: () => Promise<unknown>
+  readonly beforeSignOut?: (account: string | null) => Promise<unknown>
 }
 
 /** One screen of the settings: where it is, what it is called, what it is for. */
