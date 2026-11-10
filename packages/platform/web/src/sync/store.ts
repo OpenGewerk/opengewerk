@@ -335,6 +335,26 @@ const pulledKeys: readonly string[] = [
 const fileStore = 'files'
 const uploadStore = 'uploads'
 
+/** The narrowing a section keeps (`narrowedKey`) by kind, or null where none is kept or it does not read. */
+function narrowingIn(row: MetaRow | undefined): Readonly<Record<string, unknown>> | null {
+  if (typeof row?.value !== 'string' || row.value === '') {
+    return null
+  }
+
+  try {
+    const read: unknown = JSON.parse(row.value)
+
+    return typeof read === 'object' && read !== null ? (read as Record<string, unknown>) : null
+  } catch {
+    return null
+  }
+}
+
+/** The version a row was pulled in, or -1 for a row that names none. */
+function versionOf(values: StoredRecord): number {
+  return typeof values['version'] === 'number' ? values['version'] : -1
+}
+
 /** The kinds of record a list as `entitiesKey` keeps it names; none for nothing kept. */
 function kindsOf(list: string | number | undefined): ReadonlySet<string> {
   return new Set(typeof list === 'string' && list !== '' ? list.split(',') : [])
@@ -744,8 +764,94 @@ export async function openLocalStore(
     await claimFor(owner)
   }
 
-  if (section !== undefined) {
-    await adoptUnsectioned()
+  // Neither where another account has taken the store over since it was
+  // claimed above, by a tab opening it at the same moment: nothing here is
+  // this account's to copy, and the first read says so (`StoreTakenOver`), as
+  // it did before there were sections.
+  try {
+    if (section !== undefined) {
+      await adoptUnsectioned()
+    }
+
+    if (owner !== undefined) {
+      await takeFromOtherSections()
+    }
+  } catch (error) {
+    if (!(error instanceof StoreTakenOver)) {
+      throw error
+    }
+  }
+
+  /**
+   * What another section of the store pulled since this one last did, for
+   * the kinds both hold narrowed alike (opengewerk#907): a row the other holds
+   * in a later version, or that is missing here. The office and the site of a
+   * browser are one tab apart, and the page switched from one to the other
+   * without a network showed only what this section pulled itself, older than
+   * what was on screen a moment before. A kind narrowed apart is left alone:
+   * its rows differ, the ways into the sites carry their values on the site
+   * alone. The cursor stays as it is; the next pull brings every row from it
+   * as the server holds it then.
+   */
+  async function takeFromOtherSections(): Promise<void> {
+    const transaction = await held([recordStore, metaStore], 'readwrite')
+    const meta = transaction.objectStore(metaStore)
+    const records = transaction.objectStore(recordStore)
+    const own = narrowingIn(await promised<MetaRow | undefined>(meta.get(metaKey(narrowedKey))))
+    const kinds = kindsOf(
+      (await promised<MetaRow | undefined>(meta.get(metaKey(entitiesKey))))?.value,
+    )
+
+    if (own === null || kinds.size === 0) {
+      await finished(transaction)
+
+      return
+    }
+
+    // The other sections, by the narrowing each keeps; the part without a
+    // section keeps it under the bare key.
+    const others: (string | undefined)[] = []
+
+    for (const key of await promised<IDBValidKey[]>(meta.getAllKeys())) {
+      const name = String(key)
+      const other =
+        name === narrowedKey
+          ? undefined
+          : name.endsWith(`/${narrowedKey}`)
+            ? name.slice(0, -narrowedKey.length - 1)
+            : null
+
+      if (other !== null && other !== section) {
+        others.push(other)
+      }
+    }
+
+    for (const other of others) {
+      const at = (name: string) => (other === undefined ? name : `${other}/${name}`)
+      const theirs = narrowingIn(await promised<MetaRow | undefined>(meta.get(at(narrowedKey))))
+
+      if (theirs === null) {
+        continue
+      }
+
+      for (const kind of kinds) {
+        // Narrowed by neither is alike as well: every device gets all of it.
+        if (own[kind] !== theirs[kind]) {
+          continue
+        }
+
+        for (const row of await promised<RecordRow[]>(records.index('entity').getAll(at(kind)))) {
+          const key = keyOf(inSection(kind), row.id)
+          const mine = await promised<RecordRow | undefined>(records.get(key))
+
+          if (mine === undefined || versionOf(mine.values) < versionOf(row.values)) {
+            records.put({ ...row, key, entity: inSection(kind) } satisfies RecordRow)
+          }
+        }
+      }
+    }
+
+    await finished(transaction)
   }
 
   /**

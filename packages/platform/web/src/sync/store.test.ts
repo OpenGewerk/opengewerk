@@ -278,9 +278,11 @@ describe('what a device holds of the server, with more than one person', () => {
     await before.writeMeta('narrowed', '{"visits":"all"}')
     before.close()
 
-    // Another section's rows are not what the store pulled before.
+    // Another section's rows are not what the store pulled before; narrowed
+    // apart, nor are they taken as pulled since.
     const other = await openLocalStore(tenant, 'anna', 'other')
 
+    await other.writeMeta('narrowed', '{"visits":"other"}')
     await other.write('visits', [{ id: 'v-9', version: 1 }])
     other.close()
 
@@ -332,6 +334,48 @@ describe('what a device holds of the server, with more than one person', () => {
     expect(await site.readAll('visits')).toEqual([{ id: 'v-1', version: 1 }])
     expect(await site.readMeta('cursor')).toBe(9)
     site.close()
+  })
+
+  /**
+   * The page switched from the office to the site in the same tab, without a
+   * network (opengewerk#907): the site shows what the office pulled since, for
+   * the kinds both hold narrowed alike, and nothing of a kind they hold apart.
+   */
+  it('takes what another section pulled since, for the kinds both hold narrowed alike', async () => {
+    const tenant = aTenant()
+    const site = await openLocalStore(tenant, 'anna')
+
+    await site.writeMeta('entities', 'notes,site_accesses')
+    await site.writeMeta('narrowed', '{"notes":"all","site_accesses":"s-1:values"}')
+    await site.write('notes', [
+      { id: 'n-1', version: 1, text: 'Alt' },
+      { id: 'n-3', version: 5, text: 'Hier neuer' },
+    ])
+    await site.write('site_accesses', [{ id: 'z-1', version: 1, value: '0815' }])
+    site.close()
+
+    const office = await openLocalStore(tenant, 'anna', 'office')
+
+    await office.writeMeta('narrowed', '{"notes":"all","site_accesses":"s-1:bare"}')
+    await office.write('notes', [
+      { id: 'n-1', version: 2, text: 'Im Büro geändert' },
+      { id: 'n-2', version: 1, text: 'Im Büro angelegt' },
+      { id: 'n-3', version: 4, text: 'Dort älter' },
+    ])
+    await office.write('site_accesses', [{ id: 'z-1', version: 2 }])
+    office.close()
+
+    const again = await openLocalStore(tenant, 'anna')
+    const notes = await again.readAll('notes')
+
+    expect(
+      notes
+        .map((note) => note['text'])
+        .sort((left, right) => String(left).localeCompare(String(right))),
+    ).toEqual(['Hier neuer', 'Im Büro angelegt', 'Im Büro geändert'])
+    // The ways in are narrowed apart: the site keeps its own, with the value.
+    expect(await again.readAll('site_accesses')).toEqual([{ id: 'z-1', version: 1, value: '0815' }])
+    again.close()
   })
 
   it('lets go of the pulls of every section when another account takes the store over', async () => {
