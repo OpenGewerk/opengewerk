@@ -8,9 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { InterfaceApplication } from '../application.js'
 import { InProbe, probeApplication, probeRules } from '../probe-application.js'
 import {
+  keptTenantsKey,
   rememberAccount,
   rememberedAccount,
-  rememberedTenants,
   rememberSignedIn,
   rememberTenants,
 } from '../session/remembered.js'
@@ -68,6 +68,10 @@ beforeEach(async () => {
   for (const tenant of await storesOnDevice()) {
     await deleteLocalStore(tenant)
   }
+
+  // What the browser keeps of a sign in, as no test before left it: a sign
+  // out leaves the account signed in since in place (opengewerk#905).
+  globalThis.localStorage.clear()
 
   asked = []
   vi.stubGlobal('fetch', (path: string) => {
@@ -311,7 +315,13 @@ describe('signing out', () => {
       ])
     })
 
-    expect(rememberedTenants()?.map((each) => each.id)).toEqual(['t-sued'])
+    expect(rememberedAccount()).toBeNull()
+    expect(globalThis.localStorage.getItem('opengewerk.signedIn')).toBe('u-2')
+    expect(
+      (
+        JSON.parse(globalThis.localStorage.getItem(keptTenantsKey) ?? 'null') as { id: string }[]
+      ).map((each) => each.id),
+    ).toEqual(['t-sued'])
   })
 
   /** The question may stand while the page moves on to another account (opengewerk#882). */
