@@ -221,12 +221,27 @@ export function signedInBesides(account: string | null): string | null {
   return account !== null && other !== null && other !== account ? other : null
 }
 
-/** When the person changes: on signing out, and when the server says nobody is signed in. */
-export function forgetSignIn(): void {
+/**
+ * The account a device opens with and its tenants, forgotten, and who is
+ * signed in left as it is (opengewerk#905): where the server names another
+ * person than the one kept, and at a sign out beside the account signed in
+ * since, while what is kept to open with is still the person's signing out.
+ */
+export function forgetOpeningAccount(): void {
   forgetAccount()
 
   try {
     globalThis.localStorage.removeItem(keptTenantsKey)
+  } catch {
+    // Nothing kept, nothing to forget.
+  }
+}
+
+/** When the person changes: on signing out, and when the server says nobody is signed in. */
+export function forgetSignIn(): void {
+  forgetOpeningAccount()
+
+  try {
     globalThis.localStorage.removeItem(signedInKey)
   } catch {
     // Nothing kept, nothing to forget.

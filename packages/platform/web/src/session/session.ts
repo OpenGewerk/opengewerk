@@ -13,6 +13,7 @@ import { accountHeader, isOtherAccount, pageAccount, request } from '../sync/tra
 
 import {
   forgetAccount,
+  forgetOpeningAccount,
   forgetSignIn,
   rememberAccount,
   rememberedAccount,
@@ -323,6 +324,16 @@ export async function currentAccount(): Promise<Account | null> {
     deviceId: typeof deviceId === 'string' && deviceId !== '' ? deviceId : null,
   }
 
+  // Somebody else than the person kept to open with (opengewerk#905): what
+  // was kept of the one before goes now, also where this one has no tenant
+  // yet and nothing of theirs takes its place. A device opened without a
+  // network after that opened as the person before.
+  const before = rememberedAccount()
+
+  if (before !== null && before.userId !== account.userId) {
+    forgetOpeningAccount()
+  }
+
   rememberAccount(account)
   // Also without a tenant, and left alone when another is chosen: a sign out
   // in the tab of the person before asks it (opengewerk#905).
@@ -606,6 +617,13 @@ export async function signOut(account: string | null = pageAccount()): Promise<v
   // (opengewerk#882), and ends this account's where the cookie is its own
   // again before the page has heard of it.
   if (signedInBesides(account) !== null) {
+    // Except where what is kept to open with is still this account's: the
+    // one signed in since has no tenant yet, and nothing of theirs replaced
+    // it. A start without a network opened as this account after its sign out.
+    if (rememberedAccount()?.userId === account) {
+      forgetOpeningAccount()
+    }
+
     try {
       await request('/auth/sign-out', {
         method: 'POST',

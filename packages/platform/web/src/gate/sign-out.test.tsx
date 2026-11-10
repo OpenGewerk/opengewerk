@@ -296,12 +296,21 @@ describe('signing out', () => {
   })
 
   /**
-   * Ben chose another tenant without a network, or has not chosen one yet:
-   * the account his tab opens with is forgotten or was never kept, and who
-   * is signed in on the browser stays known (opengewerk#905).
+   * Ben has not chosen a tenant yet: what the browser opens with is still
+   * Anna's, and who is signed in on it is Ben (opengewerk#905). His store
+   * stays, and nothing opens as Anna after her sign out.
    */
   it('leaves them as well while the account signed in since keeps no tenant to open with', async () => {
     await annaLeavesBen(() => {
+      rememberAccount({
+        userId: 'u-1',
+        email: 'anna@nord.example.de',
+        name: 'Anna',
+        tenantId: 't-nord' as TenantId,
+        twoFactorEnabled: false,
+        signInMethod: 'password',
+        secondFactor: false,
+      })
       rememberSignedIn('u-2')
       rememberTenants([
         {
@@ -317,11 +326,7 @@ describe('signing out', () => {
 
     expect(rememberedAccount()).toBeNull()
     expect(globalThis.localStorage.getItem('opengewerk.signedIn')).toBe('u-2')
-    expect(
-      (
-        JSON.parse(globalThis.localStorage.getItem(keptTenantsKey) ?? 'null') as { id: string }[]
-      ).map((each) => each.id),
-    ).toEqual(['t-sued'])
+    expect(globalThis.localStorage.getItem(keptTenantsKey)).toBeNull()
   })
 
   /** The question may stand while the page moves on to another account (opengewerk#882). */
