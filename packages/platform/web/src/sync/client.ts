@@ -19,6 +19,8 @@ import { uuidv7 } from 'uuidv7'
 import { holdUpdates } from '../shell/updates.js'
 import { byRecord, project, recordKey } from './projection.js'
 import {
+  checkedForKey,
+  checkedKey,
   cursorKey,
   entitiesKey,
   type LocalStore,
@@ -103,6 +105,15 @@ export type SyncTroubleKind =
    * the form.
    */
   | 'change_refused'
+  /**
+   * A tab of a newer build pulls for the store of this browser, one that
+   * knows more kinds of record (opengewerk#899). This page pulls nothing more
+   * into the store until it is loaded again, or until a tab of its own build
+   * keeps the store for its kinds again; waiting for a network does not help.
+   * A round that ends without a network says so instead: loading the page
+   * again needs one.
+   */
+  | 'outdated'
 
 export interface SyncSnapshot {
   readonly state: SyncState
@@ -145,6 +156,12 @@ function troubled(troubleKind: SyncTroubleKind, trouble: string) {
 /** Nothing went wrong, or it is being tried again. */
 const untroubled = { trouble: null, troubleKind: null } as const
 
+/** A tab of a newer build pulls for the store (opengewerk#899). */
+const outdatedTrouble = troubled(
+  'outdated',
+  'In einem anderen Tab läuft eine neuere Fassung. Bitte diese Seite neu laden.',
+)
+
 /**
  * Whether "Keine Verbindung" stands where the state of the exchange is told:
  * when the last attempt ended with nobody answering.
@@ -177,6 +194,17 @@ export function exchangeRefusal(
   return status.troubleKind === 'exchange_refused' ? status.trouble : null
 }
 
+/**
+ * The sentence that a tab of a newer build pulls for the store of this
+ * browser (opengewerk#899), for the state of the exchange to say as the strip
+ * does, with a way to load the page again. Null while that is not so.
+ */
+export function outdatedBuild(
+  status: Pick<SyncSnapshot, 'trouble' | 'troubleKind'>,
+): string | null {
+  return status.troubleKind === 'outdated' ? status.trouble : null
+}
+
 export type EditResult =
   | { readonly outcome: 'queued'; readonly id: string }
   | {
@@ -198,34 +226,14 @@ export type Draft = Readonly<Record<string, unknown>>
  * application has the device keep for itself. A value kept under one of them
  * would overwrite the cursor, so such a name is refused at the start.
  */
-const bookkeeping: readonly string[] = [cursorKey, narrowedKey, settledKey, entitiesKey]
-
-/**
- * Whether the cursor in the store can be trusted by this build.
- *
- * A build skips the rows of a kind it does not know and moves the cursor past
- * them all the same, which is right while it has no screen for them. The next
- * build does, and asking from that cursor it would never see those rows: they
- * sit behind it. It happened with the first new kind after the offline layer
- * shipped. A device still running the old build from its service worker
- * pulled the rows of the new kind, dropped them, and after taking the new
- * build over showed records without the part that had been added to them.
- *
- * So the cursor only stands when the build that wrote it knew at least what
- * this one knows. A store without the list was written before the list
- * existed, and its cursor does not stand either. Starting again from the
- * beginning costs one full pull and nothing else: a pull only overwrites rows
- * by their id, and the outbox is laid over whatever arrives.
- */
-function cursorStands(known: string | number | null, entities: readonly string[]): boolean {
-  if (typeof known !== 'string') {
-    return false
-  }
-
-  const knew = new Set(known.split(','))
-
-  return entities.every((entity) => knew.has(entity))
-}
+const bookkeeping: readonly string[] = [
+  cursorKey,
+  narrowedKey,
+  settledKey,
+  entitiesKey,
+  checkedKey,
+  checkedForKey,
+]
 
 /**
  * The most one transmission of the outbox carries, as characters of JSON
@@ -377,6 +385,18 @@ export class SyncClient {
   private readonly projected = new Map<string, RecordState | null>()
 
   private cursor = 0
+  /** The kinds of record this build knows, as the store keeps them (`entitiesKey`). */
+  private kinds = ''
+  /**
+   * The narrowing the rows in the memory of this page were pulled for, as
+   * JSON, or null where they were pulled before the server named any. Kept
+   * at the start, at a start from the beginning and when the page takes the
+   * store as it stands (`catchUp`). Not the one the store keeps: another
+   * tab may have gone back to the start for a new one and pulled up to the
+   * same cursor again (opengewerk#899), and this page would go on showing rows
+   * pulled for the one before.
+   */
+  private pulledFor: string | null = null
   /**
    * What the rows on this device were narrowed to when the last pull ran
    * through, or null before one has since the narrowing changed. Kept in
@@ -390,6 +410,14 @@ export class SyncClient {
    * straight to the outbox, as it did before there were files (#77).
    */
   private filesWaiting = 0
+  /**
+   * Whether the last pull that ran through found a tab of a newer build
+   * pulling for the store (opengewerk#899). Kept between rounds, so that the
+   * next one does not take the reason to load the page away while it runs;
+   * a pull that writes to the store again, once a tab of this build keeps it
+   * for its kinds, sets it back.
+   */
+  private outdated = false
   /**
    * What this device keeps for itself, by the names the application gave at
    * the start: state that belongs to the device alone and never travels. A
@@ -448,31 +476,27 @@ export class SyncClient {
 
     const client = new SyncClient(store, transport, writer, rules, deviceId, onSignedOut)
 
-    const cursor = await store.readMeta(cursorKey)
-    const known = await store.readMeta(entitiesKey)
-    const list = [...entities].sort().join(',')
-    const stands = cursorStands(known, entities)
+    // The list of kinds, cursor, narrowing, settled and rows read, and the
+    // store kept for the kinds of this build, in one transaction
+    // (opengewerk#899). Read one by one, another tab that went back to the
+    // start in between left this page with the rows of one state under the
+    // cursor or the narrowing of another; and a tab of a build that knows
+    // fewer kinds wrote its list and a page past rows of the others between
+    // the list read here and the cursor, and this tab went on from there. A
+    // cursor that does not stand comes back as 0 with nothing settled: kept
+    // apart, a device closed in between kept a list that vouches for a cursor
+    // nobody checked, and a settled answer of the build before said every row
+    // of a kind it never pulled was there.
+    const pulled = await store.beginPull(entities)
 
-    client.cursor = typeof cursor === 'number' && stands ? cursor : 0
-
-    // The cursor first. The other way round, a device closed in between would
-    // keep a list that vouches for a cursor nobody checked. And the list on
-    // every change, a shorter one included: a build that knows less moves the
-    // cursor past the rows it drops, and the next longer list must not find a
-    // record that says otherwise.
-    if (!stands) {
-      await store.writeMeta(cursorKey, client.cursor)
-    }
-
-    if (known !== list) {
-      await store.writeMeta(entitiesKey, list)
-    }
+    client.cursor = pulled.cursor ?? 0
+    client.kinds = [...entities].sort().join(',')
+    client.pulledFor = pulled.narrowed
 
     for (const entity of entities) {
-      const rows = await store.readAll(entity)
       const byId = new Map<string, RecordState>()
 
-      for (const row of rows) {
+      for (const row of pulled.rows.get(entity) ?? []) {
         byId.set(String(row['id']), row)
       }
 
@@ -488,11 +512,9 @@ export class SyncClient {
       client.held.set(name, typeof held === 'string' && held !== '' ? held : null)
     }
 
-    const settled = await store.readMeta(settledKey)
-
     client.narrowedNow =
-      typeof settled === 'string' && settled !== ''
-        ? (JSON.parse(settled) as Record<string, string>)
+      pulled.settled !== null && pulled.settled !== ''
+        ? (JSON.parse(pulled.settled) as Record<string, string>)
         : null
     client.regroup()
     client.snapshot = {
@@ -918,7 +940,9 @@ export class SyncClient {
   }
 
   private async exchange(): Promise<void> {
-    this.publish({ exchanging: true, ...untroubled })
+    // An outdated page stays one while the round runs: the strip offering to
+    // load it again would otherwise stand only between two rounds.
+    this.publish({ exchanging: true, ...(this.outdated ? outdatedTrouble : untroubled) })
 
     try {
       // A push refused over one operation does not stop the pull. What comes
@@ -945,7 +969,7 @@ export class SyncClient {
         sending()
       }
 
-      await this.pullChanges()
+      this.outdated = await this.pullChanges()
 
       // Everything that settled is in the rows now, as the server holds it.
       if (this.settling.length > 0) {
@@ -958,10 +982,12 @@ export class SyncClient {
       // them go in the meantime.
       const unowned = await this.store.readUnowned()
 
+      // A page of an older build than a tab that pulls for the store says so,
+      // and not that it is up to date: what it pulls is in its memory alone,
+      // and gone with it, until it is loaded again as the newer build.
       this.publish({
-        lastSyncedAt: new Date(),
+        ...(this.outdated ? outdatedTrouble : { lastSyncedAt: new Date(), ...untroubled }),
         exchanging: false,
-        ...untroubled,
         refused,
         unowned,
       })
@@ -1142,38 +1168,91 @@ export class SyncClient {
     return operation ? { operation, message: error.message } : null
   }
 
-  private async pullChanges(): Promise<void> {
+  /**
+   * Pulls what changed since the cursor, page by page, until the server has
+   * nothing more, and writes each page down with the cursor it ends at while
+   * the store still stands where it began (opengewerk#899). True where a tab
+   * of a newer build pulls for the store and this one pulled into its memory
+   * alone.
+   */
+  private async pullChanges(): Promise<boolean> {
     let guard = 0
+    let outdated = false
 
     for (;;) {
-      const answer = await this.transport.pull(this.cursor, this.store.owner)
+      const from = this.cursor
+      const answer = await this.transport.pull(from, this.store.owner)
 
       if (await this.narrowedElsewhere(answer.narrowed)) {
         continue
       }
 
-      for (const change of answer.changes) {
+      // An entity this build does not know about is left out. Not an error:
+      // an older client talking to a newer server is the ordinary case during
+      // an update, and it has no screen for those rows anyway.
+      const known = answer.changes.filter((change) => this.records.has(change.entity))
+
+      // Rows and cursor together, and only while the store stands where this
+      // pull began (opengewerk#899). The store is shared by the tabs of the
+      // browser, and they do not take turns: a tab that pulled from its own
+      // cursor after another had gone back to the start for a new narrowing
+      // wrote a later cursor over rows that never arrived. The page is let go
+      // of, and the client asks again from where the store stands. The last
+      // page says what the rows add up to now (#444) in the same step.
+      const settled = !answer.hasMore && answer.narrowed ? answer.narrowed : null
+      const written = await this.store.writePulled({
+        changes: known,
+        from,
+        to: answer.cursor,
+        narrowed: answer.narrowed ? JSON.stringify(answer.narrowed) : null,
+        settled: settled ? JSON.stringify(settled) : null,
+        entities: this.kinds,
+      })
+
+      if (written === 'newerBuild') {
+        // A tab of a build that knows more kinds of record pulls for this
+        // store now; this one would move the cursor past rows of the kinds it
+        // does not know. It keeps what it pulls in its memory alone, from a
+        // cursor of its own, as every tab did before the store took turns,
+        // so that it shows what others and it itself wrote, and says it wants
+        // loading again.
+        outdated = true
+      }
+
+      if (written === 'fewerKinds' || written === 'unchecked') {
+        // A tab of an older build pulled since and moved the cursor past rows
+        // of the kinds it does not know, one of this generation that keeps
+        // the store for fewer kinds or one from before that checks nothing
+        // and set the cursor itself. Its cursor is no cursor to go on from:
+        // this build takes the store back for its own and asks again from the
+        // start (`beginPull` at a start).
+        await this.store.claimPull(this.kinds)
+        this.cursor = 0
+        this.narrowedNow = null
+      } else if (written === 'moved') {
+        await this.catchUp()
+      }
+
+      if (written === 'fewerKinds' || written === 'unchecked' || written === 'moved') {
+        if ((guard += 1) > 100) {
+          return outdated
+        }
+
+        continue
+      }
+
+      for (const change of known) {
         const byId = this.records.get(change.entity)
 
-        if (!byId) {
-          // An entity this build does not know about. Not an error: an older
-          // client talking to a newer server is the ordinary case during an
-          // update, and it has no screen for those rows anyway.
-          continue
-        }
-
         for (const row of change.rows) {
-          byId.set(String(row['id']), row)
+          byId?.set(String(row['id']), row)
         }
-
-        await this.store.write(change.entity, change.rows)
       }
 
       this.cursor = answer.cursor
-      await this.store.writeMeta(cursorKey, this.cursor)
 
-      if (!answer.hasMore && answer.narrowed) {
-        await this.settle(answer.narrowed)
+      if (settled) {
+        this.narrowedNow = settled
       }
 
       this.publish({})
@@ -1182,7 +1261,7 @@ export class SyncClient {
       // whole point; the counter is there so a server that always says yes
       // cannot spin this for ever.
       if (!answer.hasMore || (guard += 1) > 100) {
-        return
+        return outdated
       }
     }
   }
@@ -1213,6 +1292,18 @@ export class SyncClient {
     const said = JSON.stringify(narrowed)
     const kept = await this.store.readMeta(narrowedKey)
 
+    if (kept !== this.pulledFor) {
+      // Another tab of this browser went back to the start for another
+      // narrowing since this page pulled (opengewerk#899), once or more than
+      // once. The rows in memory were pulled for the one before, the rows of
+      // other people among them after a role that sees less, and the store
+      // has let go of them: they come from the store again, and what the
+      // server says now is held against what the store holds.
+      await this.catchUp()
+
+      return true
+    }
+
     if (kept === said) {
       return false
     }
@@ -1220,7 +1311,7 @@ export class SyncClient {
     // A device that has kept no narrowing, stands at cursor 0 and holds no
     // rows keeps the first answer. It drops the entities the answer names
     // from the store all the same: a build that knows fewer entities starts
-    // from 0 (`cursorStands`) with the rows of the others kept, rows it never
+    // from 0 (`beginPull`) with the rows of the others kept, rows it never
     // loads and a later build would show. Any other device takes every named
     // entity as changed, a cursor without rows behind it included: rows from
     // before the server narrowed may be more than the person may hold now.
@@ -1229,12 +1320,26 @@ export class SyncClient {
       this.cursor === 0 &&
       ![...this.records.values()].some((rows) => rows.size > 0)
 
+    // Both in one transaction of the store (`restartPull`): the rows gone, the
+    // cursor at 0, nothing settled and the new answer kept, or none of it. A
+    // page closed halfway found the new answer kept with the rows of somebody
+    // else (opengewerk-haustechnik#31), or rows gone behind a cursor that would
+    // never bring them back; another tab of the browser that wrote a page in
+    // between found the same (opengewerk#899). The cursor of the store goes
+    // back to 0 on a fresh device as well: another tab may have moved it.
+    // And only while the store keeps the narrowing the kinds were chosen by:
+    // another tab that started again in between may have written rows of a
+    // kind this one would leave, and then this one takes the store again.
+    const keptNarrowing = typeof kept === 'string' ? kept : null
+
     if (fresh) {
-      for (const entity of Object.keys(narrowed)) {
-        await this.store.drop(entity)
+      if (!(await this.store.restartPull(Object.keys(narrowed), said, keptNarrowing))) {
+        await this.catchUp()
+
+        return true
       }
 
-      await this.store.writeMeta(narrowedKey, said)
+      this.pulledFor = said
 
       return false
     }
@@ -1244,44 +1349,54 @@ export class SyncClient {
       (entity) => before[entity] !== narrowed[entity],
     )
 
+    if (!(await this.store.restartPull(changed, said, keptNarrowing))) {
+      await this.catchUp()
+
+      return true
+    }
+
     // What the device holds is a part now, until the pull from the start has
     // run through, and also after a start in between.
     this.narrowedNow = null
-    await this.store.writeMeta(settledKey, '')
-    // The cursor back before anything goes: a page closed between the two
-    // found rows gone behind a cursor that would never bring them back.
     this.cursor = 0
-    await this.store.writeMeta(cursorKey, 0)
+    this.pulledFor = said
 
     for (const entity of changed) {
-      await this.store.drop(entity)
       this.records.get(entity)?.clear()
     }
 
-    // The new answer last, as the proof that everything it asks for is done
-    // (opengewerk-haustechnik#31). Written first, a page closed in between
-    // found it kept at the next start and went on with the rows of somebody
-    // else, behind a cursor that would never bring the dropped ones back.
-    await this.store.writeMeta(narrowedKey, said)
     this.publish({})
 
     return true
   }
 
   /**
-   * Takes what the answer was narrowed to as what the rows on the device add
-   * up to, once a pull has run through to its last page (#444). Written only
-   * when it changed, which is rarely.
+   * Takes the cursor, the narrowing and the rows from the store as they
+   * stand, after another tab of this browser moved them while this one pulled
+   * (opengewerk#899). All of it in one transaction (`readPulled`): read one by
+   * one, a tab that went back to the start in between and pulled up to the
+   * same cursor again left this one with rows of one state under the cursor of
+   * another, and said it held them all.
    */
-  private async settle(narrowed: Readonly<Record<string, string>>): Promise<void> {
-    const said = JSON.stringify(narrowed)
+  private async catchUp(): Promise<void> {
+    const pulled = await this.store.readPulled([...this.records.keys()])
 
-    if (JSON.stringify(this.narrowedNow) === said) {
-      return
+    this.cursor = pulled.cursor ?? 0
+    this.pulledFor = pulled.narrowed
+
+    for (const [entity, byId] of this.records) {
+      byId.clear()
+
+      for (const row of pulled.rows.get(entity) ?? []) {
+        byId.set(String(row['id']), row)
+      }
     }
 
-    this.narrowedNow = narrowed
-    await this.store.writeMeta(settledKey, said)
+    this.narrowedNow =
+      pulled.settled !== null && pulled.settled !== ''
+        ? (JSON.parse(pulled.settled) as Record<string, string>)
+        : null
+    this.publish({})
   }
 
   private async refreshConflicts(): Promise<void> {

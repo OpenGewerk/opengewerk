@@ -117,6 +117,11 @@ export function isRefusedForGood(error: unknown): boolean {
   )
 }
 
+/**
+ * The refusal an answer that is not ok stands for, with the sentence of the
+ * server. One that names another account (`isOtherAccount`) is told to
+ * whoever listens (`onOtherAccount`), whichever request it answered.
+ */
 async function refusal(response: Response): Promise<RequestRefused> {
   // Nest puts the sentence in `message`; anything else gets the status.
   const fallback = `Der Server hat die Anfrage abgelehnt (${response.status}).`
@@ -352,6 +357,7 @@ function onTheWire(operation: Operation) {
  * the client a writer of its own.
  */
 export const directWrite = {
+  /** The fields that changed, for the person of the store where it names one. */
   patch(
     entity: string,
     id: string,
@@ -365,6 +371,7 @@ export const directWrite = {
     })
   },
 
+  /** The record gone at its route, for the person of the store where it names one. */
   remove(entity: string, id: string, account?: string): Promise<unknown> {
     return request(`/${entity}/${encodeURIComponent(id)}`, {
       method: 'DELETE',
@@ -374,6 +381,7 @@ export const directWrite = {
 }
 
 export const httpTransport: SyncTransport = {
+  /** The operations at `POST /sync`, with the person they wait for in the body and the header. */
   async push(deviceId, operations, account) {
     const answer = await request<{ receipts: readonly OperationReceipt[] }>('/sync', {
       method: 'POST',
@@ -388,18 +396,22 @@ export const httpTransport: SyncTransport = {
     return answer.receipts
   },
 
+  /** What changed since the cursor, asked for the person of the store. */
   pull(since, account) {
     return request<PullResult>(`/sync?since=${String(since)}`, { headers: accountHeader(account) })
   },
 
+  /** The open conflicts of this device. */
   conflicts() {
     return request<readonly SyncConflict[]>('/sync/conflicts')
   },
 
+  /** A conflict marked as decided. */
   async resolve(id) {
     await request(`/sync/conflicts/${encodeURIComponent(id)}/resolve`, { method: 'POST' })
   },
 
+  /** The bytes of a file at `PUT /files/:sha256`, for the person the file waits for. */
   async upload(sha256, bytes, mediaType, account) {
     // As bytes, a type no form can send, and the file's own type beside it.
     // `request` would name the body JSON; this body is not.

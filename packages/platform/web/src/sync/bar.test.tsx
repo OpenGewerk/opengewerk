@@ -5,7 +5,7 @@ import { syncRules } from '@opengewerk/platform-domain'
 import { probePolicies } from '@opengewerk/platform-domain/testing'
 import { render, screen } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { Shell } from '../components/surface.js'
 import { SyncStatusBar } from './bar.js'
@@ -265,6 +265,109 @@ describe('the bar above every screen', () => {
 
     expect(server.sent.flat().map((operation) => operation.entity)).toEqual(['shelves'])
     expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  /**
+   * A tab of a newer build pulls for the store (opengewerk#899): trying again
+   * changes nothing, and the reason to load the page goes before the count
+   * on site.
+   */
+  it('offers to load the page again where a newer build pulls for the store', async () => {
+    const server = new Quiet()
+    const name = `bar${String((counter += 1))}`
+    const client = await SyncClient.start({
+      store: await openLocalStore(name),
+      transport: server,
+      writer: server,
+      rules: syncRules(probePolicies),
+      deviceId: 'device',
+      entities: ['shelves', 'notes'],
+      onSignedOut: () => {},
+    })
+    // Another tab, of a build that knows a kind more, keeps the store for it.
+    const newer = await openLocalStore(name)
+
+    await newer.writeMeta('entities', 'letters,notes,shelves')
+    newer.close()
+
+    // A change the server has not taken yet, so that a count stands as well.
+    server.push = () => Promise.resolve([])
+    await client.create('shelves', { name: 'Hall', kind: 'wood' })
+    await client.synchronise()
+
+    expect(client.status().troubleKind).toBe('outdated')
+    expect(client.status().pending).toBe(1)
+
+    const reload = vi.fn()
+
+    vi.stubGlobal('location', { ...globalThis.location, reload })
+
+    try {
+      render(
+        <Shell entry="site">
+          <SyncProvider client={client}>
+            <SyncStatusBar />
+          </SyncProvider>
+        </Shell>,
+      )
+
+      expect(screen.getByText('In einem anderen Tab läuft eine neuere Fassung.')).toBeDefined()
+      // The reason to load the page again, and the count after it.
+      expect(
+        screen.getByText('Bitte diese Seite neu laden. 1 Änderung auf dem Gerät.'),
+      ).toBeDefined()
+      expect(screen.queryByRole('button', { name: 'Erneut versuchen' })).toBeNull()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Neu laden' }))
+
+      expect(reload).toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('says to load the page again beside a conflict, which keeps its way to a decision', async () => {
+    const server = new Quiet()
+    const name = `bar${String((counter += 1))}`
+
+    server.open = [conflict]
+
+    const client = await SyncClient.start({
+      store: await openLocalStore(name),
+      transport: server,
+      writer: server,
+      rules: syncRules(probePolicies),
+      deviceId: 'device',
+      entities: ['shelves', 'notes'],
+      onSignedOut: () => {},
+    })
+    const newer = await openLocalStore(name)
+
+    await newer.writeMeta('entities', 'letters,notes,shelves')
+    newer.close()
+    await client.synchronise()
+
+    expect(client.status().state).toBe('conflict')
+    expect(client.status().troubleKind).toBe('outdated')
+
+    render(
+      <SyncProvider client={client}>
+        <SyncStatusBar
+          conflictsLink={(className) => (
+            <a className={className} href="/konflikte">
+              Konflikte
+            </a>
+          )}
+        />
+      </SyncProvider>,
+    )
+
+    const strip = screen.getByRole('alert')
+
+    expect(strip.textContent).toContain('Ein Konflikt wartet')
+    expect(strip.textContent).toContain('Bitte diese Seite neu laden.')
+    expect(screen.getByRole('link', { name: 'Konflikte' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Neu laden' })).toBeDefined()
   })
 
   it('says nothing about the connection while a change is on its way (#223)', async () => {

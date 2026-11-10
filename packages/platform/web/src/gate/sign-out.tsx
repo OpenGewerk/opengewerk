@@ -137,6 +137,11 @@ export function SignOutButton({
     onSignedOut()
   }
 
+  /**
+   * What the button does: holds the account the page works for now, sends
+   * what waits, and signs out at once, or first asks when something would be
+   * lost (`waiting`).
+   */
   async function ask() {
     const account = pageAccount()
 

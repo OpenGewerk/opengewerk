@@ -34,6 +34,8 @@ import { PasswordResetScreen } from './password-reset.js'
 import { SecondFactorSetupScreen, SecondFactorSignInAgainScreen, SetupScreen } from './setup.js'
 import { SecondFactorScreen, SignInScreen, TenantScreen } from './sign-in.js'
 
+type Step = 'second-factor' | 'asking' | 'working'
+
 /**
  * Everything between opening the application and being able to work.
  *
@@ -64,8 +66,6 @@ import { SecondFactorScreen, SignInScreen, TenantScreen } from './sign-in.js'
  * the gate says of a tenant it says in the application's words, which is why
  * it stands inside an `ApplicationProvider`.
  */
-type Step = 'second-factor' | 'asking' | 'working'
-
 export function Boot({ entry, children }: { readonly entry: Entry; readonly children: ReactNode }) {
   // Asked once per start and kept: the version does not change while the page
   // is open, and without an answer the foot of the gate shows the licence

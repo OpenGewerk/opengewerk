@@ -356,6 +356,7 @@ describe('a page that names the tenant it works in', () => {
  * route before the handler runs, with the code the page knows.
  */
 describe('a page that names the account it works for', () => {
+  /** Holds that the guard refused the answer as for another account, with its code and sentence. */
   function refusedAsOtherAccount(answer: request.Response) {
     expect(answer.status).toBe(409)
     expect(answer.body).toMatchObject({

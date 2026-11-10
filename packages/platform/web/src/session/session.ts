@@ -191,6 +191,7 @@ export function forgetSessionId(): void {
   keep(sessionKey, null)
 }
 
+/** The sign out kept for the server (`signedOutKey`), or null where none is or it does not read. */
 function signedOut(): SignedOut | null {
   try {
     const raw: unknown = JSON.parse(kept(signedOutKey) ?? 'null')

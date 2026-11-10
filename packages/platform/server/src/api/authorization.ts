@@ -170,6 +170,13 @@ export class AuthorizationGuard implements CanActivate {
     private readonly database: Database,
   ) {}
 
+  /**
+   * Lets a request through to its handler or refuses it: a public route as it
+   * is, every other one by who is asking (the area of the instance, a route
+   * before the choice of a tenant, a route of a tenant), the account the page
+   * names (opengewerk#882), the tenant it works in and the right the route
+   * declares, in this order.
+   */
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean | undefined>(PUBLIC_METADATA, [
       context.getHandler(),

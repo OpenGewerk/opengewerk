@@ -31,6 +31,7 @@ export interface PushOverview {
   readonly devices: readonly PushDeviceView[]
 }
 
+/** Whether push is available here, its key, the occasions and the devices of the account. */
 export function pushOverview(): Promise<PushOverview> {
   return request<PushOverview>('/push')
 }

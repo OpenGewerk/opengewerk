@@ -68,12 +68,115 @@ export interface UnownedChanges {
   readonly files: readonly WaitingFile[]
 }
 
+/** One page of a pull, as the sync client writes it down (`writePulled`). */
+export interface PulledPage {
+  /** The rows of each kind the page brought, of the kinds the client knows. */
+  readonly changes: readonly { readonly entity: string; readonly rows: readonly StoredRecord[] }[]
+  /** The cursor the pull asked from. */
+  readonly from: number
+  /** The cursor the page ends at. */
+  readonly to: number
+  /** What the answer said it narrowed the rows to, as JSON, or null where it said nothing. */
+  readonly narrowed: string | null
+  /**
+   * What the rows add up to once this page is in (`settledKey`), on the last
+   * page of a pull with a narrowing; null on any other. Written with the page,
+   * so that no other tab goes back to the start in between and finds a pull
+   * reported as run through over rows it let go of.
+   */
+  readonly settled: string | null
+  /** The kinds of record the build that writes knows, as `entitiesKey` keeps them. */
+  readonly entities: string
+}
+
+/**
+ * What became of a page (`writePulled`): written; not written because the
+ * store moved since the pull began; or not written because the store is kept
+ * for other kinds of record than this build knows, of a build that knows more
+ * (`newerBuild`) or of one that knows fewer and pulled since (`fewerKinds`);
+ * or not written because a writer that checks nothing set the cursor since
+ * the last checked write (`unchecked`, `checkedKey`).
+ */
+export type PageWritten = 'written' | 'moved' | 'newerBuild' | 'fewerKinds' | 'unchecked'
+
+/** Where the pulls of the store stand, and its rows, as one transaction read them (`readPulled`). */
+export interface PulledState {
+  /** The cursor, or null where none is kept. */
+  readonly cursor: number | null
+  /** The cursor of the last checked write (`checkedKey`), or null where none is kept. */
+  readonly checked: number | null
+  /** The narrowing kept (`narrowedKey`), or null. */
+  readonly narrowed: string | null
+  /** What the rows add up to (`settledKey`), or null; empty while a pull from the start runs. */
+  readonly settled: string | null
+  /** The rows of each kind asked for, deleted rows included. */
+  readonly rows: ReadonlyMap<string, readonly StoredRecord[]>
+}
+
 export interface LocalStore {
   /** Everything of one kind, deleted rows included. Filtering is the caller's. */
   readAll(entity: string): Promise<readonly StoredRecord[]>
   write(entity: string, records: readonly StoredRecord[]): Promise<void>
   /** Every row of one kind, gone; the outbox keeps what it holds of it. */
   drop(entity: string): Promise<void>
+  /**
+   * The rows of one page of a pull and the cursor it ends at, in one
+   * transaction, while the store still stands where the pull began
+   * (opengewerk#899): its cursor is `from`, and the narrowing it keeps is the
+   * one the answer named. The tabs of a browser share the store and its
+   * cursor; a tab that pulled from a cursor another tab has moved since, back
+   * to the start after a change of the narrowing among them, wrote a later
+   * one over rows that never arrived. Written only for the kinds of record the
+   * store is kept for (`entitiesKey`), too: two tabs of two builds, one that
+   * knows a kind more, would otherwise move one cursor past rows of that kind
+   * for the other. Nothing is written where it answers anything but
+   * `written`.
+   */
+  writePulled(page: PulledPage): Promise<PageWritten>
+  /**
+   * The store kept for the kinds of record of this build (`entities`) from
+   * now on, pulled again from the start: the cursor at 0 and nothing settled,
+   * in one transaction. For a build that finds the store kept for fewer
+   * kinds, by an older build that pulled since and moved the cursor past rows
+   * of the others.
+   */
+  claimPull(entities: string): Promise<void>
+  /**
+   * Where the pulls of the store stand for a tab that opens, and its rows of
+   * the named kinds, read in the transaction that keeps the store for these
+   * kinds from now on (opengewerk#899). Where the store is kept for a list
+   * that holds every one of them, the list becomes theirs and the cursor
+   * stands; otherwise the store is taken back for them as `claimPull` takes
+   * it, the cursor at 0 and nothing settled. The answer is the state after.
+   * Read and written apart, a tab of a build that knows fewer kinds wrote its
+   * list and a page past rows of the others in between, and this tab went on
+   * from that cursor under its own list.
+   */
+  beginPull(entities: readonly string[]): Promise<PulledState>
+  /**
+   * A pull back to the start, in one transaction: the rows of the named
+   * kinds gone, the cursor at 0, nothing settled (`settledKey`), and
+   * `narrowed` kept as what the rows are pulled for from now on. In one, so
+   * that neither a page closed halfway nor another tab writing a page in
+   * between finds a cursor with rows missing behind it.
+   *
+   * `before` is the narrowing the caller read and chose the kinds by. Where
+   * the store keeps another by now, another tab started again in between and
+   * may have written rows for kinds this one would leave (opengewerk#899):
+   * nothing is written, and the answer is false. Left out, it is not asked.
+   */
+  restartPull(
+    entities: readonly string[],
+    narrowed: string,
+    before?: string | null,
+  ): Promise<boolean>
+  /**
+   * Where the pulls of the store stand and its rows of the named kinds, read
+   * in one transaction (opengewerk#899). Read one by one, another tab that
+   * went back to the start in between left a page with rows of one state
+   * under the cursor or the narrowing of another.
+   */
+  readPulled(entities: readonly string[]): Promise<PulledState>
 
   /** What waits to be sent: of the person the store is open for, or all of it without one. */
   readOutbox(): Promise<readonly Operation[]>
@@ -172,13 +275,106 @@ export const settledKey = 'narrowed-settled'
 export const entitiesKey = 'entities'
 
 /**
+ * The cursor as the last checked write left it (`writePulled`,
+ * `restartPull`, `claimPull`, opengewerk#899). A cursor that differs from it
+ * was set by a writer that checks nothing, a tab of a build from before, which
+ * may have moved it past rows of kinds it does not know. A store kept before
+ * writes were checked has none, and its cursor is taken as it stands until
+ * the first checked write, so that no device pulls everything again after
+ * the update.
+ */
+export const checkedKey = 'cursor-checked'
+
+/**
+ * The narrowing the last checked write left the store with, as JSON, empty
+ * for none (opengewerk#899). A tab of a build from before that went back to
+ * the start for a new narrowing and pulled up to the checked cursor again
+ * leaves the cursor as it was and the narrowing changed, with the rows of the
+ * kinds it does not know gone.
+ */
+export const checkedForKey = 'cursor-checked-for'
+
+/**
  * What the meta store holds of the pulls, and goes with the records for
  * another account. Everything else in it the application keeps for itself
  * (`SyncClient.keep`), and each such value says itself whose it is.
  */
-const pulledKeys: readonly string[] = [cursorKey, narrowedKey, settledKey, entitiesKey]
+const pulledKeys: readonly string[] = [
+  cursorKey,
+  narrowedKey,
+  settledKey,
+  entitiesKey,
+  checkedKey,
+  checkedForKey,
+]
 const fileStore = 'files'
 const uploadStore = 'uploads'
+
+/** The kinds of record a list as `entitiesKey` keeps it names; none for nothing kept. */
+function kindsOf(list: string | number | undefined): ReadonlySet<string> {
+  return new Set(typeof list === 'string' && list !== '' ? list.split(',') : [])
+}
+
+/**
+ * Whether the cursor in the store can be trusted by a build that knows `entities`,
+ * as the store keeps its list (`known`).
+ *
+ * A build skips the rows of a kind it does not know and moves the cursor past
+ * them all the same, which is right while it has no screen for them. The next
+ * build does, and asking from that cursor it would never see those rows: they
+ * sit behind it. It happened with the first new kind after the offline layer
+ * shipped. A device still running the old build from its service worker
+ * pulled the rows of the new kind, dropped them, and after taking the new
+ * build over showed records without the part that had been added to them.
+ *
+ * So the cursor only stands when the build that wrote it knew at least what
+ * this one knows. A store without the list was written before the list
+ * existed, and its cursor does not stand either. Starting again from the
+ * beginning costs one full pull and nothing else: a pull only overwrites rows
+ * by their id, and the outbox is laid over whatever arrives.
+ */
+function cursorStands(known: string | number | undefined, entities: readonly string[]): boolean {
+  if (typeof known !== 'string') {
+    return false
+  }
+
+  const knew = new Set(known.split(','))
+
+  return entities.every((entity) => knew.has(entity))
+}
+
+/**
+ * The writes that take the store back for the kinds of a build (`list`):
+ * the cursor at 0, as the cursor of the last checked write too, under the
+ * narrowing it keeps, and nothing settled.
+ */
+function claimIn(meta: IDBObjectStore, list: string, narrowed: MetaRow | undefined): void {
+  meta.put({ key: entitiesKey, value: list } satisfies MetaRow)
+  meta.put({ key: cursorKey, value: 0 } satisfies MetaRow)
+  meta.put({ key: checkedKey, value: 0 } satisfies MetaRow)
+  meta.put({ key: checkedForKey, value: narrowed?.value ?? '' } satisfies MetaRow)
+  meta.put({ key: settledKey, value: '' } satisfies MetaRow)
+}
+
+/** The rows of each named kind, deleted rows included, read in `transaction`. */
+async function pulledRows(
+  transaction: IDBTransaction,
+  entities: readonly string[],
+): Promise<ReadonlyMap<string, readonly StoredRecord[]>> {
+  const index = transaction.objectStore(recordStore).index('entity')
+  const rows = new Map<string, readonly StoredRecord[]>()
+
+  for (const entity of entities) {
+    const found = await promised<RecordRow[]>(index.getAll(entity))
+
+    rows.set(
+      entity,
+      found.map((row) => row.values),
+    )
+  }
+
+  return rows
+}
 
 function keyOf(entity: string, id: string): string {
   // A separator that cannot appear in either half, so that two different
@@ -567,6 +763,158 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
       }
 
       await finished(transaction)
+    },
+
+    /** See `LocalStore.writePulled`: kinds, cursor and narrowing asked in the transaction that writes. */
+    async writePulled(page) {
+      const transaction = await held([recordStore, metaStore], 'readwrite')
+      const meta = transaction.objectStore(metaStore)
+      const kinds = await promised<MetaRow | undefined>(meta.get(entitiesKey))
+      const cursor = await promised<MetaRow | undefined>(meta.get(cursorKey))
+      const checked = await promised<MetaRow | undefined>(meta.get(checkedKey))
+      const checkedFor = await promised<MetaRow | undefined>(meta.get(checkedForKey))
+      const narrowed = await promised<MetaRow | undefined>(meta.get(narrowedKey))
+      const kept = kindsOf(kinds?.value)
+      const known = kindsOf(page.entities)
+      const stands = cursor?.value ?? 0
+      const answer: PageWritten = [...kept].some((kind) => !known.has(kind))
+        ? 'newerBuild'
+        : [...known].some((kind) => !kept.has(kind))
+          ? 'fewerKinds'
+          : (checked !== undefined && checked.value !== stands) ||
+              (checkedFor !== undefined && checkedFor.value !== (narrowed?.value ?? ''))
+            ? 'unchecked'
+            : stands !== page.from || (page.narrowed !== null && narrowed?.value !== page.narrowed)
+              ? 'moved'
+              : 'written'
+
+      if (answer !== 'written') {
+        transaction.abort()
+
+        return answer
+      }
+
+      const records = transaction.objectStore(recordStore)
+
+      for (const { entity, rows } of page.changes) {
+        for (const values of rows) {
+          const id = String(values['id'])
+
+          records.put({ key: keyOf(entity, id), entity, id, values } satisfies RecordRow)
+        }
+      }
+
+      meta.put({ key: cursorKey, value: page.to } satisfies MetaRow)
+      meta.put({ key: checkedKey, value: page.to } satisfies MetaRow)
+      meta.put({ key: checkedForKey, value: narrowed?.value ?? '' } satisfies MetaRow)
+
+      if (page.settled !== null) {
+        meta.put({ key: settledKey, value: page.settled } satisfies MetaRow)
+      }
+
+      await finished(transaction)
+
+      return 'written'
+    },
+
+    /** See `LocalStore.claimPull`: kinds, cursor, checked cursor and settled in one transaction. */
+    async claimPull(entities) {
+      const transaction = await held([metaStore], 'readwrite')
+      const meta = transaction.objectStore(metaStore)
+      const narrowed = await promised<MetaRow | undefined>(meta.get(narrowedKey))
+
+      claimIn(meta, entities, narrowed)
+
+      await finished(transaction)
+    },
+
+    /** See `LocalStore.beginPull`: the list asked, the state read and the list or the claim written in one transaction. */
+    async beginPull(entities) {
+      const transaction = await held([recordStore, metaStore], 'readwrite')
+      const meta = transaction.objectStore(metaStore)
+      const kinds = await promised<MetaRow | undefined>(meta.get(entitiesKey))
+      const cursor = await promised<MetaRow | undefined>(meta.get(cursorKey))
+      const checked = await promised<MetaRow | undefined>(meta.get(checkedKey))
+      const narrowed = await promised<MetaRow | undefined>(meta.get(narrowedKey))
+      const settled = await promised<MetaRow | undefined>(meta.get(settledKey))
+      const list = [...entities].sort().join(',')
+      const stands = cursorStands(kinds?.value, entities)
+
+      if (!stands) {
+        claimIn(meta, list, narrowed)
+      } else if (kinds?.value !== list) {
+        // A shorter list too: a build that knows less moves the cursor past
+        // the rows it drops, and the next longer list must not find a record
+        // that says otherwise.
+        meta.put({ key: entitiesKey, value: list } satisfies MetaRow)
+      }
+
+      const rows = await pulledRows(transaction, entities)
+
+      await finished(transaction)
+
+      return {
+        cursor: !stands ? 0 : typeof cursor?.value === 'number' ? cursor.value : null,
+        checked: !stands ? 0 : typeof checked?.value === 'number' ? checked.value : null,
+        narrowed: typeof narrowed?.value === 'string' ? narrowed.value : null,
+        settled: !stands ? '' : typeof settled?.value === 'string' ? settled.value : null,
+        rows,
+      }
+    },
+
+    /** See `LocalStore.restartPull`: the narrowing asked, rows, cursor, settled and narrowing in one transaction. */
+    async restartPull(entities, narrowed, before) {
+      const transaction = await held([recordStore, metaStore], 'readwrite')
+      const meta = transaction.objectStore(metaStore)
+
+      if (before !== undefined) {
+        const kept = await promised<MetaRow | undefined>(meta.get(narrowedKey))
+
+        if ((kept?.value ?? null) !== before) {
+          transaction.abort()
+
+          return false
+        }
+      }
+
+      const records = transaction.objectStore(recordStore)
+
+      for (const entity of entities) {
+        const keys = await promised<IDBValidKey[]>(records.index('entity').getAllKeys(entity))
+
+        for (const key of keys) {
+          records.delete(key)
+        }
+      }
+
+      meta.put({ key: settledKey, value: '' } satisfies MetaRow)
+      meta.put({ key: cursorKey, value: 0 } satisfies MetaRow)
+      meta.put({ key: checkedKey, value: 0 } satisfies MetaRow)
+      meta.put({ key: checkedForKey, value: narrowed } satisfies MetaRow)
+      meta.put({ key: narrowedKey, value: narrowed } satisfies MetaRow)
+
+      await finished(transaction)
+
+      return true
+    },
+
+    /** See `LocalStore.readPulled`: cursor, narrowing, settled and rows in one transaction. */
+    async readPulled(entities) {
+      const transaction = await held([recordStore, metaStore], 'readonly')
+      const meta = transaction.objectStore(metaStore)
+      const cursor = await promised<MetaRow | undefined>(meta.get(cursorKey))
+      const checked = await promised<MetaRow | undefined>(meta.get(checkedKey))
+      const narrowed = await promised<MetaRow | undefined>(meta.get(narrowedKey))
+      const settled = await promised<MetaRow | undefined>(meta.get(settledKey))
+      const rows = await pulledRows(transaction, entities)
+
+      return {
+        cursor: typeof cursor?.value === 'number' ? cursor.value : null,
+        checked: typeof checked?.value === 'number' ? checked.value : null,
+        narrowed: typeof narrowed?.value === 'string' ? narrowed.value : null,
+        settled: typeof settled?.value === 'string' ? settled.value : null,
+        rows,
+      }
     },
 
     async readOutbox() {
