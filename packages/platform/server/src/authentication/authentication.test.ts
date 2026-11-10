@@ -1,4 +1,4 @@
-import { workingInHeader } from '@opengewerk/platform-domain'
+import { otherAccountSignedIn, workingAsHeader, workingInHeader } from '@opengewerk/platform-domain'
 import { and, eq } from 'drizzle-orm'
 import type { Pool } from 'pg'
 import request from 'supertest'
@@ -437,6 +437,79 @@ describe('the choice of tenant', () => {
       .send({ text: 'Aus dem neuen Tab' })
       .expect(201, { tenantId: south.id })
     await http().get('/probe/members').set('cookie', cookies).expect(200)
+  })
+})
+
+/**
+ * A tab still open for the person signed in before (opengewerk#882): the
+ * browser holds the cookie of the one signed in now, and the tab names the
+ * account it works for. The application refuses it, and so does the sign in
+ * in front of it, except for the one question that tells the tab who it is
+ * now.
+ */
+describe('a tab that works for the account signed in before', () => {
+  it('is refused by the routes of the application and of the sign in, and told who is signed in now', async () => {
+    const before = userIds.get(member.email) ?? ''
+    const now = userIds.get(both.email) ?? ''
+    const cookies = await signIn(both.email)
+
+    await instance.chooseTenant(cookies, north.id)
+
+    const read = await http()
+      .get('/probe/members')
+      .set('cookie', cookies)
+      .set(workingAsHeader, before)
+      .expect(409)
+
+    expect((read.body as { code: string }).code).toBe(otherAccountSignedIn)
+
+    const written = reached.written
+
+    await http()
+      .post('/probe/notes')
+      .set('cookie', cookies)
+      .set('origin', origin)
+      .set(workingAsHeader, before)
+      .send({ text: 'Aus dem Tab von vorher' })
+      .expect(409)
+
+    expect(reached.written).toBe(written)
+
+    // From the screen of the account in that tab, before better-auth sees it.
+    const changed = await http()
+      .post(`${authenticationPath}/change-password`)
+      .set('cookie', cookies)
+      .set('origin', origin)
+      .set(workingAsHeader, before)
+      .send({ currentPassword: password, newPassword: 'ein-ganz-anderes-langes-passwort' })
+      .expect(409)
+
+    expect((changed.body as { code: string }).code).toBe(otherAccountSignedIn)
+
+    const session = await http()
+      .get(`${authenticationPath}/get-session`)
+      .set('cookie', cookies)
+      .set(workingAsHeader, before)
+      .expect(200)
+
+    expect((session.body as { user: { id: string } }).user.id).toBe(now)
+
+    // Named for the one signed in, both go on as they did.
+    await http().get('/probe/members').set('cookie', cookies).set(workingAsHeader, now).expect(200)
+
+    const own = await http()
+      .post(`${authenticationPath}/change-password`)
+      .set('cookie', cookies)
+      .set('origin', origin)
+      .set(workingAsHeader, now)
+      .send({
+        currentPassword: 'nicht-das-passwort',
+        newPassword: 'ein-ganz-anderes-langes-passwort',
+      })
+
+    // better-auth's own answer to a wrong password, and not the refusal above.
+    expect(own.status).toBeGreaterThanOrEqual(400)
+    expect(own.status).not.toBe(409)
   })
 })
 

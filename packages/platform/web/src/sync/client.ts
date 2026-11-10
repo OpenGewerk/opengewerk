@@ -56,8 +56,14 @@ function sameAsHeld(held: SyncValue | undefined, handed: unknown): boolean {
  * that owns the record, not through the outbox.
  */
 export interface DirectWriter {
-  patch(entity: string, id: string, values: Readonly<Record<string, unknown>>): Promise<unknown>
-  remove(entity: string, id: string): Promise<unknown>
+  /** `account` is the person the store was opened for, which the server holds against the session. */
+  patch(
+    entity: string,
+    id: string,
+    values: Readonly<Record<string, unknown>>,
+    account?: string,
+  ): Promise<unknown>
+  remove(entity: string, id: string, account?: string): Promise<unknown>
 }
 
 /** What the bar at the top of every screen says. */
@@ -696,11 +702,14 @@ export class SyncClient {
     try {
       // Asked of the store first: the route takes the cookie of whoever is
       // signed in on the browser, and a tab still open for the account before
-      // wrote under the name of the one after (`StoreTakenOver`).
+      // wrote under the name of the one after (`StoreTakenOver`). And named
+      // for the person of the store, which the server holds against the
+      // session (opengewerk#882), for the moment before another tab takes
+      // the store over.
       await this.store.readMeta(cursorKey)
 
       if (values === null) {
-        await this.writer.remove(entity, id)
+        await this.writer.remove(entity, id, this.store.owner)
       } else {
         const held = this.get(entity, id)
         const sendable = Object.fromEntries(
@@ -715,14 +724,17 @@ export class SyncClient {
           return { outcome: 'queued', id }
         }
 
-        await this.writer.patch(entity, id, sendable)
+        await this.writer.patch(entity, id, sendable, this.store.owner)
       }
 
       await this.synchronise()
 
       return { outcome: 'queued', id }
     } catch (error) {
-      if (isUnauthenticated(error) || error instanceof StoreTakenOver) {
+      // A write straight to a route, refused because another account is
+      // signed in on the browser now (opengewerk#882), ends this client as
+      // the exchange does (`isOtherAccount` there).
+      if (isUnauthenticated(error) || error instanceof StoreTakenOver || isOtherAccount(error)) {
         this.onSignedOut()
       }
 

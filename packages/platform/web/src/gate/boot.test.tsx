@@ -1,9 +1,15 @@
 import 'fake-indexeddb/auto'
 
-import type { Operation, OperationReceipt, TenantId } from '@opengewerk/platform-domain'
+import {
+  type Operation,
+  type OperationReceipt,
+  type TenantId,
+  workingAsHeader,
+} from '@opengewerk/platform-domain'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
+import { useLayoutEffect } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DeviceStart, InterfaceApplication } from '../application.js'
@@ -26,6 +32,7 @@ import { SyncClient } from '../sync/client.js'
 import { text } from '../sync/fields.js'
 import { useRecords, useSyncStatus } from '../sync/provider.js'
 import { openLocalStore } from '../sync/store.js'
+import { workingInHeaders } from '../sync/transport.js'
 import { Boot } from './boot.js'
 
 /**
@@ -803,7 +810,61 @@ describe('the sync client behind the gate', () => {
       expect(waiting).toEqual([['op-of-mine']])
     })
   })
+
+  /**
+   * Another account signed in on the browser, and this page hears it from the
+   * answer to who is signed in (opengewerk#882). Every request names the
+   * account the page works for; a screen of the one before still on the page
+   * while the page named the one now would send under that name, with the
+   * rights of the one now. The screens go first, in the same step.
+   */
+  it('takes the screens of one account off the page before the page names the next', async () => {
+    const tenantId = await tenantOnTheDevice()
+    const queries = new QueryClient()
+    const namedAsTheyWent: (string | undefined)[] = []
+
+    rememberAccount({ ...account, tenantId })
+    noNetwork()
+    render(
+      <QueryClientProvider client={queries}>
+        <InProbe>
+          <Boot entry="site">
+            <Notes />
+            <Witness named={namedAsTheyWent} />
+          </Boot>
+        </InProbe>
+      </QueryClientProvider>,
+    )
+
+    expect(await screen.findByText('Leiter im Flur vergessen')).toBeTruthy()
+    expect(workingInHeaders()[workingAsHeader]).toBe(account.userId)
+
+    act(() => {
+      queries.setQueryData(['account'], {
+        ...(queries.getQueryData(['account']) as object),
+        userId: 'u-2',
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByText('Leiter im Flur vergessen')).toBeNull()
+    })
+    expect(namedAsTheyWent).toEqual([account.userId])
+    expect(workingInHeaders()[workingAsHeader]).toBe('u-2')
+  })
 })
+
+/** Says which account the page named at the moment the screens it stands among went. */
+function Witness({ named }: { readonly named: (string | undefined)[] }) {
+  useLayoutEffect(
+    () => () => {
+      named.push(workingInHeaders()[workingAsHeader])
+    },
+    [named],
+  )
+
+  return null
+}
 
 /**
  * The device of the session on the site (opengewerk-haustechnik, 19.10.2026):

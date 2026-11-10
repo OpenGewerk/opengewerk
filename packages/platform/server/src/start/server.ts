@@ -1,14 +1,17 @@
 import type { DynamicModule, INestApplication } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
 import type { NestExpressApplication } from '@nestjs/platform-express'
+import { workingAsHeader } from '@opengewerk/platform-domain'
 import { toNodeHandler } from 'better-auth/node'
 import type { RequestHandler } from 'express'
 
+import { namesAnotherAccount, otherAccountRefusal } from '../api/account-of-tab.js'
 import { bodiesUpTo } from '../api/body-bytes.js'
 import { nameTheClient } from '../api/client-address.js'
 import { readJsonBodiesOnly } from '../api/origin.js'
 import { sendSecurityHeaders } from '../api/security-headers.js'
 import { type Authentication, authenticationPath } from '../authentication/authentication.js'
+import { toHeaders } from '../authentication/session-identity.js'
 import { interfacePath, serveInterface } from './shells.js'
 
 /** What a server is put together from, beside the module of the application. */
@@ -46,6 +49,13 @@ export interface Server {
  * before its router finds that a path has no route: every made-up path under
  * the authentication was a new row in the database, from anybody, without a
  * session. A path no route answers is answered here, before it gets there.
+ *
+ * A page that names the account it works for (`workingAsHeader`) is held
+ * against the session here as the guard holds it on every other route
+ * (opengewerk#882): a tab still open for the one before would otherwise
+ * confirm, change a password or register a passkey on the account of the one
+ * signed in now. The question who is signed in is the one route left out; it
+ * is how such a tab learns that it is somebody else now.
  */
 export function authenticationHandler(authentication: Authentication): RequestHandler {
   const handle = toNodeHandler(authentication) as RequestHandler
@@ -59,9 +69,29 @@ export function authenticationHandler(authentication: Authentication): RequestHa
       return
     }
 
-    handle(request, response, next)
+    const named = request.headers[workingAsHeader]
+
+    if (named === undefined || request.path === sessionQuestionPath) {
+      handle(request, response, next)
+
+      return
+    }
+
+    void authentication.api.getSession({ headers: toHeaders(request.headers) }).then((found) => {
+      // Said twice is no account at all, and refused like another one.
+      if (found && (typeof named !== 'string' || namesAnotherAccount(named, found.user.id))) {
+        response.status(409).json(otherAccountRefusal())
+
+        return
+      }
+
+      handle(request, response, next)
+    }, next)
   }
 }
+
+/** The route of better-auth that says who is signed in, under the path of the authentication. */
+const sessionQuestionPath = '/get-session'
 
 /**
  * The most a body sent to the authentication may be, in bytes.

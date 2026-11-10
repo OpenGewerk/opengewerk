@@ -502,16 +502,11 @@ export class SyncController {
   async pull(
     @CurrentIdentity() identity: RequestIdentity,
     @Query() query: Record<string, unknown>,
-    @Req() request: Request,
   ): Promise<Changes & { narrowed: Readonly<Record<string, string>> }> {
     // What another account may see, asked by a tab still open for the one
-    // before, landed in its store as that person's.
-    heldForTheSession(
-      request.header('x-account'),
-      identity.userId,
-      'Auf diesem Gerät ist inzwischen ein anderes Konto angemeldet.',
-    )
-
+    // before, would land in its store as that person's. The guard holds the
+    // account the tab names against the session (`workingAsHeader`), as on
+    // every route.
     const from = Number(query['since'] ?? 0)
 
     if (!Number.isInteger(from) || from < 0) {

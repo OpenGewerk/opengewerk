@@ -4,6 +4,7 @@ import {
   otherAccountSignedIn,
   type RecordState,
   type SyncConflict,
+  workingAsHeader,
   workingInHeader,
 } from '@opengewerk/platform-domain'
 
@@ -119,12 +120,13 @@ export function isRefusedForGood(error: unknown): boolean {
 async function refusal(response: Response): Promise<RequestRefused> {
   // Nest puts the sentence in `message`; anything else gets the status.
   const fallback = `Der Server hat die Anfrage abgelehnt (${response.status}).`
+  let refused: RequestRefused
 
   try {
     const body = (await response.json()) as { message?: unknown }
     const message = body.message
 
-    return new RequestRefused(
+    refused = new RequestRefused(
       response.status,
       typeof message === 'string' ? message : Array.isArray(message) ? message.join(' ') : fallback,
       body,
@@ -132,10 +134,38 @@ async function refusal(response: Response): Promise<RequestRefused> {
   } catch {
     return new RequestRefused(response.status, fallback)
   }
+
+  if (isOtherAccount(refused)) {
+    for (const listener of [...otherAccountListeners]) {
+      listener()
+    }
+  }
+
+  return refused
+}
+
+/** Who hears that the server named another account than the one this page works for. */
+const otherAccountListeners = new Set<() => void>()
+
+/**
+ * Hears every refusal of the server that another account is signed in on the
+ * browser than the one this page named (`isOtherAccount`), from any request,
+ * a screen's as much as the sync client's (opengewerk#882). The page then asks
+ * again who is signed in. Returns the way to stop hearing.
+ */
+export function onOtherAccount(listener: () => void): () => void {
+  otherAccountListeners.add(listener)
+
+  return () => {
+    otherAccountListeners.delete(listener)
+  }
 }
 
 /** The tenant this page works in, once the sync client for it has started. */
 let workingIn: string | null = null
+
+/** The account this page works for, once it knows who is signed in (opengewerk#882). */
+let workingAs: string | null = null
 
 /**
  * Names the tenant this page works in, for every request from here on, or
@@ -149,14 +179,40 @@ export function workIn(tenantId: string | null): void {
   workingIn = tenantId
 }
 
-/** The header that names the tenant, for the requests that do not go through `request`. */
-export function workingInHeaders(): Readonly<Record<string, string>> {
-  return workingIn === null ? {} : { [workingInHeader]: workingIn }
+/**
+ * Names the account this page works for, for every request from here on, or
+ * none (opengewerk#882). Set by the gate (`Boot`) from the answer to who is
+ * signed in, once the screens of the one before are off the page and before
+ * a screen of the one now asks for anything. The cookie of a session is the
+ * browser's and not the page's: once somebody else signs in in another tab,
+ * the server refuses what this page still sends or asks for the one before
+ * (`isOtherAccount`), and the page asks again who is signed in instead of
+ * acting under the other name. Held in this page alone, not in storage the
+ * tabs of a browser share.
+ */
+export function workAs(userId: string | null): void {
+  workingAs = userId
 }
 
-/** The account a tab asks or sends for, as the server holds it against the session. */
+/**
+ * The headers that name the tenant this page works in and the account it
+ * works for, for the requests that do not go through `request`.
+ */
+export function workingInHeaders(): Readonly<Record<string, string>> {
+  return {
+    ...(workingIn === null ? {} : { [workingInHeader]: workingIn }),
+    ...(workingAs === null ? {} : { [workingAsHeader]: workingAs }),
+  }
+}
+
+/**
+ * The account a tab asks or sends for, as the server holds it against the
+ * session. Named after the headers of the page (`workingInHeaders`), it takes
+ * the place of the account of the page: the sync client names the person its
+ * store was opened for.
+ */
 export function accountHeader(account?: string): Record<string, string> {
-  return account === undefined ? {} : { 'X-Account': account }
+  return account === undefined ? {} : { [workingAsHeader]: account }
 }
 
 /**
@@ -291,15 +347,24 @@ function onTheWire(operation: Operation) {
  * the client a writer of its own.
  */
 export const directWrite = {
-  patch(entity: string, id: string, values: Readonly<Record<string, unknown>>): Promise<unknown> {
+  patch(
+    entity: string,
+    id: string,
+    values: Readonly<Record<string, unknown>>,
+    account?: string,
+  ): Promise<unknown> {
     return request(`/${entity}/${encodeURIComponent(id)}`, {
       method: 'PATCH',
+      headers: accountHeader(account),
       body: JSON.stringify(values),
     })
   },
 
-  remove(entity: string, id: string): Promise<unknown> {
-    return request(`/${entity}/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  remove(entity: string, id: string, account?: string): Promise<unknown> {
+    return request(`/${entity}/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: accountHeader(account),
+    })
   },
 }
 
@@ -307,6 +372,7 @@ export const httpTransport: SyncTransport = {
   async push(deviceId, operations, account) {
     const answer = await request<{ receipts: readonly OperationReceipt[] }>('/sync', {
       method: 'POST',
+      headers: accountHeader(account),
       body: JSON.stringify({
         deviceId,
         ...(account === undefined ? {} : { account }),
@@ -339,8 +405,10 @@ export const httpTransport: SyncTransport = {
         Accept: 'application/json',
         'Content-Type': 'application/octet-stream',
         'X-Media-Type': mediaType,
-        ...accountHeader(account),
+        // After the headers of the page: the file waits for the person of
+        // the store, whoever the page works for by now.
         ...workingInHeaders(),
+        ...accountHeader(account),
       },
       body: bytes,
     })

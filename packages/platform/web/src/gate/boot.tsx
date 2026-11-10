@@ -1,7 +1,7 @@
 import { hasSecondFactor, type TenantId } from '@opengewerk/platform-domain'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { RefreshCw, WifiOff } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import { useApplication } from '../application.js'
@@ -25,7 +25,7 @@ import type { Account } from '../session/session.js'
 import type { SyncClient } from '../sync/client.js'
 import { SyncProvider } from '../sync/provider.js'
 import { type LocalStore, openLocalStore, StoreTakenOver } from '../sync/store.js'
-import { workIn } from '../sync/transport.js'
+import { workAs, workIn } from '../sync/transport.js'
 import { Gate, GateText, GateWaiting, InstanceLegalTexts, InstanceVersion } from './frame.js'
 import { AddressScreen } from './address.js'
 import { InvitationScreen } from './invitation.js'
@@ -108,7 +108,12 @@ function BootSteps({ entry, children }: { readonly entry: Entry; readonly childr
   // asked who they are.
   const [legal] = useState(() => legalPage(globalThis.location.pathname))
   const [step, setStep] = useState<Step>('asking')
-  const [client, setClient] = useState<SyncClient | null>(null)
+  // The running client, and the account and tenant it was started for.
+  const [running, setClient] = useState<{
+    readonly client: SyncClient
+    readonly userId: string
+    readonly tenantId: TenantId
+  } | null>(null)
   // Worked out once and then constant. A ref would say the same thing and
   // would be read during render, which is what a ref is not for.
   const [deviceId] = useState(deviceIdentity)
@@ -137,6 +142,29 @@ function BootSteps({ entry, children }: { readonly entry: Entry; readonly childr
   // Whose changes the device sends. Another person signed in on this device
   // starts another client, one that leaves the changes of the first waiting.
   const userId = account.data?.userId ?? null
+  // The screens of a client stand for the account and the tenant it was
+  // started for alone. Once the answer to who is signed in names another
+  // (opengewerk#882), they go in the same step, before the page names the new
+  // account below, and not one step later when the effect stops the client:
+  // in between, a screen of the one before would send under the name of the
+  // one now.
+  const client =
+    running !== null && running.userId === userId && running.tenantId === tenantId
+      ? running.client
+      : null
+
+  // Every request of the page names the account it works for (`workAs`),
+  // from the commit that took the screens of the one before off the page and
+  // before any screen of the one now asks for anything. Until then a screen of
+  // the one before names that one, and the server refuses it.
+  useLayoutEffect(() => {
+    workAs(userId)
+
+    return () => {
+      workAs(null)
+    }
+  }, [userId])
+
   // Set when the server turned the running client away as signed out and the
   // account came back as it was; see `signedOut`.
   const [stalled, setStalled] = useState(false)
@@ -186,7 +214,7 @@ function BootSteps({ entry, children }: { readonly entry: Entry; readonly childr
 
     void (async () => {
       let store: LocalStore | null = null
-      let running: SyncClient
+      let begun: SyncClient
 
       try {
         // The store is the foundation's to open and the client the
@@ -194,7 +222,7 @@ function BootSteps({ entry, children }: { readonly entry: Entry; readonly childr
         // travel and which of them it has a screen for. Opened for the person
         // signed in, whose changes alone it sends (opengewerk-haustechnik#31).
         store = await openLocalStore(tenantId, userId)
-        running = await startSync({
+        begun = await startSync({
           store,
           deviceId,
           entry,
@@ -224,15 +252,15 @@ function BootSteps({ entry, children }: { readonly entry: Entry; readonly childr
         // The tenant changed while the store was opening. Closing it here
         // beats leaving a second client listening for the network behind the
         // one on screen.
-        running.stop()
+        begun.stop()
 
         return
       }
 
-      started = running
+      started = begun
       setStalled(false)
-      setClient(running)
-      void running.synchronise()
+      setClient({ client: begun, userId, tenantId })
+      void begun.synchronise()
     })()
 
     return () => {

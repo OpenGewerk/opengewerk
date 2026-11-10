@@ -111,9 +111,13 @@ class Recorded implements SyncTransport {
 class Writing implements DirectWriter {
   readonly patched: { entity: string; id: string; values: unknown }[] = []
   readonly removed: string[] = []
+  /** The account each write named, in the order they came. */
+  readonly accounts: (string | undefined)[] = []
   refuse: Error | null = null
 
-  patch(entity: string, id: string, values: Readonly<Record<string, unknown>>) {
+  patch(entity: string, id: string, values: Readonly<Record<string, unknown>>, account?: string) {
+    this.accounts.push(account)
+
     if (this.refuse) {
       return Promise.reject(this.refuse)
     }
@@ -123,7 +127,8 @@ class Writing implements DirectWriter {
     return Promise.resolve(undefined)
   }
 
-  remove(entity: string, id: string) {
+  remove(entity: string, id: string, account?: string) {
+    this.accounts.push(account)
     this.removed.push(`${entity}/${id}`)
 
     return Promise.resolve(undefined)
@@ -1947,6 +1952,73 @@ describe('the account of a transmission', () => {
     expect(writer.patched).toEqual([])
     expect(signedOut).toBe(1)
     ben.close()
+  })
+
+  /**
+   * Before another tab takes the store over (opengewerk#882): the write at a
+   * route names the person of the store, and the server's answer that another
+   * account is signed in ends the client as the exchange does.
+   */
+  it('names the person of its store at a route, and signs out when the server says another is signed in', async () => {
+    const tenant = `t${String((counter += 1))}`
+    let signedOut = 0
+
+    writer = new Writing()
+
+    const client = await Client.start({
+      store: await openLocalStore(tenant, 'anna'),
+      transport: new Recorded(),
+      writer,
+      rules,
+      deviceId: 'device',
+      entities,
+      onSignedOut: () => {
+        signedOut += 1
+      },
+    })
+
+    await client.update('shelves', 's-1', { name: 'Keller' })
+    await client.remove('shelves', 's-1')
+
+    expect(writer.accounts).toEqual(['anna', 'anna'])
+    expect(signedOut).toBe(0)
+
+    writer.refuse = new RequestRefused(
+      409,
+      'Auf diesem Gerät ist inzwischen ein anderes Konto angemeldet.',
+      {
+        code: 'other_account',
+      },
+    )
+
+    const refused = await client.update('shelves', 's-1', { name: 'Dachboden' })
+
+    expect(refused.outcome).toBe('refused')
+    expect(signedOut).toBe(1)
+  })
+
+  it('stays signed in over any other refusal at a route', async () => {
+    const tenant = `t${String((counter += 1))}`
+    let signedOut = 0
+
+    writer = new Writing()
+
+    const client = await Client.start({
+      store: await openLocalStore(tenant, 'anna'),
+      transport: new Recorded(),
+      writer,
+      rules,
+      deviceId: 'device',
+      entities,
+      onSignedOut: () => {
+        signedOut += 1
+      },
+    })
+
+    writer.refuse = new RequestRefused(409, 'Der Name ist schon vergeben.', { code: 'in_use' })
+    await client.update('shelves', 's-1', { name: 'Keller' })
+
+    expect(signedOut).toBe(0)
   })
 
   it('pulls for the person the store was opened for, and keeps nothing a pull for another brings', async () => {
