@@ -266,7 +266,9 @@ describe('what a device holds of the server, with more than one person', () => {
 
   /**
    * After the update the office section has never pulled (opengewerk#907): it
-   * begins with what the store pulled before, and opens it without a network.
+   * begins with the rows the store pulled before, and opens them without a
+   * network; the bookkeeping of their pull stays the site's, and the office
+   * pulls from the start at its first exchange.
    */
   it('begins a section that never pulled with what the store pulled before it had sections', async () => {
     const tenant = aTenant()
@@ -293,8 +295,8 @@ describe('what a device holds of the server, with more than one person', () => {
 
     const pulled = await office.beginPull(['visits'])
 
-    expect(pulled.cursor).toBe(9)
-    expect(pulled.narrowed).toBe('{"visits":"all"}')
+    expect(pulled.cursor).toBe(0)
+    expect(pulled.narrowed).toBeNull()
     expect(pulled.rows.get('visits')).toEqual([{ id: 'v-1', version: 1 }])
 
     // Once only: what the office lets go of from then on is its own, also
@@ -356,6 +358,7 @@ describe('what a device holds of the server, with more than one person', () => {
 
     const office = await openLocalStore(tenant, 'anna', 'office')
 
+    await office.writeMeta('entities', 'notes,site_accesses')
     await office.writeMeta('narrowed', '{"notes":"all","site_accesses":"s-1:bare"}')
     await office.write('notes', [
       { id: 'n-1', version: 2, text: 'Im Büro geändert' },
@@ -376,6 +379,146 @@ describe('what a device holds of the server, with more than one person', () => {
     // The ways in are narrowed apart: the site keeps its own, with the value.
     expect(await again.readAll('site_accesses')).toEqual([{ id: 'z-1', version: 1, value: '0815' }])
     again.close()
+  })
+
+  /**
+   * What the narrowing no longer lets the account hold goes from every
+   * section that held it alike (opengewerk#907): a customer restricted on a
+   * request for deletion, the rows of a role that sees less, also where the
+   * other entry is never opened again. A kind narrowed apart stays with the
+   * entry that pulled it, the ways into the sites with their values.
+   */
+  it('lets go in every section of a kind narrowed alike when one of them starts it again', async () => {
+    const tenant = aTenant()
+    const site = await openLocalStore(tenant, 'anna')
+
+    await site.writeMeta('entities', 'customers,site_accesses')
+    await site.writeMeta('narrowed', '{"customers":"r-1","site_accesses":"s-1:values"}')
+    await site.writeMeta('cursor', 9)
+    await site.writeMeta('cursor-checked', 9)
+    await site.write('customers', [{ id: 'c-1', version: 1, name: 'Erika Muster' }])
+    await site.write('site_accesses', [{ id: 'z-1', version: 1, value: '0815' }])
+    site.close()
+
+    const office = await openLocalStore(tenant, 'anna', 'office')
+
+    await office.writeMeta('entities', 'customers,site_accesses')
+    await office.writeMeta('narrowed', '{"customers":"r-1","site_accesses":"s-1:bare"}')
+    await office.restartPull(
+      ['customers', 'site_accesses'],
+      '{"customers":"r-2","site_accesses":"s-2:bare"}',
+    )
+    office.close()
+
+    const again = await openLocalStore(tenant, 'anna')
+
+    expect(await again.readAll('customers')).toEqual([])
+    expect(await again.readMeta('cursor')).toBe(0)
+    expect(await again.readMeta('cursor-checked')).toBe(0)
+    expect(await again.readMeta('narrowed-settled')).toBe('')
+    // Its narrowing for the kind is the office's now, in the order it was.
+    expect(await again.readMeta('narrowed')).toBe(
+      '{"customers":"r-2","site_accesses":"s-1:values"}',
+    )
+    expect(await again.readMeta('cursor-checked-for')).toBe(
+      '{"customers":"r-2","site_accesses":"s-1:values"}',
+    )
+    // The ways in, narrowed apart, stay with the site and their value.
+    expect(await again.readAll('site_accesses')).toEqual([{ id: 'z-1', version: 1, value: '0815' }])
+    again.close()
+  })
+
+  /** A record deleted, or emptied by an erasure, is so in every section that holds it (opengewerk#907). */
+  it('writes a deletion into every section that holds the record, unless it holds a later version', async () => {
+    const tenant = aTenant()
+    const site = await openLocalStore(tenant, 'anna')
+
+    await site.writeMeta('entities', 'customers')
+    await site.write('customers', [
+      { id: 'c-1', version: 1, name: 'Erika Muster', deletedAt: null },
+      { id: 'c-2', version: 7, name: 'Wiederhergestellt', deletedAt: null },
+    ])
+    site.close()
+
+    const office = await openLocalStore(tenant, 'anna', 'office')
+
+    await office.beginPull(['customers'])
+    expect(
+      await office.writePulled({
+        changes: [
+          {
+            entity: 'customers',
+            rows: [
+              { id: 'c-1', version: 2, name: null, deletedAt: '2026-11-10T12:00:00.000Z' },
+              { id: 'c-2', version: 6, name: null, deletedAt: '2026-11-10T12:00:00.000Z' },
+              { id: 'c-3', version: 1, name: null, deletedAt: '2026-11-10T12:00:00.000Z' },
+            ],
+          },
+        ],
+        from: 0,
+        to: 3,
+        narrowed: null,
+        settled: null,
+        entities: 'customers',
+      }),
+    ).toBe('written')
+    office.close()
+
+    const again = await openLocalStore(tenant, 'anna')
+
+    expect(await again.readAll('customers')).toEqual([
+      { id: 'c-1', version: 2, name: null, deletedAt: '2026-11-10T12:00:00.000Z' },
+      { id: 'c-2', version: 7, name: 'Wiederhergestellt', deletedAt: null },
+    ])
+    again.close()
+  })
+
+  /**
+   * A tab of a build from before sections takes the store over for Ben
+   * (opengewerk#907): it lets go of every record but only of the bookkeeping
+   * outside the sections. The office section Anna began begins again for Ben
+   * instead of asking on from her cursor over rows that are gone.
+   */
+  it('begins a section again that was begun for another account than the store is now', async () => {
+    const tenant = aTenant()
+    const anna = await openLocalStore(tenant, 'anna', 'office')
+
+    await anna.beginPull(['visits'])
+    await anna.writeMeta('cursor', 9)
+    await anna.writeMeta('cursor-checked', 9)
+    await anna.write('visits', [{ id: 'v-1', version: 1 }])
+    anna.close()
+
+    // The build from before: every record gone, the bare bookkeeping gone, Ben the owner.
+    const raw = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(`opengewerk.${tenant}`)
+
+      request.onsuccess = () => {
+        resolve(request.result)
+      }
+      request.onerror = () => {
+        reject(request.error ?? new Error('not opened'))
+      }
+    })
+
+    await new Promise<void>((resolve) => {
+      const transaction = raw.transaction(['records', 'meta'], 'readwrite')
+
+      transaction.objectStore('records').clear()
+      for (const key of ['cursor', 'narrowed', 'narrowed-settled', 'entities']) {
+        transaction.objectStore('meta').delete(key)
+      }
+      transaction.objectStore('meta').put({ key: 'records-owner', value: 'ben' })
+      transaction.oncomplete = () => {
+        resolve()
+      }
+    })
+    raw.close()
+
+    const ben = await openLocalStore(tenant, 'ben', 'office')
+
+    expect((await ben.beginPull(['visits'])).cursor).toBe(0)
+    ben.close()
   })
 
   it('lets go of the pulls of every section when another account takes the store over', async () => {

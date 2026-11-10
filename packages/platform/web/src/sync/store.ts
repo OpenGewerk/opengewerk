@@ -350,6 +350,43 @@ function narrowingIn(row: MetaRow | undefined): Readonly<Record<string, unknown>
   }
 }
 
+/** A name of the meta store or a kind of record as `section` of a store keeps it (opengewerk#907). */
+function within(section: string | undefined, name: string): string {
+  return section === undefined ? name : `${section}/${name}`
+}
+
+/**
+ * The sections of a store that began a pull (`entitiesKey`) besides
+ * `section`, the part without a section as undefined (opengewerk#907).
+ */
+async function sectionsBesides(
+  meta: IDBObjectStore,
+  section: string | undefined,
+): Promise<(string | undefined)[]> {
+  const others: (string | undefined)[] = []
+
+  for (const key of await promised<IDBValidKey[]>(meta.getAllKeys())) {
+    const name = String(key)
+    const other =
+      name === entitiesKey
+        ? undefined
+        : name.endsWith(`/${entitiesKey}`)
+          ? name.slice(0, -entitiesKey.length - 1)
+          : null
+
+    if (other !== null && other !== section) {
+      others.push(other)
+    }
+  }
+
+  return others
+}
+
+/** Whether a row as pulled says its record is deleted, emptied by an erasure among it. */
+function deletedIn(values: StoredRecord): boolean {
+  return values['deletedAt'] !== null && values['deletedAt'] !== undefined
+}
+
 /** The version a row was pulled in, or -1 for a row that names none. */
 function versionOf(values: StoredRecord): number {
   return typeof values['version'] === 'number' ? values['version'] : -1
@@ -752,7 +789,7 @@ export async function openLocalStore(
 
   /** A kind of record as this section of the store keeps it (`section`). */
   function inSection(name: string): string {
-    return section === undefined ? name : `${section}/${name}`
+    return within(section, name)
   }
 
   /** A key of the meta store: the bookkeeping of the pulls is the section's, any other key the store's. */
@@ -808,26 +845,8 @@ export async function openLocalStore(
       return
     }
 
-    // The other sections, by the narrowing each keeps; the part without a
-    // section keeps it under the bare key.
-    const others: (string | undefined)[] = []
-
-    for (const key of await promised<IDBValidKey[]>(meta.getAllKeys())) {
-      const name = String(key)
-      const other =
-        name === narrowedKey
-          ? undefined
-          : name.endsWith(`/${narrowedKey}`)
-            ? name.slice(0, -narrowedKey.length - 1)
-            : null
-
-      if (other !== null && other !== section) {
-        others.push(other)
-      }
-    }
-
-    for (const other of others) {
-      const at = (name: string) => (other === undefined ? name : `${other}/${name}`)
+    for (const other of await sectionsBesides(meta, section)) {
+      const at = (name: string) => within(other, name)
       const theirs = narrowingIn(await promised<MetaRow | undefined>(meta.get(at(narrowedKey))))
 
       if (theirs === null) {
@@ -855,40 +874,52 @@ export async function openLocalStore(
   }
 
   /**
-   * A section that never pulled begins with what the store pulled before it
-   * had sections (opengewerk#907), so that the office opens without a network
-   * what it showed before the update. What came in under another narrowing
-   * goes at its first exchange, as at any change of it. Asked and copied in
-   * one transaction, for the account of the store; once the section has begun
-   * a pull (`entitiesKey`), never again.
+   * A section that never pulled begins with the rows the store pulled before
+   * it had sections (opengewerk#907), so that the office opens without a
+   * network what it showed before the update. The rows alone, without the
+   * bookkeeping of their pull: kept with them, the narrowing of the site looked
+   * like the office's own, and its first exchange let go of the ways into the
+   * sites for the site as well. Without it the section pulls from the start
+   * at its first exchange and takes what it holds as narrowed anew.
+   *
+   * And a section begun for another account than the store's begins again: a
+   * tab of a build from before sections that took the store over let go of
+   * every record, but only of the bookkeeping outside the sections, and the
+   * cursor of the section stood over rows that were gone. Asked and written
+   * in one transaction, for the account of the store.
    */
   async function adoptUnsectioned(): Promise<void> {
     const transaction = await held([recordStore, metaStore], 'readwrite')
     const meta = transaction.objectStore(metaStore)
-
-    if ((await promised<MetaRow | undefined>(meta.get(metaKey(entitiesKey)))) !== undefined) {
-      await finished(transaction)
-
-      return
-    }
-
     const records = transaction.objectStore(recordStore)
 
-    for (const row of await promised<RecordRow[]>(records.getAll())) {
-      if (!row.entity.includes('/')) {
-        records.put({
-          ...row,
-          key: keyOf(inSection(row.entity), row.id),
-          entity: inSection(row.entity),
-        } satisfies RecordRow)
+    if (owner !== undefined) {
+      const begunFor = await promised<MetaRow | undefined>(meta.get(inSection(ownerKey)))
+
+      if (begunFor !== undefined && begunFor.value !== owner) {
+        for (const key of pulledKeys) {
+          meta.delete(inSection(key))
+        }
+
+        for (const row of await promised<RecordRow[]>(records.getAll())) {
+          if (row.entity.startsWith(`${String(section)}/`)) {
+            records.delete(row.key)
+          }
+        }
       }
+
+      meta.put({ key: inSection(ownerKey), value: owner } satisfies MetaRow)
     }
 
-    for (const key of pulledKeys) {
-      const row = await promised<MetaRow | undefined>(meta.get(key))
-
-      if (row !== undefined) {
-        meta.put({ key: inSection(key), value: row.value } satisfies MetaRow)
+    if ((await promised<MetaRow | undefined>(meta.get(metaKey(entitiesKey)))) === undefined) {
+      for (const row of await promised<RecordRow[]>(records.getAll())) {
+        if (!row.entity.includes('/')) {
+          records.put({
+            ...row,
+            key: keyOf(inSection(row.entity), row.id),
+            entity: inSection(row.entity),
+          } satisfies RecordRow)
+        }
       }
     }
 
@@ -960,14 +991,10 @@ export async function openLocalStore(
     // Another account's, or nobody's.
     transaction.objectStore(recordStore).clear()
     transaction.objectStore(conflictStore).clear()
-    // Of every section (opengewerk#907): the records of all of them are gone,
-    // and a section whose cursor stayed would never pull them again.
-    for (const key of await promised<IDBValidKey[]>(
-      transaction.objectStore(metaStore).getAllKeys(),
-    )) {
-      if (pulledKeys.some((pulled) => key === pulled || String(key).endsWith(`/${pulled}`))) {
-        transaction.objectStore(metaStore).delete(key)
-      }
+    // The bookkeeping of a section goes when the section is opened next, for
+    // an account it was not begun for (`adoptUnsectioned`, opengewerk#907).
+    for (const key of pulledKeys) {
+      transaction.objectStore(metaStore).delete(key)
     }
 
     const waiting = new Set(
@@ -1076,6 +1103,28 @@ export async function openLocalStore(
         }
       }
 
+      // A record deleted, or emptied by an erasure, is so in every section
+      // that holds it (opengewerk#907), in the version it came in or a later
+      // one: the other entry would otherwise show it until it pulled itself,
+      // on a device that never opens it, for good.
+      const others = page.changes.some(({ rows }) => rows.some(deletedIn))
+        ? await sectionsBesides(meta, section)
+        : []
+
+      for (const other of others) {
+        for (const { entity, rows } of page.changes) {
+          for (const values of rows.filter(deletedIn)) {
+            const id = String(values['id'])
+            const key = keyOf(within(other, entity), id)
+            const held = await promised<RecordRow | undefined>(records.get(key))
+
+            if (held !== undefined && versionOf(held.values) < versionOf(values)) {
+              records.put({ key, entity: within(other, entity), id, values } satisfies RecordRow)
+            }
+          }
+        }
+      }
+
       meta.put({ key: metaKey(cursorKey), value: page.to } satisfies MetaRow)
       meta.put({ key: metaKey(checkedKey), value: page.to } satisfies MetaRow)
       meta.put({ key: metaKey(checkedForKey), value: narrowed?.value ?? '' } satisfies MetaRow)
@@ -1139,15 +1188,12 @@ export async function openLocalStore(
     async restartPull(entities, narrowed, before) {
       const transaction = await held([recordStore, metaStore], 'readwrite')
       const meta = transaction.objectStore(metaStore)
+      const kept = await promised<MetaRow | undefined>(meta.get(metaKey(narrowedKey)))
 
-      if (before !== undefined) {
-        const kept = await promised<MetaRow | undefined>(meta.get(metaKey(narrowedKey)))
+      if (before !== undefined && (kept?.value ?? null) !== before) {
+        transaction.abort()
 
-        if ((kept?.value ?? null) !== before) {
-          transaction.abort()
-
-          return false
-        }
+        return false
       }
 
       const records = transaction.objectStore(recordStore)
@@ -1167,6 +1213,63 @@ export async function openLocalStore(
       meta.put({ key: metaKey(checkedKey), value: 0 } satisfies MetaRow)
       meta.put({ key: metaKey(checkedForKey), value: narrowed } satisfies MetaRow)
       meta.put({ key: metaKey(narrowedKey), value: narrowed } satisfies MetaRow)
+
+      // Every other section that held one of these kinds narrowed as this one
+      // did lets go of it as well and pulls from the start (opengewerk#907):
+      // what the narrowing no longer lets the account hold, a customer
+      // restricted on a request for deletion or the rows of a role that sees
+      // less, goes from the whole store at once, also from a section whose
+      // entry this device never opens again. Its narrowing for the kind
+      // becomes this one's, the same view of the same server. A kind the
+      // sections hold narrowed apart, the ways into the sites with their
+      // values on the site alone, each lets go of at its own exchange: taken
+      // with this one, every exchange of the office took the values off the
+      // site.
+      const was = narrowingIn(kept)
+      const now = narrowingIn({ key: narrowedKey, value: narrowed }) ?? {}
+
+      for (const other of was === null ? [] : await sectionsBesides(meta, section)) {
+        const theirs = narrowingIn(
+          await promised<MetaRow | undefined>(meta.get(within(other, narrowedKey))),
+        )
+        const alike =
+          theirs === null
+            ? []
+            : entities.filter(
+                (entity) => was?.[entity] !== undefined && theirs[entity] === was[entity],
+              )
+
+        if (theirs === null || alike.length === 0) {
+          continue
+        }
+
+        for (const entity of alike) {
+          const keys = await promised<IDBValidKey[]>(
+            records.index('entity').getAllKeys(within(other, entity)),
+          )
+
+          for (const key of keys) {
+            records.delete(key)
+          }
+        }
+
+        // In the order the server answers in, so that the next answer reads
+        // as the narrowing kept and the section does not start once more.
+        const updated = JSON.stringify(
+          Object.fromEntries(
+            [...Object.keys(theirs), ...Object.keys(now)]
+              .filter((entity, at, all) => all.indexOf(entity) === at)
+              .map((entity) => [entity, alike.includes(entity) ? now[entity] : theirs[entity]])
+              .filter(([, value]) => value !== undefined),
+          ),
+        )
+
+        meta.put({ key: within(other, settledKey), value: '' } satisfies MetaRow)
+        meta.put({ key: within(other, cursorKey), value: 0 } satisfies MetaRow)
+        meta.put({ key: within(other, checkedKey), value: 0 } satisfies MetaRow)
+        meta.put({ key: within(other, checkedForKey), value: updated } satisfies MetaRow)
+        meta.put({ key: within(other, narrowedKey), value: updated } satisfies MetaRow)
+      }
 
       await finished(transaction)
 
