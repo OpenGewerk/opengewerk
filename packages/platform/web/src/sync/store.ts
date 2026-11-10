@@ -78,7 +78,24 @@ export interface PulledPage {
   readonly to: number
   /** What the answer said it narrowed the rows to, as JSON, or null where it said nothing. */
   readonly narrowed: string | null
+  /**
+   * What the rows add up to once this page is in (`settledKey`), on the last
+   * page of a pull with a narrowing; null on any other. Written with the page,
+   * so that no other tab goes back to the start in between and finds a pull
+   * reported as run through over rows it let go of.
+   */
+  readonly settled: string | null
+  /** The kinds of record the build that writes knows, as `entitiesKey` keeps them. */
+  readonly entities: string
 }
+
+/**
+ * What became of a page (`writePulled`): written; not written because the
+ * store moved since the pull began; or not written because the store is kept
+ * for other kinds of record than this build knows, of a build that knows more
+ * (`newerBuild`) or of one that knows fewer and pulled since (`fewerKinds`).
+ */
+export type PageWritten = 'written' | 'moved' | 'newerBuild' | 'fewerKinds'
 
 export interface LocalStore {
   /** Everything of one kind, deleted rows included. Filtering is the caller's. */
@@ -93,10 +110,21 @@ export interface LocalStore {
    * one the answer named. The tabs of a browser share the store and its
    * cursor; a tab that pulled from a cursor another tab has moved since, back
    * to the start after a change of the narrowing among them, wrote a later
-   * one over rows that never arrived. False, with nothing written, where the
-   * store stands elsewhere.
+   * one over rows that never arrived. Written only for the kinds of record the
+   * store is kept for (`entitiesKey`), too: two tabs of two builds, one that
+   * knows a kind more, would otherwise move one cursor past rows of that kind
+   * for the other. Nothing is written where it answers anything but
+   * `written`.
    */
-  writePulled(page: PulledPage): Promise<boolean>
+  writePulled(page: PulledPage): Promise<PageWritten>
+  /**
+   * The store kept for the kinds of record of this build (`entities`) from
+   * now on, pulled again from the start: the cursor at 0 and nothing settled,
+   * in one transaction. For a build that finds the store kept for fewer
+   * kinds, by an older build that pulled since and moved the cursor past rows
+   * of the others.
+   */
+  claimPull(entities: string): Promise<void>
   /**
    * A pull back to the start, in one transaction: the rows of the named
    * kinds gone, the cursor at 0, nothing settled (`settledKey`), and
@@ -210,6 +238,11 @@ export const entitiesKey = 'entities'
 const pulledKeys: readonly string[] = [cursorKey, narrowedKey, settledKey, entitiesKey]
 const fileStore = 'files'
 const uploadStore = 'uploads'
+
+/** The kinds of record a list as `entitiesKey` keeps it names; none for nothing kept. */
+function kindsOf(list: string | number | undefined): ReadonlySet<string> {
+  return new Set(typeof list === 'string' && list !== '' ? list.split(',') : [])
+}
 
 function keyOf(entity: string, id: string): string {
   // A separator that cannot appear in either half, so that two different
@@ -600,20 +633,28 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
       await finished(transaction)
     },
 
-    /** See `LocalStore.writePulled`: cursor and narrowing asked in the transaction that writes. */
+    /** See `LocalStore.writePulled`: kinds, cursor and narrowing asked in the transaction that writes. */
     async writePulled(page) {
       const transaction = await held([recordStore, metaStore], 'readwrite')
       const meta = transaction.objectStore(metaStore)
+      const kinds = await promised<MetaRow | undefined>(meta.get(entitiesKey))
       const cursor = await promised<MetaRow | undefined>(meta.get(cursorKey))
       const narrowed = await promised<MetaRow | undefined>(meta.get(narrowedKey))
+      const kept = kindsOf(kinds?.value)
+      const known = kindsOf(page.entities)
+      const answer: PageWritten = [...kept].some((kind) => !known.has(kind))
+        ? 'newerBuild'
+        : [...known].some((kind) => !kept.has(kind))
+          ? 'fewerKinds'
+          : (cursor?.value ?? 0) !== page.from ||
+              (page.narrowed !== null && narrowed?.value !== page.narrowed)
+            ? 'moved'
+            : 'written'
 
-      if (
-        (cursor?.value ?? 0) !== page.from ||
-        (page.narrowed !== null && narrowed?.value !== page.narrowed)
-      ) {
+      if (answer !== 'written') {
         transaction.abort()
 
-        return false
+        return answer
       }
 
       const records = transaction.objectStore(recordStore)
@@ -628,9 +669,25 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
 
       meta.put({ key: cursorKey, value: page.to } satisfies MetaRow)
 
+      if (page.settled !== null) {
+        meta.put({ key: settledKey, value: page.settled } satisfies MetaRow)
+      }
+
       await finished(transaction)
 
-      return true
+      return 'written'
+    },
+
+    /** See `LocalStore.claimPull`: kinds, cursor and settled in one transaction. */
+    async claimPull(entities) {
+      const transaction = await held([metaStore], 'readwrite')
+      const meta = transaction.objectStore(metaStore)
+
+      meta.put({ key: entitiesKey, value: entities } satisfies MetaRow)
+      meta.put({ key: cursorKey, value: 0 } satisfies MetaRow)
+      meta.put({ key: settledKey, value: '' } satisfies MetaRow)
+
+      await finished(transaction)
     },
 
     /** See `LocalStore.restartPull`: rows, cursor, settled and narrowing in one transaction. */

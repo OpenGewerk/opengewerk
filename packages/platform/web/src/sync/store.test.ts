@@ -226,6 +226,8 @@ describe('what a device holds of the server, with more than one person', () => {
         from: 0,
         to: 5,
         narrowed: null,
+        settled: null,
+        entities: '',
       }),
     ).rejects.toThrow(StoreTakenOver)
     await expect(anna.restartPull(['site_accesses'], '{"site_accesses":"all"}')).rejects.toThrow(
@@ -257,8 +259,10 @@ describe('the pulls of the tabs of one browser', () => {
         from: 0,
         to: 5,
         narrowed: null,
+        settled: null,
+        entities: '',
       }),
-    ).toBe(true)
+    ).toBe('written')
 
     // Another tab asked from 0 as well, before this page was in.
     expect(
@@ -267,8 +271,10 @@ describe('the pulls of the tabs of one browser', () => {
         from: 0,
         to: 9,
         narrowed: null,
+        settled: null,
+        entities: '',
       }),
-    ).toBe(false)
+    ).toBe('moved')
 
     expect(await store.readAll('visits')).toEqual([visit('v-1')])
     expect(await store.readMeta('cursor')).toBe(5)
@@ -288,8 +294,10 @@ describe('the pulls of the tabs of one browser', () => {
         from: 0,
         to: 5,
         narrowed: '{"visits":"user:u-1"}',
+        settled: null,
+        entities: '',
       }),
-    ).toBe(false)
+    ).toBe('moved')
     expect(await store.readAll('visits')).toEqual([])
     expect(await store.readMeta('cursor')).toBe(0)
 
@@ -299,9 +307,42 @@ describe('the pulls of the tabs of one browser', () => {
         from: 0,
         to: 5,
         narrowed: '{"visits":"all"}',
+        settled: null,
+        entities: '',
       }),
-    ).toBe(true)
+    ).toBe('written')
     expect(await store.readMeta('cursor')).toBe(5)
+    store.close()
+  })
+
+  it('keeps what the rows add up to with the last page, and nothing of it with a page it refuses', async () => {
+    const store = await openLocalStore(aTenant(), 'anna')
+
+    await store.restartPull([], '{"visits":"all"}')
+
+    expect(
+      await store.writePulled({
+        changes: [],
+        from: 3,
+        to: 9,
+        narrowed: '{"visits":"all"}',
+        settled: '{"visits":"all"}',
+        entities: '',
+      }),
+    ).toBe('moved')
+    expect(await store.readMeta('narrowed-settled')).toBe('')
+
+    expect(
+      await store.writePulled({
+        changes: [],
+        from: 0,
+        to: 9,
+        narrowed: '{"visits":"all"}',
+        settled: '{"visits":"all"}',
+        entities: '',
+      }),
+    ).toBe('written')
+    expect(await store.readMeta('narrowed-settled')).toBe('{"visits":"all"}')
     store.close()
   })
 
@@ -316,6 +357,8 @@ describe('the pulls of the tabs of one browser', () => {
       from: 0,
       to: 9,
       narrowed: null,
+      settled: null,
+      entities: '',
     })
     await store.writeMeta('narrowed-settled', '{"visits":"all"}')
 
@@ -326,6 +369,50 @@ describe('the pulls of the tabs of one browser', () => {
     expect(await store.readMeta('cursor')).toBe(0)
     expect(await store.readMeta('narrowed-settled')).toBe('')
     expect(await store.readMeta('narrowed')).toBe('{"visits":"user:u-1"}')
+    store.close()
+  })
+
+  /**
+   * Two tabs of two builds, one that knows a kind of record more: one cursor
+   * moved by the other would pass rows of that kind. A page goes in only from
+   * a build that knows the kinds the store is kept for, no more and no fewer.
+   */
+  it('writes a page only from a build that knows the kinds the store is kept for', async () => {
+    const store = await openLocalStore(aTenant(), 'anna')
+    const page = (entities: string) => ({
+      changes: [{ entity: 'visits', rows: [visit('v-1')] }],
+      from: 0,
+      to: 5,
+      narrowed: null,
+      settled: null,
+      entities,
+    })
+
+    await store.writeMeta('entities', 'shelves,visits')
+
+    // A build that does not know shelves, and one that knows a kind more.
+    expect(await store.writePulled(page('visits'))).toBe('newerBuild')
+    expect(await store.writePulled(page('letters,shelves,visits'))).toBe('fewerKinds')
+    expect(await store.readAll('visits')).toEqual([])
+    expect(await store.readMeta('cursor')).toBeNull()
+
+    expect(await store.writePulled(page('shelves,visits'))).toBe('written')
+    expect(await store.readMeta('cursor')).toBe(5)
+    store.close()
+  })
+
+  it('is taken back for the kinds of a build from the start, with nothing settled', async () => {
+    const store = await openLocalStore(aTenant(), 'anna')
+
+    await store.writeMeta('entities', 'visits')
+    await store.writeMeta('cursor', 9)
+    await store.writeMeta('narrowed-settled', '{"visits":"all"}')
+
+    await store.claimPull('shelves,visits')
+
+    expect(await store.readMeta('entities')).toBe('shelves,visits')
+    expect(await store.readMeta('cursor')).toBe(0)
+    expect(await store.readMeta('narrowed-settled')).toBe('')
     store.close()
   })
 })

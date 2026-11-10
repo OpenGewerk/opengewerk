@@ -1017,6 +1017,145 @@ describe('a device handed to somebody who sees less, or more', () => {
     empty.stop()
   })
 
+  /** A server that answers every pull from before 12 with what it holds, and from 12 on with nothing. */
+  function holdingUpTo12(changes: readonly ChangedRows[]): Recorded {
+    const answering = new Recorded()
+
+    answering.pull = (since: number) => {
+      answering.asked.push(since)
+
+      return Promise.resolve(
+        since < 12
+          ? { changes, cursor: 12, hasMore: false }
+          : { changes: [], cursor: 12, hasMore: false },
+      )
+    }
+
+    return answering
+  }
+
+  /** A tab of a build that knows `held`, on the store `name`, asking `server`. */
+  async function aTabOf(name: string, held: readonly string[], server: Recorded) {
+    return await Client.start({
+      store: await openLocalStore(name),
+      transport: server,
+      writer: new Writing(),
+      rules,
+      deviceId: 'tablet',
+      entities: held,
+      onSignedOut: () => {},
+    })
+  }
+
+  const shelf = row({ id: 's-1', name: 'Hall', kind: 'wood' })
+
+  /**
+   * Two tabs of two builds after an update, the newer knowing shelves as well
+   * (opengewerk#899). The older moved the one cursor past the shelves, and the
+   * newer took that cursor over when its own page was refused: the shelves
+   * never came. A build that knows fewer kinds than the store is kept for
+   * pulls nothing for it and reads what the other writes.
+   */
+  it('lets the tab of the build that knows more kinds pull, when it opened last', async () => {
+    const olderServer = holdingUpTo12([{ entity: 'visits', rows: [mine] }])
+    const older = await aTabOf('builds-newer-last', ['visits'], olderServer)
+
+    await older.synchronise()
+    olderServer.asked.length = 0
+
+    const newerServer = holdingUpTo12([
+      { entity: 'visits', rows: [mine] },
+      { entity: 'shelves', rows: [shelf] },
+    ])
+    const newer = await aTabOf('builds-newer-last', ['shelves', 'visits'], newerServer)
+
+    await older.synchronise()
+    await newer.synchronise()
+
+    expect(olderServer.asked).toEqual([12])
+    expect(newerServer.asked).toEqual([0])
+    expect(newer.list('shelves').map((entry) => entry['id'])).toEqual(['s-1'])
+    expect(older.list('visits').map((entry) => entry['id'])).toEqual(['v-2'])
+    older.stop()
+    newer.stop()
+  })
+
+  it('takes the store back for its kinds when a tab of an older build pulled since', async () => {
+    const newerServer = holdingUpTo12([
+      { entity: 'visits', rows: [mine] },
+      { entity: 'shelves', rows: [shelf] },
+    ])
+    const newer = await aTabOf('builds-older-last', ['shelves', 'visits'], newerServer)
+    // The older opens after it, and keeps the store for its own kinds.
+    const olderServer = holdingUpTo12([{ entity: 'visits', rows: [mine] }])
+    const older = await aTabOf('builds-older-last', ['visits'], olderServer)
+
+    await older.synchronise()
+    await newer.synchronise()
+
+    expect(newerServer.asked).toEqual([0, 0])
+    expect(newer.list('shelves').map((entry) => entry['id'])).toEqual(['s-1'])
+
+    // From then on the older reads and asks nothing more.
+    olderServer.asked.length = 0
+    await older.synchronise()
+
+    expect(olderServer.asked).toEqual([12])
+    older.stop()
+    newer.stop()
+
+    const again = await startOn('builds-older-last')
+
+    expect(again.list('shelves').map((entry) => entry['id'])).toEqual(['s-1'])
+    again.stop()
+  })
+
+  /**
+   * Another tab goes back to the start right after the last page of this one
+   * is in (opengewerk#899). What the rows add up to goes with that page, so the
+   * start from the beginning leaves nothing settled behind, and no screen
+   * counts rows as all there that the other tab let go of.
+   */
+  it('reports no pull as run through over rows another tab let go of since', async () => {
+    const store = await openLocalStore('settled-two-tabs')
+    const other = await openLocalStore('settled-two-tabs')
+    const racing: LocalStore = {
+      ...store,
+      writePulled: async (page) => {
+        const written = await store.writePulled(page)
+
+        if (written === 'written' && page.settled !== null) {
+          await other.restartPull(['visits'], JSON.stringify({ visits: 'user:u-road' }))
+        }
+
+        return written
+      },
+    }
+    const device = await Client.start({
+      store: racing,
+      transport,
+      writer: new Writing(),
+      rules,
+      deviceId: 'tablet',
+      entities: ['shelves', 'visits'],
+      onSignedOut: () => {},
+    })
+
+    transport.pulls = [
+      {
+        changes: [{ entity: 'visits', rows: [theirs, mine] }],
+        cursor: 9,
+        hasMore: false,
+        narrowed: { visits: 'all' },
+      },
+    ]
+    await device.synchronise()
+
+    expect(await other.readMeta('narrowed-settled')).toBe('')
+    device.stop()
+    other.close()
+  })
+
   it('keeps everything while the server narrows the same way, or says nothing', async () => {
     const first = await startOn('same-person')
 

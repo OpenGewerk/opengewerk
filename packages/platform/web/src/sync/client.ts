@@ -377,6 +377,8 @@ export class SyncClient {
   private readonly projected = new Map<string, RecordState | null>()
 
   private cursor = 0
+  /** The kinds of record this build knows, as the store keeps them (`entitiesKey`). */
+  private kinds = ''
   /**
    * What the rows on this device were narrowed to when the last pull ran
    * through, or null before one has since the narrowing changed. Kept in
@@ -454,6 +456,7 @@ export class SyncClient {
     const stands = cursorStands(known, entities)
 
     client.cursor = typeof cursor === 'number' && stands ? cursor : 0
+    client.kinds = list
 
     // The cursor first. The other way round, a device closed in between would
     // keep a list that vouches for a cursor nobody checked. And the list on
@@ -1168,17 +1171,39 @@ export class SyncClient {
       // browser, and they do not take turns: a tab that pulled from its own
       // cursor after another had gone back to the start for a new narrowing
       // wrote a later cursor over rows that never arrived. The page is let go
-      // of, and the client asks again from where the store stands.
+      // of, and the client asks again from where the store stands. The last
+      // page says what the rows add up to now (#444) in the same step.
+      const settled = !answer.hasMore && answer.narrowed ? answer.narrowed : null
       const written = await this.store.writePulled({
         changes: known,
         from,
         to: answer.cursor,
         narrowed: answer.narrowed ? JSON.stringify(answer.narrowed) : null,
+        settled: settled ? JSON.stringify(settled) : null,
+        entities: this.kinds,
       })
 
-      if (!written) {
+      if (written === 'newerBuild') {
+        // A tab of a build that knows more kinds of record pulls for this
+        // store now. This one would move the cursor past rows of the kinds it
+        // does not know; it reads what the other writes and asks nothing.
         await this.catchUp()
 
+        return
+      }
+
+      if (written === 'fewerKinds') {
+        // A tab of an older build pulled since and moved the cursor past rows
+        // of the kinds it does not know. This build takes the store back for
+        // its own and asks again from the start (`cursorStands` at a start).
+        await this.store.claimPull(this.kinds)
+        this.cursor = 0
+        this.narrowedNow = null
+      } else if (written === 'moved') {
+        await this.catchUp()
+      }
+
+      if (written !== 'written') {
         if ((guard += 1) > 100) {
           return
         }
@@ -1196,8 +1221,8 @@ export class SyncClient {
 
       this.cursor = answer.cursor
 
-      if (!answer.hasMore && answer.narrowed) {
-        await this.settle(answer.narrowed)
+      if (settled) {
+        this.narrowedNow = settled
       }
 
       this.publish({})
@@ -1316,22 +1341,6 @@ export class SyncClient {
         ? (JSON.parse(settled) as Record<string, string>)
         : null
     this.publish({})
-  }
-
-  /**
-   * Takes what the answer was narrowed to as what the rows on the device add
-   * up to, once a pull has run through to its last page (#444). Written only
-   * when it changed, which is rarely.
-   */
-  private async settle(narrowed: Readonly<Record<string, string>>): Promise<void> {
-    const said = JSON.stringify(narrowed)
-
-    if (JSON.stringify(this.narrowedNow) === said) {
-      return
-    }
-
-    this.narrowedNow = narrowed
-    await this.store.writeMeta(settledKey, said)
   }
 
   private async refreshConflicts(): Promise<void> {
