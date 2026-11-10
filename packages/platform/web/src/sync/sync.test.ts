@@ -1429,6 +1429,67 @@ describe('a device handed to somebody who sees less, or more', () => {
   })
 
   /**
+   * A tab of an older build stays one until it is loaded again, or until a
+   * tab of its build keeps the store for its kinds again (opengewerk#899). The
+   * next round does not take the reason to load the page away while it runs:
+   * the strip offering it stood only between two rounds.
+   */
+  it('stays outdated while it exchanges again, until it pulls into the store once more', async () => {
+    const name = 'builds-outdated-stays'
+    const olderServer = holdingUpTo12([{ entity: 'shelves', rows: [shelf] }])
+    const answer = olderServer.pull.bind(olderServer)
+    const older = await aTabOf(name, ['shelves'], olderServer)
+
+    await older.synchronise()
+
+    const newer = await aTabOf(
+      name,
+      ['shelves', 'visits'],
+      holdingUpTo12([
+        { entity: 'visits', rows: [mine] },
+        { entity: 'shelves', rows: [shelf] },
+      ]),
+    )
+
+    await newer.synchronise()
+    newer.stop()
+    await older.synchronise()
+
+    expect(older.status().troubleKind).toBe('outdated')
+
+    // The next round, its pull on its way.
+    let answered = () => {}
+
+    olderServer.pull = (since: number) =>
+      new Promise((resolve) => {
+        answered = () => {
+          resolve(answer(since))
+        }
+      })
+
+    const round = older.synchronise()
+
+    await vi.waitFor(() => {
+      expect(older.status().exchanging).toBe(true)
+    })
+    expect(older.status().troubleKind).toBe('outdated')
+    answered()
+    await round
+
+    expect(older.status().troubleKind).toBe('outdated')
+
+    // A tab of the older build opens and keeps the store for its kinds again.
+    const another = await aTabOf(name, ['shelves'], holdingUpTo12([]))
+
+    another.stop()
+    olderServer.pull = answer
+    await older.synchronise()
+
+    expect(older.status().troubleKind).toBeNull()
+    older.stop()
+  })
+
+  /**
    * A tab of a build from before checked writes knows visits alone, and sets
    * the cursor itself past the shelves (opengewerk#899). The tab of this build
    * found the cursor moved, took it over and never got the shelves; it starts

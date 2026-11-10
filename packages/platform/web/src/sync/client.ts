@@ -108,7 +108,10 @@ export type SyncTroubleKind =
   /**
    * A tab of a newer build pulls for the store of this browser, one that
    * knows more kinds of record (opengewerk#899). This page pulls nothing more
-   * until it is loaded again; waiting for a network does not help.
+   * into the store until it is loaded again, or until a tab of its own build
+   * keeps the store for its kinds again; waiting for a network does not help.
+   * A round that ends without a network says so instead: loading the page
+   * again needs one.
    */
   | 'outdated'
 
@@ -152,6 +155,12 @@ function troubled(troubleKind: SyncTroubleKind, trouble: string) {
 
 /** Nothing went wrong, or it is being tried again. */
 const untroubled = { trouble: null, troubleKind: null } as const
+
+/** A tab of a newer build pulls for the store (opengewerk#899). */
+const outdatedTrouble = troubled(
+  'outdated',
+  'In einem anderen Tab läuft eine neuere Fassung. Bitte diese Seite neu laden.',
+)
 
 /**
  * Whether "Keine Verbindung" stands where the state of the exchange is told:
@@ -401,6 +410,14 @@ export class SyncClient {
    * straight to the outbox, as it did before there were files (#77).
    */
   private filesWaiting = 0
+  /**
+   * Whether the last pull that ran through found a tab of a newer build
+   * pulling for the store (opengewerk#899). Kept between rounds, so that the
+   * next one does not take the reason to load the page away while it runs;
+   * a pull that writes to the store again, once a tab of this build keeps it
+   * for its kinds, sets it back.
+   */
+  private outdated = false
   /**
    * What this device keeps for itself, by the names the application gave at
    * the start: state that belongs to the device alone and never travels. A
@@ -923,7 +940,9 @@ export class SyncClient {
   }
 
   private async exchange(): Promise<void> {
-    this.publish({ exchanging: true, ...untroubled })
+    // An outdated page stays one while the round runs: the strip offering to
+    // load it again would otherwise stand only between two rounds.
+    this.publish({ exchanging: true, ...(this.outdated ? outdatedTrouble : untroubled) })
 
     try {
       // A push refused over one operation does not stop the pull. What comes
@@ -950,7 +969,7 @@ export class SyncClient {
         sending()
       }
 
-      const outdated = await this.pullChanges()
+      this.outdated = await this.pullChanges()
 
       // Everything that settled is in the rows now, as the server holds it.
       if (this.settling.length > 0) {
@@ -967,12 +986,7 @@ export class SyncClient {
       // and not that it is up to date: what it pulls is in its memory alone,
       // and gone with it, until it is loaded again as the newer build.
       this.publish({
-        ...(outdated
-          ? troubled(
-              'outdated',
-              'In einem anderen Tab läuft eine neuere Fassung. Bitte diese Seite neu laden.',
-            )
-          : { lastSyncedAt: new Date(), ...untroubled }),
+        ...(this.outdated ? outdatedTrouble : { lastSyncedAt: new Date(), ...untroubled }),
         exchanging: false,
         refused,
         unowned,
