@@ -2,8 +2,9 @@ name: Security-Review
 
 # The security review of the organisation (OpenGewerk/.github,
 # .github/workflows/security-review.yml) for every pull request: with a shell
-# in a sandbox on pull_request for a branch of this repository by a member, by
-# reading alone on pull_request_target for anything else. A new push cancels
+# in a sandbox on pull_request for a branch of this repository by a member or
+# by the coding agent of CodeRabbit (never approved), by reading alone on
+# pull_request_target for anything else, Dependabot included. A new push cancels
 # the run of the push before, so only the newest head is reviewed. The call
 # pins a commit of that workflow on its main: a change there reaches this
 # repository with a pull request here, which moves the commit.
@@ -23,7 +24,7 @@ permissions: {}
 jobs:
   security-review:
     name: Security-Review
-    uses: OpenGewerk/.github/.github/workflows/security-review.yml@520efcc09785fc66e5aa9b022590164be434a0e0 # main
+    uses: OpenGewerk/.github/.github/workflows/security-review.yml@b98002a04bf2707853e4215f580b44db63d08b27 # main
     # The test database of this repository, as its tests expect it. The
     # review starts a PostgreSQL of its own for it, inside its sandbox.
     with:
