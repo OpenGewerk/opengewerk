@@ -10,7 +10,7 @@ import { ThemeSwitch } from '../components/theme-switch.js'
 import { useTheme } from '../components/theme.js'
 import { sinceThen } from '../format.js'
 import { useWho } from '../session/who.js'
-import { exchangeRefusal, noConnection } from '../sync/client.js'
+import { exchangeRefusal, noConnection, outdatedBuild } from '../sync/client.js'
 import { useSyncStatus } from '../sync/provider.js'
 import { helpLabel } from './help.js'
 import { useSettingsEntries } from './settings.js'
@@ -208,14 +208,17 @@ export function SyncNote() {
 
   // What went wrong with the exchange itself, if anything did: nobody
   // answered, or the server answered and refused it, which waiting for a
-  // network does not cure (#545). A change the server refused at its own
-  // route is neither. Its sentence stands at the form, and the exchange goes
-  // on as it did.
+  // network does not cure (#545). Or a tab of a newer build pulls for the
+  // store, and this page has to be loaded again (opengewerk#899). A change
+  // the server refused at its own route is none of these. Its sentence stands
+  // at the form, and the exchange goes on as it did.
   const failed = noConnection(status)
     ? 'Keine Verbindung'
-    : exchangeRefusal(status) === null
-      ? null
-      : 'Abgleich abgelehnt'
+    : exchangeRefusal(status) !== null
+      ? 'Abgleich abgelehnt'
+      : outdatedBuild(status) === null
+        ? null
+        : 'Bitte Seite neu laden'
   const settled = status.lastSyncedAt
     ? `Abgeglichen, ${sinceThen(status.lastSyncedAt)}`
     : 'Noch nicht abgeglichen'

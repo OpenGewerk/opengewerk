@@ -15,6 +15,7 @@ export {
   largestTransmission,
   mostTransmittedOperations,
   noConnection,
+  outdatedBuild,
   refusalFor,
   refusalText,
   SyncClient,

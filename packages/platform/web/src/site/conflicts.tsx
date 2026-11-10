@@ -6,7 +6,7 @@ import type { ReactNode } from 'react'
 import { Button } from '../components/button.js'
 import { Panel } from '../components/panel.js'
 import { clockTime } from '../format.js'
-import { exchangeRefusal, noConnection } from '../sync/client.js'
+import { exchangeRefusal, noConnection, outdatedBuild } from '../sync/client.js'
 import {
   hasUnowned,
   NothingToDecide,
@@ -57,6 +57,10 @@ export function ConflictScreen() {
   const offline = noConnection(status)
   // The server answered and refused: its own sentence, as in the strip.
   const refusal = exchangeRefusal(status)
+  // A tab of a newer build pulls for the store (opengewerk#899): said here as
+  // the strip says it, which this screen does not show, and trying again
+  // gives way to loading the page.
+  const outdated = outdatedBuild(status)
   const [working, setWorking] = useState(false)
 
   return (
@@ -83,6 +87,11 @@ export function ConflictScreen() {
           {refusal ? (
             <SiteStateLine icon={TriangleAlert} tone="waiting">
               {refusal}
+            </SiteStateLine>
+          ) : null}
+          {outdated ? (
+            <SiteStateLine icon={RefreshCw} tone="waiting">
+              {outdated}
             </SiteStateLine>
           ) : null}
           {pending > 0 ? (
@@ -122,20 +131,33 @@ export function ConflictScreen() {
         cards
       )}
 
-      <Button
-        wide
-        height={52}
-        icon={RefreshCw}
-        disabled={working}
-        onClick={() => {
-          setWorking(true)
-          void client.synchronise().finally(() => {
-            setWorking(false)
-          })
-        }}
-      >
-        Erneut versuchen
-      </Button>
+      {outdated ? (
+        <Button
+          wide
+          height={52}
+          icon={RefreshCw}
+          onClick={() => {
+            globalThis.location.reload()
+          }}
+        >
+          Neu laden
+        </Button>
+      ) : (
+        <Button
+          wide
+          height={52}
+          icon={RefreshCw}
+          disabled={working}
+          onClick={() => {
+            setWorking(true)
+            void client.synchronise().finally(() => {
+              setWorking(false)
+            })
+          }}
+        >
+          Erneut versuchen
+        </Button>
+      )}
     </div>
   )
 }

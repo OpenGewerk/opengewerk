@@ -130,7 +130,11 @@ export function SyncStatusBar({
       <Strip
         tone="wait"
         icon={outdated ? RefreshCw : WifiOff}
-        detail={outdated ? rest : (waiting ?? rest)}
+        detail={
+          outdated
+            ? [rest, waiting].filter((part) => part !== null).join(' ') || null
+            : (waiting ?? rest)
+        }
         actions={retry}
       >
         {head}

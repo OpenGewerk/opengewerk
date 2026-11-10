@@ -5,7 +5,7 @@ import type { ReactNode } from 'react'
 import { Button } from '../components/button.js'
 import { Panel } from '../components/panel.js'
 import { clockTime } from '../format.js'
-import { exchangeRefusal, noConnection } from '../sync/client.js'
+import { exchangeRefusal, noConnection, outdatedBuild } from '../sync/client.js'
 import { hasUnowned, NothingToDecide, unownedSummary, useDecisions } from '../sync/decisions.js'
 import { useSync, useSyncStatus } from '../sync/provider.js'
 import { PageHead, RecordColumns, Screen } from './kit.js'
@@ -48,6 +48,10 @@ function SyncStateCard() {
   const offline = noConnection(status)
   // The server answered and refused: its own sentence, as in the strip.
   const refusal = exchangeRefusal(status)
+  // A tab of a newer build pulls for the store (opengewerk#899): the strip
+  // over the screen offers to load it again, and the card does not say that
+  // nothing waits.
+  const outdated = outdatedBuild(status)
   const nobodys = hasUnowned(unowned)
 
   return (
@@ -68,6 +72,11 @@ function SyncStateCard() {
         {refusal ? (
           <StateLine icon={TriangleAlert} tone="waiting">
             {refusal}
+          </StateLine>
+        ) : null}
+        {outdated ? (
+          <StateLine icon={RefreshCw} tone="waiting">
+            {outdated}
           </StateLine>
         ) : null}
         {pending > 0 ? (
@@ -92,7 +101,13 @@ function SyncStateCard() {
             {`${unownedSummary(unowned)} ohne Person`}
           </StateLine>
         ) : null}
-        {pending === 0 && conflicts.length === 0 && !refused && !offline && !refusal && !nobodys ? (
+        {pending === 0 &&
+        conflicts.length === 0 &&
+        !refused &&
+        !offline &&
+        !refusal &&
+        !outdated &&
+        !nobodys ? (
           <StateLine icon={Check} tone="done">
             Nichts wartet, nichts zu entscheiden
           </StateLine>

@@ -185,6 +185,17 @@ export function exchangeRefusal(
   return status.troubleKind === 'exchange_refused' ? status.trouble : null
 }
 
+/**
+ * The sentence that a tab of a newer build pulls for the store of this
+ * browser (opengewerk#899), for the state of the exchange to say as the strip
+ * does, with a way to load the page again. Null while that is not so.
+ */
+export function outdatedBuild(
+  status: Pick<SyncSnapshot, 'trouble' | 'troubleKind'>,
+): string | null {
+  return status.troubleKind === 'outdated' ? status.trouble : null
+}
+
 export type EditResult =
   | { readonly outcome: 'queued'; readonly id: string }
   | {

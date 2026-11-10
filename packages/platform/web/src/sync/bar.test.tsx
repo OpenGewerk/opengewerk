@@ -312,7 +312,10 @@ describe('the bar above every screen', () => {
       )
 
       expect(screen.getByText('In einem anderen Tab läuft eine neuere Fassung.')).toBeDefined()
-      expect(screen.getByText('Bitte diese Seite neu laden.')).toBeDefined()
+      // The reason to load the page again, and the count after it.
+      expect(
+        screen.getByText('Bitte diese Seite neu laden. 1 Änderung auf dem Gerät.'),
+      ).toBeDefined()
       expect(screen.queryByRole('button', { name: 'Erneut versuchen' })).toBeNull()
 
       await userEvent.click(screen.getByRole('button', { name: 'Neu laden' }))

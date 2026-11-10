@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { InterfaceApplication } from '../application.js'
 import { Shell } from '../components/surface.js'
 import { clockTime, moment } from '../format.js'
+import { SyncNote } from '../office/navigation.js'
 import { SyncScreen } from '../office/sync-screen.js'
 import { InProbe, probeApplication, probeRecords, probeRules } from '../probe-application.js'
 import { ConflictScreen } from '../site/conflicts.js'
@@ -138,6 +139,35 @@ async function client(rows: Record<string, RecordState[]> = {}) {
   })
 
   await started.synchronise()
+
+  return started
+}
+
+/**
+ * A client whose store another tab keeps for a build that knows a kind more
+ * (opengewerk#899): it pulls into its memory alone and says to load the page.
+ */
+async function outdatedClient() {
+  const name = `decisions${String((counter += 1))}`
+
+  server.pulls.push({ changes: [{ entity: 'notes', rows: [note] }], cursor: 1, hasMore: false })
+
+  const started = await SyncClient.start({
+    store: await openLocalStore(name),
+    transport: server,
+    writer: server,
+    rules: probeRules,
+    deviceId: 'device',
+    entities: ['notes'],
+    onSignedOut: () => {},
+  })
+  const newer = await openLocalStore(name)
+
+  await newer.writeMeta('entities', 'letters,notes')
+  newer.close()
+  await started.synchronise()
+
+  expect(started.status().troubleKind).toBe('outdated')
 
   return started
 }
@@ -794,6 +824,35 @@ describe('"Abgleich" in the office', () => {
     ).toBeNull()
   })
 
+  /**
+   * A tab of a newer build pulls for the store (opengewerk#899). The strip
+   * over the screen offers to load it again; the card and the line under the
+   * entry say it as well, and not that nothing waits.
+   */
+  it('says to load the page again where a newer build pulls for the store', async () => {
+    const started = await outdatedClient()
+
+    inOffice(started)
+
+    const state = within(screen.getByRole('region', { name: 'Stand des Abgleichs' }))
+
+    expect(
+      state.getByText(
+        'In einem anderen Tab läuft eine neuere Fassung. Bitte diese Seite neu laden.',
+      ),
+    ).toBeTruthy()
+    expect(state.queryByText('Nichts wartet, nichts zu entscheiden')).toBeNull()
+
+    render(
+      <SyncProvider client={started}>
+        <SyncNote />
+      </SyncProvider>,
+    )
+
+    // Red, as when the exchange fails: somebody has to load the page.
+    expect(screen.getByText('Bitte Seite neu laden').className).toContain('text-conflict')
+  })
+
   it('says when there is no connection, even when nothing waits', async () => {
     const started = await client()
 
@@ -1130,6 +1189,32 @@ describe('"Konflikte" on site', () => {
 
     expect(await screen.findByRole('region', { name: 'Regal drei umräumen' })).toBeTruthy()
     expect(screen.getByText(`Zuletzt abgeglichen um ${clockTime(now)}.`)).toBeTruthy()
+  })
+
+  /**
+   * A tab of a newer build pulls for the store (opengewerk#899). The strip
+   * says so, and this screen does not show the strip: it says it itself, and
+   * trying again gives way to loading the page.
+   */
+  it('says to load the page again where a newer build pulls for the store', async () => {
+    const started = await outdatedClient()
+    const reload = vi.fn()
+
+    vi.stubGlobal('location', { ...globalThis.location, reload })
+    onSite(started)
+
+    const state = within(screen.getByRole('list', { name: 'Stand des Abgleichs' }))
+
+    expect(
+      state.getByText(
+        'In einem anderen Tab läuft eine neuere Fassung. Bitte diese Seite neu laden.',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Erneut versuchen' })).toBeNull()
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Neu laden' }))
+
+    expect(reload).toHaveBeenCalled()
   })
 
   it('puts each field with the two versions one over the other', async () => {
