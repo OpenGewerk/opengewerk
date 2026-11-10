@@ -201,6 +201,9 @@ describe('what a device holds of the server, with more than one person', () => {
       StoreTakenOver,
     )
     await expect(anna.readAll('site_accesses')).rejects.toThrow(StoreTakenOver)
+    // The ways the client reads and takes the store since opengewerk#899.
+    await expect(anna.readPulled(['site_accesses'])).rejects.toThrow(StoreTakenOver)
+    await expect(anna.claimPull('site_accesses')).rejects.toThrow(StoreTakenOver)
     await expect(anna.writeMeta('cursor', 42)).rejects.toThrow(StoreTakenOver)
 
     await expect(anna.keepFile(photo, false)).rejects.toThrow(StoreTakenOver)
