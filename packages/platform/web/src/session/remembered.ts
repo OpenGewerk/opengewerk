@@ -180,6 +180,22 @@ function keptChoice(tenant: unknown): TenantChoice | null {
   }
 }
 
+/**
+ * The account signed in on this browser since the one a page works for
+ * (`account`), or null (opengewerk#905). Every tab keeps the account it last
+ * heard of in the one place the browser shares (`rememberAccount`), and a tab
+ * still open for `account` after somebody else signed in finds the other one
+ * there. Null where the page names no account, nobody is kept, or it is the
+ * page's own.
+ */
+export function signedInBesides(account: string | null): string | null {
+  const remembered = rememberedAccount()
+
+  return account !== null && remembered !== null && remembered.userId !== account
+    ? remembered.userId
+    : null
+}
+
 /** When the person changes: on signing out, and when the server says nobody is signed in. */
 export function forgetSignIn(): void {
   forgetAccount()

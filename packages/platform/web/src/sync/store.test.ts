@@ -189,6 +189,44 @@ describe('what a device holds of the server, with more than one person', () => {
     ben.close()
   })
 
+  /**
+   * A sign out of Anna after Ben signed in on the browser and took the store
+   * over (opengewerk#905): her change and her photo go, his outbox and what
+   * was pulled for him stay.
+   */
+  it('lets go of what one person left waiting in the store of the account signed in since, and of nothing else', async () => {
+    const tenant = aTenant()
+    const anna = await openLocalStore(tenant, 'anna')
+
+    await anna.queue(aNote('op-anna', 'Leiter im Flur'))
+    await anna.keepFile(photo, true)
+
+    const ben = await openLocalStore(tenant, 'ben')
+
+    await ben.queue(aNote('op-ben', 'Kabel im Keller'))
+    await ben.write('site_accesses', [{ id: 'z-2', value: '0815' }])
+
+    const any = await openLocalStore(tenant)
+
+    expect(await any.whose()).toBe('ben')
+    expect(await any.waitingOf('anna')).toBe(2)
+    expect(await any.waitingOf('ben')).toBe(1)
+
+    // For anybody else than whose the store is, nothing is taken.
+    expect(await any.leave('anna', 'carla')).toBe(false)
+    expect(await any.leave('ben', 'ben')).toBe(false)
+    expect(await any.waitingOf('anna')).toBe(2)
+
+    expect(await any.leave('anna', 'ben')).toBe(true)
+    expect(await any.waitingOf('anna')).toBe(0)
+    expect(await any.readFile(photo.sha256)).toBeNull()
+    expect((await ben.readOutbox()).map((operation) => operation.id)).toEqual(['op-ben'])
+    expect(await ben.readAll('site_accesses')).toEqual([{ id: 'z-2', value: '0815' }])
+    anna.close()
+    ben.close()
+    any.close()
+  })
+
   it('reads and writes nothing more of the server for a tab still open for the account before', async () => {
     const tenant = aTenant()
     const anna = await openLocalStore(tenant, 'anna')

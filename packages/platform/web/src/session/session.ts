@@ -18,6 +18,7 @@ import {
   rememberedAccount,
   rememberedTenants,
   rememberTenants,
+  signedInBesides,
   unreachable,
 } from './remembered.js'
 
@@ -593,6 +594,28 @@ export async function revokeDevice(sessionId: string): Promise<void> {
  * browser any more, and the other one is not this sign out's to end.
  */
 export async function signOut(account: string | null = pageAccount()): Promise<void> {
+  // Another account signed in on this browser since (opengewerk#905): the
+  // account kept, its tenants and the id of its session are theirs, and so is
+  // the cookie. Nothing of it is forgotten, and no sign out is kept for the
+  // next start, which would end a sign in of this account made since. The
+  // server is asked all the same: it refuses for the other session
+  // (opengewerk#882), and ends this account's where the cookie is its own
+  // again before the page has heard of it.
+  if (signedInBesides(account) !== null) {
+    try {
+      await request('/auth/sign-out', {
+        method: 'POST',
+        headers: accountHeader(account ?? undefined),
+      })
+    } catch (error) {
+      if (!isOtherAccount(error)) {
+        throw error
+      }
+    }
+
+    return
+  }
+
   // First, so that a sign out without a network still leaves nothing for the
   // next start to open on its own (#123), nor the roles of whoever it was (#184).
   const signedIn = rememberedAccount() !== null

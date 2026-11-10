@@ -3,11 +3,30 @@ import { useState } from 'react'
 
 import { useApplication } from '../application.js'
 import { Button } from '../components/button.js'
-import { rememberedAccount, rememberedTenants } from '../session/remembered.js'
+import { rememberedAccount, rememberedTenants, signedInBesides } from '../session/remembered.js'
 import { signOut } from '../session/session.js'
 import type { SyncClient } from '../sync/client.js'
-import { deleteLocalStore, storesOnDevice, waitingIn } from '../sync/store.js'
+import {
+  deleteLocalStore,
+  type Leaving,
+  leaveLocalStore,
+  storesOnDevice,
+  waitingIn,
+} from '../sync/store.js'
 import { pageAccount } from '../sync/transport.js'
+
+/**
+ * A sign out of `account` while another account is signed in on the browser
+ * since (opengewerk#905), or undefined. The stores of the other account and
+ * what the browser keeps of its sign in are then theirs: deleting them took
+ * what waited there for the other account to send, and the account and
+ * tenants its tab opens with without a network.
+ */
+function leavingFor(account: string | null): Leaving | undefined {
+  const keptFor = signedInBesides(account)
+
+  return account === null || keptFor === null ? undefined : { person: account, keptFor }
+}
 
 /** "1 Änderung" or "3 Änderungen". */
 function changes(count: number): string {
@@ -102,11 +121,12 @@ export function SignOutButton({
 
     try {
       const stores = await storesOnDevice(named())
+      const leaving = leavingFor(account)
 
       client?.stop()
 
       for (const tenant of stores) {
-        await deleteLocalStore(tenant)
+        await (leaving === undefined ? deleteLocalStore(tenant) : leaveLocalStore(tenant, leaving))
       }
     } catch {
       setTrouble('Die Daten auf diesem Gerät ließen sich nicht vollständig löschen.')
@@ -154,10 +174,13 @@ export function SignOutButton({
       // No network. What is left is counted below.
     }
 
+    // What the sign out would lose: in the store of another account signed
+    // in since, only what this account left waiting there.
+    const leaving = leavingFor(account)
     let unsent = 0
 
     for (const tenant of await storesOnDevice(named())) {
-      unsent += await waitingIn(tenant)
+      unsent += await waitingIn(tenant, leaving)
     }
 
     if (unsent > 0) {

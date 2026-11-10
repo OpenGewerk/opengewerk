@@ -366,6 +366,34 @@ describe('signing in and out', () => {
     expect(asked.at(-1)).toMatchObject({ path: '/auth/sign-out', method: 'POST' })
   })
 
+  /**
+   * A tab still open for Anna after Ben signed in on the browser
+   * (opengewerk#905): what the browser keeps of his sign in stays, his
+   * account, his tenants and the id of his session, and no sign out is kept
+   * for the next start.
+   */
+  it('leaves what the browser keeps of the account signed in since in another tab', async () => {
+    answers = () => aSession('s-ben', 'ben', -60_000)
+
+    expect(await currentAccount()).toMatchObject({ userId: 'ben' })
+    rememberTenants([choice])
+
+    answers = () => new TypeError('Failed to fetch')
+
+    await expect(signOut('anna')).rejects.toThrow(TypeError)
+
+    expect(rememberedAccount()?.userId).toBe('ben')
+    expect(rememberedTenants()?.map((each) => each.id)).toEqual([tenantId])
+    expect(globalThis.localStorage.getItem('opengewerk.session')).toBe('s-ben')
+    expect(globalThis.localStorage.getItem('opengewerk.signedOut')).toBeNull()
+
+    // A sign out of the account the browser keeps forgets it, as ever.
+    await expect(signOut('ben')).rejects.toThrow(TypeError)
+
+    expect(rememberedAccount()).toBeNull()
+    expect(rememberedTenants()).toBeNull()
+  })
+
   it('keeps a session of somebody else after a second sign out without a network', async () => {
     answers = () => aSession('s-anna', 'anna', -10 * 60_000)
 

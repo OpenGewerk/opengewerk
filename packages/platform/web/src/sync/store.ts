@@ -178,6 +178,25 @@ export interface LocalStore {
    */
   readPulled(entities: readonly string[]): Promise<PulledState>
 
+  /**
+   * The account the store is kept for (`records-owner`), or null for a store
+   * kept for nobody yet. A sign out asks it, and leaves the store of an
+   * account signed in on the browser since to that account (opengewerk#905).
+   */
+  whose(): Promise<string | null>
+  /** How many changes and files wait in the store for `person` alone (opengewerk#905). */
+  waitingOf(person: string): Promise<number>
+  /**
+   * What `person` left waiting in the store, gone, while the store is kept
+   * for another account, `keptFor`, in one transaction (opengewerk#905): the
+   * changes and the files to send recorded for them. A sign out of `person`
+   * takes these along from the store of an account signed in on the browser
+   * since, and leaves the rest to that account. The answer is false, and
+   * nothing is written, where the store is kept for anybody else by now or
+   * `keptFor` is `person`; the sign out then deletes the store as any other.
+   */
+  leave(person: string, keptFor: string): Promise<boolean>
+
   /** What waits to be sent: of the person the store is open for, or all of it without one. */
   readOutbox(): Promise<readonly Operation[]>
   queue(operation: Operation): Promise<void>
@@ -445,6 +464,11 @@ function fromStored(row: unknown): Operation {
  * where counting before a sign out still finds it, and goes with the sign
  * out. Opened without an owner, the store answers with everything.
  */
+/** The person a change or a file to send was recorded for, or undefined for nobody. */
+function recordedFor(row: unknown): string | undefined {
+  return (row as { owner?: string }).owner
+}
+
 function sendableBy(row: unknown, owner: string | undefined): boolean {
   const recordedFor = (row as { owner?: string }).owner
 
@@ -547,14 +571,56 @@ export async function storesOnDevice(named: readonly string[] = []): Promise<str
   return [...new Set([...listed, ...openedStores(), ...named])]
 }
 
-/** How many changes wait in the store of a tenant and have not reached the server. */
-export async function waitingIn(tenantId: string): Promise<number> {
+/**
+ * A sign out of `person` while another account, `keptFor`, is signed in on
+ * the browser since (opengewerk#905).
+ */
+export interface Leaving {
+  readonly person: string
+  readonly keptFor: string
+}
+
+/**
+ * How many changes wait in the store of a tenant and have not reached the
+ * server: all of them, or, for a sign out that leaves the store to the
+ * account it is kept for (`leaving`), those of the person signing out.
+ */
+export async function waitingIn(tenantId: string, leaving?: Leaving): Promise<number> {
   const store = await openLocalStore(tenantId)
 
   try {
+    if (
+      leaving !== undefined &&
+      leaving.person !== leaving.keptFor &&
+      (await store.whose()) === leaving.keptFor
+    ) {
+      return await store.waitingOf(leaving.person)
+    }
+
     return (await store.readOutbox()).length + (await store.countWaitingFiles())
   } finally {
     store.close()
+  }
+}
+
+/**
+ * The store of a tenant at a sign out of `leaving.person` while another
+ * account is signed in on the browser since (opengewerk#905). Kept for that
+ * account, it loses what the person left waiting in it and stays theirs;
+ * every other store is deleted (`deleteLocalStore`), as at any sign out.
+ */
+export async function leaveLocalStore(tenantId: string, leaving: Leaving): Promise<void> {
+  const store = await openLocalStore(tenantId)
+  let kept: boolean
+
+  try {
+    kept = await store.leave(leaving.person, leaving.keptFor)
+  } finally {
+    store.close()
+  }
+
+  if (!kept) {
+    await deleteLocalStore(tenantId)
   }
 }
 
@@ -915,6 +981,63 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
         settled: typeof settled?.value === 'string' ? settled.value : null,
         rows,
       }
+    },
+
+    async whose() {
+      const transaction = transact([metaStore], 'readonly')
+      const row = await promised<MetaRow | undefined>(
+        transaction.objectStore(metaStore).get(ownerKey),
+      )
+
+      return typeof row?.value === 'string' ? row.value : null
+    },
+
+    async waitingOf(person) {
+      const transaction = transact([outboxStore, uploadStore], 'readonly')
+      const [queued, uploads] = await Promise.all([
+        promised<unknown[]>(transaction.objectStore(outboxStore).getAll()),
+        promised<unknown[]>(transaction.objectStore(uploadStore).getAll()),
+      ])
+
+      return [...queued, ...uploads].filter((row) => recordedFor(row) === person).length
+    },
+
+    /** See `LocalStore.leave`: whose the store is asked in the transaction that takes the rows. */
+    async leave(person, keptFor) {
+      const transaction = transact([metaStore, outboxStore, uploadStore, fileStore], 'readwrite')
+      const row = await promised<MetaRow | undefined>(
+        transaction.objectStore(metaStore).get(ownerKey),
+      )
+
+      if (keptFor === person || row?.value !== keptFor) {
+        transaction.abort()
+
+        return false
+      }
+
+      const outbox = transaction.objectStore(outboxStore)
+      const uploads = transaction.objectStore(uploadStore)
+      const [queued, waiting] = await Promise.all([
+        promised<unknown[]>(outbox.getAll()),
+        promised<UploadRow[]>(uploads.getAll()),
+      ])
+
+      for (const each of queued) {
+        if (recordedFor(each) === person) {
+          outbox.delete((each as { id: string }).id)
+        }
+      }
+
+      for (const each of waiting) {
+        if (each.owner === person) {
+          uploads.delete(each.sha256)
+          transaction.objectStore(fileStore).delete(each.sha256)
+        }
+      }
+
+      await finished(transaction)
+
+      return true
     },
 
     async readOutbox() {
