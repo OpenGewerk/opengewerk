@@ -479,16 +479,16 @@ export class SyncClient {
     client.kinds = list
     client.pulledFor = pulled.narrowed
 
-    // The cursor first. The other way round, a device closed in between would
-    // keep a list that vouches for a cursor nobody checked. And the list on
-    // every change, a shorter one included: a build that knows less moves the
-    // cursor past the rows it drops, and the next longer list must not find a
-    // record that says otherwise.
+    // A cursor that does not stand goes back to the start with the list and
+    // nothing settled, in one step (`claimPull`): kept apart, a device closed in
+    // between kept a list that vouches for a cursor nobody checked, and a
+    // settled answer of the build before said every row of a kind it never
+    // pulled was there. And the list on every change, a shorter one included:
+    // a build that knows less moves the cursor past the rows it drops, and the
+    // next longer list must not find a record that says otherwise.
     if (!stands) {
-      await store.writeMeta(cursorKey, client.cursor)
-    }
-
-    if (known !== list) {
+      await store.claimPull(list)
+    } else if (known !== list) {
       await store.writeMeta(entitiesKey, list)
     }
 
@@ -512,7 +512,7 @@ export class SyncClient {
     }
 
     client.narrowedNow =
-      pulled.settled !== null && pulled.settled !== ''
+      stands && pulled.settled !== null && pulled.settled !== ''
         ? (JSON.parse(pulled.settled) as Record<string, string>)
         : null
     client.regroup()
@@ -1221,10 +1221,13 @@ export class SyncClient {
         outdated = true
       }
 
-      if (written === 'fewerKinds') {
+      if (written === 'fewerKinds' || written === 'unchecked') {
         // A tab of an older build pulled since and moved the cursor past rows
-        // of the kinds it does not know. This build takes the store back for
-        // its own and asks again from the start (`cursorStands` at a start).
+        // of the kinds it does not know, one of this generation that keeps
+        // the store for fewer kinds or one from before that checks nothing
+        // and set the cursor itself. Its cursor is no cursor to go on from:
+        // this build takes the store back for its own and asks again from the
+        // start (`cursorStands` at a start).
         await this.store.claimPull(this.kinds)
         this.cursor = 0
         this.narrowedNow = null
@@ -1232,7 +1235,7 @@ export class SyncClient {
         await this.catchUp()
       }
 
-      if (written === 'fewerKinds' || written === 'moved') {
+      if (written === 'fewerKinds' || written === 'unchecked' || written === 'moved') {
         if ((guard += 1) > 100) {
           return outdated
         }

@@ -404,6 +404,40 @@ describe('the pulls of the tabs of one browser', () => {
     store.close()
   })
 
+  /**
+   * A tab of a build from before checked writes sets the cursor itself, past
+   * rows of kinds it does not know (opengewerk#899). A page goes in only while
+   * the cursor is the one the last checked write left.
+   */
+  it('writes no page over a cursor a writer that checks nothing set since', async () => {
+    const store = await openLocalStore(aTenant(), 'anna')
+    const page = (from: number, to: number) => ({
+      changes: [{ entity: 'visits', rows: [visit('v-1')] }],
+      from,
+      to,
+      narrowed: null,
+      settled: null,
+      entities: '',
+    })
+
+    // A store kept before writes were checked takes the first page.
+    await store.writeMeta('cursor', 3)
+    expect(await store.writePulled(page(3, 5))).toBe('written')
+    expect(await store.readMeta('cursor-checked')).toBe(5)
+
+    // The tab from before moves the cursor on its own.
+    await store.writeMeta('cursor', 12)
+
+    expect(await store.writePulled(page(12, 15))).toBe('unchecked')
+    expect(await store.readMeta('cursor')).toBe(12)
+
+    await store.claimPull('')
+
+    expect(await store.readMeta('cursor-checked')).toBe(0)
+    expect(await store.writePulled(page(0, 15))).toBe('written')
+    store.close()
+  })
+
   it('is taken back for the kinds of a build from the start, with nothing settled', async () => {
     const store = await openLocalStore(aTenant(), 'anna')
 

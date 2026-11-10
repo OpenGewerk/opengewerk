@@ -1428,6 +1428,78 @@ describe('a device handed to somebody who sees less, or more', () => {
     older.stop()
   })
 
+  /**
+   * A tab of a build from before checked writes knows visits alone, and sets
+   * the cursor itself past the shelves (opengewerk#899). The tab of this build
+   * found the cursor moved, took it over and never got the shelves; it starts
+   * the store again instead.
+   */
+  it('takes the store back from a tab of a build that checks nothing and moved the cursor', async () => {
+    const newerServer = holdingUpTo12([
+      { entity: 'visits', rows: [mine] },
+      { entity: 'shelves', rows: [shelf] },
+    ])
+    const newer = await aTabOf('build-from-before', ['shelves', 'visits'], newerServer)
+    // The tab from before: its rows and its cursor, written without a check.
+    const before = await openLocalStore('build-from-before')
+
+    await before.write('visits', [mine])
+    await before.writeMeta('cursor', 12)
+    before.close()
+
+    await newer.synchronise()
+
+    expect(newerServer.asked).toEqual([0, 0])
+    expect(newer.list('shelves').map((entry) => entry['id'])).toEqual(['s-1'])
+    newer.stop()
+  })
+
+  /**
+   * A store an earlier version kept, opened by this one (opengewerk#899). Its
+   * cursor is taken as checked once, so that no device pulls everything again
+   * after the update.
+   */
+  it('goes on from the cursor of a store kept before writes were checked', async () => {
+    const server = holdingUpTo12([{ entity: 'visits', rows: [mine] }])
+    const store = await openLocalStore('kept-before-checks')
+
+    await store.writeMeta('entities', 'shelves,visits')
+    await store.writeMeta('cursor', 12)
+    store.close()
+
+    const device = await aTabOf('kept-before-checks', ['shelves', 'visits'], server)
+
+    await device.synchronise()
+
+    expect(server.asked).toEqual([12])
+    device.stop()
+  })
+
+  /**
+   * A build that knows a kind more opens a store an older build kept, with
+   * the answer of its last pull settled (#444). Until it has pulled from the
+   * start, it does not say it holds every shelf (opengewerk#899).
+   */
+  it('says it holds no kind as a whole when it starts a store from the start for its kinds', async () => {
+    const store = await openLocalStore('settled-by-older')
+
+    await store.writeMeta('entities', 'visits')
+    await store.writeMeta('cursor', 9)
+    await store.writeMeta('narrowed-settled', JSON.stringify({ shelves: 'all', visits: 'all' }))
+    store.close()
+
+    const device = await aTabOf('settled-by-older', ['shelves', 'visits'], new Recorded())
+
+    expect(device.holdsAll('shelves')).toBe(false)
+
+    const again = await openLocalStore('settled-by-older')
+
+    expect(await again.readMeta('narrowed-settled')).toBe('')
+    expect(await again.readMeta('cursor')).toBe(0)
+    again.close()
+    device.stop()
+  })
+
   it('takes the store back for its kinds when a tab of an older build pulled since', async () => {
     const newerServer = holdingUpTo12([
       { entity: 'visits', rows: [mine] },

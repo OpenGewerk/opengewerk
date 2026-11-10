@@ -93,14 +93,18 @@ export interface PulledPage {
  * What became of a page (`writePulled`): written; not written because the
  * store moved since the pull began; or not written because the store is kept
  * for other kinds of record than this build knows, of a build that knows more
- * (`newerBuild`) or of one that knows fewer and pulled since (`fewerKinds`).
+ * (`newerBuild`) or of one that knows fewer and pulled since (`fewerKinds`);
+ * or not written because a writer that checks nothing set the cursor since
+ * the last checked write (`unchecked`, `checkedKey`).
  */
-export type PageWritten = 'written' | 'moved' | 'newerBuild' | 'fewerKinds'
+export type PageWritten = 'written' | 'moved' | 'newerBuild' | 'fewerKinds' | 'unchecked'
 
 /** Where the pulls of the store stand, and its rows, as one transaction read them (`readPulled`). */
 export interface PulledState {
   /** The cursor, or null where none is kept. */
   readonly cursor: number | null
+  /** The cursor of the last checked write (`checkedKey`), or null where none is kept. */
+  readonly checked: number | null
   /** The narrowing kept (`narrowedKey`), or null. */
   readonly narrowed: string | null
   /** What the rows add up to (`settledKey`), or null; empty while a pull from the start runs. */
@@ -259,11 +263,22 @@ export const settledKey = 'narrowed-settled'
 export const entitiesKey = 'entities'
 
 /**
+ * The cursor as the last checked write left it (`writePulled`,
+ * `restartPull`, `claimPull`, opengewerk#899). A cursor that differs from it
+ * was set by a writer that checks nothing, a tab of a build from before, which
+ * may have moved it past rows of kinds it does not know. A store kept before
+ * writes were checked has none, and its cursor is taken as it stands until
+ * the first checked write, so that no device pulls everything again after
+ * the update.
+ */
+export const checkedKey = 'cursor-checked'
+
+/**
  * What the meta store holds of the pulls, and goes with the records for
  * another account. Everything else in it the application keeps for itself
  * (`SyncClient.keep`), and each such value says itself whose it is.
  */
-const pulledKeys: readonly string[] = [cursorKey, narrowedKey, settledKey, entitiesKey]
+const pulledKeys: readonly string[] = [cursorKey, narrowedKey, settledKey, entitiesKey, checkedKey]
 const fileStore = 'files'
 const uploadStore = 'uploads'
 
@@ -667,17 +682,20 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
       const meta = transaction.objectStore(metaStore)
       const kinds = await promised<MetaRow | undefined>(meta.get(entitiesKey))
       const cursor = await promised<MetaRow | undefined>(meta.get(cursorKey))
+      const checked = await promised<MetaRow | undefined>(meta.get(checkedKey))
       const narrowed = await promised<MetaRow | undefined>(meta.get(narrowedKey))
       const kept = kindsOf(kinds?.value)
       const known = kindsOf(page.entities)
+      const stands = cursor?.value ?? 0
       const answer: PageWritten = [...kept].some((kind) => !known.has(kind))
         ? 'newerBuild'
         : [...known].some((kind) => !kept.has(kind))
           ? 'fewerKinds'
-          : (cursor?.value ?? 0) !== page.from ||
-              (page.narrowed !== null && narrowed?.value !== page.narrowed)
-            ? 'moved'
-            : 'written'
+          : checked !== undefined && checked.value !== stands
+            ? 'unchecked'
+            : stands !== page.from || (page.narrowed !== null && narrowed?.value !== page.narrowed)
+              ? 'moved'
+              : 'written'
 
       if (answer !== 'written') {
         transaction.abort()
@@ -696,6 +714,7 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
       }
 
       meta.put({ key: cursorKey, value: page.to } satisfies MetaRow)
+      meta.put({ key: checkedKey, value: page.to } satisfies MetaRow)
 
       if (page.settled !== null) {
         meta.put({ key: settledKey, value: page.settled } satisfies MetaRow)
@@ -706,13 +725,14 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
       return 'written'
     },
 
-    /** See `LocalStore.claimPull`: kinds, cursor and settled in one transaction. */
+    /** See `LocalStore.claimPull`: kinds, cursor, checked cursor and settled in one transaction. */
     async claimPull(entities) {
       const transaction = await held([metaStore], 'readwrite')
       const meta = transaction.objectStore(metaStore)
 
       meta.put({ key: entitiesKey, value: entities } satisfies MetaRow)
       meta.put({ key: cursorKey, value: 0 } satisfies MetaRow)
+      meta.put({ key: checkedKey, value: 0 } satisfies MetaRow)
       meta.put({ key: settledKey, value: '' } satisfies MetaRow)
 
       await finished(transaction)
@@ -745,6 +765,7 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
 
       meta.put({ key: settledKey, value: '' } satisfies MetaRow)
       meta.put({ key: cursorKey, value: 0 } satisfies MetaRow)
+      meta.put({ key: checkedKey, value: 0 } satisfies MetaRow)
       meta.put({ key: narrowedKey, value: narrowed } satisfies MetaRow)
 
       await finished(transaction)
@@ -757,6 +778,7 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
       const transaction = await held([recordStore, metaStore], 'readonly')
       const meta = transaction.objectStore(metaStore)
       const cursor = await promised<MetaRow | undefined>(meta.get(cursorKey))
+      const checked = await promised<MetaRow | undefined>(meta.get(checkedKey))
       const narrowed = await promised<MetaRow | undefined>(meta.get(narrowedKey))
       const settled = await promised<MetaRow | undefined>(meta.get(settledKey))
       const index = transaction.objectStore(recordStore).index('entity')
@@ -773,6 +795,7 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
 
       return {
         cursor: typeof cursor?.value === 'number' ? cursor.value : null,
+        checked: typeof checked?.value === 'number' ? checked.value : null,
         narrowed: typeof narrowed?.value === 'string' ? narrowed.value : null,
         settled: typeof settled?.value === 'string' ? settled.value : null,
         rows,
