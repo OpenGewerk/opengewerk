@@ -2,8 +2,9 @@ name: Security-Review
 
 # The security review of the organisation (OpenGewerk/.github,
 # .github/workflows/security-review.yml) for every pull request: with a shell
-# in a sandbox on pull_request for a branch of this repository by a member, by
-# reading alone on pull_request_target for anything else. A new push cancels
+# in a sandbox on pull_request for a branch of this repository by a member or
+# by the coding agent of CodeRabbit (never approved), by reading alone on
+# pull_request_target for anything else, Dependabot included. A new push cancels
 # the run of the push before, so only the newest head is reviewed. The call
 # pins a commit of that workflow on its main: a change there reaches this
 # repository with a pull request here, which moves the commit.
