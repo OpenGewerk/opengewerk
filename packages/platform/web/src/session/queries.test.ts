@@ -6,10 +6,10 @@ import {
 } from '@tanstack/react-query'
 import { render } from '@testing-library/react'
 import { createElement } from 'react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { RequestRefused } from '../sync/transport.js'
-import { forgetOnAccountChange, queries, QueryProvider } from './queries.js'
+import { request, RequestRefused } from '../sync/transport.js'
+import { askAgainOnOtherAccount, forgetOnAccountChange, queries, QueryProvider } from './queries.js'
 
 /**
  * What the cache does with a question that failed. It asks once more where
@@ -137,5 +137,123 @@ describe('the answers of a page when another account signs in on it', () => {
     expect(client.getQueryData(['tenants'])).toBeUndefined()
 
     stop()
+  })
+})
+
+/**
+ * The account a page works for (opengewerk#882) is asked again when the
+ * server says another one is signed in on the browser; which one the page
+ * names is the gate's (`boot.test.tsx`).
+ */
+describe('the account a page works for', () => {
+  const someone = (userId: string) => ({
+    userId,
+    email: `${userId}@example.de`,
+    name: userId,
+    tenantId: 't-1',
+    twoFactorEnabled: false,
+    emailVerified: true,
+    signInMethod: 'password',
+    secondFactor: false,
+    deviceId: null,
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('is asked again when the server says another one is signed in, and not over another refusal', async () => {
+    const client = new QueryClient()
+    let asked = 0
+
+    client.setQueryDefaults(['account'], {
+      queryFn: () => {
+        asked += 1
+
+        return someone('bert')
+      },
+    })
+    client.setQueryData(['account'], someone('anna'))
+
+    const observer = new QueryObserver(client, { queryKey: ['account'], staleTime: Infinity })
+    const unsubscribe = observer.subscribe(() => {})
+    const stop = askAgainOnOtherAccount(client)
+    let code = 'in_use'
+
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ code, message: 'Abgelehnt.' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    )
+
+    await expect(request('/probe', { method: 'POST' })).rejects.toBeInstanceOf(RequestRefused)
+    expect(asked).toBe(0)
+
+    code = 'other_account'
+    await expect(request('/probe', { method: 'POST' })).rejects.toBeInstanceOf(RequestRefused)
+    await vi.waitFor(() => {
+      expect(client.getQueryData<{ userId: string }>(['account'])?.userId).toBe('bert')
+    })
+    expect(asked).toBe(1)
+
+    stop()
+    unsubscribe()
+  })
+
+  /**
+   * The refusal may come from within the question itself, from the sign out
+   * it ends: asked over again on every refusal, it asked and was refused
+   * without end.
+   */
+  it('is asked once while the question is under way, however many refusals come meanwhile', async () => {
+    const client = new QueryClient()
+    let asked = 0
+    let answer: (account: unknown) => void = () => {}
+
+    client.setQueryDefaults(['account'], {
+      queryFn: () => {
+        asked += 1
+
+        return new Promise((resolve) => {
+          answer = resolve
+        })
+      },
+    })
+    // Known, and being asked again: a page that came back into view.
+    client.setQueryData(['account'], someone('anna'))
+
+    const observer = new QueryObserver(client, { queryKey: ['account'], staleTime: Infinity })
+    const unsubscribe = observer.subscribe(() => {})
+    const stop = askAgainOnOtherAccount(client)
+
+    void client.refetchQueries({ queryKey: ['account'] })
+    expect(asked).toBe(1)
+
+    vi.stubGlobal('fetch', () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ code: 'other_account', message: 'Anderes Konto.' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    )
+
+    for (let refusal = 0; refusal < 3; refusal += 1) {
+      await expect(request('/auth/sign-out', { method: 'POST' })).rejects.toBeInstanceOf(
+        RequestRefused,
+      )
+    }
+
+    answer(someone('bert'))
+    await vi.waitFor(() => {
+      expect(client.getQueryData<{ userId: string }>(['account'])?.userId).toBe('bert')
+    })
+    expect(asked).toBe(1)
+
+    stop()
+    unsubscribe()
   })
 })

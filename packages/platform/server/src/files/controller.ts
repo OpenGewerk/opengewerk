@@ -16,7 +16,6 @@ import { fileHashProblem, fileSizeProblem, largestFileBytes } from '@opengewerk/
 import { and, eq } from 'drizzle-orm'
 import type { Request } from 'express'
 
-import { heldForTheSession } from '../api/account-of-tab.js'
 import { RequiresPermission } from '../api/authorization.js'
 import { bodyBytesOf } from '../api/body-bytes.js'
 import { AcceptsBody } from '../api/origin.js'
@@ -94,16 +93,10 @@ function filesController(right: string): Type<unknown> {
       }
 
       // A photo that waits for one person, sent while another is signed in
-      // on the same browser, as at `POST /sync`: it would count against the
-      // one now and leave the list of the one before. A client that names no
-      // account, one of a build from before, is taken as it was.
-      heldForTheSession(
-        request.header('x-account'),
-        identity.userId,
-        'Diese Datei gehört zu Änderungen eines anderen Kontos als dem, das hier ' +
-          'angemeldet ist. Sie wartet auf dem Gerät, bis es sich wieder anmeldet.',
-      )
-
+      // on the same browser, would count against the one now and leave the
+      // list of the one before. The client names the person it waits for
+      // (`workingAsHeader`), and the guard refuses it for another account
+      // before this handler runs, as on every route.
       const body = await bodyBytesOf(request, largestFileBytes)
 
       if (body === null) {

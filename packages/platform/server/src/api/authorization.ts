@@ -8,10 +8,11 @@ import {
   UnauthorizedException,
 } from '@nestjs/common'
 import { Reflector } from '@nestjs/core'
-import { workingInHeader } from '@opengewerk/platform-domain'
+import { workingAsHeader, workingInHeader } from '@opengewerk/platform-domain'
 
 import { Database } from '../database/database.js'
 import { operatorAccess } from '../instance/access.js'
+import { heldForTheSession } from './account-of-tab.js'
 import {
   IDENTITY_SOURCE,
   identityProperty,
@@ -200,6 +201,8 @@ export class AuthorizationGuard implements CanActivate {
         throw new UnauthorizedException('Keine gültige Anmeldung.')
       }
 
+      heldForTheSession(headerOf(request, workingAsHeader), user.userId)
+
       const access = await operatorAccess(this.database, user.userId, user.sessionId)
 
       if (!access.operator) {
@@ -233,6 +236,8 @@ export class AuthorizationGuard implements CanActivate {
         throw new UnauthorizedException('Keine gültige Anmeldung.')
       }
 
+      heldForTheSession(headerOf(request, workingAsHeader), user.userId)
+
       request[userProperty] = user
 
       return true
@@ -243,6 +248,15 @@ export class AuthorizationGuard implements CanActivate {
     if (!identity) {
       throw new UnauthorizedException('Keine gültige Anmeldung.')
     }
+
+    // A page names the account it works for (opengewerk#882). Once somebody
+    // else signs in on the same browser, the cookie is theirs, and a tab still
+    // open for the one before would read and write under their name and with
+    // their rights. Refused before the tenant, which a tab of the
+    // other account may well share, and before anything is read or written;
+    // the page asks again who is signed in. Held the same way on the routes
+    // before a tenant and in the area of the instance above.
+    heldForTheSession(headerOf(request, workingAsHeader), identity.userId)
 
     // A page names the tenant it works in. A switch in another tab moves the
     // session and not this page, which would otherwise send its outbox into a

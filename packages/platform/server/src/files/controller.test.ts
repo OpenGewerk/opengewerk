@@ -300,7 +300,8 @@ describe('the bytes of a file', () => {
       .send(bytes)
       .expect(409)
 
-    expect((answer.body as { message: string }).message).toMatch(/anderen Kontos/)
+    // Refused by the guard, as every route is (opengewerk#882).
+    expect((answer.body as { message: string }).message).toMatch(/anderes Konto/)
     expect((answer.body as { code: string }).code).toBe('other_account')
 
     const { rows } = await admin.query(

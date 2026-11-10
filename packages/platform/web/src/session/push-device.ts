@@ -2,6 +2,7 @@ import { deviceName } from './device-name.js'
 import {
   type BrowserSubscription,
   pushOverview,
+  pushOverviewFor,
   subscribeDevice,
   unsubscribeDevice,
 } from './push.js'
@@ -241,18 +242,24 @@ export async function refreshPush(entry: string, name: string): Promise<void> {
  * next person on this device gets nothing of the last one's. Never in the way
  * of signing out: whatever fails, the session ends all the same, and the
  * server sends nothing to a device whose session is gone.
+ *
+ * For `account`, the one signing out (opengewerk#882), where the page names
+ * one. Another account signed in on the browser since keeps its row and the
+ * subscription of the browser: the server refuses the question for the one
+ * signing out, and nothing after it is done.
  */
-export async function leavePush(): Promise<void> {
+export async function leavePush(account?: string | null): Promise<void> {
   const subscription = await browserSubscription()
 
   if (!subscription) {
     return
   }
 
-  const mine = (await pushOverview()).devices.find((device) => device.thisSession)
+  const named = account ?? undefined
+  const mine = (await pushOverviewFor(named)).devices.find((device) => device.thisSession)
 
   if (mine) {
-    await unsubscribeDevice(mine.id)
+    await unsubscribeDevice(mine.id, named)
   }
 
   await subscription.unsubscribe()

@@ -1,8 +1,8 @@
-import type { TenantId } from '@opengewerk/platform-domain'
+import { type TenantId, workingAsHeader } from '@opengewerk/platform-domain'
 import { WebAuthnError } from '@simplewebauthn/browser'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { RequestRefused } from '../sync/transport.js'
+import { RequestRefused, workAs } from '../sync/transport.js'
 import { deviceIdentity } from './device.js'
 import { passkeyTrouble } from './passkeys.js'
 import {
@@ -65,10 +65,12 @@ interface Asked {
   readonly path: string
   readonly method: string
   readonly body: unknown
+  /** The account the request named (`workingAsHeader`), if any. */
+  readonly account: string | undefined
 }
 
 let asked: Asked[]
-let answers: (path: string) => Response | Error
+let answers: (path: string, account: string | undefined) => Response | Error
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -83,13 +85,16 @@ beforeEach(() => {
   answers = () => json({})
 
   vi.stubGlobal('fetch', (path: string, init?: RequestInit) => {
+    const account = (init?.headers as Record<string, string> | undefined)?.[workingAsHeader]
+
     asked.push({
       path,
       method: init?.method ?? 'GET',
       body: typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : null,
+      account,
     })
 
-    const answer = answers(path)
+    const answer = answers(path, account)
 
     return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer)
   })
@@ -97,6 +102,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  workAs(null)
 })
 
 describe('who is signed in', () => {
@@ -400,6 +406,97 @@ describe('signing in and out', () => {
 
     expect(await currentAccount()).toBeNull()
     expect(asked.at(-1)).toMatchObject({ path: '/auth/sign-out', method: 'POST' })
+  })
+
+  /**
+   * A tab still open for the person before (opengewerk#882): another tab of
+   * the browser signed somebody else in since, and wrote the id of that
+   * session where every tab keeps it.
+   */
+  describe('from a tab of the person before', () => {
+    /** Bert's tab asks who is signed in and keeps the id of his session. */
+    async function bertSignedInElsewhere() {
+      answers = (path) =>
+        path.endsWith('/get-session') ? aSession('s-bert', 'bert', -60_000) : json({})
+
+      expect(await currentAccount()).toMatchObject({ userId: 'bert' })
+    }
+
+    /** The server: a sign out naming another account than Bert's is refused (`workingAsHeader`). */
+    function serverWithBert(path: string, named: string | undefined): Response {
+      if (path === '/auth/sign-out' && named !== undefined && named !== 'bert') {
+        return json({ code: 'other_account', message: 'Anderes Konto.' }, 409)
+      }
+
+      return path.endsWith('/get-session') ? aSession('s-bert', 'bert', -60_000) : json({})
+    }
+
+    it('ends no session of the person signed in since, heard or not', async () => {
+      await bertSignedInElsewhere()
+      workAs('anna')
+
+      // Anna signs out without a network, and the sign out waits for one.
+      answers = () => new TypeError('Failed to fetch')
+
+      await expect(signOut()).rejects.toThrow(TypeError)
+
+      // Back online, in a page that names nobody yet: the session is Bert's,
+      // and it stays.
+      workAs(null)
+      asked = []
+      answers = serverWithBert
+
+      expect(await currentAccount()).toMatchObject({ userId: 'bert' })
+      expect(asked.map((each) => each.path)).not.toContain('/auth/sign-out')
+    })
+
+    it('is refused for the account it names, ends nothing of the one now, and leaves nothing to end', async () => {
+      await bertSignedInElsewhere()
+      // The page moved on to Bert while Anna's sign out was under way.
+      workAs('bert')
+      answers = serverWithBert
+
+      await expect(signOut('anna')).resolves.toBeUndefined()
+      expect(asked.at(-1)).toMatchObject({ path: '/auth/sign-out', account: 'anna' })
+
+      asked = []
+
+      expect(await currentAccount()).toMatchObject({ userId: 'bert' })
+      expect(asked.map((each) => each.path)).not.toContain('/auth/sign-out')
+    })
+
+    it('leaves the session of the one now to a sign out kept without an account', async () => {
+      await bertSignedInElsewhere()
+      // A sign out an earlier version kept, with the id of Bert's session.
+      globalThis.localStorage.setItem('opengewerk.signedOut', JSON.stringify({ session: 's-bert' }))
+      workAs('anna')
+      asked = []
+      answers = serverWithBert
+
+      expect(await currentAccount()).toMatchObject({ userId: 'bert' })
+      expect(asked.filter((each) => each.path === '/auth/sign-out')).toHaveLength(1)
+
+      asked = []
+
+      expect(await currentAccount()).toMatchObject({ userId: 'bert' })
+      expect(asked.map((each) => each.path)).not.toContain('/auth/sign-out')
+    })
+  })
+
+  it('ends the session of the account a kept sign out names, and names it', async () => {
+    answers = (path) => (path.endsWith('/get-session') ? aSession('s-1', 'u-1', -60_000) : json({}))
+    await currentAccount()
+    workAs('u-1')
+    answers = () => new TypeError('Failed to fetch')
+
+    await expect(signOut()).rejects.toThrow(TypeError)
+
+    workAs(null)
+    asked = []
+    answers = (path) => (path.endsWith('/get-session') ? aSession('s-1', 'u-1', -60_000) : json({}))
+
+    expect(await currentAccount()).toBeNull()
+    expect(asked.at(-1)).toMatchObject({ path: '/auth/sign-out', method: 'POST', account: 'u-1' })
   })
 
   it('sends a recovery code without the spaces it was copied with', async () => {

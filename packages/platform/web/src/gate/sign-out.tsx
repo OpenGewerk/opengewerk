@@ -7,6 +7,7 @@ import { rememberedAccount, rememberedTenants } from '../session/remembered.js'
 import { signOut } from '../session/session.js'
 import type { SyncClient } from '../sync/client.js'
 import { deleteLocalStore, storesOnDevice, waitingIn } from '../sync/store.js'
+import { pageAccount } from '../sync/transport.js'
 
 /** "1 Änderung" or "3 Änderungen". */
 function changes(count: number): string {
@@ -71,7 +72,12 @@ export function SignOutButton({
   readonly primary?: boolean
 }) {
   const application = useApplication()
-  const [waiting, setWaiting] = useState<number | null>(null)
+  // The changes that would be lost, and the account that asked to sign out:
+  // the page may move on to another while the question stands (#882).
+  const [waiting, setWaiting] = useState<{
+    readonly count: number
+    readonly account: string | null
+  } | null>(null)
   const [busy, setBusy] = useState(false)
   const [trouble, setTrouble] = useState<string | null>(null)
 
@@ -84,7 +90,13 @@ export function SignOutButton({
     return [...(kept ? [kept] : []), ...(rememberedTenants() ?? []).map((tenant) => tenant.id)]
   }
 
-  async function leave() {
+  /**
+   * `account` is the one the page worked for when the person asked to sign
+   * out (opengewerk#882). Sending the outbox first may end with the answer
+   * that another account is signed in on the browser, and the page then moves
+   * on to that one; the sign out stays the one that was asked for.
+   */
+  async function leave(account: string | null) {
     setBusy(true)
     setTrouble(null)
 
@@ -107,9 +119,11 @@ export function SignOutButton({
     // while there is a session to take it off with, as the row a push
     // message would be sent to (#284). Never longer than a few seconds and
     // never in the way: a server sends nothing to a device whose session has
-    // ended anyway.
+    // ended anyway. For the account signing out, as the sign out itself.
+    const before = application.beforeSignOut
+
     await Promise.race([
-      quietly(application.beforeSignOut),
+      quietly(before ? () => before(account) : undefined),
       new Promise((resolve) => {
         setTimeout(resolve, 3_000)
       }),
@@ -119,11 +133,13 @@ export function SignOutButton({
     // same: nothing is left here, and `signOut` keeps when it happened, so
     // that the next start ends the session at the server before it opens
     // anything (`currentAccount`), or it runs out.
-    await signOut().catch(() => undefined)
+    await signOut(account).catch(() => undefined)
     onSignedOut()
   }
 
   async function ask() {
+    const account = pageAccount()
+
     setBusy(true)
     setTrouble(null)
 
@@ -140,20 +156,20 @@ export function SignOutButton({
     }
 
     if (unsent > 0) {
-      setWaiting(unsent)
+      setWaiting({ count: unsent, account })
       setBusy(false)
 
       return
     }
 
-    await leave()
+    await leave(account)
   }
 
   if (waiting !== null) {
     return (
       <div role="alert" className="flex flex-col gap-3 max-w-md">
         <p className="text-body font-semibold text-conflict">
-          {`Auf diesem Gerät liegen noch ${changes(waiting)}, die den Server nicht erreicht haben. Beim Abmelden gehen sie verloren.`}
+          {`Auf diesem Gerät liegen noch ${changes(waiting.count)}, die den Server nicht erreicht haben. Beim Abmelden gehen sie verloren.`}
         </p>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -166,7 +182,12 @@ export function SignOutButton({
           >
             Angemeldet bleiben
           </Button>
-          <Button tone="danger" wide={wide} disabled={busy} onClick={() => void leave()}>
+          <Button
+            tone="danger"
+            wide={wide}
+            disabled={busy}
+            onClick={() => void leave(waiting.account)}
+          >
             Trotzdem abmelden
           </Button>
         </div>

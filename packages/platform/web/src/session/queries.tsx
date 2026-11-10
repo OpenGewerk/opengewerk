@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider, queryOptions, useQuery } from '@tanstack/react-query'
 import { type ReactNode, useEffect } from 'react'
 
-import { isRefusedForGood } from '../sync/transport.js'
+import { isRefusedForGood, onOtherAccount } from '../sync/transport.js'
 import { type Account, availableTenants, currentAccount, legalTexts } from './session.js'
 
 /**
@@ -110,6 +110,24 @@ export function forgetOnAccountChange(client: QueryClient): () => void {
   })
 }
 
+/**
+ * Asks again who is signed in whenever the server says another account is
+ * signed in on the browser than the one this page named (opengewerk#882),
+ * from a screen as much as from the sync client. The answer moves the page
+ * to the one signed in now, as a look at the tab would have: the gate takes
+ * the screens of the one before away and names the new one (`Boot`).
+ * Returns the way to stop hearing.
+ *
+ * A question already under way is not asked over again: the refusal may come
+ * from within it, from a sign out it ends, and asking over again on every
+ * refusal would ask and be refused without end.
+ */
+export function askAgainOnOtherAccount(client: QueryClient): () => void {
+  return onOtherAccount(() => {
+    void client.invalidateQueries({ queryKey: accountQuery.queryKey }, { cancelRefetch: false })
+  })
+}
+
 export function QueryProvider({
   client,
   children,
@@ -118,6 +136,7 @@ export function QueryProvider({
   readonly children: ReactNode
 }) {
   useEffect(() => forgetOnAccountChange(client), [client])
+  useEffect(() => askAgainOnOtherAccount(client), [client])
 
   return <QueryClientProvider client={client}>{children}</QueryClientProvider>
 }

@@ -31,3 +31,16 @@ export interface TenantIdentity {
  * understood as it was.
  */
 export const workingInHeader = 'x-opengewerk-tenant'
+
+/**
+ * The header a page names the account in that it works for (opengewerk#882).
+ *
+ * The cookie of a session belongs to the browser and not to a tab. Once
+ * somebody else signed in on the same browser, a tab still open for the one
+ * before sent and asked under the name and with the rights of the one now.
+ * The server holds what the header names against the session and refuses
+ * another account with `otherAccountSignedIn` before anything is written or
+ * read; a page that names none, one of a build from before, is taken as it
+ * was. In small letters for the reason given at `workingInHeader`.
+ */
+export const workingAsHeader = 'x-account'

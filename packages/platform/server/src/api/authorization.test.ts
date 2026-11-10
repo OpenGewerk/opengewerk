@@ -349,6 +349,95 @@ describe('a page that names the tenant it works in', () => {
   })
 })
 
+/**
+ * A tab still open for the person before (opengewerk#882): the cookie is the
+ * browser's, and once somebody else signs in it is theirs. A page names the
+ * account it works for, and the guard refuses another one on every kind of
+ * route before the handler runs, with the code the page knows.
+ */
+describe('a page that names the account it works for', () => {
+  function refusedAsOtherAccount(answer: request.Response) {
+    expect(answer.status).toBe(409)
+    expect(answer.body).toMatchObject({
+      code: 'other_account',
+      message: 'Auf diesem Gerät ist inzwischen ein anderes Konto angemeldet.',
+    })
+  }
+
+  it('is answered when it is the account of the session, and when it names none', async () => {
+    const reader = as('reader', tenant, 'probe.read')
+
+    await http()
+      .get('/probe')
+      .set(testIdentityHeader, reader)
+      .set('X-Account', 'reader')
+      .expect(200)
+    await http().get('/probe').set(testIdentityHeader, reader).expect(200)
+  })
+
+  it('is refused on a route with a right, reading and writing, before the handler', async () => {
+    refusedAsOtherAccount(
+      await http()
+        .get('/probe')
+        .set(testIdentityHeader, as('reader', tenant, 'probe.read'))
+        .set('X-Account', 'before'),
+    )
+
+    const written = await http()
+      .post('/probe')
+      .set(testIdentityHeader, as('writer', tenant, 'probe.write'))
+      .set('X-Account', 'before')
+
+    refusedAsOtherAccount(written)
+    // The handler answers with the reason; a refusal from the guard has none.
+    expect(written.body).not.toHaveProperty('reason')
+  })
+
+  it('is refused before the tenant it names, which the other account may share', async () => {
+    refusedAsOtherAccount(
+      await http()
+        .get('/probe')
+        .set(testIdentityHeader, as('reader', tenant, 'probe.read'))
+        .set('X-OpenGewerk-Tenant', otherTenant)
+        .set('X-Account', 'before'),
+    )
+  })
+
+  it('is refused on a route for whoever works for the tenant', async () => {
+    refusedAsOtherAccount(
+      await http()
+        .get('/probe/mine')
+        .set(testIdentityHeader, as('member', tenant))
+        .set('X-Account', 'before'),
+    )
+  })
+
+  it('is refused on a route before the choice of tenant, and answered for its own', async () => {
+    refusedAsOtherAccount(
+      await http()
+        .get('/probe/me')
+        .set(testIdentityHeader, as('newcomer', undefined))
+        .set('X-Account', 'before'),
+    )
+    await http()
+      .get('/probe/me')
+      .set(testIdentityHeader, as('newcomer', undefined))
+      .set('X-Account', 'newcomer')
+      .expect(200)
+  })
+
+  it('is refused in the area of the instance before anybody asks whether they run it', async () => {
+    // Who runs the instance is a row in a database this file does without:
+    // reaching that question would end in an error, not in this refusal.
+    refusedAsOtherAccount(
+      await http()
+        .get('/probe/instance')
+        .set(testIdentityHeader, as('operator', undefined))
+        .set('X-Account', 'before'),
+    )
+  })
+})
+
 describe('a change from a foreign page', () => {
   it('is refused before anybody asks whose session it carries', async () => {
     await http()
