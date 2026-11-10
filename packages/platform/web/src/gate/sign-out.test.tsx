@@ -203,6 +203,40 @@ describe('signing out', () => {
     expect(await storesOnDevice()).toEqual([])
   })
 
+  /** The question may stand while the page moves on to another account (opengewerk#882). */
+  it('signs out the account that asked, when the loss is confirmed after the page moved on', async () => {
+    await kept('t-nord', true)
+    const named: (string | undefined)[] = []
+    const signedOut = vi.fn()
+
+    vi.stubGlobal('fetch', (path: string, init?: RequestInit) => {
+      if (path === '/auth/sign-out') {
+        named.push((init?.headers as Record<string, string>)[workingAsHeader])
+      }
+
+      return Promise.resolve(
+        new Response('{}', { headers: { 'Content-Type': 'application/json' } }),
+      )
+    })
+    workAs('u-1')
+
+    try {
+      button(signedOut)
+      await userEvent.click(screen.getByRole('button', { name: 'Abmelden' }))
+      await screen.findByRole('alert')
+
+      workAs('u-2')
+      await userEvent.click(screen.getByRole('button', { name: 'Trotzdem abmelden' }))
+
+      await waitFor(() => {
+        expect(signedOut).toHaveBeenCalled()
+      })
+      expect(named).toEqual(['u-1'])
+    } finally {
+      workAs(null)
+    }
+  })
+
   it('sends first when it can, and then asks nothing', async () => {
     const server = new TestServer()
     const client = await SyncClient.start({

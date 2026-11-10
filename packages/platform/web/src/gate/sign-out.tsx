@@ -72,7 +72,12 @@ export function SignOutButton({
   readonly primary?: boolean
 }) {
   const application = useApplication()
-  const [waiting, setWaiting] = useState<number | null>(null)
+  // The changes that would be lost, and the account that asked to sign out:
+  // the page may move on to another while the question stands (#882).
+  const [waiting, setWaiting] = useState<{
+    readonly count: number
+    readonly account: string | null
+  } | null>(null)
   const [busy, setBusy] = useState(false)
   const [trouble, setTrouble] = useState<string | null>(null)
 
@@ -151,7 +156,7 @@ export function SignOutButton({
     }
 
     if (unsent > 0) {
-      setWaiting(unsent)
+      setWaiting({ count: unsent, account })
       setBusy(false)
 
       return
@@ -164,7 +169,7 @@ export function SignOutButton({
     return (
       <div role="alert" className="flex flex-col gap-3 max-w-md">
         <p className="text-body font-semibold text-conflict">
-          {`Auf diesem Gerät liegen noch ${changes(waiting)}, die den Server nicht erreicht haben. Beim Abmelden gehen sie verloren.`}
+          {`Auf diesem Gerät liegen noch ${changes(waiting.count)}, die den Server nicht erreicht haben. Beim Abmelden gehen sie verloren.`}
         </p>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -181,7 +186,7 @@ export function SignOutButton({
             tone="danger"
             wide={wide}
             disabled={busy}
-            onClick={() => void leave(pageAccount())}
+            onClick={() => void leave(waiting.account)}
           >
             Trotzdem abmelden
           </Button>
