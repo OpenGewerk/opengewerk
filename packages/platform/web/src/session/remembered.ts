@@ -181,6 +181,13 @@ function keptChoice(tenant: unknown): TenantChoice | null {
 }
 
 /**
+ * The session this browser last opened, by the id the server gives it. A
+ * sign out keeps it as the one it signed out of. Kept here, beside who is
+ * signed in, which is valid only with the session it was kept with.
+ */
+export const sessionKey = 'opengewerk.session'
+
+/**
  * Who the server last said is signed in on this browser, by id, with a tenant
  * or still without one (opengewerk#905). Kept apart from the account the
  * device opens with (`key`): that one is forgotten when another tenant is
@@ -189,10 +196,28 @@ function keptChoice(tenant: unknown): TenantChoice | null {
  */
 const signedInKey = 'opengewerk.signedIn'
 
-/** Keeps who the server says is signed in on this browser (`signedInKey`). */
-export function rememberSignedIn(userId: string): void {
+/**
+ * The id of the session `signedInKey` was kept with. A tab of a build from
+ * before this keeps no `signedInKey` and changes who is signed in all the
+ * same: its sign out forgets the id of the session, and its next answer keeps
+ * the one of whoever signed in there. Where the two differ, the hint is from
+ * a session that is not the browser's any more.
+ */
+const signedInSessionKey = 'opengewerk.signedInSession'
+
+/**
+ * Keeps who the server says is signed in on this browser (`signedInKey`), and
+ * the id of the session it said so in, or none where it gave none.
+ */
+export function rememberSignedIn(userId: string, session: string | null): void {
   try {
     globalThis.localStorage.setItem(signedInKey, userId)
+
+    if (session === null) {
+      globalThis.localStorage.removeItem(signedInSessionKey)
+    } else {
+      globalThis.localStorage.setItem(signedInSessionKey, session)
+    }
   } catch {
     // Not kept. A sign out then reads the account kept to open with.
   }
@@ -203,15 +228,23 @@ export function rememberSignedIn(userId: string): void {
  * (`account`), or null (opengewerk#905). Every tab keeps who the server last
  * said is signed in in the one place the browser shares (`rememberSignedIn`),
  * and a tab still open for `account` after somebody else signed in finds the
- * other one there; where that was never kept, as before this, the account
- * kept to open with stands for it. Null where the page names no account,
+ * other one there; where that was never kept, as before this, or is out of
+ * date, the account kept to open with stands for it. Null where the page names no account,
  * nobody is kept, or it is the page's own.
  */
 export function signedInBesides(account: string | null): string | null {
   let kept: string | null
 
   try {
-    kept = globalThis.localStorage.getItem(signedInKey)
+    // Only with the session it was kept with: otherwise a tab of a build from
+    // before changed who is signed in since, and the hint names the one
+    // before. A sign out without a network then kept no sign out for the next
+    // start, which opened the session of the person signing out.
+    kept =
+      globalThis.localStorage.getItem(signedInSessionKey) ===
+      globalThis.localStorage.getItem(sessionKey)
+        ? globalThis.localStorage.getItem(signedInKey)
+        : null
   } catch {
     kept = null
   }
@@ -243,6 +276,7 @@ export function forgetSignIn(): void {
 
   try {
     globalThis.localStorage.removeItem(signedInKey)
+    globalThis.localStorage.removeItem(signedInSessionKey)
   } catch {
     // Nothing kept, nothing to forget.
   }

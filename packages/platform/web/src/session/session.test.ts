@@ -400,6 +400,64 @@ describe('signing in and out', () => {
    * (opengewerk#905): before a tenant is chosen, and after another was chosen
    * without a network. The server saying nobody is signed in ends it.
    */
+  it('knows who signed in since without a tenant, until the server says nobody is', async () => {
+    answers = () =>
+      json({
+        user: { id: 'ben', email: 'ben@example.de', name: 'Ben' },
+        session: { id: 's-ben', activeTenantId: null },
+      })
+
+    expect(await currentAccount()).toMatchObject({ userId: 'ben', tenantId: null })
+    expect(signedInBesides('anna')).toBe('ben')
+    expect(signedInBesides('ben')).toBeNull()
+
+    answers = () => new TypeError('Failed to fetch')
+
+    await expect(chooseTenant(tenantId)).rejects.toThrow(TypeError)
+
+    expect(rememberedAccount()).toBeNull()
+    expect(signedInBesides('anna')).toBe('ben')
+
+    answers = () => json(null)
+
+    expect(await currentAccount()).toBeNull()
+    expect(signedInBesides('anna')).toBeNull()
+  })
+
+  /**
+   * A tab of a build from before this one changes who is signed in without
+   * keeping it (opengewerk#905): Ben signs out there, Anna signs in. The hint
+   * that Ben is signed in was kept with his session, which is not the
+   * browser's any more, and a sign out of Anna without a network is kept for
+   * the next start as ever, which ends her session.
+   */
+  it('takes no hint of somebody else signed in that a build from before outdated', async () => {
+    answers = () => aSession('s-ben', 'ben', -60_000)
+
+    expect(await currentAccount()).toMatchObject({ userId: 'ben' })
+
+    // The build from before: his sign out, her sign in, nothing of the hint.
+    globalThis.localStorage.removeItem('opengewerk.account')
+    globalThis.localStorage.removeItem('opengewerk.session')
+    rememberAccount({ ...account, userId: 'anna' })
+    globalThis.localStorage.setItem('opengewerk.session', 's-anna')
+
+    expect(signedInBesides('anna')).toBeNull()
+
+    answers = () => new TypeError('Failed to fetch')
+
+    await expect(signOut('anna')).rejects.toThrow(TypeError)
+
+    expect(globalThis.localStorage.getItem('opengewerk.signedOut')).not.toBeNull()
+
+    asked = []
+    answers = (path) =>
+      path.endsWith('/get-session') ? aSession('s-anna', 'anna', -1_000) : json({})
+
+    expect(await currentAccount()).toBeNull()
+    expect(asked.at(-1)).toMatchObject({ path: '/auth/sign-out', method: 'POST' })
+  })
+
   /**
    * Ben signed in in another tab and has no tenant yet; what the device opens
    * with is still Anna's (opengewerk#905). The answer naming Ben lets go of
@@ -432,30 +490,6 @@ describe('signing in and out', () => {
     expect(globalThis.localStorage.getItem(keptTenantsKey)).toBeNull()
     expect(signedInBesides('anna')).toBe('ben')
     await expect(currentAccount()).rejects.toThrow(TypeError)
-  })
-
-  it('knows who signed in since without a tenant, until the server says nobody is', async () => {
-    answers = () =>
-      json({
-        user: { id: 'ben', email: 'ben@example.de', name: 'Ben' },
-        session: { id: 's-ben', activeTenantId: null },
-      })
-
-    expect(await currentAccount()).toMatchObject({ userId: 'ben', tenantId: null })
-    expect(signedInBesides('anna')).toBe('ben')
-    expect(signedInBesides('ben')).toBeNull()
-
-    answers = () => new TypeError('Failed to fetch')
-
-    await expect(chooseTenant(tenantId)).rejects.toThrow(TypeError)
-
-    expect(rememberedAccount()).toBeNull()
-    expect(signedInBesides('anna')).toBe('ben')
-
-    answers = () => json(null)
-
-    expect(await currentAccount()).toBeNull()
-    expect(signedInBesides('anna')).toBeNull()
   })
 
   it('keeps a session of somebody else after a second sign out without a network', async () => {

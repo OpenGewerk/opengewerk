@@ -311,7 +311,7 @@ describe('signing out', () => {
         signInMethod: 'password',
         secondFactor: false,
       })
-      rememberSignedIn('u-2')
+      rememberSignedIn('u-2', null)
       rememberTenants([
         {
           id: 't-sued' as TenantId,

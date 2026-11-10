@@ -20,6 +20,7 @@ import {
   rememberedTenants,
   rememberSignedIn,
   rememberTenants,
+  sessionKey,
   signedInBesides,
   unreachable,
 } from './remembered.js'
@@ -132,12 +133,6 @@ interface SessionAnswer {
     readonly id?: unknown
   }
 }
-
-/**
- * The session this browser last opened, by the id the server gives it. A
- * sign out keeps it as the one it signed out of.
- */
-const sessionKey = 'opengewerk.session'
 
 /**
  * The sign out of this browser the server has not confirmed: the session it
@@ -337,8 +332,10 @@ export async function currentAccount(): Promise<Account | null> {
   rememberAccount(account)
   // Also without a tenant, and left alone when another is chosen: a sign out
   // in the tab of the person before asks it (opengewerk#905).
-  rememberSignedIn(account.userId)
-  keep(sessionKey, typeof answer?.session?.id === 'string' ? answer.session.id : null)
+  const session = typeof answer?.session?.id === 'string' ? answer.session.id : null
+
+  rememberSignedIn(account.userId, session)
+  keep(sessionKey, session)
 
   return account
 }
