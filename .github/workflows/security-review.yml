@@ -24,7 +24,7 @@ permissions: {}
 jobs:
   security-review:
     name: Security-Review
-    uses: OpenGewerk/.github/.github/workflows/security-review.yml@ba04843742ae7192351d50b2e6b5cf4a9fbfca9a # main
+    uses: OpenGewerk/.github/.github/workflows/security-review.yml@b7b6ba3db1a2806e4d04cde501c451a86b6585e5 # main
     # The test database of this repository, as its tests expect it. The
     # review starts a PostgreSQL of its own for it, inside its sandbox.
     with:
