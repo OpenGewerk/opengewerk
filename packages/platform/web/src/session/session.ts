@@ -17,6 +17,7 @@ import {
   rememberAccount,
   rememberedAccount,
   rememberedTenants,
+  rememberSignedIn,
   rememberTenants,
   signedInBesides,
   unreachable,
@@ -323,6 +324,9 @@ export async function currentAccount(): Promise<Account | null> {
   }
 
   rememberAccount(account)
+  // Also without a tenant, and left alone when another is chosen: a sign out
+  // in the tab of the person before asks it (opengewerk#905).
+  rememberSignedIn(account.userId)
   keep(sessionKey, typeof answer?.session?.id === 'string' ? answer.session.id : null)
 
   return account

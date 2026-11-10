@@ -197,7 +197,9 @@ export function SignOutButton({
     return (
       <div role="alert" className="flex flex-col gap-3 max-w-md">
         <p className="text-body font-semibold text-conflict">
-          {`Auf diesem Gerät liegen noch ${changes(waiting.count)}, die den Server nicht erreicht haben. Beim Abmelden gehen sie verloren.`}
+          {waiting.count === 1
+            ? 'Auf diesem Gerät liegt noch 1 Änderung, die den Server nicht erreicht hat. Beim Abmelden geht sie verloren.'
+            : `Auf diesem Gerät liegen noch ${changes(waiting.count)}, die den Server nicht erreicht haben. Beim Abmelden gehen sie verloren.`}
         </p>
         <div className="flex flex-wrap gap-2">
           <Button

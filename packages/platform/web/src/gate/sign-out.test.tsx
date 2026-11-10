@@ -7,7 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { InterfaceApplication } from '../application.js'
 import { InProbe, probeApplication, probeRules } from '../probe-application.js'
-import { rememberAccount, rememberedAccount, rememberTenants } from '../session/remembered.js'
+import {
+  rememberAccount,
+  rememberedAccount,
+  rememberedTenants,
+  rememberSignedIn,
+  rememberTenants,
+} from '../session/remembered.js'
 import { SyncClient } from '../sync/client.js'
 import { deleteLocalStore, openLocalStore, storesOnDevice } from '../sync/store.js'
 import { TestServer } from '../sync/test-server.js'
@@ -185,7 +191,7 @@ describe('signing out', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Abmelden' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain(
-      'Auf diesem Gerät liegen noch 1 Änderung, die den Server nicht erreicht haben.',
+      'Auf diesem Gerät liegt noch 1 Änderung, die den Server nicht erreicht hat.',
     )
     expect(await storesOnDevice()).toEqual(['t-nord'])
     expect(signedOut).not.toHaveBeenCalled()
@@ -204,12 +210,12 @@ describe('signing out', () => {
   })
 
   /**
-   * Ben signed in in another tab since Anna's page opened (opengewerk#905).
-   * His store and what the browser keeps of his sign in stay his; Anna's
+   * Ben signed in in another tab since Anna's page opened (opengewerk#905),
+   * kept by the browser as `remember` keeps him. His store stays his; Anna's
    * sign out takes her own store along, and what she left waiting in his,
    * and asks about that alone.
    */
-  it('leaves the stores and the sign in of the account signed in since in another tab', async () => {
+  async function annaLeavesBen(remember: () => void) {
     const operation = (id: string) => ({
       id: id as OperationId,
       entity: 'shelves',
@@ -237,15 +243,7 @@ describe('signing out', () => {
     await sued.queue(operation('o-ben'))
     sued.close()
 
-    rememberAccount({
-      userId: 'u-2',
-      email: 'ben@sued.example.de',
-      name: 'Ben',
-      tenantId: 't-sued' as TenantId,
-      twoFactorEnabled: false,
-      signInMethod: 'password',
-      secondFactor: false,
-    })
+    remember()
     workAs('u-1')
 
     const signedOut = vi.fn()
@@ -275,7 +273,45 @@ describe('signing out', () => {
     expect((await left.readOutbox()).map((each) => each.id)).toEqual(['o-ben'])
     expect(await left.whose()).toBe('u-2')
     left.close()
+  }
+
+  it('leaves the stores and the sign in of the account signed in since in another tab', async () => {
+    await annaLeavesBen(() => {
+      rememberAccount({
+        userId: 'u-2',
+        email: 'ben@sued.example.de',
+        name: 'Ben',
+        tenantId: 't-sued' as TenantId,
+        twoFactorEnabled: false,
+        signInMethod: 'password',
+        secondFactor: false,
+      })
+    })
+
     expect(rememberedAccount()?.userId).toBe('u-2')
+  })
+
+  /**
+   * Ben chose another tenant without a network, or has not chosen one yet:
+   * the account his tab opens with is forgotten or was never kept, and who
+   * is signed in on the browser stays known (opengewerk#905).
+   */
+  it('leaves them as well while the account signed in since keeps no tenant to open with', async () => {
+    await annaLeavesBen(() => {
+      rememberSignedIn('u-2')
+      rememberTenants([
+        {
+          id: 't-sued' as TenantId,
+          name: 'Süd',
+          roles: ['member'],
+          roleLabels: ['Mitglied'],
+          rights: [],
+          secondFactor: false,
+        },
+      ])
+    })
+
+    expect(rememberedTenants()?.map((each) => each.id)).toEqual(['t-sued'])
   })
 
   /** The question may stand while the page moves on to another account (opengewerk#882). */

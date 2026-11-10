@@ -29,6 +29,12 @@ interface RecordRow {
 interface MetaRow {
   readonly key: string
   readonly value: string | number
+  /**
+   * The person a value an application keeps for the device was written for
+   * (`writeMeta` on a store opened for one, opengewerk#905). A sign out takes
+   * their values from the store of an account signed in since (`leave`).
+   */
+  readonly owner?: string
 }
 
 /**
@@ -456,6 +462,11 @@ function fromStored(row: unknown): Operation {
   return { ...stored, recordedAt: new Date(stored.recordedAt) }
 }
 
+/** The person a change or a file to send was recorded for, or undefined for nobody. */
+function recordedFor(row: unknown): string | undefined {
+  return (row as { owner?: string }).owner
+}
+
 /**
  * Whether an operation in the outbox is one the person the store is open for
  * may send. One queued before the store recorded the person with it says
@@ -464,15 +475,8 @@ function fromStored(row: unknown): Operation {
  * where counting before a sign out still finds it, and goes with the sign
  * out. Opened without an owner, the store answers with everything.
  */
-/** The person a change or a file to send was recorded for, or undefined for nobody. */
-function recordedFor(row: unknown): string | undefined {
-  return (row as { owner?: string }).owner
-}
-
 function sendableBy(row: unknown, owner: string | undefined): boolean {
-  const recordedFor = (row as { owner?: string }).owner
-
-  return owner === undefined || recordedFor === owner
+  return owner === undefined || recordedFor(row) === owner
 }
 
 /** A row of the list of uploads. */
@@ -1015,12 +1019,22 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
         return false
       }
 
+      const meta = transaction.objectStore(metaStore)
       const outbox = transaction.objectStore(outboxStore)
       const uploads = transaction.objectStore(uploadStore)
-      const [queued, waiting] = await Promise.all([
+      const [kept, queued, waiting] = await Promise.all([
+        promised<MetaRow[]>(meta.getAll()),
         promised<unknown[]>(outbox.getAll()),
         promised<UploadRow[]>(uploads.getAll()),
       ])
+
+      // What the application kept for them, a running stopwatch with where
+      // it was started among it.
+      for (const each of kept) {
+        if (each.owner === person) {
+          meta.delete(each.key)
+        }
+      }
 
       for (const each of queued) {
         if (recordedFor(each) === person) {
@@ -1107,7 +1121,9 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
     async writeMeta(key, value) {
       const transaction = await held([metaStore], 'readwrite')
 
-      transaction.objectStore(metaStore).put({ key, value } satisfies MetaRow)
+      transaction
+        .objectStore(metaStore)
+        .put({ key, value, ...(owner === undefined ? {} : { owner }) } satisfies MetaRow)
 
       await finished(transaction)
     },

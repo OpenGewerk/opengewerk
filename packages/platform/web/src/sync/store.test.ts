@@ -200,11 +200,14 @@ describe('what a device holds of the server, with more than one person', () => {
 
     await anna.queue(aNote('op-anna', 'Leiter im Flur'))
     await anna.keepFile(photo, true)
+    // A running stopwatch of hers, with where it was started.
+    await anna.writeMeta('stopwatch', '{"userId":"anna","place":{"latitudeMicro":49452000}}')
 
     const ben = await openLocalStore(tenant, 'ben')
 
     await ben.queue(aNote('op-ben', 'Kabel im Keller'))
     await ben.write('site_accesses', [{ id: 'z-2', value: '0815' }])
+    await ben.writeMeta('reminder', '{"userId":"ben"}')
 
     const any = await openLocalStore(tenant)
 
@@ -220,6 +223,8 @@ describe('what a device holds of the server, with more than one person', () => {
     expect(await any.leave('anna', 'ben')).toBe(true)
     expect(await any.waitingOf('anna')).toBe(0)
     expect(await any.readFile(photo.sha256)).toBeNull()
+    expect(await any.readMeta('stopwatch')).toBeNull()
+    expect(await any.readMeta('reminder')).toBe('{"userId":"ben"}')
     expect((await ben.readOutbox()).map((operation) => operation.id)).toEqual(['op-ben'])
     expect(await ben.readAll('site_accesses')).toEqual([{ id: 'z-2', value: '0815' }])
     anna.close()

@@ -181,19 +181,44 @@ function keptChoice(tenant: unknown): TenantChoice | null {
 }
 
 /**
+ * Who the server last said is signed in on this browser, by id, with a tenant
+ * or still without one (opengewerk#905). Kept apart from the account the
+ * device opens with (`key`): that one is forgotten when another tenant is
+ * chosen and kept only with a tenant, and a sign out in the tab of the person
+ * before took a store of the one signed in since for nobody's in between.
+ */
+const signedInKey = 'opengewerk.signedIn'
+
+/** Keeps who the server says is signed in on this browser (`signedInKey`). */
+export function rememberSignedIn(userId: string): void {
+  try {
+    globalThis.localStorage.setItem(signedInKey, userId)
+  } catch {
+    // Not kept. A sign out then reads the account kept to open with.
+  }
+}
+
+/**
  * The account signed in on this browser since the one a page works for
- * (`account`), or null (opengewerk#905). Every tab keeps the account it last
- * heard of in the one place the browser shares (`rememberAccount`), and a tab
- * still open for `account` after somebody else signed in finds the other one
- * there. Null where the page names no account, nobody is kept, or it is the
- * page's own.
+ * (`account`), or null (opengewerk#905). Every tab keeps who the server last
+ * said is signed in in the one place the browser shares (`rememberSignedIn`),
+ * and a tab still open for `account` after somebody else signed in finds the
+ * other one there; where that was never kept, as before this, the account
+ * kept to open with stands for it. Null where the page names no account,
+ * nobody is kept, or it is the page's own.
  */
 export function signedInBesides(account: string | null): string | null {
-  const remembered = rememberedAccount()
+  let kept: string | null
 
-  return account !== null && remembered !== null && remembered.userId !== account
-    ? remembered.userId
-    : null
+  try {
+    kept = globalThis.localStorage.getItem(signedInKey)
+  } catch {
+    kept = null
+  }
+
+  const other = kept !== null && kept !== '' ? kept : (rememberedAccount()?.userId ?? null)
+
+  return account !== null && other !== null && other !== account ? other : null
 }
 
 /** When the person changes: on signing out, and when the server says nobody is signed in. */
@@ -202,6 +227,7 @@ export function forgetSignIn(): void {
 
   try {
     globalThis.localStorage.removeItem(keptTenantsKey)
+    globalThis.localStorage.removeItem(signedInKey)
   } catch {
     // Nothing kept, nothing to forget.
   }

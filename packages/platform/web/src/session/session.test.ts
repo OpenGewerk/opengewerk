@@ -11,6 +11,7 @@ import {
   rememberedAccount,
   rememberedTenants,
   rememberTenants,
+  signedInBesides,
 } from './remembered.js'
 import {
   type Account,
@@ -392,6 +393,35 @@ describe('signing in and out', () => {
 
     expect(rememberedAccount()).toBeNull()
     expect(rememberedTenants()).toBeNull()
+  })
+
+  /**
+   * Who is signed in stays known without a tenant kept to open with
+   * (opengewerk#905): before a tenant is chosen, and after another was chosen
+   * without a network. The server saying nobody is signed in ends it.
+   */
+  it('knows who signed in since without a tenant, until the server says nobody is', async () => {
+    answers = () =>
+      json({
+        user: { id: 'ben', email: 'ben@example.de', name: 'Ben' },
+        session: { id: 's-ben', activeTenantId: null },
+      })
+
+    expect(await currentAccount()).toMatchObject({ userId: 'ben', tenantId: null })
+    expect(signedInBesides('anna')).toBe('ben')
+    expect(signedInBesides('ben')).toBeNull()
+
+    answers = () => new TypeError('Failed to fetch')
+
+    await expect(chooseTenant(tenantId)).rejects.toThrow(TypeError)
+
+    expect(rememberedAccount()).toBeNull()
+    expect(signedInBesides('anna')).toBe('ben')
+
+    answers = () => json(null)
+
+    expect(await currentAccount()).toBeNull()
+    expect(signedInBesides('anna')).toBeNull()
   })
 
   it('keeps a session of somebody else after a second sign out without a network', async () => {
