@@ -464,6 +464,84 @@ describe('what a device holds of the server, with more than one person', () => {
   })
 
   /**
+   * The office took rows over and has not pulled yet when the site starts a
+   * kind again (opengewerk#907): the rows go from the office as well, which
+   * would otherwise show them at its next start until its own first pull.
+   */
+  it('lets go in a section that took rows over and has not pulled yet, when another starts a kind again', async () => {
+    const tenant = aTenant()
+    const before = await openLocalStore(tenant, 'anna')
+
+    await before.writeMeta('entities', 'customers')
+    await before.writeMeta('narrowed', '{"customers":"r-1"}')
+    await before.write('customers', [{ id: 'c-1', version: 1, name: 'Erika Muster' }])
+    before.close()
+
+    // Opened once, and closed before it pulled.
+    const office = await openLocalStore(tenant, 'anna', 'office')
+
+    expect(await office.readAll('customers')).toEqual([
+      { id: 'c-1', version: 1, name: 'Erika Muster' },
+    ])
+    office.close()
+
+    const site = await openLocalStore(tenant, 'anna')
+
+    await site.restartPull(['customers'], '{"customers":"r-2"}')
+    site.close()
+
+    const raw = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(`opengewerk.${tenant}`)
+
+      request.onsuccess = () => {
+        resolve(request.result)
+      }
+      request.onerror = () => {
+        reject(request.error ?? new Error('not opened'))
+      }
+    })
+    const kinds = await new Promise<string[]>((resolve) => {
+      const request = raw.transaction('records').objectStore('records').getAll()
+
+      request.onsuccess = () => {
+        resolve((request.result as { entity: string }[]).map((row) => row.entity))
+      }
+    })
+
+    raw.close()
+    expect(kinds.filter((kind) => kind.endsWith('customers'))).toEqual([])
+  })
+
+  /**
+   * Rows taken over from a store that kept no narrowing are narrowed by
+   * nothing (opengewerk#907): a kind narrowed for the first time goes from
+   * the office as well, before its first pull.
+   */
+  it('lets go in a section that took rows over the store kept no narrowing for', async () => {
+    const tenant = aTenant()
+    const before = await openLocalStore(tenant, 'anna')
+
+    await before.writeMeta('entities', 'suppliers,visits')
+    await before.write('suppliers', [{ id: 's-1', version: 1 }])
+    before.close()
+
+    const office = await openLocalStore(tenant, 'anna', 'office')
+
+    office.close()
+
+    const site = await openLocalStore(tenant, 'anna')
+
+    await site.writeMeta('narrowed', '{"visits":"all"}')
+    await site.restartPull(['suppliers'], '{"visits":"all","suppliers":"none"}')
+    site.close()
+
+    const again = await openLocalStore(tenant, 'anna', 'office')
+
+    expect(await again.readAll('suppliers')).toEqual([])
+    again.close()
+  })
+
+  /**
    * A kind narrowed by neither section before, and narrowed now for a role
    * that sees less (opengewerk#907): it goes from both.
    */

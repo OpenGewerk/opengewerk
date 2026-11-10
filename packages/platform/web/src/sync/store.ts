@@ -365,8 +365,10 @@ function within(section: string | undefined, name: string): string {
 }
 
 /**
- * The sections of a store that began a pull (`entitiesKey`) besides
- * `section`, the part without a section as undefined (opengewerk#907).
+ * The sections of a store that hold rows besides `section`, the part without
+ * a section as undefined (opengewerk#907): those that began a pull
+ * (`entitiesKey`), and those that took rows over and have not pulled yet
+ * (`adoptedKey`).
  */
 async function sectionsBesides(
   meta: IDBObjectStore,
@@ -376,14 +378,13 @@ async function sectionsBesides(
 
   for (const key of await promised<IDBValidKey[]>(meta.getAllKeys())) {
     const name = String(key)
+    const marked = [entitiesKey, adoptedKey].find(
+      (mark) => name === mark || name.endsWith(`/${mark}`),
+    )
     const other =
-      name === entitiesKey
-        ? undefined
-        : name.endsWith(`/${entitiesKey}`)
-          ? name.slice(0, -entitiesKey.length - 1)
-          : null
+      marked === undefined ? null : name === marked ? undefined : name.slice(0, -marked.length - 1)
 
-    if (other !== null && other !== section) {
+    if (other !== null && other !== section && !others.includes(other)) {
       others.push(other)
     }
   }
@@ -917,9 +918,9 @@ export async function openLocalStore(
     if ((await promised<MetaRow | undefined>(meta.get(metaKey(entitiesKey)))) === undefined) {
       const stood = await promised<MetaRow | undefined>(meta.get(narrowedKey))
 
-      if (stood !== undefined) {
-        meta.put({ key: metaKey(adoptedKey), value: stood.value } satisfies MetaRow)
-      }
+      // Kept also where the store kept none, as narrowed by nothing: a
+      // section with rows taken over is one another section's start reaches.
+      meta.put({ key: metaKey(adoptedKey), value: stood?.value ?? '{}' } satisfies MetaRow)
 
       for (const row of await promised<RecordRow[]>(records.getAll())) {
         if (!row.entity.includes('/')) {
@@ -1242,9 +1243,11 @@ export async function openLocalStore(
       const now = narrowingIn({ key: narrowedKey, value: narrowed }) ?? {}
 
       for (const other of was === null ? [] : await sectionsBesides(meta, section)) {
-        const theirs = narrowingIn(
-          await promised<MetaRow | undefined>(meta.get(within(other, narrowedKey))),
-        )
+        // A section that took rows over and has not pulled yet holds them
+        // under the narrowing they were taken over under.
+        const theirs =
+          narrowingIn(await promised<MetaRow | undefined>(meta.get(within(other, narrowedKey)))) ??
+          narrowingIn(await promised<MetaRow | undefined>(meta.get(within(other, adoptedKey))))
         const alike =
           theirs === null
             ? []
