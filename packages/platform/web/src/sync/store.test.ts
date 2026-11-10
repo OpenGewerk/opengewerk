@@ -204,6 +204,7 @@ describe('what a device holds of the server, with more than one person', () => {
     // The ways the client reads and takes the store since opengewerk#899.
     await expect(anna.readPulled(['site_accesses'])).rejects.toThrow(StoreTakenOver)
     await expect(anna.claimPull('site_accesses')).rejects.toThrow(StoreTakenOver)
+    await expect(anna.beginPull(['site_accesses'])).rejects.toThrow(StoreTakenOver)
     await expect(anna.writeMeta('cursor', 42)).rejects.toThrow(StoreTakenOver)
 
     await expect(anna.keepFile(photo, false)).rejects.toThrow(StoreTakenOver)
@@ -449,6 +450,51 @@ describe('the pulls of the tabs of one browser', () => {
 
     expect(await store.readMeta('entities')).toBe('shelves,visits')
     expect(await store.readMeta('cursor')).toBe(0)
+    expect(await store.readMeta('narrowed-settled')).toBe('')
+    store.close()
+  })
+
+  it('begins a pull where its cursor stands for every kind of a build, and keeps the list of the build', async () => {
+    const store = await openLocalStore(aTenant(), 'anna')
+
+    await store.writeMeta('entities', 'notes,shelves,visits')
+    await store.writeMeta('cursor', 9)
+    await store.writeMeta('cursor-checked', 9)
+    await store.writeMeta('narrowed-settled', '{"visits":"all"}')
+    await store.write('visits', [visit('v-1')])
+
+    const pulled = await store.beginPull(['visits', 'shelves'])
+
+    expect(pulled.cursor).toBe(9)
+    expect(pulled.checked).toBe(9)
+    expect(pulled.settled).toBe('{"visits":"all"}')
+    expect(pulled.rows.get('visits')).toEqual([visit('v-1')])
+    // The shorter list as well: a build that knows less moves the cursor past
+    // the rows it drops, and a longer list must not vouch for that cursor.
+    expect(await store.readMeta('entities')).toBe('shelves,visits')
+    expect(await store.readMeta('cursor')).toBe(9)
+    store.close()
+  })
+
+  it('begins a pull from the start for a build the store is kept for fewer kinds than, with nothing settled', async () => {
+    const store = await openLocalStore(aTenant(), 'anna')
+
+    await store.writeMeta('entities', 'visits')
+    await store.writeMeta('cursor', 9)
+    await store.writeMeta('cursor-checked', 9)
+    await store.writeMeta('narrowed-settled', '{"visits":"all"}')
+    await store.write('visits', [visit('v-1')])
+
+    const pulled = await store.beginPull(['shelves', 'visits'])
+
+    expect(pulled.cursor).toBe(0)
+    expect(pulled.checked).toBe(0)
+    expect(pulled.settled).toBe('')
+    // The rows stay: a pull from the start overwrites them by their id.
+    expect(pulled.rows.get('visits')).toEqual([visit('v-1')])
+    expect(await store.readMeta('entities')).toBe('shelves,visits')
+    expect(await store.readMeta('cursor')).toBe(0)
+    expect(await store.readMeta('cursor-checked')).toBe(0)
     expect(await store.readMeta('narrowed-settled')).toBe('')
     store.close()
   })

@@ -1208,8 +1208,8 @@ describe('a device handed to somebody who sees less, or more', () => {
     // The other tab goes back to the start the moment this one has read the store.
     const racing: LocalStore = {
       ...store,
-      readPulled: async (entities) => {
-        const read = await store.readPulled(entities)
+      beginPull: async (entities) => {
+        const read = await store.beginPull(entities)
 
         if (!raced) {
           raced = true
@@ -1581,6 +1581,82 @@ describe('a device handed to somebody who sees less, or more', () => {
     newer.stop()
 
     const again = await startOn('builds-older-last')
+
+    expect(again.list('shelves').map((entry) => entry['id'])).toEqual(['s-1'])
+    again.stop()
+  })
+
+  /**
+   * A tab of a build that knows fewer kinds opens while this one starts
+   * (opengewerk#899). Between the list this tab read and the cursor, it wrote
+   * its own list and a page past the shelves; this tab went on from that
+   * cursor under its own list, and the shelves never came. Read and kept in
+   * one step, this tab finds the store kept for fewer kinds at its first page
+   * and pulls from the start.
+   */
+  it('reads the list of kinds with the cursor while a tab of a build that knows fewer opens', async () => {
+    const name = 'kinds-with-cursor'
+    const setup = await openLocalStore(name)
+
+    // Kept for a build that knows a kind more than both.
+    await setup.writeMeta('entities', 'notes,shelves,visits')
+    setup.close()
+
+    const changes = [
+      { entity: 'visits', rows: [mine] },
+      { entity: 'shelves', rows: [shelf] },
+    ]
+    const store = await openLocalStore(name)
+    let opened = false
+    const meanwhile = async () => {
+      if (opened) {
+        return
+      }
+
+      opened = true
+
+      const older = await aTabOf(name, ['visits'], holdingUpTo12(changes))
+
+      await older.synchronise()
+      older.stop()
+    }
+    const racing: LocalStore = {
+      ...store,
+      // Where the list is read on its own, and where it is read with the rest.
+      readMeta: async (key) => {
+        const value = await store.readMeta(key)
+
+        if (key === 'entities') {
+          await meanwhile()
+        }
+
+        return value
+      },
+      beginPull: async (entities) => {
+        const pulled = await store.beginPull(entities)
+
+        await meanwhile()
+
+        return pulled
+      },
+    }
+    const newer = await Client.start({
+      store: racing,
+      transport: holdingUpTo12(changes),
+      writer: new Writing(),
+      rules,
+      deviceId: 'tablet',
+      entities: ['shelves', 'visits'],
+      onSignedOut: () => {},
+    })
+
+    await newer.synchronise()
+
+    expect(opened).toBe(true)
+    expect(newer.list('shelves').map((entry) => entry['id'])).toEqual(['s-1'])
+    newer.stop()
+
+    const again = await startOn(name)
 
     expect(again.list('shelves').map((entry) => entry['id'])).toEqual(['s-1'])
     again.stop()

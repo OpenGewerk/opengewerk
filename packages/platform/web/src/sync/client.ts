@@ -227,33 +227,6 @@ const bookkeeping: readonly string[] = [
 ]
 
 /**
- * Whether the cursor in the store can be trusted by this build.
- *
- * A build skips the rows of a kind it does not know and moves the cursor past
- * them all the same, which is right while it has no screen for them. The next
- * build does, and asking from that cursor it would never see those rows: they
- * sit behind it. It happened with the first new kind after the offline layer
- * shipped. A device still running the old build from its service worker
- * pulled the rows of the new kind, dropped them, and after taking the new
- * build over showed records without the part that had been added to them.
- *
- * So the cursor only stands when the build that wrote it knew at least what
- * this one knows. A store without the list was written before the list
- * existed, and its cursor does not stand either. Starting again from the
- * beginning costs one full pull and nothing else: a pull only overwrites rows
- * by their id, and the outbox is laid over whatever arrives.
- */
-function cursorStands(known: string | number | null, entities: readonly string[]): boolean {
-  if (typeof known !== 'string') {
-    return false
-  }
-
-  const knew = new Set(known.split(','))
-
-  return entities.every((entity) => knew.has(entity))
-}
-
-/**
  * The most one transmission of the outbox carries, as characters of JSON
  * (#202). A device that spent a day without a network sends a day's work,
  * and a change to a long record carries its values twice, as `from` and
@@ -486,31 +459,22 @@ export class SyncClient {
 
     const client = new SyncClient(store, transport, writer, rules, deviceId, onSignedOut)
 
-    const known = await store.readMeta(entitiesKey)
-    const list = [...entities].sort().join(',')
-    const stands = cursorStands(known, entities)
-    // Cursor, narrowing, settled and rows in one transaction (opengewerk#899),
-    // as `catchUp` reads them: read one by one, another tab that went back to
-    // the start in between left this page with the rows of one state under
-    // the cursor or the narrowing of another.
-    const pulled = await store.readPulled(entities)
+    // The list of kinds, cursor, narrowing, settled and rows read, and the
+    // store kept for the kinds of this build, in one transaction
+    // (opengewerk#899). Read one by one, another tab that went back to the
+    // start in between left this page with the rows of one state under the
+    // cursor or the narrowing of another; and a tab of a build that knows
+    // fewer kinds wrote its list and a page past rows of the others between
+    // the list read here and the cursor, and this tab went on from there. A
+    // cursor that does not stand comes back as 0 with nothing settled: kept
+    // apart, a device closed in between kept a list that vouches for a cursor
+    // nobody checked, and a settled answer of the build before said every row
+    // of a kind it never pulled was there.
+    const pulled = await store.beginPull(entities)
 
-    client.cursor = pulled.cursor !== null && stands ? pulled.cursor : 0
-    client.kinds = list
+    client.cursor = pulled.cursor ?? 0
+    client.kinds = [...entities].sort().join(',')
     client.pulledFor = pulled.narrowed
-
-    // A cursor that does not stand goes back to the start with the list and
-    // nothing settled, in one step (`claimPull`): kept apart, a device closed in
-    // between kept a list that vouches for a cursor nobody checked, and a
-    // settled answer of the build before said every row of a kind it never
-    // pulled was there. And the list on every change, a shorter one included:
-    // a build that knows less moves the cursor past the rows it drops, and the
-    // next longer list must not find a record that says otherwise.
-    if (!stands) {
-      await store.claimPull(list)
-    } else if (known !== list) {
-      await store.writeMeta(entitiesKey, list)
-    }
 
     for (const entity of entities) {
       const byId = new Map<string, RecordState>()
@@ -532,7 +496,7 @@ export class SyncClient {
     }
 
     client.narrowedNow =
-      stands && pulled.settled !== null && pulled.settled !== ''
+      pulled.settled !== null && pulled.settled !== ''
         ? (JSON.parse(pulled.settled) as Record<string, string>)
         : null
     client.regroup()
@@ -1247,7 +1211,7 @@ export class SyncClient {
         // the store for fewer kinds or one from before that checks nothing
         // and set the cursor itself. Its cursor is no cursor to go on from:
         // this build takes the store back for its own and asks again from the
-        // start (`cursorStands` at a start).
+        // start (`beginPull` at a start).
         await this.store.claimPull(this.kinds)
         this.cursor = 0
         this.narrowedNow = null
@@ -1333,7 +1297,7 @@ export class SyncClient {
     // A device that has kept no narrowing, stands at cursor 0 and holds no
     // rows keeps the first answer. It drops the entities the answer names
     // from the store all the same: a build that knows fewer entities starts
-    // from 0 (`cursorStands`) with the rows of the others kept, rows it never
+    // from 0 (`beginPull`) with the rows of the others kept, rows it never
     // loads and a later build would show. Any other device takes every named
     // entity as changed, a cursor without rows behind it included: rows from
     // before the server narrowed may be more than the person may hold now.
