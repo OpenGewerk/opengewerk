@@ -467,12 +467,18 @@ export class SyncClient {
     const client = new SyncClient(store, transport, writer, rules, deviceId, onSignedOut)
 
     const cursor = await store.readMeta(cursorKey)
+    // Before the rows, as `catchUp` reads them (opengewerk#899): another tab
+    // that goes back to the start in between leaves this page with rows newer
+    // than this, and the first exchange takes the store again, where the other
+    // order left it with old rows held for the new narrowing.
+    const pulledFor = await store.readMeta(narrowedKey)
     const known = await store.readMeta(entitiesKey)
     const list = [...entities].sort().join(',')
     const stands = cursorStands(known, entities)
 
     client.cursor = typeof cursor === 'number' && stands ? cursor : 0
     client.kinds = list
+    client.pulledFor = typeof pulledFor === 'string' ? pulledFor : null
 
     // The cursor first. The other way round, a device closed in between would
     // keep a list that vouches for a cursor nobody checked. And the list on
@@ -508,13 +514,11 @@ export class SyncClient {
     }
 
     const settled = await store.readMeta(settledKey)
-    const pulledFor = await store.readMeta(narrowedKey)
 
     client.narrowedNow =
       typeof settled === 'string' && settled !== ''
         ? (JSON.parse(settled) as Record<string, string>)
         : null
-    client.pulledFor = typeof pulledFor === 'string' ? pulledFor : null
     client.regroup()
     client.snapshot = {
       ...client.snapshot,
@@ -1291,18 +1295,19 @@ export class SyncClient {
     const said = JSON.stringify(narrowed)
     const kept = await this.store.readMeta(narrowedKey)
 
+    if (kept !== this.pulledFor) {
+      // Another tab of this browser went back to the start for another
+      // narrowing since this page pulled (opengewerk#899), once or more than
+      // once. The rows in memory were pulled for the one before, the rows of
+      // other people among them after a role that sees less, and the store
+      // has let go of them: they come from the store again, and what the
+      // server says now is held against what the store holds.
+      await this.catchUp()
+
+      return true
+    }
+
     if (kept === said) {
-      if (this.pulledFor !== said) {
-        // Another tab of this browser went back to the start for this
-        // narrowing since this page pulled, and may have pulled up to the
-        // cursor of this page again (opengewerk#899). The rows in memory were
-        // pulled for the one before, the rows of other people among them
-        // after a role that sees less: they come from the store again.
-        await this.catchUp()
-
-        return true
-      }
-
       return false
     }
 

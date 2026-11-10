@@ -1133,6 +1133,121 @@ describe('a device handed to somebody who sees less, or more', () => {
     second.stop()
   })
 
+  /**
+   * The narrowing changes twice before the second tab asks again: first the
+   * role, then another kind (opengewerk#899). The second tab held what it
+   * let go of against the store and not against what its memory was pulled
+   * for, and kept the visits of the other person.
+   */
+  it('lets go of them too when the narrowing changed twice before it asked again', async () => {
+    const first = { shelves: 'a', visits: 'all' }
+    const role = { shelves: 'a', visits: 'user:u-road' }
+    const both = { shelves: 'b', visits: 'user:u-road' }
+    const firstServer = new Recorded()
+    const secondServer = new Recorded()
+    const one = await aTabOf('narrowed-twice', ['shelves', 'visits'], firstServer)
+
+    firstServer.pulls = [
+      {
+        changes: [{ entity: 'visits', rows: [theirs, mine] }],
+        cursor: 9,
+        hasMore: false,
+        narrowed: first,
+      },
+    ]
+    await one.synchronise()
+
+    const two = await aTabOf('narrowed-twice', ['shelves', 'visits'], secondServer)
+
+    // The first tab hears the narrower role and starts again; the store keeps it.
+    firstServer.pulls = [
+      { changes: [], cursor: 9, hasMore: false, narrowed: role },
+      { changes: [{ entity: 'visits', rows: [mine] }], cursor: 9, hasMore: false, narrowed: role },
+    ]
+    await one.synchronise()
+
+    // The second hears the change after that one first, which differs from
+    // what the store keeps in the shelves alone.
+    secondServer.pulls = [
+      { changes: [], cursor: 9, hasMore: false, narrowed: both },
+      { changes: [], cursor: 9, hasMore: false, narrowed: both },
+      { changes: [{ entity: 'visits', rows: [mine] }], cursor: 9, hasMore: false, narrowed: both },
+    ]
+    await two.synchronise()
+
+    expect(two.list('visits').map((entry) => entry['id'])).toEqual(['v-2'])
+    one.stop()
+    two.stop()
+  })
+
+  /**
+   * A tab is opened while another goes back to the start for a narrower role
+   * and pulls up to the same cursor again (opengewerk#899). The narrowing is
+   * read before the rows at the start, so that the new tab never holds old
+   * rows for the new narrowing.
+   */
+  it('holds no old rows for a new narrowing when it opens while another tab starts again', async () => {
+    const all = { visits: 'all' }
+    const own = { visits: 'user:u-road' }
+    const firstServer = new Recorded()
+    const one = await aTabOf('opened-while-restarting', ['shelves', 'visits'], firstServer)
+
+    firstServer.pulls = [
+      {
+        changes: [{ entity: 'visits', rows: [theirs, mine] }],
+        cursor: 9,
+        hasMore: false,
+        narrowed: all,
+      },
+    ]
+    await one.synchronise()
+
+    const store = await openLocalStore('opened-while-restarting')
+    let raced = false
+    // The other tab goes back to the start the moment this one reads the narrowing.
+    const racing: LocalStore = {
+      ...store,
+      readMeta: async (key) => {
+        if (key === 'narrowed' && !raced) {
+          raced = true
+          firstServer.pulls = [
+            { changes: [], cursor: 9, hasMore: false, narrowed: own },
+            {
+              changes: [{ entity: 'visits', rows: [mine] }],
+              cursor: 9,
+              hasMore: false,
+              narrowed: own,
+            },
+          ]
+          await one.synchronise()
+        }
+
+        return store.readMeta(key)
+      },
+    }
+    const secondServer = new Recorded()
+    const two = await Client.start({
+      store: racing,
+      transport: secondServer,
+      writer: new Writing(),
+      rules,
+      deviceId: 'tablet',
+      entities: ['shelves', 'visits'],
+      onSignedOut: () => {},
+    })
+
+    secondServer.pulls = [
+      { changes: [], cursor: 9, hasMore: false, narrowed: own },
+      { changes: [], cursor: 9, hasMore: false, narrowed: own },
+    ]
+    await two.synchronise()
+
+    expect(raced).toBe(true)
+    expect(two.list('visits').map((entry) => entry['id'])).toEqual(['v-2'])
+    one.stop()
+    two.stop()
+  })
+
   it('lets go of them too when the rows in its memory were pulled before any narrowing', async () => {
     const own = { visits: 'user:u-road' }
     const firstServer = new Recorded()

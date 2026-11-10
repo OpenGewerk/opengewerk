@@ -7,7 +7,13 @@ import {
   priceOn,
   type RecordState,
 } from '@opengewerk/domain'
-import { maybeText, text, useRecords, useSyncStatus } from '@opengewerk/platform-web/sync'
+import {
+  maybeText,
+  type SyncSnapshot,
+  text,
+  useRecords,
+  useSyncStatus,
+} from '@opengewerk/platform-web/sync'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
 
@@ -109,11 +115,21 @@ function foundOf(row: ArticleRow): FoundArticle {
   }
 }
 
-/** Whether the device counts itself without a connection; see `ArticleSearch.offline`. */
-function useOffline(): boolean {
-  const status = useSyncStatus()
+/**
+ * Whether a state of the exchange counts the device without a connection;
+ * see `ArticleSearch.offline`. A page of an older build than the tab that
+ * pulls for the store (`outdated`, opengewerk#899) reaches the server all the
+ * same, and searches the whole catalogue there.
+ */
+export function withoutConnection(
+  status: Pick<SyncSnapshot, 'online' | 'trouble' | 'troubleKind'>,
+): boolean {
+  return !status.online || (status.trouble !== null && status.troubleKind !== 'outdated')
+}
 
-  return !status.online || status.trouble !== null
+/** Whether the device counts itself without a connection now (`withoutConnection`). */
+function useOffline(): boolean {
+  return withoutConnection(useSyncStatus())
 }
 
 /** Whether an article on the device answers a search: its number, its name or its EAN. */
