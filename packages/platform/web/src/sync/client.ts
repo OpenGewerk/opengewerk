@@ -466,19 +466,18 @@ export class SyncClient {
 
     const client = new SyncClient(store, transport, writer, rules, deviceId, onSignedOut)
 
-    const cursor = await store.readMeta(cursorKey)
-    // Before the rows, as `catchUp` reads them (opengewerk#899): another tab
-    // that goes back to the start in between leaves this page with rows newer
-    // than this, and the first exchange takes the store again, where the other
-    // order left it with old rows held for the new narrowing.
-    const pulledFor = await store.readMeta(narrowedKey)
     const known = await store.readMeta(entitiesKey)
     const list = [...entities].sort().join(',')
     const stands = cursorStands(known, entities)
+    // Cursor, narrowing, settled and rows in one transaction (opengewerk#899),
+    // as `catchUp` reads them: read one by one, another tab that went back to
+    // the start in between left this page with the rows of one state under
+    // the cursor or the narrowing of another.
+    const pulled = await store.readPulled(entities)
 
-    client.cursor = typeof cursor === 'number' && stands ? cursor : 0
+    client.cursor = pulled.cursor !== null && stands ? pulled.cursor : 0
     client.kinds = list
-    client.pulledFor = typeof pulledFor === 'string' ? pulledFor : null
+    client.pulledFor = pulled.narrowed
 
     // The cursor first. The other way round, a device closed in between would
     // keep a list that vouches for a cursor nobody checked. And the list on
@@ -494,10 +493,9 @@ export class SyncClient {
     }
 
     for (const entity of entities) {
-      const rows = await store.readAll(entity)
       const byId = new Map<string, RecordState>()
 
-      for (const row of rows) {
+      for (const row of pulled.rows.get(entity) ?? []) {
         byId.set(String(row['id']), row)
       }
 
@@ -513,11 +511,9 @@ export class SyncClient {
       client.held.set(name, typeof held === 'string' && held !== '' ? held : null)
     }
 
-    const settled = await store.readMeta(settledKey)
-
     client.narrowedNow =
-      typeof settled === 'string' && settled !== ''
-        ? (JSON.parse(settled) as Record<string, string>)
+      pulled.settled !== null && pulled.settled !== ''
+        ? (JSON.parse(pulled.settled) as Record<string, string>)
         : null
     client.regroup()
     client.snapshot = {
@@ -1330,8 +1326,18 @@ export class SyncClient {
     // never bring them back; another tab of the browser that wrote a page in
     // between found the same (opengewerk#899). The cursor of the store goes
     // back to 0 on a fresh device as well: another tab may have moved it.
+    // And only while the store keeps the narrowing the kinds were chosen by:
+    // another tab that started again in between may have written rows of a
+    // kind this one would leave, and then this one takes the store again.
+    const keptNarrowing = typeof kept === 'string' ? kept : null
+
     if (fresh) {
-      await this.store.restartPull(Object.keys(narrowed), said)
+      if (!(await this.store.restartPull(Object.keys(narrowed), said, keptNarrowing))) {
+        await this.catchUp()
+
+        return true
+      }
+
       this.pulledFor = said
 
       return false
@@ -1342,7 +1348,11 @@ export class SyncClient {
       (entity) => before[entity] !== narrowed[entity],
     )
 
-    await this.store.restartPull(changed, said)
+    if (!(await this.store.restartPull(changed, said, keptNarrowing))) {
+      await this.catchUp()
+
+      return true
+    }
 
     // What the device holds is a part now, until the pull from the start has
     // run through, and also after a start in between.
@@ -1360,34 +1370,30 @@ export class SyncClient {
   }
 
   /**
-   * Takes the cursor and the rows from the store as they stand, after another
-   * tab of this browser moved them while this one pulled (opengewerk#899).
-   * The cursor first: a page that tab writes in between leaves this one
-   * behind the store, and its next page is refused and taken again, where the
-   * other order would leave it ahead of rows it never read.
+   * Takes the cursor, the narrowing and the rows from the store as they
+   * stand, after another tab of this browser moved them while this one pulled
+   * (opengewerk#899). All of it in one transaction (`readPulled`): read one by
+   * one, a tab that went back to the start in between and pulled up to the
+   * same cursor again left this one with rows of one state under the cursor of
+   * another, and said it held them all.
    */
   private async catchUp(): Promise<void> {
-    const cursor = await this.store.readMeta(cursorKey)
-    const pulledFor = await this.store.readMeta(narrowedKey)
+    const pulled = await this.store.readPulled([...this.records.keys()])
 
-    this.cursor = typeof cursor === 'number' ? cursor : 0
-    this.pulledFor = typeof pulledFor === 'string' ? pulledFor : null
+    this.cursor = pulled.cursor ?? 0
+    this.pulledFor = pulled.narrowed
 
     for (const [entity, byId] of this.records) {
-      const rows = await this.store.readAll(entity)
-
       byId.clear()
 
-      for (const row of rows) {
+      for (const row of pulled.rows.get(entity) ?? []) {
         byId.set(String(row['id']), row)
       }
     }
 
-    const settled = await this.store.readMeta(settledKey)
-
     this.narrowedNow =
-      typeof settled === 'string' && settled !== ''
-        ? (JSON.parse(settled) as Record<string, string>)
+      pulled.settled !== null && pulled.settled !== ''
+        ? (JSON.parse(pulled.settled) as Record<string, string>)
         : null
     this.publish({})
   }

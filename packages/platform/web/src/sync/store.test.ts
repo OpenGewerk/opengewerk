@@ -415,6 +415,60 @@ describe('the pulls of the tabs of one browser', () => {
     expect(await store.readMeta('narrowed-settled')).toBe('')
     store.close()
   })
+
+  it('goes back to the start only while it keeps the narrowing the kinds were chosen by', async () => {
+    const store = await openLocalStore(aTenant(), 'anna')
+
+    await store.restartPull([], '{"visits":"all"}')
+    await store.writePulled({
+      changes: [{ entity: 'visits', rows: [visit('v-1')] }],
+      from: 0,
+      to: 9,
+      narrowed: '{"visits":"all"}',
+      settled: null,
+      entities: '',
+    })
+
+    // Chosen by a narrowing another tab has replaced since.
+    expect(await store.restartPull(['shelves'], '{"visits":"own"}', '{"visits":"part"}')).toBe(
+      false,
+    )
+    expect(await store.readAll('visits')).toEqual([visit('v-1')])
+    expect(await store.readMeta('cursor')).toBe(9)
+    expect(await store.readMeta('narrowed')).toBe('{"visits":"all"}')
+
+    expect(await store.restartPull(['visits'], '{"visits":"own"}', '{"visits":"all"}')).toBe(true)
+    expect(await store.readAll('visits')).toEqual([])
+    expect(await store.readMeta('narrowed')).toBe('{"visits":"own"}')
+    store.close()
+  })
+
+  it('reads where its pulls stand and its rows together', async () => {
+    const store = await openLocalStore(aTenant(), 'anna')
+
+    await store.restartPull([], '{"visits":"all"}')
+    await store.writePulled({
+      changes: [
+        { entity: 'visits', rows: [visit('v-1')] },
+        { entity: 'shelves', rows: [visit('s-1')] },
+      ],
+      from: 0,
+      to: 9,
+      narrowed: '{"visits":"all"}',
+      settled: '{"visits":"all"}',
+      entities: '',
+    })
+
+    const read = await store.readPulled(['visits', 'notes'])
+
+    expect(read.cursor).toBe(9)
+    expect(read.narrowed).toBe('{"visits":"all"}')
+    expect(read.settled).toBe('{"visits":"all"}')
+    expect(read.rows.get('visits')).toEqual([visit('v-1')])
+    expect(read.rows.get('notes')).toEqual([])
+    expect(read.rows.has('shelves')).toBe(false)
+    store.close()
+  })
 })
 
 describe('what waits on a device for nobody', () => {

@@ -97,6 +97,18 @@ export interface PulledPage {
  */
 export type PageWritten = 'written' | 'moved' | 'newerBuild' | 'fewerKinds'
 
+/** Where the pulls of the store stand, and its rows, as one transaction read them (`readPulled`). */
+export interface PulledState {
+  /** The cursor, or null where none is kept. */
+  readonly cursor: number | null
+  /** The narrowing kept (`narrowedKey`), or null. */
+  readonly narrowed: string | null
+  /** What the rows add up to (`settledKey`), or null; empty while a pull from the start runs. */
+  readonly settled: string | null
+  /** The rows of each kind asked for, deleted rows included. */
+  readonly rows: ReadonlyMap<string, readonly StoredRecord[]>
+}
+
 export interface LocalStore {
   /** Everything of one kind, deleted rows included. Filtering is the caller's. */
   readAll(entity: string): Promise<readonly StoredRecord[]>
@@ -131,8 +143,24 @@ export interface LocalStore {
    * `narrowed` kept as what the rows are pulled for from now on. In one, so
    * that neither a page closed halfway nor another tab writing a page in
    * between finds a cursor with rows missing behind it.
+   *
+   * `before` is the narrowing the caller read and chose the kinds by. Where
+   * the store keeps another by now, another tab started again in between and
+   * may have written rows for kinds this one would leave (opengewerk#899):
+   * nothing is written, and the answer is false. Left out, it is not asked.
    */
-  restartPull(entities: readonly string[], narrowed: string): Promise<void>
+  restartPull(
+    entities: readonly string[],
+    narrowed: string,
+    before?: string | null,
+  ): Promise<boolean>
+  /**
+   * Where the pulls of the store stand and its rows of the named kinds, read
+   * in one transaction (opengewerk#899). Read one by one, another tab that
+   * went back to the start in between left a page with rows of one state
+   * under the cursor or the narrowing of another.
+   */
+  readPulled(entities: readonly string[]): Promise<PulledState>
 
   /** What waits to be sent: of the person the store is open for, or all of it without one. */
   readOutbox(): Promise<readonly Operation[]>
@@ -690,9 +718,21 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
       await finished(transaction)
     },
 
-    /** See `LocalStore.restartPull`: rows, cursor, settled and narrowing in one transaction. */
-    async restartPull(entities, narrowed) {
+    /** See `LocalStore.restartPull`: the narrowing asked, rows, cursor, settled and narrowing in one transaction. */
+    async restartPull(entities, narrowed, before) {
       const transaction = await held([recordStore, metaStore], 'readwrite')
+      const meta = transaction.objectStore(metaStore)
+
+      if (before !== undefined) {
+        const kept = await promised<MetaRow | undefined>(meta.get(narrowedKey))
+
+        if ((kept?.value ?? null) !== before) {
+          transaction.abort()
+
+          return false
+        }
+      }
+
       const records = transaction.objectStore(recordStore)
 
       for (const entity of entities) {
@@ -703,13 +743,40 @@ export async function openLocalStore(tenantId: string, owner?: string): Promise<
         }
       }
 
-      const meta = transaction.objectStore(metaStore)
-
       meta.put({ key: settledKey, value: '' } satisfies MetaRow)
       meta.put({ key: cursorKey, value: 0 } satisfies MetaRow)
       meta.put({ key: narrowedKey, value: narrowed } satisfies MetaRow)
 
       await finished(transaction)
+
+      return true
+    },
+
+    /** See `LocalStore.readPulled`: cursor, narrowing, settled and rows in one transaction. */
+    async readPulled(entities) {
+      const transaction = await held([recordStore, metaStore], 'readonly')
+      const meta = transaction.objectStore(metaStore)
+      const cursor = await promised<MetaRow | undefined>(meta.get(cursorKey))
+      const narrowed = await promised<MetaRow | undefined>(meta.get(narrowedKey))
+      const settled = await promised<MetaRow | undefined>(meta.get(settledKey))
+      const index = transaction.objectStore(recordStore).index('entity')
+      const rows = new Map<string, readonly StoredRecord[]>()
+
+      for (const entity of entities) {
+        const found = await promised<RecordRow[]>(index.getAll(entity))
+
+        rows.set(
+          entity,
+          found.map((row) => row.values),
+        )
+      }
+
+      return {
+        cursor: typeof cursor?.value === 'number' ? cursor.value : null,
+        narrowed: typeof narrowed?.value === 'string' ? narrowed.value : null,
+        settled: typeof settled?.value === 'string' ? settled.value : null,
+        rows,
+      }
     },
 
     async readOutbox() {
