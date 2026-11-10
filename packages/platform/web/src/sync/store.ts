@@ -320,11 +320,6 @@ export const checkedKey = 'cursor-checked'
 export const checkedForKey = 'cursor-checked-for'
 
 /**
- * What the meta store holds of the pulls, and goes with the records for
- * another account. Everything else in it the application keeps for itself
- * (`SyncClient.keep`), and each such value says itself whose it is.
- */
-/**
  * The narrowing the rows a section took over from the store stood under
  * (`adoptUnsectioned`, opengewerk#907), until the section starts its first
  * pull for a narrowing of its own: what changed since then goes from every
@@ -332,6 +327,13 @@ export const checkedForKey = 'cursor-checked-for'
  */
 export const adoptedKey = 'narrowed-adopted'
 
+/**
+ * What the meta store holds of the pulls, and goes with the records for
+ * another account: outside the sections at once, in a section when it is
+ * opened next without its mark among the records (`adoptUnsectioned`).
+ * Everything else in it the application keeps for itself (`SyncClient.keep`),
+ * and each such value says itself whose it is.
+ */
 const pulledKeys: readonly string[] = [
   cursorKey,
   narrowedKey,
