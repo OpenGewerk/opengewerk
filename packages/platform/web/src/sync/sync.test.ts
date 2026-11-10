@@ -1054,7 +1054,7 @@ describe('a device handed to somebody who sees less, or more', () => {
    * (opengewerk#899). The older moved the one cursor past the shelves, and the
    * newer took that cursor over when its own page was refused: the shelves
    * never came. A build that knows fewer kinds than the store is kept for
-   * pulls nothing for it and reads what the other writes.
+   * writes nothing to it and keeps what it pulls in its memory.
    */
   it('lets the tab of the build that knows more kinds pull, when it opened last', async () => {
     const olderServer = holdingUpTo12([{ entity: 'visits', rows: [mine] }])
@@ -1069,15 +1069,169 @@ describe('a device handed to somebody who sees less, or more', () => {
     ])
     const newer = await aTabOf('builds-newer-last', ['shelves', 'visits'], newerServer)
 
+    const syncedBefore = older.status().lastSyncedAt
+
     await older.synchronise()
     await newer.synchronise()
 
+    // The older says it is out of date, not that it is up to date: what it
+    // pulls is in its memory alone until it is loaded as the newer build.
+    expect(older.status().troubleKind).toBe('outdated')
+    expect(older.status().state).not.toBe('synced')
+    expect(older.status().lastSyncedAt).toBe(syncedBefore)
+    expect(newer.status().troubleKind).toBeNull()
     expect(olderServer.asked).toEqual([12])
     expect(newerServer.asked).toEqual([0])
     expect(newer.list('shelves').map((entry) => entry['id'])).toEqual(['s-1'])
     expect(older.list('visits').map((entry) => entry['id'])).toEqual(['v-2'])
     older.stop()
     newer.stop()
+  })
+
+  /**
+   * A role that sees less, heard by the first of two tabs (opengewerk#899).
+   * It goes back to the start and pulls up to the cursor the second still
+   * stands at. The second finds the store at its cursor and with the new
+   * narrowing, and held the rows of the other person in its memory until it
+   * was loaded again.
+   */
+  it('lets go of the rows another tab let go of for a narrower role, at the same cursor', async () => {
+    const all = { visits: 'all' }
+    const own = { visits: 'user:u-road' }
+    const firstServer = new Recorded()
+    const secondServer = new Recorded()
+    const first = await aTabOf('narrower-two-tabs', ['shelves', 'visits'], firstServer)
+
+    firstServer.pulls = [
+      {
+        changes: [{ entity: 'visits', rows: [theirs, mine] }],
+        cursor: 9,
+        hasMore: false,
+        narrowed: all,
+      },
+    ]
+    await first.synchronise()
+
+    const second = await aTabOf('narrower-two-tabs', ['shelves', 'visits'], secondServer)
+
+    expect(second.list('visits')).toHaveLength(2)
+
+    firstServer.pulls = [
+      { changes: [], cursor: 9, hasMore: false, narrowed: own },
+      { changes: [{ entity: 'visits', rows: [mine] }], cursor: 9, hasMore: false, narrowed: own },
+    ]
+    await first.synchronise()
+
+    secondServer.pulls = [
+      { changes: [], cursor: 9, hasMore: false, narrowed: own },
+      { changes: [], cursor: 9, hasMore: false, narrowed: own },
+    ]
+    await second.synchronise()
+
+    expect(second.list('visits').map((entry) => entry['id'])).toEqual(['v-2'])
+    first.stop()
+    second.stop()
+  })
+
+  it('lets go of them too when the rows in its memory were pulled before any narrowing', async () => {
+    const own = { visits: 'user:u-road' }
+    const firstServer = new Recorded()
+    const secondServer = new Recorded()
+    const first = await aTabOf('first-narrowing-two-tabs', ['shelves', 'visits'], firstServer)
+
+    // Pulled from a server that named no narrowing yet.
+    firstServer.pulls = [
+      { changes: [{ entity: 'visits', rows: [theirs, mine] }], cursor: 9, hasMore: false },
+    ]
+    await first.synchronise()
+
+    const second = await aTabOf('first-narrowing-two-tabs', ['shelves', 'visits'], secondServer)
+
+    firstServer.pulls = [
+      { changes: [], cursor: 9, hasMore: false, narrowed: own },
+      { changes: [{ entity: 'visits', rows: [mine] }], cursor: 9, hasMore: false, narrowed: own },
+    ]
+    await first.synchronise()
+
+    secondServer.pulls = [
+      { changes: [], cursor: 9, hasMore: false, narrowed: own },
+      { changes: [], cursor: 9, hasMore: false, narrowed: own },
+    ]
+    await second.synchronise()
+
+    expect(second.list('visits').map((entry) => entry['id'])).toEqual(['v-2'])
+    first.stop()
+    second.stop()
+  })
+
+  /**
+   * The newer tab pulled once and is closed, or stays idle; the older goes on
+   * working. It shows what it writes itself and what others write, as every
+   * tab did before the store took turns, while the store is left to the newer
+   * build.
+   */
+  it('lets the tab of the older build go on showing what it and others write', async () => {
+    const theirs9 = row({ id: 's-9', name: 'Keller', kind: 'metal' })
+    const olderServer = new Recorded()
+
+    olderServer.pull = (since: number) => {
+      olderServer.asked.push(since)
+
+      const created = olderServer.sent
+        .flat()
+        .filter((operation) => operation.entity === 'shelves' && operation.kind === 'create')
+        .map((operation) => row({ id: operation.recordId, name: 'Neu', kind: 'wood' }))
+
+      return Promise.resolve(
+        since < 12
+          ? { changes: [{ entity: 'shelves', rows: [shelf] }], cursor: 12, hasMore: false }
+          : since < 15
+            ? {
+                changes: [{ entity: 'shelves', rows: [theirs9, ...created] }],
+                cursor: 15,
+                hasMore: false,
+              }
+            : { changes: [], cursor: 15, hasMore: false },
+      )
+    }
+
+    const older = await aTabOf('builds-older-goes-on', ['shelves'], olderServer)
+
+    await older.synchronise()
+
+    const newer = await aTabOf(
+      'builds-older-goes-on',
+      ['shelves', 'visits'],
+      holdingUpTo12([
+        { entity: 'visits', rows: [mine] },
+        { entity: 'shelves', rows: [shelf] },
+      ]),
+    )
+
+    await newer.synchronise()
+    newer.stop()
+
+    const made = await older.create('shelves', { name: 'Neu', kind: 'wood' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The shelf was not queued.')
+    }
+
+    await older.synchronise()
+
+    expect(older.list('shelves').map((entry) => entry['id'])).toEqual(
+      expect.arrayContaining(['s-1', 's-9', made.id]),
+    )
+    expect(older.list('shelves')).toHaveLength(3)
+    expect(older.status().pending).toBe(0)
+    expect(older.status().troubleKind).toBe('outdated')
+
+    // The store is the newer build's: nothing of the older's pulls went in.
+    const again = await startOn('builds-older-goes-on')
+
+    expect(again.list('shelves').map((entry) => entry['id'])).toEqual(['s-1'])
+    again.stop()
+    older.stop()
   })
 
   it('takes the store back for its kinds when a tab of an older build pulled since', async () => {

@@ -103,6 +103,12 @@ export type SyncTroubleKind =
    * the form.
    */
   | 'change_refused'
+  /**
+   * A tab of a newer build pulls for the store of this browser, one that
+   * knows more kinds of record (opengewerk#899). This page pulls nothing more
+   * until it is loaded again; waiting for a network does not help.
+   */
+  | 'outdated'
 
 export interface SyncSnapshot {
   readonly state: SyncState
@@ -380,6 +386,16 @@ export class SyncClient {
   /** The kinds of record this build knows, as the store keeps them (`entitiesKey`). */
   private kinds = ''
   /**
+   * The narrowing the rows in the memory of this page were pulled for, as
+   * JSON, or null where they were pulled before the server named any. Kept
+   * at the start, at a start from the beginning and when the page takes the
+   * store as it stands (`catchUp`). Not the one the store keeps: another
+   * tab may have gone back to the start for a new one and pulled up to the
+   * same cursor again (opengewerk#899), and this page would go on showing rows
+   * pulled for the one before.
+   */
+  private pulledFor: string | null = null
+  /**
    * What the rows on this device were narrowed to when the last pull ran
    * through, or null before one has since the narrowing changed. Kept in
    * memory beside the store, for the screens that have to know whether the
@@ -492,11 +508,13 @@ export class SyncClient {
     }
 
     const settled = await store.readMeta(settledKey)
+    const pulledFor = await store.readMeta(narrowedKey)
 
     client.narrowedNow =
       typeof settled === 'string' && settled !== ''
         ? (JSON.parse(settled) as Record<string, string>)
         : null
+    client.pulledFor = typeof pulledFor === 'string' ? pulledFor : null
     client.regroup()
     client.snapshot = {
       ...client.snapshot,
@@ -948,7 +966,7 @@ export class SyncClient {
         sending()
       }
 
-      await this.pullChanges()
+      const outdated = await this.pullChanges()
 
       // Everything that settled is in the rows now, as the server holds it.
       if (this.settling.length > 0) {
@@ -961,10 +979,17 @@ export class SyncClient {
       // them go in the meantime.
       const unowned = await this.store.readUnowned()
 
+      // A page of an older build than a tab that pulls for the store says so,
+      // and not that it is up to date: what it pulls is in its memory alone,
+      // and gone with it, until it is loaded again as the newer build.
       this.publish({
-        lastSyncedAt: new Date(),
+        ...(outdated
+          ? troubled(
+              'outdated',
+              'In einem anderen Tab läuft eine neuere Fassung. Bitte diese Seite neu laden.',
+            )
+          : { lastSyncedAt: new Date(), ...untroubled }),
         exchanging: false,
-        ...untroubled,
         refused,
         unowned,
       })
@@ -1148,10 +1173,13 @@ export class SyncClient {
   /**
    * Pulls what changed since the cursor, page by page, until the server has
    * nothing more, and writes each page down with the cursor it ends at while
-   * the store still stands where it began (opengewerk#899).
+   * the store still stands where it began (opengewerk#899). True where a tab
+   * of a newer build pulls for the store and this one pulled into its memory
+   * alone.
    */
-  private async pullChanges(): Promise<void> {
+  private async pullChanges(): Promise<boolean> {
     let guard = 0
+    let outdated = false
 
     for (;;) {
       const from = this.cursor
@@ -1185,11 +1213,12 @@ export class SyncClient {
 
       if (written === 'newerBuild') {
         // A tab of a build that knows more kinds of record pulls for this
-        // store now. This one would move the cursor past rows of the kinds it
-        // does not know; it reads what the other writes and asks nothing.
-        await this.catchUp()
-
-        return
+        // store now; this one would move the cursor past rows of the kinds it
+        // does not know. It keeps what it pulls in its memory alone, from a
+        // cursor of its own, as every tab did before the store took turns,
+        // so that it shows what others and it itself wrote, and says it wants
+        // loading again.
+        outdated = true
       }
 
       if (written === 'fewerKinds') {
@@ -1203,9 +1232,9 @@ export class SyncClient {
         await this.catchUp()
       }
 
-      if (written !== 'written') {
+      if (written === 'fewerKinds' || written === 'moved') {
         if ((guard += 1) > 100) {
-          return
+          return outdated
         }
 
         continue
@@ -1231,7 +1260,7 @@ export class SyncClient {
       // whole point; the counter is there so a server that always says yes
       // cannot spin this for ever.
       if (!answer.hasMore || (guard += 1) > 100) {
-        return
+        return outdated
       }
     }
   }
@@ -1263,6 +1292,17 @@ export class SyncClient {
     const kept = await this.store.readMeta(narrowedKey)
 
     if (kept === said) {
+      if (this.pulledFor !== said) {
+        // Another tab of this browser went back to the start for this
+        // narrowing since this page pulled, and may have pulled up to the
+        // cursor of this page again (opengewerk#899). The rows in memory were
+        // pulled for the one before, the rows of other people among them
+        // after a role that sees less: they come from the store again.
+        await this.catchUp()
+
+        return true
+      }
+
       return false
     }
 
@@ -1287,6 +1327,7 @@ export class SyncClient {
     // back to 0 on a fresh device as well: another tab may have moved it.
     if (fresh) {
       await this.store.restartPull(Object.keys(narrowed), said)
+      this.pulledFor = said
 
       return false
     }
@@ -1302,6 +1343,7 @@ export class SyncClient {
     // run through, and also after a start in between.
     this.narrowedNow = null
     this.cursor = 0
+    this.pulledFor = said
 
     for (const entity of changed) {
       this.records.get(entity)?.clear()
@@ -1321,8 +1363,10 @@ export class SyncClient {
    */
   private async catchUp(): Promise<void> {
     const cursor = await this.store.readMeta(cursorKey)
+    const pulledFor = await this.store.readMeta(narrowedKey)
 
     this.cursor = typeof cursor === 'number' ? cursor : 0
+    this.pulledFor = typeof pulledFor === 'string' ? pulledFor : null
 
     for (const [entity, byId] of this.records) {
       const rows = await this.store.readAll(entity)
