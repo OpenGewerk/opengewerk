@@ -301,8 +301,14 @@ describe('what a device holds of the server, with more than one person', () => {
 
     // Once only: what the office lets go of from then on is its own, also
     // when it is opened again.
-    await office.restartPull(['visits'], '{"visits":"own"}')
+    await office.restartPull(['visits'], '{"visits":"all"}')
     office.close()
+
+    // Narrowed apart from now on, so that nothing is taken as pulled since.
+    const apart = await openLocalStore(tenant, 'anna')
+
+    await apart.writeMeta('narrowed', '{"visits":"site"}')
+    apart.close()
 
     const again = await openLocalStore(tenant, 'anna', 'office')
 
@@ -416,15 +422,70 @@ describe('what a device holds of the server, with more than one person', () => {
     expect(await again.readMeta('cursor')).toBe(0)
     expect(await again.readMeta('cursor-checked')).toBe(0)
     expect(await again.readMeta('narrowed-settled')).toBe('')
-    // Its narrowing for the kind is the office's now, in the order it was.
+    // Its narrowing stays its own, which its next exchange finds changed.
     expect(await again.readMeta('narrowed')).toBe(
-      '{"customers":"r-2","site_accesses":"s-1:values"}',
+      '{"customers":"r-1","site_accesses":"s-1:values"}',
     )
     expect(await again.readMeta('cursor-checked-for')).toBe(
-      '{"customers":"r-2","site_accesses":"s-1:values"}',
+      '{"customers":"r-1","site_accesses":"s-1:values"}',
     )
     // The ways in, narrowed apart, stay with the site and their value.
     expect(await again.readAll('site_accesses')).toEqual([{ id: 'z-1', version: 1, value: '0815' }])
+    again.close()
+  })
+
+  /**
+   * The office begins its first pull after the update without a narrowing of
+   * its own (opengewerk#907): the one its rows were taken over under stands
+   * for it, and what changed since goes from the part they came from, the rest
+   * stays.
+   */
+  it('lets go in the part rows were taken over from of what changed since, at the first pull', async () => {
+    const tenant = aTenant()
+    const before = await openLocalStore(tenant, 'anna')
+
+    await before.writeMeta('entities', 'customers,visits')
+    await before.writeMeta('narrowed', '{"customers":"r-1","visits":"all"}')
+    await before.write('customers', [{ id: 'c-1', version: 1, name: 'Erika Muster' }])
+    await before.write('visits', [{ id: 'v-1', version: 1 }])
+    before.close()
+
+    const office = await openLocalStore(tenant, 'anna', 'office')
+
+    expect((await office.beginPull(['customers', 'visits'])).narrowed).toBeNull()
+    await office.restartPull(['customers', 'visits'], '{"customers":"r-2","visits":"all"}', null)
+    office.close()
+
+    const site = await openLocalStore(tenant, 'anna')
+
+    expect(await site.readAll('customers')).toEqual([])
+    expect(await site.readAll('visits')).toEqual([{ id: 'v-1', version: 1 }])
+    site.close()
+  })
+
+  /**
+   * A kind narrowed by neither section before, and narrowed now for a role
+   * that sees less (opengewerk#907): it goes from both.
+   */
+  it('lets go in every section of a kind narrowed by neither before, when it is narrowed now', async () => {
+    const tenant = aTenant()
+    const site = await openLocalStore(tenant, 'anna')
+
+    await site.writeMeta('entities', 'suppliers,visits')
+    await site.writeMeta('narrowed', '{"visits":"all"}')
+    await site.write('suppliers', [{ id: 's-1', version: 1 }])
+    site.close()
+
+    const office = await openLocalStore(tenant, 'anna', 'office')
+
+    await office.writeMeta('entities', 'suppliers,visits')
+    await office.writeMeta('narrowed', '{"visits":"all"}')
+    await office.restartPull(['suppliers'], '{"visits":"all","suppliers":"none"}')
+    office.close()
+
+    const again = await openLocalStore(tenant, 'anna')
+
+    expect(await again.readAll('suppliers')).toEqual([])
     again.close()
   })
 

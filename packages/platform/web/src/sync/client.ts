@@ -19,6 +19,7 @@ import { uuidv7 } from 'uuidv7'
 import { holdUpdates } from '../shell/updates.js'
 import { byRecord, project, recordKey } from './projection.js'
 import {
+  adoptedKey,
   checkedForKey,
   checkedKey,
   cursorKey,
@@ -233,6 +234,7 @@ const bookkeeping: readonly string[] = [
   entitiesKey,
   checkedKey,
   checkedForKey,
+  adoptedKey,
 ]
 
 /**

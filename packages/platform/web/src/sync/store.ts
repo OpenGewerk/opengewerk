@@ -324,6 +324,14 @@ export const checkedForKey = 'cursor-checked-for'
  * another account. Everything else in it the application keeps for itself
  * (`SyncClient.keep`), and each such value says itself whose it is.
  */
+/**
+ * The narrowing the rows a section took over from the store stood under
+ * (`adoptUnsectioned`, opengewerk#907), until the section starts its first
+ * pull for a narrowing of its own: what changed since then goes from every
+ * section that held it alike, as at any later change of the narrowing.
+ */
+export const adoptedKey = 'narrowed-adopted'
+
 const pulledKeys: readonly string[] = [
   cursorKey,
   narrowedKey,
@@ -331,6 +339,7 @@ const pulledKeys: readonly string[] = [
   entitiesKey,
   checkedKey,
   checkedForKey,
+  adoptedKey,
 ]
 const fileStore = 'files'
 const uploadStore = 'uploads'
@@ -882,36 +891,36 @@ export async function openLocalStore(
    * sites for the site as well. Without it the section pulls from the start
    * at its first exchange and takes what it holds as narrowed anew.
    *
-   * And a section begun for another account than the store's begins again: a
-   * tab of a build from before sections that took the store over let go of
-   * every record, but only of the bookkeeping outside the sections, and the
-   * cursor of the section stood over rows that were gone. Asked and written
-   * in one transaction, for the account of the store.
+   * And a section whose records went since it began begins again. Every
+   * takeover by another account lets go of every record, by any build, also
+   * one from before sections, which knows only the bookkeeping outside them;
+   * and an account that comes back after another finds the section begun for
+   * it. A row of the section's own, among its records, says they are still
+   * those its bookkeeping counts: gone with them, the cursor of the section
+   * would stand over rows that are missing. Asked and written in one
+   * transaction, for the account of the store.
    */
   async function adoptUnsectioned(): Promise<void> {
     const transaction = await held([recordStore, metaStore], 'readwrite')
     const meta = transaction.objectStore(metaStore)
     const records = transaction.objectStore(recordStore)
+    const mark = keyOf(inSection(''), '')
 
-    if (owner !== undefined) {
-      const begunFor = await promised<MetaRow | undefined>(meta.get(inSection(ownerKey)))
-
-      if (begunFor !== undefined && begunFor.value !== owner) {
-        for (const key of pulledKeys) {
-          meta.delete(inSection(key))
-        }
-
-        for (const row of await promised<RecordRow[]>(records.getAll())) {
-          if (row.entity.startsWith(`${String(section)}/`)) {
-            records.delete(row.key)
-          }
-        }
+    if ((await promised<RecordRow | undefined>(records.get(mark))) === undefined) {
+      for (const key of pulledKeys) {
+        meta.delete(inSection(key))
       }
 
-      meta.put({ key: inSection(ownerKey), value: owner } satisfies MetaRow)
+      records.put({ key: mark, entity: inSection(''), id: '', values: {} } satisfies RecordRow)
     }
 
     if ((await promised<MetaRow | undefined>(meta.get(metaKey(entitiesKey)))) === undefined) {
+      const stood = await promised<MetaRow | undefined>(meta.get(narrowedKey))
+
+      if (stood !== undefined) {
+        meta.put({ key: metaKey(adoptedKey), value: stood.value } satisfies MetaRow)
+      }
+
       for (const row of await promised<RecordRow[]>(records.getAll())) {
         if (!row.entity.includes('/')) {
           records.put({
@@ -991,15 +1000,11 @@ export async function openLocalStore(
     // Another account's, or nobody's.
     transaction.objectStore(recordStore).clear()
     transaction.objectStore(conflictStore).clear()
-    // Of every section (opengewerk#907): the records of all of them are gone,
-    // and a section whose cursor stayed would ask on from it over rows that
-    // are missing, also when the account it was begun for comes back.
-    for (const key of await promised<IDBValidKey[]>(
-      transaction.objectStore(metaStore).getAllKeys(),
-    )) {
-      if (pulledKeys.some((pulled) => key === pulled || String(key).endsWith(`/${pulled}`))) {
-        transaction.objectStore(metaStore).delete(key)
-      }
+    // That of a section goes when the section is opened next: with the
+    // records went the row that says they are its own (`adoptUnsectioned`,
+    // opengewerk#907).
+    for (const key of pulledKeys) {
+      transaction.objectStore(metaStore).delete(key)
     }
 
     const waiting = new Set(
@@ -1194,6 +1199,7 @@ export async function openLocalStore(
       const transaction = await held([recordStore, metaStore], 'readwrite')
       const meta = transaction.objectStore(metaStore)
       const kept = await promised<MetaRow | undefined>(meta.get(metaKey(narrowedKey)))
+      const adopted = await promised<MetaRow | undefined>(meta.get(metaKey(adoptedKey)))
 
       if (before !== undefined && (kept?.value ?? null) !== before) {
         transaction.abort()
@@ -1224,13 +1230,15 @@ export async function openLocalStore(
       // what the narrowing no longer lets the account hold, a customer
       // restricted on a request for deletion or the rows of a role that sees
       // less, goes from the whole store at once, also from a section whose
-      // entry this device never opens again. Its narrowing for the kind
-      // becomes this one's, the same view of the same server. A kind the
+      // entry this device never opens again. A kind the
       // sections hold narrowed apart, the ways into the sites with their
       // values on the site alone, each lets go of at its own exchange: taken
       // with this one, every exchange of the office took the values off the
       // site.
-      const was = narrowingIn(kept)
+      // A section that took its rows over begins its first pull without a
+      // narrowing of its own: the one the rows stood under stands for it, and
+      // a change since the update reaches the part they came from as well.
+      const was = narrowingIn(kept) ?? narrowingIn(adopted)
       const now = narrowingIn({ key: narrowedKey, value: narrowed }) ?? {}
 
       for (const other of was === null ? [] : await sectionsBesides(meta, section)) {
@@ -1240,8 +1248,12 @@ export async function openLocalStore(
         const alike =
           theirs === null
             ? []
-            : entities.filter(
-                (entity) => was?.[entity] !== undefined && theirs[entity] === was[entity],
+            : // Narrowed by neither before is alike as well, a kind narrowed
+              // for a role that sees less among it; and only a kind whose
+              // narrowing changed, not one the client names for want of the one
+              // before.
+              entities.filter(
+                (entity) => theirs[entity] === was?.[entity] && was?.[entity] !== now[entity],
               )
 
         if (theirs === null || alike.length === 0) {
@@ -1258,22 +1270,17 @@ export async function openLocalStore(
           }
         }
 
-        // In the order the server answers in, so that the next answer reads
-        // as the narrowing kept and the section does not start once more.
-        const updated = JSON.stringify(
-          Object.fromEntries(
-            [...Object.keys(theirs), ...Object.keys(now)]
-              .filter((entity, at, all) => all.indexOf(entity) === at)
-              .map((entity) => [entity, alike.includes(entity) ? now[entity] : theirs[entity]])
-              .filter(([, value]) => value !== undefined),
-          ),
-        )
+        // Its own narrowing stays: its next exchange finds the server's
+        // answer changed and starts the kind itself, with this section's no
+        // longer alike. Taking this one's over made a kind the entries hold
+        // apart alike with the other's old one, and each start went back and
+        // forth between the two.
+        const own = await promised<MetaRow | undefined>(meta.get(within(other, narrowedKey)))
 
         meta.put({ key: within(other, settledKey), value: '' } satisfies MetaRow)
         meta.put({ key: within(other, cursorKey), value: 0 } satisfies MetaRow)
         meta.put({ key: within(other, checkedKey), value: 0 } satisfies MetaRow)
-        meta.put({ key: within(other, checkedForKey), value: updated } satisfies MetaRow)
-        meta.put({ key: within(other, narrowedKey), value: updated } satisfies MetaRow)
+        meta.put({ key: within(other, checkedForKey), value: own?.value ?? '' } satisfies MetaRow)
       }
 
       await finished(transaction)

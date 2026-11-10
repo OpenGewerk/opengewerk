@@ -1469,11 +1469,15 @@ describe('a device handed to somebody who sees less, or more', () => {
       onSignedOut: () => {},
     })
 
+    // The first exchange of the office after the update starts the site
+    // once, for the rows it took over under the site's narrowing.
+    await office.synchronise()
+    await site.synchronise()
     await office.synchronise()
     siteServer.asked.length = 0
     await site.synchronise()
 
-    // The site asks on from its own cursor and keeps its rows.
+    // From then on the site asks on from its own cursor and keeps its rows.
     expect(siteServer.asked).toEqual([9])
     expect(site.list('visits').map((entry) => entry['id'])).toEqual(['v-2'])
     expect(office.list('visits').map((entry) => entry['id'])).toEqual(['v-2'])
