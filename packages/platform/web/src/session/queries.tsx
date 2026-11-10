@@ -128,6 +128,12 @@ export function askAgainOnOtherAccount(client: QueryClient): () => void {
   })
 }
 
+/**
+ * The cache for the screens of an application, with what goes with it on
+ * every page: the answers of the account before go when another signs in
+ * (`forgetOnAccountChange`), and who is signed in is asked again when the
+ * server names another account (`askAgainOnOtherAccount`).
+ */
 export function QueryProvider({
   client,
   children,
