@@ -2774,6 +2774,9 @@ describe('the rollback of deleting customers', () => {
     await admin.query(
       'begin; set local session_replication_role = replica; delete from erasures; commit;',
     )
+    // A later migration that hangs on 0131 goes back first, as in a rollback in
+    // order: 0139 locks the earlier certificates with its `goes_with_the_file`.
+    await revertMigration(admin, '0139_replaced_certificates')
     await revertMigration(admin, '0131_staff_erasure')
 
     const labels = await admin.query(

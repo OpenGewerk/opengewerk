@@ -168,7 +168,9 @@ describe('the tables', () => {
       'document_file_takes_its_file()':
         'the file of a document goes with its customer, and the application may not delete files (#845)',
       'qualification_takes_its_certificate()':
-        'the certificate of a qualification goes with the file of its person or when it is replaced, and the application may not delete files (#846, #802)',
+        'the certificate of a qualification goes with the file of its person, and the application may not delete files (#846)',
+      'replaced_certificate_takes_its_file()':
+        'a certificate a qualification named before goes with the file of its person, and the application may not delete files (#802)',
     })
 
     expect(reading).toEqual({ unexplained: [], stale: [], openToEveryRole: [] })
@@ -1170,6 +1172,26 @@ const crossings: readonly {
       sql`insert into qualifications (tenant_id, person_id, kind_key, certificate_sha256, certificate_name)
             values (${own.tenant}, ${own.person}, 'core.driving_licence', ${other.fileHash}, 'fuehrerschein.pdf')`,
   },
+  // A certificate a qualification named before (opengewerk#802): of a person,
+  // a qualification and a file of this business.
+  {
+    key: 'replaced_certificates_of_somebody_here',
+    write: (own, other) =>
+      sql`insert into replaced_certificates (tenant_id, person_id, qualification_id, sha256, name)
+            values (${own.tenant}, ${other.person}, ${own.qualification}, ${own.fileHash}, 'vorher.pdf')`,
+  },
+  {
+    key: 'replaced_certificates_of_a_qualification_here',
+    write: (own, other) =>
+      sql`insert into replaced_certificates (tenant_id, person_id, qualification_id, sha256, name)
+            values (${own.tenant}, ${own.person}, ${other.qualification}, ${own.fileHash}, 'vorher.pdf')`,
+  },
+  {
+    key: 'replaced_certificates_stored',
+    write: (own, other) =>
+      sql`insert into replaced_certificates (tenant_id, person_id, qualification_id, sha256, name)
+            values (${own.tenant}, ${own.person}, ${own.qualification}, ${other.fileHash}, 'vorher.pdf')`,
+  },
   // An appointment at a job here, and who goes to it (#290): somebody who works
   // here, at an appointment here. Inserts, because the application may only
   // mark who goes deleted and never move them.
@@ -1561,6 +1583,8 @@ interface Planted {
   /** A person in the files, with the owner's account, and a kind of qualification of the business (#287). */
   readonly person: string
   readonly qualificationKind: string
+  /** A qualification of the person above, without a certificate (opengewerk#802). */
+  readonly qualification: string
   /** An appointment at the job above (#290). */
   readonly appointment: string
   /** A grid operator of the business (#306). */
@@ -1692,6 +1716,11 @@ async function plant(tenant: TenantId, slug: string): Promise<Planted> {
     [tenant],
   )
 
+  const person = await one(
+    "insert into people (tenant_id, name, user_id) values ($1, 'Inhaberin', $2)",
+    [tenant, user],
+  )
+
   return {
     tenant,
     user,
@@ -1800,9 +1829,10 @@ async function plant(tenant: TenantId, slug: string): Promise<Planted> {
       [tenant, article],
     ),
     store: await one("insert into stores (tenant_id, name) values ($1, 'Lager')", [tenant]),
-    person: await one(
-      "insert into people (tenant_id, name, user_id) values ($1, 'Inhaberin', $2)",
-      [tenant, user],
+    person,
+    qualification: await one(
+      "insert into qualifications (tenant_id, person_id, kind_key) values ($1, $2, 'core.driving_licence')",
+      [tenant, person],
     ),
     qualificationKind: await one(
       "insert into qualification_kinds (tenant_id, label, level) values ($1, 'Ersthelfer', 'instructed_person')",

@@ -402,7 +402,7 @@ export async function takeStaffYear(
 
 /**
  * Deletes the file of somebody who left: the working time agreed, the
- * qualifications with their certificates, the devices and calendar feeds of
+ * qualifications with their certificates, those of now and of before, the devices and calendar feeds of
  * the access here; the file stays empty with its name while a year of the
  * person is still kept, and loses the name too where none is. The data of the
  * account follow outside the transaction (`finishErasedAccounts`). The line
@@ -417,6 +417,13 @@ export async function takePerson(
       tx,
       'working_times',
       sql`delete from working_times where person_id = ${person.personId} returning id`,
+    ),
+    // The certificates the qualifications named before (opengewerk#802),
+    // ahead of the qualifications their rows point at; each takes its file.
+    await taken(
+      tx,
+      'replaced_certificates',
+      sql`delete from replaced_certificates where person_id = ${person.personId} returning id`,
     ),
     await taken(
       tx,

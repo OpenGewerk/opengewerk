@@ -638,6 +638,15 @@ export const auditTables: Readonly<Record<string, AuditTableWords>> = {
       certificate_name: 'Name des Nachweises',
     },
   },
+  replaced_certificates: {
+    label: 'Früherer Nachweis',
+    fields: {
+      person_id: 'Person',
+      qualification_id: 'Qualifikation',
+      sha256: 'Datei',
+      name: 'Name der Datei',
+    },
+  },
   stores: {
     label: 'Lagerort',
     fields: {

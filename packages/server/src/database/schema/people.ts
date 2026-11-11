@@ -10,4 +10,6 @@ import { peopleSchema, qualificationSchema } from '@opengewerk/platform-server'
  */
 export const { people, workingTimes } = peopleSchema()
 
-export const { qualificationKinds, qualifications } = qualificationSchema({ people })
+export const { qualificationKinds, qualifications, replacedCertificates } = qualificationSchema({
+  people,
+})

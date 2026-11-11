@@ -105,12 +105,13 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Ablage. Abgelehnt wird ein Hash, den dieser Betrieb nicht gespeichert hat oder den die Person nicht nennen darf,
   weil sie die Datei weder selbst hochgeladen hat noch eine Qualifikation sieht, die sie nennt. Die Notiz steht
   unter Art und Stufe, auf dem Telefon öffnet der Kasten den Nachweis und hat den Knopf zum Ändern. Die eigene
-  Akte unter „Konto“ nennt, dass es einen Nachweis gibt, öffnet ihn aber nicht. Wird ein Nachweis ersetzt oder
-  abgenommen, geht die alte Datei aus dem Speicher, wie beim Löschen der Akte (Migration 0139); in beiden Fällen
-  bleibt sie, solange ein anderer Datensatz sie nennt, auch die Dateien eines DATANORM-Imports und das Logo im
-  festgeschriebenen Inhalt eines Belegs, die eine Datei ohne Fremdschlüssel nennen. Warum: Ein
-  Gesellenbrief oder eine Unterweisung gehört zur Qualifikation, und nach ADR 0012 liest ihn nur, wer die Akte
-  liest. Einschränkung: Eine Datei, die hochgeladen wurde, deren Qualifikation dann aber nicht gespeichert wird
+  Akte unter „Konto“ nennt, dass es einen Nachweis gibt, öffnet ihn aber nicht. Ein ersetzter oder abgenommener
+  Nachweis bleibt als früherer Nachweis bis zum Löschen der Akte im Speicher (Tabelle `replaced_certificates`,
+  Migration 0139), ohne in der Oberfläche zu stehen; die Auskunft nach Art. 15 gibt ihn mit, und das Löschen der
+  Akte nimmt ihn samt Datei. Dabei bleibt eine Datei, solange ein anderer Datensatz sie nennt, auch die Dateien
+  eines DATANORM-Imports und das Logo im festgeschriebenen Inhalt eines Belegs, die eine Datei ohne Fremdschlüssel
+  nennen. Warum: Ein Gesellenbrief oder eine Unterweisung gehört zur Qualifikation, und nach ADR 0012 liest ihn
+  nur, wer die Akte liest; ein Fehlgriff im Dialog soll keine Datei kosten. Einschränkung: Eine Datei, die hochgeladen wurde, deren Qualifikation dann aber nicht gespeichert wird
   (Netz weg, Ablehnung durch den Server), bleibt im Speicher des Betriebs.
 
 ### Geändert

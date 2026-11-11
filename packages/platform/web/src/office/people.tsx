@@ -578,6 +578,7 @@ function Qualifications({
         {row.certificateName}
       </a>
     ) : null
+  // The pencil that opens the dialog of a qualification, for whoever may change it.
   const changeOf = (row: QualificationRow) =>
     writes ? (
       <IconButton

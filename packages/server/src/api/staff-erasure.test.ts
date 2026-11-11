@@ -79,6 +79,8 @@ interface Fixture {
   readonly family: string
   readonly person: string
   readonly certificate: string
+  /** The certificate the qualification named before (opengewerk#802). */
+  readonly earlierCertificate: string
   readonly dueSickness: string
   readonly freshSickness: string
   readonly oldSickness: string
@@ -93,13 +95,15 @@ interface Fixture {
  * table a deletion of the staff reaches and the name of his family in each:
  * records of time, times on call, absences and days of leave of the old year
  * and the year after, a sickness that is due and one that is not, the
- * working time agreed, a qualification with its certificate, an answer
+ * working time agreed, a qualification with its certificate and the one it
+ * named before, an answer
  * about recording the place, and the account he signed in with.
  */
 async function kraft(withLaterYears = true): Promise<Fixture> {
   const family = `Kraft${newId<'person'>().slice(-6)}`
   const id = newId<'person'>()
   const certificate = createHash('sha256').update(family).digest('hex')
+  const earlierCertificate = createHash('sha256').update(`${family} vorher`).digest('hex')
   const dueSickness = newId<'absence'>()
   const freshSickness = newId<'absence'>()
   const oldSickness = newId<'absence'>()
@@ -121,9 +125,12 @@ async function kraft(withLaterYears = true): Promise<Fixture> {
      insert into working_times (tenant_id, person_id, valid_from, monday_minutes, tuesday_minutes)
        values ('${north}', '${id}', '${String(oldYear - 3)}-03-01', 480, 480);
      insert into files (tenant_id, sha256, size_bytes, media_type)
-       values ('${north}', '${certificate}', 12, 'application/pdf');
+       values ('${north}', '${certificate}', 12, 'application/pdf'),
+              ('${north}', '${earlierCertificate}', 12, 'application/pdf');
      insert into qualifications (tenant_id, person_id, kind_key, valid_until, note, certificate_sha256, certificate_name)
-       values ('${north}', '${id}', 'electrician', '2030-01-01', 'Prüfung bei ${family}', '${certificate}', 'pruefung-${family}.pdf');
+       values ('${north}', '${id}', 'electrician', '2030-01-01', 'Prüfung bei ${family}', '${earlierCertificate}', 'vorher-${family}.pdf');
+     update qualifications set certificate_sha256 = '${certificate}', certificate_name = 'pruefung-${family}.pdf'
+      where person_id = '${id}';
      insert into absences (id, tenant_id, person_id, kind, state, first_day, last_day, note)
        values ('${vacation}', '${north}', '${id}', 'vacation', 'approved', '${o}-08-01', '${o}-08-14', 'Urlaub der ${family}s'),
               ('${oldSickness}', '${north}', '${id}', 'sickness', 'approved', '${o}-05-06', '${o}-05-10', null);
@@ -159,6 +166,7 @@ async function kraft(withLaterYears = true): Promise<Fixture> {
     family,
     person: id,
     certificate,
+    earlierCertificate,
     dueSickness,
     freshSickness,
     oldSickness,
@@ -262,7 +270,10 @@ beforeEach(async () => {
      delete from audit_redactions; delete from erasures; delete from erasure_automations;
      delete from deadlines; delete from tasks; delete from time_entries; delete from on_call_shifts;
      delete from absences; delete from leave_entitlements; delete from location_consents;
-     delete from qualifications; delete from working_times; delete from people; delete from files;
+     delete from replaced_certificates; delete from qualifications; delete from working_times;
+     delete from people; delete from files;
+     delete from document_snapshots; delete from documents; delete from customers;
+     delete from article_imports; delete from suppliers;
      commit;`,
   )
 })
@@ -562,6 +573,15 @@ describe('the file of somebody who left', () => {
     expect(
       await count(`select count(*) as n from files where sha256 = $1`, [dennis.certificate]),
     ).toBe(0)
+    // The one the qualification named before goes with it (opengewerk#802).
+    expect(
+      await count(`select count(*) as n from replaced_certificates where person_id = $1`, [
+        dennis.person,
+      ]),
+    ).toBe(0)
+    expect(
+      await count(`select count(*) as n from files where sha256 = $1`, [dennis.earlierCertificate]),
+    ).toBe(0)
 
     const { rows: files } = await admin.query<{
       name: string
@@ -578,6 +598,59 @@ describe('the file of somebody who left', () => {
     )
 
     expect(accounts).toEqual([{ name: `Dennis ${dennis.family}`, email: removedAddress('kurt') }])
+  })
+
+  it('keeps a certificate, of now or of before, that a price list import or a written document still names by a value', async () => {
+    const dennis = await kraft()
+    const { rows: suppliers } = await admin.query<{ id: string }>(
+      `insert into suppliers (tenant_id, name) values ($1, 'Hansa Elektro') returning id`,
+      [north],
+    )
+    const { rows: customers } = await admin.query<{ id: string }>(
+      `insert into customers (tenant_id, kind, name) values ($1, 'business', 'Logo GmbH') returning id`,
+      [north],
+    )
+    const { rows: documents } = await admin.query<{ id: string }>(
+      `insert into documents (tenant_id, customer_id, kind, document_date)
+       values ($1, $2, 'quote', '2026-10-01') returning id`,
+      [north, customers[0]?.id],
+    )
+
+    // Neither holds its file by a key: the import in its list of files, the
+    // document in what it wrote, as the logo of its letterhead then.
+    await admin.query(
+      `insert into article_imports (tenant_id, supplier_id, files, valid_from) values ($1, $2, $3, '2026-10-01')`,
+      [
+        north,
+        suppliers[0]?.id,
+        JSON.stringify([{ name: 'preise.001', sha256: dennis.certificate, bytes: 12 }]),
+      ],
+    )
+    await admin.query(
+      'insert into document_snapshots (tenant_id, document_id, content) values ($1, $2, $3)',
+      [
+        north,
+        documents[0]?.id,
+        JSON.stringify({
+          issuer: {
+            logo: { fileId: newId(), sha256: dennis.earlierCertificate, mediaType: 'image/png' },
+          },
+        }),
+      ],
+    )
+
+    await pass()
+    await erase('person', [dennis.person]).expect(201)
+
+    expect(
+      await count(`select count(*) as n from qualifications where person_id = $1`, [dennis.person]),
+    ).toBe(0)
+    expect(
+      await count(`select count(*) as n from files where sha256 = $1`, [dennis.certificate]),
+    ).toBe(1)
+    expect(
+      await count(`select count(*) as n from files where sha256 = $1`, [dennis.earlierCertificate]),
+    ).toBe(1)
   })
 
   it('loses the name with the last year, and with it the answer about the place and the name of the account; nothing of the person is left', async () => {

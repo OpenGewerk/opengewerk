@@ -311,6 +311,7 @@ export const personalDataCatalogue: Readonly<Record<string, PersonalData>> = {
     'certificate_sha256',
     'certificate_name',
   ),
+  replaced_certificates: ofPerson('person_id', 'qualification_id', 'sha256', 'name'),
   second_factor_changes: ofPerson('user_id'),
   secrets: { about: ['customer'], columns: ['record_id', 'sealed'] },
   selling_price_runs: ofPerson('requested_by'),

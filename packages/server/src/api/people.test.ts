@@ -7,6 +7,7 @@ import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import { addDays, berlinClock } from '@opengewerk/domain'
 import { Database, dispositionFor, FileStore, newId } from '@opengewerk/platform-server'
+import { sql } from 'drizzle-orm'
 import type { Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -373,10 +374,12 @@ describe('the certificate of a qualification', () => {
   const certificate = Buffer.from('%PDF-1.7\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n')
   const name = 'unterweisung-psaga-2026.pdf'
 
+  /** The name of some bytes in the store. */
   function hashOf(bytes: Buffer): string {
     return createHash('sha256').update(bytes).digest('hex')
   }
 
+  /** Puts bytes into the store as somebody, and says their name. */
   async function upload(bytes: Buffer, who = owner) {
     await http()
       .put(`/files/${hashOf(bytes)}`)
@@ -389,6 +392,7 @@ describe('the certificate of a qualification', () => {
     return hashOf(bytes)
   }
 
+  /** The certificate of a qualification of Anna, as somebody reads it. */
   function read(qualificationId: string, who = owner) {
     return http()
       .get(`/people/${annasFile}/qualifications/${qualificationId}/certificate`)
@@ -463,13 +467,12 @@ describe('the certificate of a qualification', () => {
     ).id
   }
 
-  it('takes the file it replaces out of the store, unless another qualification still names it', async () => {
+  it('keeps the file it replaces or takes off, as an earlier certificate of its person, and shows the new one', async () => {
     const first = Buffer.from('%PDF-1.7\n% erster Nachweis\n%%EOF\n')
     const replacing = Buffer.from('%PDF-1.7\n% neuer Nachweis\n%%EOF\n')
-    const shared = Buffer.from('%PDF-1.7\n% Nachweis für zwei\n%%EOF\n')
+    const takenOffBytes = Buffer.from('%PDF-1.7\n% abgenommener Nachweis\n%%EOF\n')
     const replaced = await added(first, 'erster.pdf')
-    const takenOff = await added(shared, 'fuer-zwei.pdf')
-    const keeping = await added(shared, 'fuer-zwei.pdf')
+    const takenOff = await added(takenOffBytes, 'abgenommen.pdf')
 
     await send('patch', `/people/${annasFile}/qualifications/${replaced}`, {
       certificateSha256: await upload(replacing),
@@ -479,69 +482,42 @@ describe('the certificate of a qualification', () => {
       certificateSha256: null,
       certificateName: null,
     })
+    // A change that leaves the certificate as it is keeps nothing more.
+    await send('patch', `/people/${annasFile}/qualifications/${replaced}`, { note: 'Klasse BE' })
 
-    expect(await stored(hashOf(first))).toBe(0)
-    expect(await stored(hashOf(replacing))).toBe(1)
-    expect(await stored(hashOf(shared))).toBe(1)
+    const { rows } = await admin.query<{ qualification_id: string; sha256: string; name: string }>(
+      `select qualification_id::text, sha256, name from replaced_certificates
+        where person_id = $1 and qualification_id = any($2::uuid[]) order by name`,
+      [annasFile, [replaced, takenOff]],
+    )
+
+    expect(rows).toEqual([
+      { qualification_id: takenOff, sha256: hashOf(takenOffBytes), name: 'abgenommen.pdf' },
+      { qualification_id: replaced, sha256: hashOf(first), name: 'erster.pdf' },
+    ])
+    expect(await stored(hashOf(first))).toBe(1)
+    expect(await stored(hashOf(takenOffBytes))).toBe(1)
+    expect(Buffer.from((await read(replaced).expect(200)).body as Buffer).equals(replacing)).toBe(
+      true,
+    )
     await read(takenOff).expect(404)
-    expect(Buffer.from((await read(keeping).expect(200)).body as Buffer).equals(shared)).toBe(true)
   })
 
-  it('leaves the file it replaces where a price list import or a written document names it by a value', async () => {
-    const priceList = Buffer.from('DATANORM 001 Preisliste des Lieferanten\n')
-    const logo = Buffer.from('%PDF-1.7\n% Logo des Briefkopfs\n%%EOF\n')
-    const { rows: suppliers } = await admin.query<{ id: string }>(
-      "insert into suppliers (tenant_id, name) values ($1, 'Hansa Elektro') returning id",
-      [north.id],
-    )
-    const { rows: customers } = await admin.query<{ id: string }>(
-      "insert into customers (tenant_id, kind, name) values ($1, 'business', 'Logo GmbH') returning id",
-      [north.id],
-    )
-    const { rows: documents } = await admin.query<{ id: string }>(
-      `insert into documents (tenant_id, customer_id, kind, document_date)
-       values ($1, $2, 'quote', '2026-10-01') returning id`,
-      [north.id, customers[0]?.id],
-    )
+  it('is kept before by a row the application may not delete outside the deletion concept', async () => {
+    const bytes = Buffer.from('%PDF-1.7\n% bleibt\n%%EOF\n')
+    const id = await added(bytes, 'bleibt.pdf')
 
-    // Both name their file with no key: the import in its list of files,
-    // the document in what it wrote, as the logo of its letterhead then.
-    await admin.query(
-      `insert into article_imports (tenant_id, supplier_id, files, valid_from)
-       values ($1, $2, $3, '2026-10-01')`,
-      [
-        north.id,
-        suppliers[0]?.id,
-        JSON.stringify([
-          { name: 'preise.001', sha256: hashOf(priceList), bytes: priceList.length },
-        ]),
-      ],
-    )
-    await admin.query(
-      'insert into document_snapshots (tenant_id, document_id, content) values ($1, $2, $3)',
-      [
-        north.id,
-        documents[0]?.id,
-        JSON.stringify({
-          issuer: { logo: { fileId: newId(), sha256: hashOf(logo), mediaType: 'application/pdf' } },
-        }),
-      ],
-    )
-
-    const imported = await added(priceList, 'preise.pdf')
-    const letterhead = await added(logo, 'logo.pdf')
-
-    await send('patch', `/people/${annasFile}/qualifications/${imported}`, {
+    await send('patch', `/people/${annasFile}/qualifications/${id}`, {
       certificateSha256: null,
       certificateName: null,
     })
-    await send('patch', `/people/${annasFile}/qualifications/${letterhead}`, {
-      certificateSha256: await upload(Buffer.from('%PDF-1.7\n% anderer Nachweis\n%%EOF\n')),
-      certificateName: 'anderer.pdf',
-    })
 
-    expect(await stored(hashOf(priceList))).toBe(1)
-    expect(await stored(hashOf(logo))).toBe(1)
+    await expect(
+      database.forTenant({ tenantId: north.id, userId: 'test' }, (tx) =>
+        tx.execute(sql`delete from replaced_certificates where qualification_id = ${id}`),
+      ),
+    ).rejects.toThrow()
+    expect(await stored(hashOf(bytes))).toBe(1)
   })
 
   it.each([

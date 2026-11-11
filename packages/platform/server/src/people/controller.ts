@@ -72,7 +72,10 @@ const notStored =
   'Diese Datei liegt hier nicht im Speicher. Laden Sie den Nachweis noch einmal hoch.'
 
 /** The tables of the people and their qualifications, as an application binds them. */
-export type PeopleRouteTables = PeopleTables & ReturnType<typeof qualificationSchema>
+// The routes need no earlier certificates: the application keeps them by a
+// trigger of its own and shows none (opengewerk#802).
+export type PeopleRouteTables = PeopleTables &
+  Pick<ReturnType<typeof qualificationSchema>, 'qualificationKinds' | 'qualifications'>
 
 export interface PeopleRoutes {
   /** The people of the application, made with `peopleSchema` and `qualificationSchema`. */

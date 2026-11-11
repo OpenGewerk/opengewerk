@@ -311,7 +311,8 @@ beforeEach(async () => {
      delete from job_notes; delete from communications; delete from attachment_versions; delete from attachments;
      delete from files; delete from documents; delete from jobs; delete from contacts; delete from sites;
      delete from prospects; delete from customers; delete from time_entries; delete from absences;
-     delete from push_subscriptions; delete from calendar_feeds; delete from people;
+     delete from push_subscriptions; delete from calendar_feeds;
+     delete from replaced_certificates; delete from qualifications; delete from people;
      commit;`,
   )
 })
@@ -598,6 +599,43 @@ describe('the answer to the others', () => {
       expect(text).not.toContain(secret)
       expect(html).not.toContain(secret)
     }
+  })
+
+  it('gives somebody of the staff the certificates of their qualifications as files, of now and of before', async () => {
+    const file = await tomsFile()
+    const now = new TextEncoder().encode('Gesellenbrief von Tom')
+    const before = new TextEncoder().encode('Alte Unterweisung von Tom')
+    /** The name of some bytes in the store. */
+    const hashOf = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
+
+    stored.set(hashOf(now), now)
+    stored.set(hashOf(before), before)
+    // Replaced once (opengewerk#802): the one of before is kept for the file.
+    await admin.query(
+      `begin;
+       set local app.user_id = 'lena';
+       insert into files (tenant_id, sha256, size_bytes, media_type)
+         values ('${north}', '${hashOf(now)}', ${String(now.length)}, 'application/pdf'),
+                ('${north}', '${hashOf(before)}', ${String(before.length)}, 'application/pdf');
+       insert into qualifications (tenant_id, person_id, kind_key, certificate_sha256, certificate_name)
+         values ('${north}', '${file}', 'core.work_at_height', '${hashOf(before)}', 'unterweisung-2025.pdf');
+       update qualifications set certificate_sha256 = '${hashOf(now)}', certificate_name = 'gesellenbrief.pdf'
+        where person_id = '${file}';
+       commit;`,
+    )
+
+    const id = (await record('person', file).expect(201)).body.request.id as string
+    const { entries, json } = await answerOf(id)
+
+    expect((entries.get('dateien/gesellenbrief.pdf') as Buffer).toString('utf8')).toBe(
+      'Gesellenbrief von Tom',
+    )
+    expect((entries.get('dateien/unterweisung-2025.pdf') as Buffer).toString('utf8')).toBe(
+      'Alte Unterweisung von Tom',
+    )
+    expect(json.tables['replaced_certificates']).toMatchObject([
+      { sha256: hashOf(before), name: 'unterweisung-2025.pdf' },
+    ])
   })
 
   it('gives a contact its row, the mails to it and the calls that name it', async () => {

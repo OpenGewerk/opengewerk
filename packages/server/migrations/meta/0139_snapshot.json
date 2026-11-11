@@ -1,5 +1,5 @@
 {
-  "id": "7620b07d-af39-4e1d-a130-e66bf6c7f833",
+  "id": "f8b93f5b-4c0e-40e9-b49c-e0d2b621bd68",
   "prevId": "565d62a7-0365-4601-83db-3636615ccc47",
   "version": "7",
   "dialect": "postgresql",
@@ -17442,6 +17442,171 @@
         "qualifications_certificate_name_fits": {
           "name": "qualifications_certificate_name_fits",
           "value": "\"qualifications\".\"certificate_name\" is null or char_length(\"qualifications\".\"certificate_name\") between 1 and 200"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.replaced_certificates": {
+      "name": "replaced_certificates",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "person_id": {
+          "name": "person_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "qualification_id": {
+          "name": "qualification_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sha256": {
+          "name": "sha256",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "replaced_certificates_of_a_person": {
+          "name": "replaced_certificates_of_a_person",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "person_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "replaced_certificates_tenant_id_tenants_id_fk": {
+          "name": "replaced_certificates_tenant_id_tenants_id_fk",
+          "tableFrom": "replaced_certificates",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "replaced_certificates_of_somebody_here": {
+          "name": "replaced_certificates_of_somebody_here",
+          "tableFrom": "replaced_certificates",
+          "tableTo": "people",
+          "columnsFrom": [
+            "tenant_id",
+            "person_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "replaced_certificates_of_a_qualification_here": {
+          "name": "replaced_certificates_of_a_qualification_here",
+          "tableFrom": "replaced_certificates",
+          "tableTo": "qualifications",
+          "columnsFrom": [
+            "tenant_id",
+            "qualification_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "replaced_certificates_stored": {
+          "name": "replaced_certificates_stored",
+          "tableFrom": "replaced_certificates",
+          "tableTo": "files",
+          "columnsFrom": [
+            "tenant_id",
+            "sha256"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "sha256"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "tenant_isolation": {
+          "name": "tenant_isolation",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "opengewerk_app"
+          ],
+          "using": "\"replaced_certificates\".\"tenant_id\" = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "\"replaced_certificates\".\"tenant_id\" = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "replaced_certificates_is_a_hash": {
+          "name": "replaced_certificates_is_a_hash",
+          "value": "\"replaced_certificates\".\"sha256\" ~ '^[0-9a-f]{64}$'"
+        },
+        "replaced_certificates_name_fits": {
+          "name": "replaced_certificates_name_fits",
+          "value": "char_length(\"replaced_certificates\".\"name\") between 1 and 200"
         }
       },
       "isRLSEnabled": false
