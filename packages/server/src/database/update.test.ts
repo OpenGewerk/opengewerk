@@ -2792,6 +2792,61 @@ describe('the rollback of deleting customers', () => {
     ).toBe(0)
   })
 
+  it('takes no certificate and no earlier one away, and stops while there is one (0138, 0139)', async () => {
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+    await admin.query('insert into tenants (id, name) values ($1, $2)', [tenant.id, tenant.name])
+
+    const person = newId<'person'>()
+    const first = 'c'.repeat(64)
+    const second = 'd'.repeat(64)
+
+    // A certificate replaced once (opengewerk#802): the one of now and the one of before.
+    await admin.query(
+      `begin; set local app.user_id = 'lena';
+       insert into people (id, tenant_id, name) values ('${person}', '${tenant.id}', 'Anna Weber');
+       insert into files (tenant_id, sha256, size_bytes, media_type)
+         values ('${tenant.id}', '${first}', 3, 'application/pdf'), ('${tenant.id}', '${second}', 3, 'application/pdf');
+       insert into qualifications (tenant_id, person_id, kind_key, certificate_sha256, certificate_name)
+         values ('${tenant.id}', '${person}', 'core.driving_licence', '${first}', 'erster.pdf');
+       update qualifications set certificate_sha256 = '${second}', certificate_name = 'zweiter.pdf'
+        where person_id = '${person}';
+       commit;`,
+    )
+
+    await expect(revertMigration(admin, '0139_replaced_certificates')).rejects.toThrow(
+      'Die Rücknahme von 0139 ließe ihre Dateien ohne Halt im Speicher',
+    )
+    await admin.query(
+      'begin; set local session_replication_role = replica; delete from replaced_certificates; commit;',
+    )
+    await revertMigration(admin, '0139_replaced_certificates')
+    await expect(revertMigration(admin, '0138_qualification_certificate_name')).rejects.toThrow(
+      'Die Rücknahme von 0138 nähme ihnen den Namen',
+    )
+    expect(
+      (
+        await admin.query<{ certificate_name: string }>(
+          'select certificate_name from qualifications',
+        )
+      ).rows,
+    ).toEqual([{ certificate_name: 'zweiter.pdf' }])
+
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       update qualifications set certificate_sha256 = null, certificate_name = null; commit;`,
+    )
+    await revertMigration(admin, '0138_qualification_certificate_name')
+
+    expect(
+      (
+        await admin.query(
+          "select 1 from information_schema.columns where table_name = 'qualifications' and column_name = 'certificate_name'",
+        )
+      ).rowCount,
+    ).toBe(0)
+  })
+
   it('deletes no line of a site, and stops while there is one (0132)', async () => {
     await resetSchema(admin)
     await runMigrations(ownerDatabaseUrl(), migrationsFolder)
