@@ -147,10 +147,13 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   `dateien/Bericht.pdf (fehlt).txt` neben den gespeicherten Dateien (#916). Warum: Hieß eine gespeicherte Datei
   derselben Person genau wie der Hinweis, gab das ZIP ihr einen anderen Namen als PDF und `daten.json`, und wer die
   Auskunft las, fand sie dort nicht. Im eigenen Ordner kann keine gespeicherte Datei liegen, und das PDF sagt, wo die
-  Hinweise liegen. Dazu verliert jeder Teil eines Namens im ZIP die Punkte und Leerzeichen an seinem Ende, wie Windows
-  sie beim Entpacken streicht, bevor die Endung seiner Art dazukommt: Ein Nachweis `..` als PDF heißt dort
-  `Datei.pdf`, eine Datei `...` heißt `Datei`. Bisher konnte so ein Name den Pfad `dateien` selbst ergeben, neben dem
-  Ordner, sein Hinweis den Namen eines anderen bekommen, und an `dateien/...` scheiterte das Entpacken unter Windows.
+  Hinweise liegen. Dazu verliert jeder Teil eines Namens im ZIP den Leerraum an seinem Anfang und die Punkte und den
+  Leerraum an seinem Ende, wie Windows sie beim Entpacken streicht, bevor die Endung seiner Art dazukommt: Ein
+  Nachweis `..` als PDF heißt dort `Datei.pdf`, eine Datei `...` heißt `Datei`. Bisher konnte so ein Name den Pfad
+  `dateien` selbst ergeben, neben dem Ordner, sein Hinweis den Namen eines anderen bekommen, und an `dateien/...`
+  scheiterte das Entpacken unter Windows. Für den Pfad zählen von einem Namen nur die ersten 200 Zeichen, und das ZIP
+  lehnt einen Namen über 65 535 Byte ab, statt sein Längenfeld überlaufen zu lassen: Der Abgleich lässt Namen bis
+  100 000 Zeichen durch, und ein solcher Name hätte das ZIP der Auskunft unlesbar gemacht.
 - Jede protokollierte Änderung eines Betriebs sperrt jetzt zuerst den Zähler des Abgleichs und dann die Kette des
   Änderungsprotokolls, in derselben Reihenfolge wie jede Änderung einer abgeglichenen Zeile (#914, Migration 0142).
   Bis jetzt nahm eine Änderung an einer Tabelle ohne Abgleich nur die Kette; das Löschen nach dem Löschkonzept

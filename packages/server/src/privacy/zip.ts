@@ -9,7 +9,9 @@ import { crc32 } from 'node:zlib'
  *
  * Names are UTF-8 (bit 11), which every current unpacker reads, umlauts
  * included. Without ZIP64: an archive stops at 65 535 entries and 4 GiB, and
- * one that would go beyond is refused before its first byte.
+ * one that would go beyond is refused before its first byte. A name stops at
+ * 65 535 bytes, the most its field holds; a longer one is refused when it is
+ * its turn.
  */
 
 /**
@@ -28,6 +30,7 @@ export class ZipTooLargeError extends Error {}
 const utf8 = new TextEncoder()
 const maxEntries = 0xffff
 const maxBytes = 0xffffffff
+const maxName = 0xffff
 
 /** The date and time as an archive keeps them, in the local time it is given. */
 export function dosMoment(at: {
@@ -64,23 +67,42 @@ function unfit(character: string): boolean {
   return character.charCodeAt(0) < 0x20 || '<>:"|?*'.includes(character)
 }
 
+/** What a part of a name loses at its end: white space and dots. */
+const endOfPart = /^[\s.]$/
+
+/**
+ * A part without the white space and dots at its end, one character at a
+ * time (opengewerk#916): a pattern for the whole run would try every place in
+ * it as its start, and a name of many dots would hold the server for seconds.
+ */
+function withoutEnd(part: string): string {
+  let end = part.length
+
+  while (end > 0 && endOfPart.test(part.charAt(end - 1))) {
+    end -= 1
+  }
+
+  return part.slice(0, end)
+}
+
 /**
  * A name as the archive may hold it: backslashes become slashes, slashes
- * separate folders, and a part loses the dots and spaces at its end, which
- * Windows drops when it unpacks (opengewerk#916); "Foto." would be "Foto"
- * there and "..." the folder it stands in. A part with nothing left does not
- * survive, "." and ".." among them, and a name with nothing left is "Datei".
+ * separate folders, and a part loses the white space at its start and the
+ * white space and dots at its end, which Windows drops when it unpacks
+ * (opengewerk#916); "Foto." would be "Foto" there and "..." the folder it
+ * stands in. A part with nothing left does not survive, "." and ".." among
+ * them, and a name with nothing left is "Datei". A name it gives back comes
+ * back the same when it is cleaned again, so that the archive keeps the names
+ * the answer gave it.
  */
 export function cleanName(raw: string): string {
   const name = raw
     .replace(/\\/g, '/')
     .split('/')
     .map((part) =>
-      [...part]
-        .map((character) => (unfit(character) ? '_' : character))
-        .join('')
-        .trim()
-        .replace(/[. ]+$/, ''),
+      withoutEnd(
+        [...part].map((character) => (unfit(character) ? '_' : character)).join(''),
+      ).trimStart(),
     )
     .filter((part) => part !== '')
     .join('/')
@@ -138,6 +160,10 @@ export async function* zipPieces(
     const bytes = got instanceof Uint8Array ? got : got.bytes
     const name = utf8.encode(unique(got instanceof Uint8Array ? entry.name : got.name))
     const checksum = crc32(bytes)
+
+    if (name.length > maxName) {
+      throw new ZipTooLargeError('Ein Name im Archiv wäre länger als 65 535 Byte.')
+    }
 
     if (offset + 30 + name.length + bytes.length > maxBytes) {
       throw new ZipTooLargeError('Das Archiv würde größer als 4 GiB.')

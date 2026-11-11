@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { dosMoment, uniqueNames } from './zip.js'
+import { cleanName, dosMoment, uniqueNames, zipBytes, ZipTooLargeError } from './zip.js'
+
+/** A space that does not break, which trim takes and a pattern for spaces does not. */
+const unbroken = String.fromCharCode(0xa0)
 
 /** The names in the archive of an answer (#318) and the moment it keeps. */
 describe('the names in an archive', () => {
@@ -51,6 +54,47 @@ describe('the names in an archive', () => {
       'a/b .pdf',
       'dateien',
     ])
+  })
+
+  it('come back the same when they are cleaned again', () => {
+    const names = [
+      `x${unbroken}. .`,
+      `x .${unbroken}.`,
+      `${unbroken} .x`,
+      '...',
+      ' a. /. b',
+      `dateien/x${unbroken}.`,
+    ]
+
+    expect(cleanName(`x${unbroken}. .`)).toBe('x')
+
+    for (const name of names) {
+      expect(cleanName(cleanName(name))).toBe(cleanName(name))
+    }
+
+    // So the archive gives two files the names the answer gave them (opengewerk#916).
+    expect(uniqueNames([`dateien/x${unbroken}. .`, 'dateien/x'])).toEqual([
+      'dateien/x',
+      'dateien/x (2)',
+    ])
+  })
+
+  it('clean a long run of dots in time that grows with its length', () => {
+    const long = `${'.'.repeat(100_000)}x`
+    const started = performance.now()
+
+    expect(cleanName(long)).toBe(long)
+    expect(performance.now() - started).toBeLessThan(500)
+  })
+
+  it('refuse a name longer than its field holds', async () => {
+    const bytes = () => Promise.resolve(new Uint8Array([1]))
+    const moment = { time: 0, date: 0 }
+
+    await expect(zipBytes([{ name: 'ä'.repeat(32_767), bytes }], moment)).resolves.toBeDefined()
+    await expect(zipBytes([{ name: 'ä'.repeat(32_768), bytes }], moment)).rejects.toThrow(
+      ZipTooLargeError,
+    )
   })
 })
 
