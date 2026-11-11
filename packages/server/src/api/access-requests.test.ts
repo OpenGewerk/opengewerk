@@ -638,6 +638,47 @@ describe('the answer to the others', () => {
     ])
   })
 
+  it('names two files of the same name in the PDF and in the JSON as the ZIP does', async () => {
+    const file = await tomsFile()
+    const now = new TextEncoder().encode('Scan von heute')
+    const before = new TextEncoder().encode('Scan von früher')
+    /** The name of some bytes in the store. */
+    const hashOf = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
+
+    stored.set(hashOf(now), now)
+    stored.set(hashOf(before), before)
+    // Both called scan.pdf (opengewerk#913), as a phone calls every photo image.jpg.
+    await admin.query(
+      `begin;
+       set local app.user_id = 'lena';
+       insert into files (tenant_id, sha256, size_bytes, media_type)
+         values ('${north}', '${hashOf(now)}', ${String(now.length)}, 'application/pdf'),
+                ('${north}', '${hashOf(before)}', ${String(before.length)}, 'application/pdf');
+       insert into qualifications (tenant_id, person_id, kind_key, certificate_sha256, certificate_name)
+         values ('${north}', '${file}', 'core.work_at_height', '${hashOf(before)}', 'scan.pdf');
+       update qualifications set certificate_sha256 = '${hashOf(now)}' where person_id = '${file}';
+       commit;`,
+    )
+
+    const id = (await record('person', file).expect(201)).body.request.id as string
+    const { entries, text, html } = await answerOf(id)
+    const files = (JSON.parse(text) as { files: { path: string; sha256: string }[] }).files
+
+    expect(files.map((each) => each.path).sort()).toEqual([
+      'dateien/scan (2).pdf',
+      'dateien/scan.pdf',
+    ])
+
+    for (const each of files) {
+      expect(
+        createHash('sha256')
+          .update(entries.get(each.path) as Buffer)
+          .digest('hex'),
+      ).toBe(each.sha256)
+      expect(html).toContain(each.path)
+    }
+  })
+
   it('gives a contact its row, the mails to it and the calls that name it', async () => {
     const { family, contact } = await seidel()
 

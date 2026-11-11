@@ -142,6 +142,11 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Die Auskunft nach Art. 15 nennt zwei Dateien desselben Namens im PDF und in `daten.json` unter den Pfaden, die sie
+  im ZIP haben, etwa `dateien/scan.pdf` und `dateien/scan (2).pdf` (#913). Warum: Das ZIP machte die Namen eindeutig,
+  PDF und JSON nannten beide Male den ersten Pfad, und wer die Auskunft las, fand die zweite Datei dort nicht. Mit
+  einem früheren Nachweis neben dem von jetzt (#802) oder Fotos vom Telefon, die alle `image.jpg` heißen, kam das
+  häufiger vor.
 - Eine Datei geht nur noch endgültig, wenn weder ein Fremdschlüssel noch ein Wert sie nennt, auf jedem Weg, der eine
   Datei nimmt (#911): die Fassungen der Ablage, wenn ein Dokument mit seinem Kunden geht, und die Dateien eines
   Belegs fragen jetzt wie die Nachweise einer Qualifikation, ob ein DATANORM-Import sie als Datei oder ein
