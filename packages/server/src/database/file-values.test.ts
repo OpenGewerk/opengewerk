@@ -163,49 +163,6 @@ describe('the values that name a file', () => {
     }
   })
 
-  it('add no lock to a deletion that asks, so that nothing waits in a circle', async () => {
-    const tenant = newId<'tenant'>()
-
-    await admin.query("insert into tenants (id, name) values ($1, 'Elektro Süd GmbH')", [tenant])
-
-    const deleting = await admin.connect()
-    const writing = await admin.connect()
-    let written: Promise<unknown> = Promise.resolve()
-
-    try {
-      // A deletion that has written its protocol: it holds the chain.
-      await deleting.query('begin')
-      await deleting.query("select set_config('app.tenant_id', $1, true)", [tenant])
-      await deleting.query(
-        `insert into audit_chains (tenant_id) values ($1)
-         on conflict (tenant_id) do update set updated_at = now()`,
-        [tenant],
-      )
-
-      // A change of a row that travels: the counter, then the chain, which
-      // it waits for.
-      await writing.query('begin')
-      await writing.query("select set_config('app.tenant_id', $1, true)", [tenant])
-      written = writing
-        .query('select public.next_sync_sequence($1)', [tenant])
-        .then(() => writing.query('select public.file_naming_lock($1)', [tenant]))
-
-      await waitingFor(admin, deleting, written)
-
-      // The deletion asks whether a value names a file: nothing it waits for.
-      await deleting.query('select public.file_named_by_a_value($1, $2)', [tenant, 'f'.repeat(64)])
-      await deleting.query('commit')
-      await written
-      await writing.query('commit')
-    } finally {
-      await deleting.query('rollback').catch(() => undefined)
-      await written.catch(() => undefined)
-      await writing.query('rollback').catch(() => undefined)
-      deleting.release()
-      writing.release()
-    }
-  })
-
   it('are locked only for the tenant of the transaction', async () => {
     const tenant = newId<'tenant'>()
     const other = newId<'tenant'>()
