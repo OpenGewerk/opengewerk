@@ -6,7 +6,16 @@ import {
   tenantIsolation,
 } from '@opengewerk/platform-server'
 import { files, tenantColumn } from '@opengewerk/platform-server/schema'
-import { foreignKey, jsonb, pgEnum, pgTable, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
+import {
+  foreignKey,
+  index,
+  jsonb,
+  pgEnum,
+  pgTable,
+  timestamp,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core'
 
 import { documents } from './documents.js'
 
@@ -54,6 +63,14 @@ export const documentSnapshots = pgTable(
     // One per document. A second issuing is refused long before this, by the
     // status; the index is the lock behind the lock.
     uniqueIndex('document_snapshots_document').on(table.documentId),
+    // Whether the content written names a file as its logo, asked for every
+    // file a deletion takes, while the chain of the log of the tenant is
+    // locked (`application_file_named_by_a_value`, opengewerk#911): without
+    // it, every such question read every document of the tenant.
+    index('document_snapshots_logo').on(
+      table.tenantId,
+      sql`(${table.content} #>> '{issuer,logo,sha256}')`,
+    ),
   ],
 )
 

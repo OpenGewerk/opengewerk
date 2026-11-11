@@ -103,8 +103,77 @@ BEGIN
 END;
 $$;--> statement-breakpoint
 
+-- The lock under which a file of a tenant is named in a value rather than by
+-- a key (opengewerk#911): the row of the tenant's chain of the log, the one
+-- every logged change locks to the end of its transaction (`record_change`).
+-- Taken by whoever is about to name a file in a value, before it reads
+-- `files`; a function that takes a file for good takes it as well before it
+-- asks whether a value names the file (`file_named_by_a_value`). So the two
+-- never cross: one waits for the other to end and then sees what it did. The
+-- chain and not a lock of its own, because a transaction that writes holds
+-- the chain anyway, and a second lock beside it could be taken the other way
+-- round and leave two transactions waiting for each other.
+--
+-- The chain alone, as a change of a row that does not travel locks it. A
+-- transaction that writes rows that travel takes the counter of the sync
+-- before the chain (`stamp_sync_columns` before `record_change`); it names a
+-- file after its first such write, when it holds both, so that no lock is
+-- taken the other way round. SECURITY DEFINER because the application role
+-- may not touch the chain, and only for the tenant of the transaction, so
+-- that nobody holds up the writes of another tenant. The row is created on
+-- first use, as the writer does.
+CREATE FUNCTION "file_naming_lock"(p_tenant uuid) RETURNS void
+	LANGUAGE plpgsql
+	SECURITY DEFINER
+	SET search_path = pg_catalog, public
+AS $$
+BEGIN
+	IF p_tenant IS NULL OR p_tenant::text IS DISTINCT FROM nullif(current_setting('app.tenant_id', true), '') THEN
+		RAISE EXCEPTION 'Gesperrt wird nur für den Mandanten der Transaktion.'
+			USING ERRCODE = 'OG001';
+	END IF;
+
+	INSERT INTO public.audit_chains (tenant_id)
+	VALUES (p_tenant)
+	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();
+END;
+$$;--> statement-breakpoint
+
+-- Whether a record still names a file of a tenant by a value rather than by a
+-- key (opengewerk#911), asked before a file goes for good: the keys onto
+-- `files` refuse the deletion of a file a record names, a value does not. The
+-- foundation does not know where an application keeps a file in a value; an
+-- application that does defines `application_file_named_by_a_value(uuid, text)`
+-- in a migration of its own and answers there. Without it, no value names a
+-- file. The chain of the tenant is locked first, as `file_naming_lock` does,
+-- so that the answer includes a name written by a transaction that held it. A
+-- deletion has locked the chain already with its own protocol, so the
+-- question adds no lock to it, and none in another order.
+CREATE FUNCTION "file_named_by_a_value"(p_tenant uuid, p_hash text) RETURNS boolean
+	LANGUAGE plpgsql
+	VOLATILE
+	SET search_path = pg_catalog, public
+AS $$
+DECLARE
+	named boolean;
+BEGIN
+	INSERT INTO public.audit_chains (tenant_id)
+	VALUES (p_tenant)
+	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();
+
+	IF to_regprocedure('public.application_file_named_by_a_value(uuid,text)') IS NULL THEN
+		RETURN false;
+	END IF;
+
+	EXECUTE 'SELECT public.application_file_named_by_a_value($1, $2)' INTO named USING p_tenant, p_hash;
+
+	RETURN coalesce(named, false);
+END;
+$$;--> statement-breakpoint
+
 -- The files of a version that went with its document (#658), after the
--- deletion: its file and its preview, each once no key names it any more.
+-- deletion: its file and its preview, each once no key names it any more and
+-- no value either (`file_named_by_a_value`, opengewerk#911).
 -- Only a deletion the lock of the version let through gets here, and that is
 -- one while its document goes for good; the setting is asked once more, not
 -- the application, whose answer is for the person who asks.
@@ -127,6 +196,7 @@ BEGIN
 
 	FOREACH hash IN ARRAY ARRAY[old.sha256, old.preview_sha256] LOOP
 		CONTINUE WHEN hash IS NULL;
+		CONTINUE WHEN public.file_named_by_a_value(old.tenant_id, hash);
 
 		PERFORM set_config('app.taking_file', old.tenant_id::text || '/' || hash, true);
 
@@ -192,4 +262,7 @@ BEGIN
 
 	RETURN cardinality(named) - left_over;
 END;
-$$;
+$$;--> statement-breakpoint
+REVOKE EXECUTE ON FUNCTION "file_named_by_a_value"(uuid, text) FROM PUBLIC;--> statement-breakpoint
+REVOKE EXECUTE ON FUNCTION "file_naming_lock"(uuid) FROM PUBLIC;--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION "file_naming_lock"(uuid) TO "opengewerk_app";

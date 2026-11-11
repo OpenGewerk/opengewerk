@@ -23,6 +23,7 @@ import { deliveryTooLarge, largestUnpackedBytes } from '../datanorm/zip.js'
 import { ApiModule } from './api.module.js'
 import { ArticleImportsController } from './article-imports.controller.js'
 import { as, testIdentities as identities } from './test-identity.js'
+import { waitingFor } from './test-hold.js'
 
 /**
  * Imports from DATANORM through the routes (#297): the preview that writes
@@ -1298,6 +1299,47 @@ describe('the options of a preview', () => {
 })
 
 describe('an import that cannot start or run', () => {
+  it('waits while a file it names goes for good, and finds it gone then', async () => {
+    const sha256 = await upload(new TextEncoder().encode('Lieferung, die eben geht\n'))
+    // As the deletion of a document takes a file (opengewerk#911): the lock
+    // of the file exclusively, then the row of the file goes.
+    const taking = await admin.connect()
+
+    try {
+      await taking.query('begin')
+      await taking.query('select public.file_named_by_a_value($1, $2)', [north.id, sha256])
+      await taking.query('set local session_replication_role = replica')
+      // The key would take the uploads of the file with it; not so as the replica.
+      await taking.query('delete from file_uploads where tenant_id = $1 and sha256 = $2', [
+        north.id,
+        sha256,
+      ])
+      await taking.query('delete from files where tenant_id = $1 and sha256 = $2', [
+        north.id,
+        sha256,
+      ])
+
+      const starting = http()
+        .post(`/suppliers/${hansa}/imports`)
+        .set('x-test-identity', office)
+        .send({ files: [{ name: 'DATANORM.001', sha256 }] })
+        .then((answer) => answer)
+
+      await waitingFor(admin, taking, starting)
+      await taking.query('commit')
+
+      const answer = await starting
+
+      expect([answer.status, (answer.body as { message?: string }).message]).toEqual([
+        422,
+        'Die Datei DATANORM.001 ist nicht hochgeladen worden.',
+      ])
+    } finally {
+      await taking.query('rollback').catch(() => undefined)
+      taking.release()
+    }
+  })
+
   it('is refused for files that were not uploaded, and for a charset it does not know', async () => {
     const missing = await send(
       'post',

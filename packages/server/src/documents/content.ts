@@ -81,6 +81,36 @@ async function durabilitiesOf(
 }
 
 /**
+ * The content of a document as it is written, with the logo of its letterhead
+ * only while the file is still stored (opengewerk#911). Written content names
+ * the logo by a value, which no key holds, and a deletion keeps a file only
+ * for a value it finds. Called right before the content is written, after the
+ * document was changed in the same transaction: that change locked the
+ * tenant's chain of the log, under which a file goes for good, so the file
+ * read here stays until the content naming it is written. A logo that went in
+ * between the reading of the letterhead and here is left out rather than
+ * named, and the document prints without it.
+ */
+export async function withStoredLogo<Content extends { readonly issuer: IssuerContent }>(
+  tx: TenantTransaction,
+  tenantId: TenantId,
+  content: Content,
+): Promise<Content> {
+  const logo = content.issuer.logo
+
+  if (logo === null) {
+    return content
+  }
+
+  const [stored] = await tx
+    .select({ id: files.id })
+    .from(files)
+    .where(and(eq(files.tenantId, tenantId), eq(files.sha256, logo.sha256)))
+
+  return stored ? content : { ...content, issuer: { ...content.issuer, logo: null } }
+}
+
+/**
  * The letterhead of a business as a document prints it.
  *
  * A business that has not filled in its letterhead still has a name, the one

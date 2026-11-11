@@ -245,6 +245,8 @@ export const foundationDefinerFunctions: Readonly<Record<string, string>> = {
   'create_tenant(company text)':
     'a further tenant, the only other way one is created; the server decides who may ask',
   'every_tenant()': 'the jobs in the background work for every tenant and act for no person',
+  'file_naming_lock(p_tenant uuid)':
+    'whoever is about to name a file in a value locks the chain of the log of the own tenant, which the application may not touch (opengewerk#911)',
   'files_held(candidates text[])':
     'the sweep of the shared store asks for names it found on the disk and acts for no tenant',
   'instance_is_empty()': 'asked before anybody is signed in, when no membership opens a tenant',

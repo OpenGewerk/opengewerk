@@ -25,6 +25,7 @@ import { ApiModule } from './api.module.js'
 import { binary } from './test-binary.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { invoiceable, issuableDraft, readyToInvoice } from './test-invoice.js'
+import { waitingFor } from './test-hold.js'
 
 /**
  * The PDF of a document, with a renderer that is not Chromium.
@@ -335,6 +336,69 @@ describe('a logo on the letterhead', () => {
     await pdfOf(document).expect(200)
 
     expect(jobs.at(-1)?.html).toContain(`src="data:image/png;base64,${png.toString('base64')}"`)
+  })
+
+  it('is written into a document only while it is there, also when it goes for good meanwhile', async () => {
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==',
+      'base64',
+    )
+
+    await http()
+      .put('/settings/letterhead/logo')
+      .set('x-test-identity', as(north.id, 'owner'))
+      .set('content-type', 'image/png')
+      .send(png)
+      .expect(200)
+
+    const { rows } = await admin.query<{ sha256: string }>(
+      'select f.sha256 from letterheads l join files f on f.id = l.logo_file_id where l.tenant_id = $1',
+      [north.id],
+    )
+    const logo = rows[0]?.sha256 ?? ''
+    const draft = await issuableDraft(app, office(), customerId)
+    // As a deletion takes a file that the letterhead no longer names
+    // (opengewerk#911): the lock of the file exclusively, then its row goes.
+    const taking = await admin.connect()
+
+    try {
+      await taking.query('begin')
+      await taking.query('select public.file_named_by_a_value($1, $2)', [north.id, logo])
+      await taking.query('set local session_replication_role = replica')
+      // The key would take the uploads of the file with it; not so as the replica.
+      await taking.query('delete from file_uploads where tenant_id = $1 and sha256 = $2', [
+        north.id,
+        logo,
+      ])
+      await taking.query('delete from files where tenant_id = $1 and sha256 = $2', [north.id, logo])
+
+      const issuing = http()
+        .post(`/documents/${draft}/issue`)
+        .set('x-test-identity', office())
+        .then((answer) => answer.status)
+
+      await waitingFor(admin, taking, issuing)
+      await taking.query('commit')
+
+      expect(await issuing).toBe(201)
+    } finally {
+      await taking.query('rollback').catch(() => undefined)
+      taking.release()
+      await admin.query(
+        `begin; set local session_replication_role = replica;
+         update letterheads set logo_file_id = null where tenant_id = '${north.id}'; commit;`,
+      )
+    }
+
+    // The document names no file that is gone.
+    expect(
+      (
+        await admin.query<{ logo: unknown }>(
+          `select content #> '{issuer,logo}' as logo from document_snapshots where document_id = $1`,
+          [draft],
+        )
+      ).rows,
+    ).toEqual([{ logo: null }])
   })
 })
 

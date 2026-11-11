@@ -24,6 +24,8 @@ END
 $$;--> statement-breakpoint
 DROP FUNCTION IF EXISTS "purge_attachment"(uuid, text);--> statement-breakpoint
 DROP FUNCTION IF EXISTS "version_takes_its_files"();--> statement-breakpoint
+DROP FUNCTION IF EXISTS "file_named_by_a_value"(uuid, text);--> statement-breakpoint
+DROP FUNCTION IF EXISTS "file_naming_lock"(uuid);--> statement-breakpoint
 DROP FUNCTION IF EXISTS "file_goes_with_its_document"();--> statement-breakpoint
 DROP FUNCTION IF EXISTS "attachment_version_stays_as_written"();--> statement-breakpoint
 DROP FUNCTION IF EXISTS "attachment_purging"(uuid);--> statement-breakpoint

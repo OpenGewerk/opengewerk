@@ -27,6 +27,7 @@ import {
   type FilePlace,
   type FileStorage,
   isUniqueViolation,
+  lockFileNaming,
   mayNameFile,
   StoredFileDamagedError,
   StoredFileMissingError,
@@ -309,6 +310,10 @@ export class ArticleImports {
       .forTenant({ ...importer, reason: 'article.import' }, async (tx) => {
         await supplierOf(tx, supplierId)
         await this.refuseWhileRunning(tx)
+        // The import names its files in a value, not by a key: none of them
+        // may go for good between reading it here and writing the import
+        // (opengewerk#911).
+        await lockFileNaming(tx, importer.tenantId)
 
         const stored = await tx
           .select({ sha256: files.sha256, sizeBytes: files.sizeBytes })
