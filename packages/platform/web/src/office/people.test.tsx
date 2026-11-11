@@ -410,6 +410,28 @@ describe('the certificate of a qualification', () => {
     expect(calls.filter((call) => call.method === 'PUT')).toHaveLength(1)
   })
 
+  it('is taken off without the qualification, and sends that it names none', async () => {
+    render(inQueries(<PersonScreen {...screenProps} personId="anna" mayWrite />))
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Führerschein ändern' }))
+
+    const dialog = screen.getByRole('dialog')
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Abnehmen' }))
+
+    expect(within(dialog).getByText('Kein Nachweis mehr')).toBeTruthy()
+    expect(within(dialog).queryByRole('button', { name: 'Abnehmen' })).toBeNull()
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Speichern' }))
+
+    await waitFor(() => {
+      expect(sent('PATCH', '/people/anna/qualifications/q-licence')).toEqual([
+        expect.objectContaining({ certificateSha256: null, certificateName: null }),
+      ])
+    })
+    expect(calls.some((call) => call.method === 'PUT')).toBe(false)
+  })
+
   it('keeps the one there when no other is chosen, and sends none', async () => {
     render(inQueries(<PersonScreen {...screenProps} personId="anna" mayWrite />))
 

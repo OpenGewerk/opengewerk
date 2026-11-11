@@ -1116,6 +1116,9 @@ function QualificationDialog({
   const [ownLevel, setOwnLevel] = useState<PersonLevel>('instructed_person')
   // The certificate chosen now, which replaces the one kept (opengewerk#802).
   const [chosen, setChosen] = useState<File | null>(null)
+  // The one kept taken off, so that the qualification names none any more.
+  const [takenOff, setTakenOff] = useState(false)
+  const kept = takenOff ? null : (qualification?.certificateName ?? null)
   const picker = useRef<HTMLInputElement>(null)
   // A second press while the file is still on its way would store it again
   // and, when adding, add the qualification twice.
@@ -1165,7 +1168,13 @@ function QualificationDialog({
 
     try {
       // The file into the store first; the qualification names it after.
-      const certificate = chosen === null ? {} : await storeCertificate(chosen)
+      // Taken off, it stays as an earlier certificate until the file goes.
+      const certificate =
+        chosen !== null
+          ? await storeCertificate(chosen)
+          : takenOff
+            ? { certificateSha256: null, certificateName: null }
+            : {}
 
       await (qualification === null
         ? addQualification(file.id, { ...fields, ...certificate })
@@ -1303,15 +1312,27 @@ function QualificationDialog({
             <span className="min-w-0 grow truncate text-[13px] text-ink-muted">
               {chosen
                 ? `${chosen.name}, ${fileSize(chosen.size)}`
-                : (qualification?.certificateName ?? 'Noch keine Datei')}
+                : takenOff
+                  ? 'Kein Nachweis mehr'
+                  : (kept ?? 'Noch keine Datei')}
             </span>
+            {chosen === null && kept !== null ? (
+              <Button
+                size="small"
+                onClick={() => {
+                  setTakenOff(true)
+                }}
+              >
+                Abnehmen
+              </Button>
+            ) : null}
             <Button
               size="small"
               onClick={() => {
                 picker.current?.click()
               }}
             >
-              {chosen || qualification?.certificateName ? 'Andere Datei' : 'Datei wählen'}
+              {chosen || kept ? 'Andere Datei' : 'Datei wählen'}
             </Button>
             <input
               ref={picker}
@@ -1335,6 +1356,10 @@ function QualificationDialog({
 
                 setProblem(tooLarge)
                 setChosen(tooLarge === null ? picked : null)
+
+                if (tooLarge === null) {
+                  setTakenOff(false)
+                }
               }}
             />
           </div>
