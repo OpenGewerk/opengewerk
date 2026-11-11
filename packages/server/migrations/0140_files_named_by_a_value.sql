@@ -3,16 +3,16 @@
 -- about to name it.
 --
 -- - `file_named_by_a_value` is the foundation's now (block `attachments.sql`):
---   it locks the tenant's counter of the sync and chain of the log, in the
---   order every change of a row that travels takes them, and then asks the
---   application, which answers in
+--   it locks the tenant's chain of the log, as every logged change does, and
+--   then asks the application, which answers in
 --   `application_file_named_by_a_value` the question 0139 asked: the files of
 --   a price list import and the logo in the content of a document as it was
 --   written.
 -- - `file_naming_lock` takes the same lock for the tenant of the transaction.
---   The import takes it for its files and the writing of a document for its
---   logo before they read `files`, so that a file is either named and kept,
---   or gone before it is read.
+--   The import takes it before it reads its files in `files`; the writing of
+--   a document holds it already when it reads its logo once more, from the
+--   change of the document before. So a file is either named and kept, or
+--   gone before it is read.
 -- - The versions of the archive (`version_takes_its_files`, 0087) and the
 --   files of a document (`document_file_takes_its_file`, 0130) ask it as the
 --   certificates of a qualification do since 0139.
@@ -43,10 +43,6 @@ BEGIN
 			USING ERRCODE = 'OG001';
 	END IF;
 
-	INSERT INTO public.sync_sequences (tenant_id)
-	VALUES (p_tenant)
-	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();
-
 	INSERT INTO public.audit_chains (tenant_id)
 	VALUES (p_tenant)
 	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();
@@ -62,10 +58,6 @@ AS $$
 DECLARE
 	named boolean;
 BEGIN
-	INSERT INTO public.sync_sequences (tenant_id)
-	VALUES (p_tenant)
-	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();
-
 	INSERT INTO public.audit_chains (tenant_id)
 	VALUES (p_tenant)
 	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();

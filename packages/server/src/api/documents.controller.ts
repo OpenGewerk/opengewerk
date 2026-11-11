@@ -68,7 +68,7 @@ import {
   payments,
 } from '../database/schema/index.js'
 import { articlePricesOn, type PriceOfDay, pricedFromArticle } from '../documents/article-prices.js'
-import { contentAndGapsOf, issuerOf } from '../documents/content.js'
+import { contentAndGapsOf, issuerOf, withStoredLogo } from '../documents/content.js'
 import { contractFlatLineFor } from '../contracts/invoice.js'
 import { surchargeLineFor } from '../service-calls/on-call.js'
 import { deductionsFor, paymentsOfADraft, showsReceivedPayments } from '../documents/deductions.js'
@@ -996,7 +996,7 @@ export class DocumentsController {
       await tx.insert(documentSnapshots).values({
         tenantId: identity.tenantId,
         documentId: created.id,
-        content: { ...content, number },
+        content: await withStoredLogo(tx, identity.tenantId, { ...content, number }),
       })
 
       // The status and nothing else, which is exactly what the trigger on the
@@ -1162,7 +1162,7 @@ export async function issueWith(
   await tx.insert(documentSnapshots).values({
     tenantId: identity.tenantId,
     documentId: issued.id,
-    content: { ...content, number },
+    content: await withStoredLogo(tx, identity.tenantId, { ...content, number }),
   })
 
   return issued

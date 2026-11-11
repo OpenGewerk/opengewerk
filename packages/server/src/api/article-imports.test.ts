@@ -23,7 +23,7 @@ import { deliveryTooLarge, largestUnpackedBytes } from '../datanorm/zip.js'
 import { ApiModule } from './api.module.js'
 import { ArticleImportsController } from './article-imports.controller.js'
 import { as, testIdentities as identities } from './test-identity.js'
-import { waitingForALock } from './test-hold.js'
+import { waitingFor } from './test-hold.js'
 
 /**
  * Imports from DATANORM through the routes (#297): the preview that writes
@@ -1320,7 +1320,7 @@ describe('an import that cannot start or run', () => {
         .send({ files: [{ name: 'DATANORM.001', sha256 }] })
         .then((answer) => answer)
 
-      await waitingForALock(admin, starting)
+      await waitingFor(admin, taking, starting)
       await taking.query('commit')
 
       const answer = await starting

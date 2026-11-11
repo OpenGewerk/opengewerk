@@ -25,7 +25,7 @@ import { ApiModule } from './api.module.js'
 import { binary } from './test-binary.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { invoiceable, issuableDraft, readyToInvoice } from './test-invoice.js'
-import { waitingForALock } from './test-hold.js'
+import { waitingFor } from './test-hold.js'
 
 /**
  * The PDF of a document, with a renderer that is not Chromium.
@@ -372,7 +372,7 @@ describe('a logo on the letterhead', () => {
         .set('x-test-identity', office())
         .then((answer) => answer.status)
 
-      await waitingForALock(admin, issuing)
+      await waitingFor(admin, taking, issuing)
       await taking.query('commit')
 
       expect(await issuing).toBe(201)

@@ -1,4 +1,4 @@
-import { Client, type Pool } from 'pg'
+import { Client, type Pool, type PoolClient } from 'pg'
 import { onTestFinished } from 'vitest'
 
 /** A statement held in the test's own process before it reaches the database. */
@@ -64,13 +64,19 @@ export function holdQuery(
 }
 
 /**
- * Waits until some statement waits for a lock (opengewerk#911), or until
- * `work` is done without ever having waited: a test that holds a lock in a
- * transaction of its own lets it go only once the request it holds up is
- * really held up. Without the lock in the code, `work` is done first, and the
- * test goes on to find what the lock was there to prevent.
+ * Waits until a statement waits for the transaction of `holder`
+ * (opengewerk#911): a test that holds a lock in a transaction of its own lets
+ * it go only once the request it holds up is really held up by it. Fails when
+ * `work` is done first or nothing waits for the holder in time, so that a
+ * test never goes on believing it raced when it did not.
  */
-export async function waitingForALock(pool: Pool, work: Promise<unknown>): Promise<void> {
+export async function waitingFor(
+  pool: Pool,
+  holder: PoolClient,
+  work: Promise<unknown>,
+): Promise<void> {
+  const { rows } = await holder.query<{ pid: number }>('select pg_backend_pid() as pid')
+  const pid = rows[0]?.pid
   let done = false
 
   work.then(
@@ -82,15 +88,22 @@ export async function waitingForALock(pool: Pool, work: Promise<unknown>): Promi
     },
   )
 
-  for (let tries = 0; tries < 200 && !done; tries += 1) {
-    const { rows } = await pool.query<{ waiting: number }>(
-      'select count(*)::int as waiting from pg_locks where not granted',
+  for (let tries = 0; tries < 200; tries += 1) {
+    const { rows: waiting } = await pool.query<{ waiting: number }>(
+      'select count(*)::int as waiting from pg_stat_activity where $1 = any(pg_blocking_pids(pid))',
+      [pid],
     )
 
-    if ((rows[0]?.waiting ?? 0) > 0) {
+    if ((waiting[0]?.waiting ?? 0) > 0) {
       return
+    }
+
+    if (done) {
+      throw new Error('The work was done without ever waiting for the held transaction')
     }
 
     await new Promise((resolve) => setTimeout(resolve, 50))
   }
+
+  throw new Error('Nothing waited for the held transaction')
 }

@@ -2,7 +2,7 @@ import { newId } from '@opengewerk/platform-server'
 import type { Pool } from 'pg'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { waitingForALock } from '../api/test-hold.js'
+import { waitingFor } from '../api/test-hold.js'
 import { connect, resetToMigrated } from './test-database.js'
 
 // A file of the store goes for good once no key names it and no value does
@@ -104,7 +104,7 @@ describe('the values that name a file', () => {
         [tenant, hash],
       )
 
-      await waitingForALock(admin, asking)
+      await waitingFor(admin, naming, asking)
       await naming.query('commit')
 
       expect((await asking).rows).toEqual([{ named: true }])
@@ -117,47 +117,46 @@ describe('the values that name a file', () => {
     }
   })
 
-  it('are locked in the order a change of a row that travels takes the locks, so that nothing waits in a circle', async () => {
+  it('add no lock to a deletion that asks, so that nothing waits in a circle', async () => {
     const tenant = newId<'tenant'>()
 
     await admin.query("insert into tenants (id, name) values ($1, 'Elektro Süd GmbH')", [tenant])
 
+    const deleting = await admin.connect()
     const writing = await admin.connect()
-    const naming = await admin.connect()
-    let named: Promise<unknown> = Promise.resolve()
+    let written: Promise<unknown> = Promise.resolve()
 
     try {
-      // A change of a row that travels: stamped first, which locks the counter.
-      await writing.query('begin')
-      await writing.query("select set_config('app.tenant_id', $1, true)", [tenant])
-      await writing.query('select public.next_sync_sequence($1)', [tenant])
-
-      // About to name a file, and to write a row that travels after.
-      await naming.query('begin')
-      await naming.query("select set_config('app.tenant_id', $1, true)", [tenant])
-
-      named = naming
-        .query('select public.file_naming_lock($1)', [tenant])
-        .then(() => naming.query('select public.next_sync_sequence($1)', [tenant]))
-
-      await waitingForALock(admin, named)
-
-      // The change is logged: the chain, which the lock must not hold yet.
-      await writing.query(
+      // A deletion that has written its protocol: it holds the chain.
+      await deleting.query('begin')
+      await deleting.query("select set_config('app.tenant_id', $1, true)", [tenant])
+      await deleting.query(
         `insert into audit_chains (tenant_id) values ($1)
          on conflict (tenant_id) do update set updated_at = now()`,
         [tenant],
       )
+
+      // A change of a row that travels: the counter, then the chain, which
+      // it waits for.
+      await writing.query('begin')
+      await writing.query("select set_config('app.tenant_id', $1, true)", [tenant])
+      written = writing
+        .query('select public.next_sync_sequence($1)', [tenant])
+        .then(() => writing.query('select public.file_naming_lock($1)', [tenant]))
+
+      await waitingFor(admin, deleting, written)
+
+      // The deletion asks whether a value names a file: nothing it waits for.
+      await deleting.query('select public.file_named_by_a_value($1, $2)', [tenant, 'f'.repeat(64)])
+      await deleting.query('commit')
+      await written
       await writing.query('commit')
-      await named
-      await naming.query('commit')
     } finally {
-      // The change first: the lock still waiting for it ends with it.
+      await deleting.query('rollback').catch(() => undefined)
+      await written.catch(() => undefined)
       await writing.query('rollback').catch(() => undefined)
-      await named.catch(() => undefined)
-      await naming.query('rollback').catch(() => undefined)
+      deleting.release()
       writing.release()
-      naming.release()
     }
   })
 
