@@ -62,17 +62,28 @@ const language = auditLanguage(auditVocabulary)
 const answerNames = ['Auskunft.pdf', 'daten.json'] as const
 
 /**
- * The characters of the name of a file the answer keeps for its path
+ * The UTF-8 bytes of the name of a file the answer keeps for its path
  * (opengewerk#916): the sync lets a name of 100 000 characters through, and
- * the archive holds at most 65 535 bytes for one.
+ * ext4 and macOS hold at most 255 bytes for one part of a path. With the
+ * extension of its media type (5 bytes at most) and a " (65535)" that makes
+ * it unique (8), a part stays below that.
  */
-const nameCharacters = 200
+const nameBytes = 200
 
 /** What `extensionOf` takes for an extension at the end of a name. */
 const extensionAtEnd = /\.[a-z0-9]{2,5}$/i
 
+const utf8 = new TextEncoder()
+
+/** The UTF-8 bytes of one character; a half of one is written as three, as U+FFFD. */
+function bytesOf(character: string): number {
+  const point = character.codePointAt(0) ?? 0
+
+  return point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4
+}
+
 /**
- * A cleaned name cut to `nameCharacters` by characters, so that no half of
+ * A cleaned name cut to `nameBytes` by whole characters, so that no half of
  * one is left, and cleaned again: its extension kept, "Angebot …x.pdf" and
  * not "Angebot …x.pd", which would pass for one of its own. Where the name
  * had none, the cut makes none either: "Begehung 12.05.2026" cut after "12.05"
@@ -82,14 +93,26 @@ const extensionAtEnd = /\.[a-z0-9]{2,5}$/i
  * slash leaves no ".pdf" on its own.
  */
 function cut(name: string): string {
-  const characters = [...name]
-
-  if (characters.length <= nameCharacters) {
+  if (utf8.encode(name).length <= nameBytes) {
     return name
   }
 
   const extension = extensionAtEnd.exec(name)?.[0] ?? ''
-  let stem = cleanName(characters.slice(0, nameCharacters - extension.length).join(''))
+  let room = nameBytes - extension.length
+  let kept = ''
+
+  for (const character of name) {
+    const size = bytesOf(character)
+
+    if (size > room) {
+      break
+    }
+
+    kept += character
+    room -= size
+  }
+
+  let stem = cleanName(kept)
 
   // Each round takes three characters at least, of no more than 200.
   while (extension === '' && extensionAtEnd.test(stem)) {

@@ -62,9 +62,20 @@ export function uniqueNames(names: readonly string[]): string[] {
   return names.map(nameMaker())
 }
 
-/** A character no unpacker should be asked to put into a name: a control character or one Windows refuses. */
+/**
+ * A character no unpacker should be asked to put into a name: a control
+ * character, one Windows refuses, or half of one (a surrogate without its
+ * other half), which the archive would write as U+FFFD and `daten.json` as
+ * "\ud800", so that the two named the file differently (opengewerk#916).
+ */
 function unfit(character: string): boolean {
-  return character.charCodeAt(0) < 0x20 || '<>:"|?*'.includes(character)
+  const code = character.charCodeAt(0)
+
+  return (
+    code < 0x20 ||
+    '<>:"|?*'.includes(character) ||
+    (character.length === 1 && code >= 0xd800 && code <= 0xdfff)
+  )
 }
 
 /** What a part of a name loses at its end: white space and dots. */

@@ -42,6 +42,17 @@ describe('the names in an archive', () => {
     ])
   })
 
+  it('lose half a character and keep a whole one of two halves', () => {
+    const half = String.fromCharCode(0xd83d)
+    const whole = String.fromCodePoint(0x1f600)
+
+    expect(uniqueNames([`a${half}b.pdf`, `${whole}.pdf`, `c${half}`])).toEqual([
+      'a_b.pdf',
+      `${whole}.pdf`,
+      'c_',
+    ])
+  })
+
   it('give a nameless entry a name', () => {
     expect(uniqueNames(['', '..'])).toEqual(['Datei', 'Datei (2)'])
   })
