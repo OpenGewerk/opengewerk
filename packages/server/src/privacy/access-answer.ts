@@ -19,7 +19,7 @@ import { type PrintJob, present, text } from '@opengewerk/platform-server'
 import { momentText } from '../forms/defect-report.js'
 import { type GridParty, sheetHead, sheetJob } from '../forms/grid-documents.js'
 import { type AccessReport, type ReportRow } from './access-report.js'
-import { type ZipEntry } from './zip.js'
+import { nameMaker, type ZipEntry } from './zip.js'
 
 /**
  * The answer to a request for access (#318) as the person gets it, one ZIP:
@@ -57,12 +57,30 @@ export interface AccessAnswer {
 
 const language = auditLanguage(auditVocabulary)
 
-/** Where a file of the report lies in the archive. */
+/** The two files of the answer itself, first in the archive. */
+const answerNames = ['Auskunft.pdf', 'daten.json'] as const
+
+/**
+ * Where a file of the report lies in the archive, as the archive names it
+ * (opengewerk#913): made unique the way `zipPieces` does, after the two files
+ * of the answer, so that two files of the same name stand in the PDF and in
+ * `daten.json` under the two names they have in the ZIP, "scan.pdf" and
+ * "scan (2).pdf", and not twice under the first. The archive gets these
+ * names and leaves them as they are.
+ */
 export function filePaths(report: AccessReport): string[] {
+  const unique = nameMaker()
+
+  for (const name of answerNames) {
+    unique(name)
+  }
+
   return report.files.map((file) => {
     const extension = extensionOf(file.mediaType, file.name)
 
-    return `dateien/${file.name.endsWith(extension) ? file.name : `${file.name}${extension}`}`
+    return unique(
+      `dateien/${file.name.endsWith(extension) ? file.name : `${file.name}${extension}`}`,
+    )
   })
 }
 
@@ -339,8 +357,8 @@ export function accessEntries(
   const paths = filePaths(answer.report)
 
   return [
-    { name: 'Auskunft.pdf', bytes: () => Promise.resolve(pdf) },
-    { name: 'daten.json', bytes: () => Promise.resolve(encoder.encode(accessJson(answer))) },
+    { name: answerNames[0], bytes: () => Promise.resolve(pdf) },
+    { name: answerNames[1], bytes: () => Promise.resolve(encoder.encode(accessJson(answer))) },
     ...answer.report.files.map((file, index) => {
       const path = paths[index] ?? `dateien/${file.name}`
 
