@@ -7,16 +7,23 @@
 -- it stops. Which they are, this shows:
 --
 --   select person_id, qualification_id, name from replaced_certificates;
+--
+-- The check, the trigger that writes the table and the table go in one
+-- transaction, under locks that let nothing write in between, so that no
+-- certificate replaced after the check is lost with the table.
 
 DO $$
 BEGIN
+	LOCK TABLE "qualifications", "replaced_certificates" IN ACCESS EXCLUSIVE MODE;
+
 	IF EXISTS (SELECT 1 FROM "replaced_certificates") THEN
 		RAISE EXCEPTION 'Es gibt frühere Nachweise. Die Rücknahme von 0139 ließe ihre Dateien ohne Halt im Speicher und bricht deshalb ab.';
 	END IF;
+
+	DROP TRIGGER IF EXISTS "qualifications_keep_their_replaced_certificate" ON "qualifications";
+	DROP TABLE IF EXISTS "replaced_certificates";
 END
 $$;--> statement-breakpoint
-DROP TRIGGER IF EXISTS "qualifications_keep_their_replaced_certificate" ON "qualifications";--> statement-breakpoint
-DROP TABLE IF EXISTS "replaced_certificates";--> statement-breakpoint
 DROP FUNCTION IF EXISTS "replaced_certificate_takes_its_file"();--> statement-breakpoint
 DROP FUNCTION IF EXISTS "qualification_keeps_its_replaced_certificate"();--> statement-breakpoint
 CREATE OR REPLACE FUNCTION "qualification_takes_its_certificate"() RETURNS trigger
