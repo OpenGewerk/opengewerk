@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import type { IsoDate } from '@opengewerk/domain'
 import {
   addDays,
@@ -37,6 +39,62 @@ async function send(base: string, method: string, path: string, body?: unknown):
   }
 
   return answer
+}
+
+/**
+ * A file into the store by its hash, as the office stores one ahead of the
+ * record that names it (`PUT /files/:sha256`).
+ */
+async function stored(base: string, bytes: Buffer, mediaType: string): Promise<string> {
+  const sha256 = createHash('sha256').update(bytes).digest('hex')
+  const response = await fetch(new URL(`/files/${sha256}`, base), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/octet-stream', 'X-Media-Type': mediaType },
+    body: bytes,
+  })
+
+  if (!response.ok) {
+    throw new Error(`The sample data broke at PUT /files/${sha256}: ${String(response.status)}`)
+  }
+
+  return sha256
+}
+
+/**
+ * A PDF of one page with one line of text that a viewer opens, built by hand
+ * so that the sample data need no PDF engine (opengewerk#802). The line is
+ * printable ASCII without parentheses or backslashes, so that every character
+ * is one byte and needs no escape.
+ */
+function onePagePdf(line: string): Buffer {
+  if (!/^[\x20-\x27\x2a-\x5b\x5d-\x7e]*$/.test(line)) {
+    throw new Error('The sample PDF takes printable ASCII without parentheses or backslashes')
+  }
+
+  const content = `BT /F1 16 Tf 72 760 Td (${line}) Tj ET`
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+  ]
+  const offsets: number[] = []
+  let pdf = '%PDF-1.7\n'
+
+  objects.forEach((object, index) => {
+    offsets.push(pdf.length)
+    pdf += `${String(index + 1)} 0 obj\n${object}\nendobj\n`
+  })
+
+  const table = pdf.length
+
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`
+  pdf += offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\n`
+  pdf += `startxref\n${String(table)}\n%%EOF\n`
+
+  return Buffer.from(pdf, 'latin1')
 }
 
 function idOf(answer: Answer): string {
@@ -1414,6 +1472,13 @@ async function plantPeople(base: string, today: IsoDate): Promise<void> {
       kindKey: 'core.work_at_height',
       validUntil: addDays(today, 29),
       note: 'Unterweisung PSA gegen Absturz, jährlich',
+      // The certificate the board "Akte" draws (opengewerk#802).
+      certificateSha256: await stored(
+        base,
+        onePagePdf('Unterweisung PSA gegen Absturz'),
+        'application/pdf',
+      ),
+      certificateName: 'unterweisung-psaga-2026.pdf',
     },
     { ownKindId: firstAid.id, validUntil: addDays(today, -17) },
   ]) {

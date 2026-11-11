@@ -97,6 +97,26 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   zuerst seine Nummer. Warum: Ein Serviceauftrag kommt per Telefon und muss Sekunden später auf einem Bildschirm und
   auf dem Telefon des Monteurs stehen, und ein Verbraucher, der ohne Angebot beauftragt, hat dieselben Rechte wie
   einer mit Angebot.
+- Der Nachweis einer Qualifikation als Datei (#802): Im Dialog „Qualifikation hinzufügen“ und beim Ändern wählt
+  der Inhaber ein PDF oder Foto, es geht über `PUT /files/:sha256` in den Speicher des Betriebs, und die
+  Qualifikation nennt es mit Hash und Namen (Spalte `certificate_name`, Migration 0138). Die Akte zeigt eine Spalte
+  „Nachweis“ mit dem Namen der Datei, der sie in einem neuen Tab öffnet, über die Route
+  `GET /people/:id/qualifications/:qualificationId/certificate` unter dem Recht der Akten, nicht unter dem der
+  Ablage. Abgelehnt wird ein Hash, den dieser Betrieb nicht gespeichert hat oder den die Person nicht nennen darf,
+  weil sie die Datei weder selbst hochgeladen hat noch eine Qualifikation sieht, die sie nennt. Die Notiz steht
+  unter Art und Stufe, auf dem Telefon öffnet der Kasten den Nachweis und hat den Knopf zum Ändern. Beim Ändern
+  nimmt „Abnehmen“ den Nachweis ab, ohne die Qualifikation zu löschen. Die eigene
+  Akte unter „Konto“ nennt, dass es einen Nachweis gibt, öffnet ihn aber nicht. Ein ersetzter oder abgenommener
+  Nachweis bleibt als früherer Nachweis bis zum Löschen der Akte im Speicher (Tabelle `replaced_certificates`,
+  Migration 0139), ohne in der Oberfläche zu stehen; die Auskunft nach Art. 15 gibt ihn mit, und das Löschen der
+  Akte nimmt ihn samt Datei. Dabei bleibt eine Datei, solange ein anderer Datensatz sie nennt, auch die Dateien
+  eines DATANORM-Imports und das Logo im festgeschriebenen Inhalt eines Belegs, die eine Datei ohne Fremdschlüssel
+  nennen. Warum: Ein Gesellenbrief oder eine Unterweisung gehört zur Qualifikation, und nach ADR 0012 liest ihn
+  nur, wer die Akte liest; ein Fehlgriff im Dialog soll keine Datei kosten. Einschränkungen: Eine Datei, die
+  hochgeladen wurde, deren Qualifikation dann aber nicht gespeichert wird (Netz weg, Ablehnung durch den Server),
+  bleibt im Speicher des Betriebs. Beginnt im selben Augenblick, in dem das Löschen einer Akte einen Nachweis
+  nimmt, ein DATANORM-Import mit denselben Bytes, kann der Import seine Datei verlieren; eine gemeinsame Sperre
+  für alle Wege, die eine Datei endgültig löschen, kommt mit #911.
 
 ### Geändert
 

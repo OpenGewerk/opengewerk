@@ -1,4 +1,5 @@
 import { addDays } from './calendar.js'
+import { fileHashProblem } from './file.js'
 import type { Id, IsoDate, Synced } from './identifier.js'
 import type { PersonId } from './person.js'
 
@@ -41,6 +42,8 @@ export const qualificationLimits = {
   /** The key a catalogue gives a kind, "<package>.<key>". */
   kindKey: 120,
   note: 500,
+  /** The name of the file of a certificate, as it was chosen (opengewerk#802). */
+  certificateName: 200,
 } as const
 
 /** A kind of qualification, from a catalogue of the application or the tenant's own. */
@@ -75,6 +78,11 @@ export interface Qualification extends Synced {
   readonly note: string | null
   /** The certificate, a file of the tenant's store, where there is one. */
   readonly certificateSha256: string | null
+  /**
+   * The name of the file of the certificate as it was chosen, which the file
+   * names it by (opengewerk#802); there exactly where the certificate is.
+   */
+  readonly certificateName: string | null
 }
 
 /** How a qualification stands on a day: it holds, its end is near, or it has run out. */
@@ -208,6 +216,24 @@ export function qualificationProblems(
     (typeof note !== 'string' || note.trim().length > qualificationLimits.note)
   ) {
     problems['note'] = `Höchstens ${String(qualificationLimits.note)} Zeichen.`
+  }
+
+  // The file and the name it is shown by, both or neither (opengewerk#802).
+  const certificate = qualification['certificateSha256'] ?? null
+  const certificateName = qualification['certificateName'] ?? null
+
+  if (certificate !== null && fileHashProblem(certificate) !== null) {
+    problems['certificate'] = fileHashProblem(certificate) ?? ''
+  } else if ((certificate === null) !== (certificateName === null)) {
+    problems['certificate'] = 'Ein Nachweis ist eine Datei mit ihrem Namen.'
+  } else if (
+    certificateName !== null &&
+    (typeof certificateName !== 'string' ||
+      certificateName.trim() === '' ||
+      certificateName.length > qualificationLimits.certificateName)
+  ) {
+    problems['certificate'] =
+      `Der Name der Datei hat 1 bis ${String(qualificationLimits.certificateName)} Zeichen.`
   }
 
   return problems

@@ -967,6 +967,20 @@
       "when": 1794210122655,
       "tag": "0137_credential_generation",
       "breakpoints": true
+    },
+    {
+      "idx": 138,
+      "version": "7",
+      "when": 1794356943321,
+      "tag": "0138_qualification_certificate_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 139,
+      "version": "7",
+      "when": 1794379360617,
+      "tag": "0139_replaced_certificates",
+      "breakpoints": true
     }
   ]
 }

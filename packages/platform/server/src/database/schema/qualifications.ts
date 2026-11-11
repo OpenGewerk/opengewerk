@@ -55,8 +55,22 @@ function qualificationParts() {
     validUntil: date('valid_until', { mode: 'string' }),
     note: text('note'),
     certificateSha256: text('certificate_sha256'),
+    certificateName: text('certificate_name'),
     ...timestamps,
     ...syncColumns,
+  }
+}
+
+/** The columns of an earlier certificate: its person, its qualification, its file and its name. */
+function replacedParts() {
+  return {
+    id: primaryId<'replaced-certificate'>(),
+    ...tenantColumn,
+    personId: reference<'person'>('person_id').notNull(),
+    qualificationId: reference<'qualification'>('qualification_id').notNull(),
+    sha256: text('sha256').notNull(),
+    name: text('name').notNull(),
+    ...timestamps,
   }
 }
 
@@ -106,7 +120,46 @@ export function qualificationSchema({ people }: Pick<PeopleTables, 'people'>) {
       'qualifications_certificate_is_a_hash',
       sql`${table.certificateSha256} is null or ${table.certificateSha256} ~ '^[0-9a-f]{64}$'`,
     ),
+    // The file of a certificate and the name it is shown by, both or neither
+    // (opengewerk#802).
+    check(
+      'qualifications_certificate_named',
+      sql`num_nonnulls(${table.certificateSha256}, ${table.certificateName}) in (0, 2)`,
+    ),
+    check(
+      'qualifications_certificate_name_fits',
+      sql`${table.certificateName} is null or ${fits(table.certificateName, qualificationLimits.certificateName)}`,
+    ),
   ])
 
-  return { qualificationKinds, qualifications }
+  // The certificates a qualification named before (opengewerk#802). One that
+  // is replaced or taken off stays in the store, held by its row here, until
+  // the file of its person goes and its rows with it; a mistake in the dialog
+  // loses no file. Written by the application when the hash of a
+  // qualification changes, never changed, and not shown on a screen. The
+  // person beside the qualification, so that the rows are found and locked by
+  // the person they are about.
+  const replacedCertificates = pgTable('replaced_certificates', replacedParts(), (table) => [
+    tenantIsolation(table.tenantId),
+    index('replaced_certificates_of_a_person').on(table.tenantId, table.personId),
+    foreignKey({
+      columns: [table.tenantId, table.personId],
+      foreignColumns: [people.tenantId, people.id],
+      name: 'replaced_certificates_of_somebody_here',
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.qualificationId],
+      foreignColumns: [qualifications.tenantId, qualifications.id],
+      name: 'replaced_certificates_of_a_qualification_here',
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.sha256],
+      foreignColumns: [files.tenantId, files.sha256],
+      name: 'replaced_certificates_stored',
+    }),
+    check('replaced_certificates_is_a_hash', sql`${table.sha256} ~ '^[0-9a-f]{64}$'`),
+    check('replaced_certificates_name_fits', fits(table.name, qualificationLimits.certificateName)),
+  ])
+
+  return { qualificationKinds, qualifications, replacedCertificates }
 }

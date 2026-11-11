@@ -333,6 +333,8 @@ describe('the tables', () => {
       name === 'working_times' ||
       name === 'qualifications' ||
       name === 'qualification_kinds' ||
+      // The certificates a qualification named before (#802), on no screen at all.
+      name === 'replaced_certificates' ||
       // Leave and sickness and the holidays they count with (#288), online like the files.
       name === 'absences' ||
       name === 'leave_entitlements' ||

@@ -514,7 +514,7 @@ async function changesOf(
   return changes.sort((one, other) => one.at.localeCompare(other.at))
 }
 
-/** The files the rows keep: versions of attachments, printed documents, certificates. */
+/** The files the rows keep: versions of attachments, printed documents, certificates of now and of before. */
 async function filesOf(tx: TenantTransaction, reached: Reached): Promise<ReportFile[]> {
   const files: ReportFile[] = []
 
@@ -532,10 +532,10 @@ async function filesOf(tx: TenantTransaction, reached: Reached): Promise<ReportF
 
   const documentFiles = reached.of('document_files')
   const wantedIds = documentFiles.map((row) => String(row['file_id']))
-  const wantedHashes = reached
-    .of('qualifications')
-    .map((row) => row['certificate_sha256'])
-    .filter((hash): hash is string => typeof hash === 'string')
+  const wantedHashes = [
+    ...reached.of('qualifications').map((row) => row['certificate_sha256']),
+    ...reached.of('replaced_certificates').map((row) => row['sha256']),
+  ].filter((hash): hash is string => typeof hash === 'string')
   const { rows: stored } =
     wantedIds.length + wantedHashes.length === 0
       ? { rows: [] }
@@ -569,7 +569,27 @@ async function filesOf(tx: TenantTransaction, reached: Reached): Promise<ReportF
         recordId: String(row['id']),
         sha256: file.sha256,
         mediaType: file.media_type,
-        name: `Zertifikat ${String(row['kind_key'] ?? '')}`.trim(),
+        // By the name it was chosen under (opengewerk#802), as the file of it.
+        name:
+          typeof row['certificate_name'] === 'string'
+            ? row['certificate_name']
+            : `Zertifikat ${String(row['kind_key'] ?? '')}`.trim(),
+      })
+    }
+  }
+
+  // A certificate replaced or taken off stays until the file goes (opengewerk#802),
+  // and is handed over like the one of now.
+  for (const row of reached.of('replaced_certificates')) {
+    const file = stored.find((entry) => entry.sha256 === row['sha256'])
+
+    if (file !== undefined) {
+      files.push({
+        table: 'replaced_certificates',
+        recordId: String(row['id']),
+        sha256: file.sha256,
+        mediaType: file.media_type,
+        name: String(row['name'] ?? file.sha256),
       })
     }
   }

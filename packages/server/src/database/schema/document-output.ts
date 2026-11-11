@@ -1,5 +1,10 @@
 import { documentFilePurposes, type StoredDocumentContent } from '@opengewerk/domain'
-import { primaryId, reference, tenantIsolation } from '@opengewerk/platform-server'
+import {
+  primaryId,
+  readableByTheOwner,
+  reference,
+  tenantIsolation,
+} from '@opengewerk/platform-server'
 import { files, tenantColumn } from '@opengewerk/platform-server/schema'
 import { foreignKey, jsonb, pgEnum, pgTable, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
 
@@ -36,6 +41,11 @@ export const documentSnapshots = pgTable(
   },
   (table) => [
     tenantIsolation(table.tenantId),
+    // `file_named_by_a_value` runs as the owner, from the trigger that takes the
+    // certificate of a qualification, and asks the content written here whether
+    // its logo is the file; without the reading half it would find no row and
+    // take the logo of a document (migration 0139).
+    readableByTheOwner(),
     foreignKey({
       columns: [table.tenantId, table.documentId],
       foreignColumns: [documents.tenantId, documents.id],

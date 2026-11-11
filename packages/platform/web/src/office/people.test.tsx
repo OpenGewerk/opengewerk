@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
@@ -116,9 +118,22 @@ const anna: PersonFile = {
       validUntil: '2026-11-30',
       note: null,
       certificateSha256: null,
+      certificateName: null,
       kindLabel: 'Höhenarbeit',
       kindLevel: 'instructed_person',
       standing: 'expiring',
+    },
+    {
+      id: 'q-licence',
+      kindKey: 'core.driving_licence',
+      ownKindId: null,
+      validUntil: null,
+      note: 'Klasse BE',
+      certificateSha256: 'b'.repeat(64),
+      certificateName: 'fuehrerschein.pdf',
+      kindLabel: 'Führerschein',
+      kindLevel: 'instructed_person',
+      standing: 'valid',
     },
   ],
 }
@@ -284,6 +299,174 @@ describe('a file', () => {
   })
 })
 
+/**
+ * The certificate of a qualification (opengewerk#802): chosen in the dialog,
+ * stored by its hash before the qualification names it, and shown in the
+ * file by its name, as a way to open it.
+ */
+describe('the certificate of a qualification', () => {
+  const bytes = Buffer.from('%PDF-1.7\n% Nachweis\n%%EOF\n')
+  const hash = createHash('sha256').update(bytes).digest('hex')
+
+  it('is shown by its name and opened at its qualification, and named missing where there is none', async () => {
+    render(inQueries(<PersonScreen {...screenProps} personId="anna" mayWrite />))
+
+    const link = await screen.findByRole('link', { name: 'fuehrerschein.pdf' })
+
+    expect(link.getAttribute('href')).toBe('/people/anna/qualifications/q-licence/certificate')
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(screen.getByText('Kein Nachweis')).toBeTruthy()
+  })
+
+  it('is opened from its box on a phone, where the note and a way to change it are as well', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }))
+    render(inQueries(<PersonScreen {...screenProps} personId="anna" mayWrite />))
+
+    const boxes = await screen.findByRole('list', { name: 'Qualifikationen' })
+    const licence = within(boxes).getByText('Führerschein').closest('li') as HTMLElement
+
+    expect(
+      within(licence).getByRole('link', { name: 'fuehrerschein.pdf' }).getAttribute('href'),
+    ).toBe('/people/anna/qualifications/q-licence/certificate')
+    expect(within(licence).getByText('Klasse BE')).toBeTruthy()
+    expect(within(licence).getByRole('button', { name: 'Führerschein ändern' })).toBeTruthy()
+  })
+
+  it('leaves the note in the table, under the kind', async () => {
+    render(inQueries(<PersonScreen {...screenProps} personId="anna" mayWrite />))
+
+    const table = await screen.findByRole('table', { name: 'Qualifikationen' })
+    const row = within(table).getByText('Führerschein').closest('tr') as HTMLElement
+
+    expect(within(row).getByText('Klasse BE')).toBeTruthy()
+  })
+
+  it('is stored by its hash and then named by the qualification', async () => {
+    serverSays('POST', '/people/anna/qualifications', { id: 'q-new' }, 201)
+    render(inQueries(<PersonScreen {...screenProps} personId="anna" mayWrite />))
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Qualifikation hinzufügen' }))
+
+    const dialog = screen.getByRole('dialog')
+
+    await userEvent.selectOptions(within(dialog).getByLabelText(/^Art/), 'key:core.work_at_height')
+    await userEvent.upload(
+      within(dialog).getByLabelText('Datei des Nachweises'),
+      new File([bytes], 'unterweisung-psaga-2026.pdf', { type: 'application/pdf' }),
+    )
+
+    expect(within(dialog).getByText(/^unterweisung-psaga-2026\.pdf, /)).toBeTruthy()
+    expect(within(dialog).getByRole('button', { name: 'Andere Datei' })).toBeTruthy()
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Hinzufügen' }))
+
+    await waitFor(() => {
+      expect(sent('POST', '/people/anna/qualifications')).toEqual([
+        expect.objectContaining({
+          kindKey: 'core.work_at_height',
+          certificateSha256: hash,
+          certificateName: 'unterweisung-psaga-2026.pdf',
+        }),
+      ])
+    })
+    // The bytes before the qualification that names them.
+    expect(calls.map((call) => `${call.method} ${call.path}`)).toEqual(
+      expect.arrayContaining([`PUT /files/${hash}`]),
+    )
+    expect(
+      calls.findIndex((call) => call.method === 'PUT' && call.path === `/files/${hash}`),
+    ).toBeLessThan(calls.findIndex((call) => call.method === 'POST'))
+  })
+
+  it('is stored and named once when the button is pressed again while it travels', async () => {
+    serverSays('POST', '/people/anna/qualifications', { id: 'q-new' }, 201)
+    render(inQueries(<PersonScreen {...screenProps} personId="anna" mayWrite />))
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Qualifikation hinzufügen' }))
+
+    const dialog = screen.getByRole('dialog')
+
+    await userEvent.selectOptions(within(dialog).getByLabelText(/^Art/), 'key:core.work_at_height')
+    await userEvent.upload(
+      within(dialog).getByLabelText('Datei des Nachweises'),
+      new File([bytes], 'unterweisung-psaga-2026.pdf', { type: 'application/pdf' }),
+    )
+
+    const add = within(dialog).getByRole('button', { name: 'Hinzufügen' })
+
+    // Twice before React has drawn the first press.
+    add.click()
+    add.click()
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+    expect(sent('POST', '/people/anna/qualifications')).toHaveLength(1)
+    expect(calls.filter((call) => call.method === 'PUT')).toHaveLength(1)
+  })
+
+  it('is taken off without the qualification, and sends that it names none', async () => {
+    render(inQueries(<PersonScreen {...screenProps} personId="anna" mayWrite />))
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Führerschein ändern' }))
+
+    const dialog = screen.getByRole('dialog')
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Abnehmen' }))
+
+    expect(within(dialog).getByText('Kein Nachweis mehr')).toBeTruthy()
+    expect(within(dialog).queryByRole('button', { name: 'Abnehmen' })).toBeNull()
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Speichern' }))
+
+    await waitFor(() => {
+      expect(sent('PATCH', '/people/anna/qualifications/q-licence')).toEqual([
+        expect.objectContaining({ certificateSha256: null, certificateName: null }),
+      ])
+    })
+    expect(calls.some((call) => call.method === 'PUT')).toBe(false)
+  })
+
+  it('keeps the one there when no other is chosen, and sends none', async () => {
+    render(inQueries(<PersonScreen {...screenProps} personId="anna" mayWrite />))
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Führerschein ändern' }))
+
+    const dialog = screen.getByRole('dialog')
+
+    expect(within(dialog).getByText('fuehrerschein.pdf')).toBeTruthy()
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Speichern' }))
+
+    await waitFor(() => {
+      expect(sent('PATCH', '/people/anna/qualifications/q-licence')).toHaveLength(1)
+    })
+    expect(sent('PATCH', '/people/anna/qualifications/q-licence')[0]).not.toHaveProperty(
+      'certificateSha256',
+    )
+    expect(calls.some((call) => call.method === 'PUT')).toBe(false)
+  })
+
+  it('takes no file larger than the store keeps, and says so', async () => {
+    render(inQueries(<PersonScreen {...screenProps} personId="anna" mayWrite />))
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Qualifikation hinzufügen' }))
+
+    const dialog = screen.getByRole('dialog')
+    const large = new File([bytes], 'riesig.pdf', { type: 'application/pdf' })
+
+    Object.defineProperty(large, 'size', { value: 26_000_000 })
+    await userEvent.upload(within(dialog).getByLabelText('Datei des Nachweises'), large)
+
+    expect(within(dialog).queryByText(/^riesig\.pdf, /)).toBeNull()
+    expect(within(dialog).getByText(/^Die Datei ist größer als 25 MB/)).toBeTruthy()
+  })
+})
+
 describe('the own file under "Konto"', () => {
   it('shows the own working time and qualifications, read only', async () => {
     serverSays('GET', '/people/mine', anna)
@@ -293,6 +476,10 @@ describe('the own file under "Konto"', () => {
     expect(screen.getByText('Höhenarbeit')).toBeTruthy()
     expect(screen.getByText('Läuft bald ab')).toBeTruthy()
     expect(screen.queryByRole('button')).toBeNull()
+    // That there is a certificate, and where (opengewerk#802); no way to open it here.
+    expect(screen.getByText('läuft nicht ab · Nachweis')).toBeTruthy()
+    expect(screen.getByText(/Einen Nachweis gibt es dort\./)).toBeTruthy()
+    expect(screen.queryByRole('link')).toBeNull()
   })
 
   it('is not there for somebody without a file', async () => {

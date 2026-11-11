@@ -1,5 +1,6 @@
 import {
   addDays,
+  fileSizeProblem,
   type IsoDate,
   personLevelLabel,
   personLevels,
@@ -15,8 +16,8 @@ import {
 } from '@opengewerk/platform-domain'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { Check, LogOut, Paperclip, Pencil, Plus, Trash2 } from 'lucide-react'
-import { type FormEvent, type ReactNode, useState } from 'react'
+import { Check, LogOut, Paperclip, Pencil, Plus, Trash2, Upload } from 'lucide-react'
+import { type FormEvent, type ReactNode, useRef, useState } from 'react'
 
 import { Button, IconButton, useButtonLook } from '../components/button.js'
 import { Dialog, DialogActions } from '../components/dialog.js'
@@ -24,10 +25,11 @@ import { Field, SelectField } from '../components/field.js'
 import { cardLink, Panel, PanelLabel, TablePanel } from '../components/panel.js'
 import { Status, type StatusTone } from '../components/status.js'
 import { Cell, Column } from '../components/table.js'
-import { date, scaledNumber, today } from '../format.js'
+import { date, fileSize, scaledNumber, today } from '../format.js'
 import {
   addQualification,
   addWorkingTime,
+  certificatePath,
   changePerson,
   changeQualification,
   changeWorkingTime,
@@ -42,6 +44,7 @@ import {
   qualificationKindsOf,
   removeQualification,
   removeWorkingTime,
+  storeCertificate,
   type WorkingTimeRow,
 } from '../session/people.js'
 import { Empty, PageHead, RecordColumns, Screen } from './kit.js'
@@ -554,8 +557,39 @@ function Qualifications({
       {row.kindLevel ? (
         <span className="block text-[12px] text-ink-muted">{personLevelLabel[row.kindLevel]}</span>
       ) : null}
+      {/* The note in the file, since the column "Nachweis" took its place. */}
+      {row.note ? (
+        <span className="block text-[12px] text-ink-faint [overflow-wrap:anywhere]">
+          {row.note}
+        </span>
+      ) : null}
     </>
   )
+  // Plain in the table, as the board draws it; underlined in a box, where no
+  // pointer shows that it is a link.
+  const certificateOf = (row: QualificationRow, look = 'truncate no-underline hover:underline') =>
+    row.certificateName ? (
+      <a
+        href={certificatePath(file.id, row.id)}
+        target="_blank"
+        rel="noopener"
+        className={`text-ink ${look}`}
+      >
+        {row.certificateName}
+      </a>
+    ) : null
+  // The pencil that opens the dialog of a qualification, for whoever may change it.
+  const changeOf = (row: QualificationRow) =>
+    writes ? (
+      <IconButton
+        label={`${row.kindLabel} ändern`}
+        onClick={() => {
+          onAsk(row)
+        }}
+      >
+        <Pencil size={16} aria-hidden="true" />
+      </IconButton>
+    ) : null
 
   return (
     <TablePanel
@@ -577,12 +611,26 @@ function Qualifications({
       cards={file.qualifications.map((row) => ({
         key: row.id,
         title: row.kindLabel,
-        sub: row.validUntil ? `bis ${date(row.validUntil)}` : 'läuft nicht ab',
+        // What the columns of the table hold, the certificate as the way to
+        // open it and the note under the date, as in the table.
+        sub: (
+          <>
+            {row.validUntil ? `bis ${date(row.validUntil)}` : 'läuft nicht ab'}
+            {row.certificateName ? (
+              <>
+                {' · '}
+                {certificateOf(row, 'underline')}
+              </>
+            ) : null}
+            {row.note ? <span className="block">{row.note}</span> : null}
+          </>
+        ),
         right: (
           <Status tone={standingTone[row.standing]}>
             {qualificationStandingLabel[row.standing]}
           </Status>
         ),
+        actions: changeOf(row),
       }))}
       note={note}
     >
@@ -591,7 +639,7 @@ function Qualifications({
           <Column className="min-w-[180px]">Art und Stufe</Column>
           <Column className="w-[110px]">Gültig bis</Column>
           <Column className="w-[170px]">Stand</Column>
-          <Column className="w-[200px]">Notiz</Column>
+          <Column className="w-[210px]">Nachweis</Column>
         </tr>
       </thead>
       <tbody>
@@ -606,21 +654,18 @@ function Qualifications({
                 <Status tone={standingTone[row.standing]}>
                   {qualificationStandingLabel[row.standing]}
                 </Status>
-                {writes ? (
-                  <IconButton
-                    label={`${row.kindLabel} ändern`}
-                    onClick={() => {
-                      onAsk(row)
-                    }}
-                  >
-                    <Pencil size={16} aria-hidden="true" />
-                  </IconButton>
-                ) : null}
+                {changeOf(row)}
               </span>
             </Cell>
-            <Cell className="text-ink-muted">
-              {row.certificateSha256 ? <Paperclip aria-label="Nachweis" size={14} /> : null}
-              {row.note ?? ''}
+            <Cell>
+              {row.certificateName ? (
+                <span className="inline-flex min-w-0 items-center gap-1.5">
+                  <Paperclip size={14} aria-hidden="true" className="shrink-0 text-ink-muted" />
+                  {certificateOf(row)}
+                </span>
+              ) : (
+                <span className="text-ink-faint">Kein Nachweis</span>
+              )}
             </Cell>
           </tr>
         ))}
@@ -1069,6 +1114,16 @@ function QualificationDialog({
   const [adding, setAdding] = useState(false)
   const [ownLabel, setOwnLabel] = useState('')
   const [ownLevel, setOwnLevel] = useState<PersonLevel>('instructed_person')
+  // The certificate chosen now, which replaces the one kept (opengewerk#802).
+  const [chosen, setChosen] = useState<File | null>(null)
+  // The one kept taken off, so that the qualification names none any more.
+  const [takenOff, setTakenOff] = useState(false)
+  const kept = takenOff ? null : (qualification?.certificateName ?? null)
+  const picker = useRef<HTMLInputElement>(null)
+  // A second press while the file is still on its way would store it again
+  // and, when adding, add the qualification twice.
+  const saving = useRef(false)
+  const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
   const options = [
     { value: '', label: 'Bitte wählen' },
@@ -1097,6 +1152,13 @@ function QualificationDialog({
   async function save(event: FormEvent) {
     event.preventDefault()
 
+    if (saving.current) {
+      return
+    }
+
+    saving.current = true
+    setBusy(true)
+
     const fields = {
       kindKey: kind.startsWith('key:') ? kind.slice(4) : null,
       ownKindId: kind.startsWith('own:') ? kind.slice(4) : null,
@@ -1105,13 +1167,25 @@ function QualificationDialog({
     }
 
     try {
+      // The file into the store first; the qualification names it after.
+      // Taken off, it stays as an earlier certificate until the file goes.
+      const certificate =
+        chosen !== null
+          ? await storeCertificate(chosen)
+          : takenOff
+            ? { certificateSha256: null, certificateName: null }
+            : {}
+
       await (qualification === null
-        ? addQualification(file.id, fields)
-        : changeQualification(file.id, qualification.id, fields))
+        ? addQualification(file.id, { ...fields, ...certificate })
+        : changeQualification(file.id, qualification.id, { ...fields, ...certificate }))
       await queries.invalidateQueries({ queryKey: peopleKey })
       onClose()
     } catch (error) {
       setProblem(problemOf(error))
+    } finally {
+      saving.current = false
+      setBusy(false)
     }
   }
 
@@ -1225,6 +1299,74 @@ function QualificationDialog({
             setNote(event.target.value)
           }}
         />
+        <div className="flex flex-col">
+          <span id="qualification-certificate" className="mb-1 text-[13px] font-medium">
+            Nachweis
+          </span>
+          <div
+            role="group"
+            aria-labelledby="qualification-certificate"
+            className="flex items-center gap-2.5 rounded-[4px] border border-dashed border-line-strong bg-surface-sunken px-3 py-2.5"
+          >
+            <Upload size={16} aria-hidden="true" className="shrink-0 text-ink-muted" />
+            <span className="min-w-0 grow truncate text-[13px] text-ink-muted">
+              {chosen
+                ? `${chosen.name}, ${fileSize(chosen.size)}`
+                : takenOff
+                  ? 'Kein Nachweis mehr'
+                  : (kept ?? 'Noch keine Datei')}
+            </span>
+            {chosen === null && kept !== null ? (
+              <Button
+                size="small"
+                onClick={() => {
+                  setTakenOff(true)
+                }}
+              >
+                Abnehmen
+              </Button>
+            ) : null}
+            <Button
+              size="small"
+              onClick={() => {
+                picker.current?.click()
+              }}
+            >
+              {chosen || kept ? 'Andere Datei' : 'Datei wählen'}
+            </Button>
+            <input
+              ref={picker}
+              type="file"
+              accept="application/pdf,image/*"
+              aria-label="Datei des Nachweises"
+              className="sr-only"
+              tabIndex={-1}
+              onChange={(event) => {
+                const picked = event.target.files?.[0] ?? null
+
+                // Empty again, so that the same file chosen once more is
+                // checked once more.
+                event.target.value = ''
+
+                if (picked === null) {
+                  return
+                }
+
+                const tooLarge = fileSizeProblem(picked.size)
+
+                setProblem(tooLarge)
+                setChosen(tooLarge === null ? picked : null)
+
+                if (tooLarge === null) {
+                  setTakenOff(false)
+                }
+              }}
+            />
+          </div>
+          <div className="mt-1 text-[13px] text-ink-faint">
+            PDF oder Foto. Lesen kann ihn, wer die Akte liest.
+          </div>
+        </div>
         <Problem>{problem}</Problem>
         <DialogActions>
           {qualification === null ? null : (
@@ -1233,7 +1375,12 @@ function QualificationDialog({
             </Button>
           )}
           <Button onClick={onClose}>Abbrechen</Button>
-          <Button type="submit" tone="primary" icon={qualification === null ? Plus : Check}>
+          <Button
+            type="submit"
+            tone="primary"
+            icon={qualification === null ? Plus : Check}
+            disabled={busy}
+          >
             {qualification === null ? 'Hinzufügen' : 'Speichern'}
           </Button>
         </DialogActions>
@@ -1301,7 +1448,8 @@ export function OwnFilePanel() {
               line(
                 row.id,
                 row.kindLabel,
-                row.validUntil ? `bis ${date(row.validUntil)}` : 'läuft nicht ab',
+                (row.validUntil ? `bis ${date(row.validUntil)}` : 'läuft nicht ab') +
+                  (row.certificateName ? ' · Nachweis' : ''),
                 <Status tone={standingTone[row.standing]}>
                   {qualificationStandingLabel[row.standing]}
                 </Status>,
@@ -1312,6 +1460,9 @@ export function OwnFilePanel() {
       </div>
       <p className="m-0 mt-2.5 text-[13px] leading-[1.45] text-ink-muted">
         Ändern kann sie, wer Akten pflegt.
+        {current.qualifications.some((row) => row.certificateName)
+          ? ' Einen Nachweis gibt es dort.'
+          : ''}
       </p>
     </Panel>
   )
