@@ -383,14 +383,20 @@ export function accessJson(answer: AccessAnswer): string {
   )
 }
 
+/** The name of a note, in a folder of the path of its file. */
+const noteName = 'fehlt.txt'
+
 /**
- * Where the note on a file the store lost lies: under its path in the folder
- * of the files, in the folder of the notes, "fehlende Dateien/Bericht.pdf.txt".
- * Every path starts in the folder of the files and the paths are unique, and
- * so are the notes.
+ * Where the note on a file the store lost lies: in the folder of the notes,
+ * in a folder of the path the file has in the folder of the files,
+ * "fehlende Dateien/Bericht.pdf/fehlt.txt". Every path starts in the folder of
+ * the files and the paths are unique, and so are the notes. A note is the
+ * folder of another only where a path is the folder of another (#919): with
+ * ".txt" behind its path, the note of "a" would be "a.txt", the folder of the
+ * note of "a.txt/b".
  */
 function missingNote(path: string): string {
-  return `${missingFolder}/${path.slice(filesFolder.length + 1)}.txt`
+  return `${missingFolder}/${path.slice(filesFolder.length + 1)}/${noteName}`
 }
 
 /**

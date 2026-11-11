@@ -548,7 +548,7 @@ describe('the answer to a customer', () => {
 
     const id = (await record('customer', customer).expect(201)).body.request.id as string
     const { entries } = await answerOf(id)
-    const missing = entries.get(`fehlende Dateien/haus-${family.toLowerCase()}.jpg.txt`)
+    const missing = entries.get(`fehlende Dateien/haus-${family.toLowerCase()}.jpg/fehlt.txt`)
 
     expect(missing?.toString('utf8')).toContain(photo)
     expect(entries.has(`dateien/haus-${family.toLowerCase()}.jpg`)).toBe(false)
@@ -589,7 +589,7 @@ describe('the answer to a customer', () => {
     expect(entries.get('dateien/Bericht.pdf (fehlt).txt')?.toString('utf8')).toBe(
       'Eine Datei, die wie ein Hinweis heißt',
     )
-    expect(entries.get('fehlende Dateien/Bericht.pdf.txt')?.toString('utf8')).toContain(
+    expect(entries.get('fehlende Dateien/Bericht.pdf/fehlt.txt')?.toString('utf8')).toContain(
       hashOf(lost),
     )
     expect(html).toContain('dateien/Bericht.pdf (fehlt).txt')
@@ -598,7 +598,7 @@ describe('the answer to a customer', () => {
         'Auskunft.pdf',
         'daten.json',
         'dateien/Bericht.pdf (fehlt).txt',
-        'fehlende Dateien/Bericht.pdf.txt',
+        'fehlende Dateien/Bericht.pdf/fehlt.txt',
       ].sort(),
     )
   })
@@ -647,7 +647,9 @@ describe('the answer to a customer', () => {
     ])
     expect(files.find((each) => each.path === 'dateien/Datei')?.sha256).toBe(hashOf(dots))
 
-    const notes = files.map((each) => `fehlende Dateien/${each.path.slice('dateien/'.length)}.txt`)
+    const notes = files.map(
+      (each) => `fehlende Dateien/${each.path.slice('dateien/'.length)}/fehlt.txt`,
+    )
 
     for (const [index, each] of files.entries()) {
       expect(entries.get(notes[index] as string)?.toString('utf8')).toContain(each.sha256)

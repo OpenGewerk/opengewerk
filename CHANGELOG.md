@@ -143,7 +143,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 ### Behoben
 
 - Kann der Dateispeicher eine Datei der Auskunft nach Art. 15 nicht mehr lesen, liegt der Hinweis darauf im ZIP jetzt
-  im eigenen Ordner `fehlende Dateien`, etwa `fehlende Dateien/Bericht.pdf.txt`, statt als
+  im eigenen Ordner `fehlende Dateien`, etwa `fehlende Dateien/Bericht.pdf/fehlt.txt`, statt als
   `dateien/Bericht.pdf (fehlt).txt` neben den gespeicherten Dateien (#916). Warum: Hieß eine gespeicherte Datei
   derselben Person genau wie der Hinweis, gab das ZIP ihr einen anderen Namen als PDF und `daten.json`, und wer die
   Auskunft las, fand sie dort nicht. Im eigenen Ordner kann keine gespeicherte Datei liegen, und das PDF sagt, wo die

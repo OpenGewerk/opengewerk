@@ -61,21 +61,45 @@ describe('the paths of the files of an answer', () => {
       { mediaType: 'text/plain', name: 'aΣ' },
       { mediaType: 'text/plain', name: 'aσ' },
     ])
-    const answer = { report } as unknown as AccessAnswer
-    const entries = accessEntries(answer, new Uint8Array(), () => Promise.reject(new Error('lost')))
-    const notes: string[] = []
-
-    for (const entry of entries.slice(2)) {
-      const got = await entry.bytes()
-
-      notes.push(got instanceof Uint8Array ? entry.name : got.name)
-    }
+    const notes = await notesOf(report)
 
     expect(filePaths(report)).toEqual(['dateien/aΣ', 'dateien/aσ (2)'])
-    expect(notes).toEqual(['fehlende Dateien/aΣ.txt', 'fehlende Dateien/aσ (2).txt'])
+    expect(notes).toEqual(['fehlende Dateien/aΣ/fehlt.txt', 'fehlende Dateien/aσ (2)/fehlt.txt'])
 
     const names = ['Auskunft.pdf', 'daten.json', ...notes]
 
     expect(uniqueNames(names)).toEqual(names)
   })
+
+  it('make no note the folder of another where no path is the folder of another', async () => {
+    // With ".txt" behind the path, the note of "a" was "a.txt", the folder of
+    // the note of "a.txt/b", and the two could not both be unpacked.
+    const report = reportOf([
+      { mediaType: 'text/plain', name: 'a' },
+      { mediaType: 'text/plain', name: 'a.txt/b' },
+    ])
+    const notes = await notesOf(report)
+
+    expect(filePaths(report)).toEqual(['dateien/a', 'dateien/a.txt/b'])
+    expect(notes).toEqual(['fehlende Dateien/a/fehlt.txt', 'fehlende Dateien/a.txt/b/fehlt.txt'])
+
+    for (const note of notes) {
+      expect(notes.filter((other) => other.startsWith(`${note}/`))).toEqual([])
+    }
+  })
 })
+
+/** The names the archive gets for the files of a report when the store has lost every one. */
+async function notesOf(report: AccessReport): Promise<string[]> {
+  const answer = { report } as unknown as AccessAnswer
+  const entries = accessEntries(answer, new Uint8Array(), () => Promise.reject(new Error('lost')))
+  const notes: string[] = []
+
+  for (const entry of entries.slice(2)) {
+    const got = await entry.bytes()
+
+    notes.push(got instanceof Uint8Array ? entry.name : got.name)
+  }
+
+  return notes
+}
