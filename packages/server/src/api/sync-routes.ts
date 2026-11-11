@@ -426,7 +426,10 @@ export function syncRoutes(key: SecretKey | null): SyncRoutes<Identity, Permissi
       const sites =
         own !== null && (withValues || !keepsAccess) ? await sitesWithOpenJobs(tx, own) : null
       // The customers restricted on a request for deletion stay off every
-      // device, with everything that hangs on them (#845).
+      // device, with everything that hangs on them (#845): each part of the
+      // store of a browser lets go of them at its next exchange, and of a kind
+      // narrowed alike in both parts at the exchange of either
+      // (opengewerk#907).
       const restricted = await restrictedOnDevices(tx)
       // The years of the staff deleted for good (#846), which a device drops.
       const erasedYears = await staffYearsErased(tx)
@@ -513,7 +516,8 @@ export function syncRoutes(key: SecretKey | null): SyncRoutes<Identity, Permissi
             ]),
           ),
           // Changes with the sites of the open jobs, so that a closed job takes
-          // the ways into its site off the device, and with whether values were
+          // the ways into its site off the device, at the next exchange of the
+          // entry that holds them (opengewerk#907), and with whether values were
           // asked for. For whoever keeps them all, only while some carry a value
           // (#447): a device that holds none has nothing to let go of.
           site_accesses: narrowedWith(

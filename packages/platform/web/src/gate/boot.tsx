@@ -221,7 +221,10 @@ function BootSteps({ entry, children }: { readonly entry: Entry; readonly childr
         // application's to start: only it knows by which rules its records
         // travel and which of them it has a screen for. Opened for the person
         // signed in, whose changes alone it sends (opengewerk-haustechnik#31).
-        store = await openLocalStore(tenantId, userId)
+        // The office pulls into a section of its own (opengewerk#907): the
+        // server narrows it apart from the site, and the site keeps the
+        // section from before, which a device opens without a network.
+        store = await openLocalStore(tenantId, userId, entry === 'office' ? 'office' : undefined)
         begun = await startSync({
           store,
           deviceId,

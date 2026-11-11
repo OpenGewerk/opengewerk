@@ -761,6 +761,43 @@ describe('the sync client behind the gate', () => {
   )
 
   /**
+   * The office pulls into a section of the store of its own, and the site
+   * keeps the store as it was (opengewerk#907): the server narrows them apart.
+   */
+  it.each([
+    ['office', false],
+    ['site', true],
+  ] as const)(
+    'opens for the %s the section of the store it pulls into',
+    async (entry, asBefore) => {
+      const tenantId = await tenantOnTheDevice()
+      const standing = probeApplication()
+
+      rememberAccount({ ...account, tenantId })
+      noNetwork()
+      start({
+        entry,
+        application: {
+          ...standing,
+          startSync: async (device: DeviceStart) => {
+            await device.store.write('notes', [{ id: 'n-2', text: 'Hier geschrieben' }])
+
+            return standing.startSync(device)
+          },
+        },
+      })
+
+      expect(await screen.findByText('Leiter im Flur vergessen')).toBeTruthy()
+
+      const before = await openLocalStore(tenantId, account.userId)
+      const ids = (await before.readAll('notes')).map((note) => note['id'])
+
+      before.close()
+      expect(ids.includes('n-2')).toBe(asBefore)
+    },
+  )
+
+  /**
    * Somebody else wrote on this device, and their session ran out before it
    * went (opengewerk-haustechnik#31). The client of the person signed in now
    * does not see it, so it does not go out under their name; it waits for its
