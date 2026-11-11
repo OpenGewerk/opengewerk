@@ -110,6 +110,16 @@ export function cleanName(raw: string): string {
   return name === '' ? 'Datei' : name
 }
 
+/**
+ * A name as the archive compares it: in capitals, as Windows does. Lower case
+ * would not do, it writes a sigma at the end of a word otherwise than inside
+ * one, and "aΣ" and "aσ" stayed two names until ".txt" came after them
+ * (opengewerk#916).
+ */
+function folded(name: string): string {
+  return name.toUpperCase()
+}
+
 /** Makes each name it is given unique among those it made before. */
 export function nameMaker(): (raw: string) => string {
   const taken = new Set<string>()
@@ -123,17 +133,17 @@ export function nameMaker(): (raw: string) => string {
     const slash = fallback.lastIndexOf('/')
     const [stem, extension] =
       dot > slash + 1 ? [fallback.slice(0, dot), fallback.slice(dot)] : [fallback, '']
-    const key = fallback.toLowerCase()
+    const key = folded(fallback)
     let candidate = fallback
     let counter = counters.get(key) ?? 2
 
-    while (taken.has(candidate.toLowerCase())) {
+    while (taken.has(folded(candidate))) {
       candidate = `${stem} (${String(counter)})${extension}`
       counter += 1
     }
 
     counters.set(key, counter)
-    taken.add(candidate.toLowerCase())
+    taken.add(folded(candidate))
 
     return candidate
   }

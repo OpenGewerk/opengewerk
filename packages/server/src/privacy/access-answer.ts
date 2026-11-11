@@ -62,11 +62,31 @@ const language = auditLanguage(auditVocabulary)
 const answerNames = ['Auskunft.pdf', 'daten.json'] as const
 
 /**
- * The characters of the name of a file the answer keeps for its path, counted
- * before it is cleaned (opengewerk#916): the sync lets a name of 100 000
- * characters through, and the archive holds at most 65 535 bytes for one.
+ * The characters of the name of a file the answer keeps for its path
+ * (opengewerk#916): the sync lets a name of 100 000 characters through, and
+ * the archive holds at most 65 535 bytes for one.
  */
 const nameCharacters = 200
+
+/** What `extensionOf` takes for an extension at the end of a name. */
+const extensionAtEnd = /\.[a-z0-9]{2,5}$/i
+
+/**
+ * A cleaned name cut to `nameCharacters` by characters, so that no half of
+ * one is left, its extension kept: "Angebot …x.pdf" and not "Angebot …x.pd",
+ * which would pass for one of its own.
+ */
+function cut(name: string): string {
+  const characters = [...name]
+
+  if (characters.length <= nameCharacters) {
+    return name
+  }
+
+  const extension = extensionAtEnd.exec(name)?.[0] ?? ''
+
+  return cleanName(characters.slice(0, nameCharacters - extension.length).join('') + extension)
+}
 
 /** The folder of the stored files: every path `filePaths` gives starts in it. */
 const filesFolder = 'dateien'
@@ -95,12 +115,11 @@ export function filePaths(report: AccessReport): string[] {
   }
 
   return report.files.map((file) => {
-    // Cut, then cleaned before it goes into the folder and before its
+    // Cleaned and cut before it goes into the folder and before its
     // extension (opengewerk#916): a name of only dots or slashes would leave
     // "dateien" itself as the path, beside the folder and not in it, or
-    // "dateien/...", and a PDF called ".." would be "...pdf". Cut by
-    // characters, so that no half of one is left.
-    const named = cleanName([...file.name].slice(0, nameCharacters).join(''))
+    // "dateien/...", and a PDF called ".." would be "...pdf".
+    const named = cut(cleanName(file.name))
 
     return unique(`${filesFolder}/${named}${extensionOf(file.mediaType, named)}`)
   })
@@ -117,7 +136,7 @@ function extensionOf(mediaType: string, name: string): string {
     'text/xml': '.xml',
   }
 
-  return /\.[a-z0-9]{2,5}$/i.test(name) ? '' : (known[mediaType] ?? '')
+  return extensionAtEnd.test(name) ? '' : (known[mediaType] ?? '')
 }
 
 const isoMoment = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/
