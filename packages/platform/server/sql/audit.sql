@@ -379,6 +379,21 @@ BEGIN
 			USING ERRCODE = 'insufficient_privilege';
 	END IF;
 
+	-- The counter of the sync and the chain of the log before the entry
+	-- (opengewerk#914): a deletion holds both when it blacks out the entries of
+	-- what it deletes, and a redaction that held the entry first and then
+	-- waited for them, to log itself, would wait in a circle with it.
+	PERFORM 1 FROM public.sync_sequences WHERE tenant_id = new.tenant_id FOR NO KEY UPDATE;
+
+	IF NOT FOUND THEN
+		INSERT INTO public.sync_sequences (tenant_id, next_value) VALUES (new.tenant_id, 0) ON CONFLICT (tenant_id) DO NOTHING;
+		PERFORM 1 FROM public.sync_sequences WHERE tenant_id = new.tenant_id FOR NO KEY UPDATE;
+	END IF;
+
+	INSERT INTO public.audit_chains (tenant_id)
+	VALUES (new.tenant_id)
+	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();
+
 	SELECT * INTO entry FROM public.audit_entries e
 	 WHERE e.id = new.entry_id AND e.tenant_id = new.tenant_id
 	   FOR UPDATE;

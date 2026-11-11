@@ -7,8 +7,10 @@
 -- protocol, and a change at the same moment could leave both waiting in a
 -- circle until PostgreSQL broke one off. `record_change` now locks the counter
 -- before the chain, without moving it, and so do the two locks of opengewerk#911
--- (`file_naming_lock`, `file_named_by_a_value`). The functions are the
--- foundation's (blocks `audit.sql` and `attachments.sql`).
+-- (`file_naming_lock`, `file_named_by_a_value`). A redaction takes both before
+-- it locks its entry (`audit_redaction_checked`), as a deletion that blacks out
+-- entries holds them already. The functions are the foundation's (blocks
+-- `audit.sql` and `attachments.sql`).
 CREATE OR REPLACE FUNCTION "record_change"() RETURNS trigger
 	LANGUAGE plpgsql
 	SECURITY DEFINER
@@ -107,6 +109,79 @@ BEGIN
 	END IF;
 
 	RETURN NULL;
+END;
+$$;--> statement-breakpoint
+CREATE OR REPLACE FUNCTION "audit_redaction_checked"() RETURNS trigger
+	LANGUAGE plpgsql
+	SECURITY DEFINER
+	SET search_path = pg_catalog, public
+AS $$
+DECLARE
+	entry public.audit_entries;
+	found_problem text;
+BEGIN
+	IF new.tenant_id IS DISTINCT FROM nullif(current_setting('app.tenant_id', true), '')::uuid
+	   OR NOT EXISTS (
+	     SELECT 1 FROM public.memberships m
+	       JOIN public.tenant_roles r ON r.tenant_id = m.tenant_id AND r.key = ANY (m.roles) AND r.leads
+	      WHERE m.tenant_id = new.tenant_id
+	        AND m.user_id = nullif(current_setting('app.user_id', true), '')
+	        AND m.blocked_at IS NULL
+	        AND (m.last_day IS NULL OR m.last_day >= (now() AT TIME ZONE 'Europe/Berlin')::date)) THEN
+		RAISE EXCEPTION 'Einen Wert im Änderungsprotokoll schwärzt nur, wer den Mandanten führt.'
+			USING ERRCODE = 'insufficient_privilege';
+	END IF;
+
+	-- The counter of the sync and the chain of the log before the entry
+	-- (opengewerk#914): a deletion holds both when it blacks out the entries of
+	-- what it deletes, and a redaction that held the entry first and then
+	-- waited for them, to log itself, would wait in a circle with it.
+	PERFORM 1 FROM public.sync_sequences WHERE tenant_id = new.tenant_id FOR NO KEY UPDATE;
+
+	IF NOT FOUND THEN
+		INSERT INTO public.sync_sequences (tenant_id, next_value) VALUES (new.tenant_id, 0) ON CONFLICT (tenant_id) DO NOTHING;
+		PERFORM 1 FROM public.sync_sequences WHERE tenant_id = new.tenant_id FOR NO KEY UPDATE;
+	END IF;
+
+	INSERT INTO public.audit_chains (tenant_id)
+	VALUES (new.tenant_id)
+	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();
+
+	SELECT * INTO entry FROM public.audit_entries e
+	 WHERE e.id = new.entry_id AND e.tenant_id = new.tenant_id
+	   FOR UPDATE;
+
+	IF NOT FOUND THEN
+		RAISE EXCEPTION 'Diesen Eintrag gibt es im Änderungsprotokoll nicht.'
+			USING ERRCODE = 'OG006';
+	END IF;
+
+	IF (new.side = 'old' AND entry.old_value IS NULL) OR (new.side = 'new' AND entry.new_value IS NULL) THEN
+		RAISE EXCEPTION 'Dieser Wert ist leer oder schon geschwärzt.'
+			USING ERRCODE = 'OG006';
+	END IF;
+
+	found_problem := public.audit_entry_problem(entry);
+
+	IF found_problem IS NOT NULL THEN
+		RAISE EXCEPTION 'Der Eintrag ist nicht mehr, wie er geschrieben wurde; geschwärzt wird nichts. %', found_problem
+			USING ERRCODE = 'OG006';
+	END IF;
+
+	new.redacted_by := nullif(current_setting('app.user_id', true), '');
+
+	IF entry.fingerprint_version = 1 THEN
+		IF entry.old_value_digest IS NULL AND entry.new_value_digest IS NULL THEN
+			entry.old_value_digest := public.audit_value_digest(entry.old_value);
+			entry.new_value_digest := public.audit_value_digest(entry.new_value);
+		END IF;
+
+		new.witness := public.audit_witness(entry);
+	ELSE
+		new.witness := NULL;
+	END IF;
+
+	RETURN new;
 END;
 $$;--> statement-breakpoint
 CREATE OR REPLACE FUNCTION "file_naming_lock"(p_tenant uuid) RETURNS void

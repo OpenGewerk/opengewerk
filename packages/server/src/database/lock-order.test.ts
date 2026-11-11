@@ -123,4 +123,113 @@ describe('the locks of a tenant that writes', () => {
       await done(writing, locking, locked)
     }
   })
+
+  it('are taken counter first by a redaction, before it locks its entry', async () => {
+    const tenant = await tenantOfItsOwn()
+
+    // Lena leads the tenant and may black out values; a customer renamed
+    // once leaves an entry with a value of before and of after.
+    await admin.query(
+      `insert into auth_users (id, name, email) values ('lena', 'Lena', 'lena@example.org')
+         on conflict (id) do nothing;
+       insert into tenant_roles (tenant_id, key, label, rights, leads, second_factor)
+         values ('${tenant}', 'owner', 'Inhaber', '{}', true, false);
+       insert into memberships (tenant_id, user_id, roles) values ('${tenant}', 'lena', '{owner}');`,
+    )
+
+    const setup = await begin(tenant)
+
+    await customer(setup, tenant)
+    await setup.query("update customers set name = 'Ingrid Vossberg-Kraft' where tenant_id = $1", [
+      tenant,
+    ])
+    await setup.query('commit')
+    setup.release()
+
+    const { rows } = await admin.query<{ id: string }>(
+      `select id from audit_entries where tenant_id = $1 and table_name = 'customers'
+          and operation = 'update' and old_value is not null and new_value is not null limit 1`,
+      [tenant],
+    )
+    const entry = rows[0]?.id
+    const redaction = (client: PoolClient, side: 'old' | 'new') =>
+      client.query(
+        `insert into audit_redactions (tenant_id, entry_id, side, reason, redacted_by)
+         values ($1, $2, $3, 'Auf Löschanfrage', 'lena')`,
+        [tenant, entry, side],
+      )
+    const erasing = await begin(tenant)
+    const redacting = await begin(tenant)
+    let redacted: Promise<unknown> = Promise.resolve()
+
+    try {
+      // A deletion that has written its protocol and goes on to black out
+      // the entries of what it deletes.
+      await protocolLine(erasing, tenant)
+
+      // A redaction of the same entry by hand, meanwhile.
+      redacted = redaction(redacting, 'new')
+      await waitingFor(admin, erasing, redacted)
+
+      // The deletion blacks out the other value of the entry: it must not
+      // wait for a redaction that waits for it.
+      await redaction(erasing, 'old')
+      await erasing.query('commit')
+      await redacted
+      await redacting.query('commit')
+    } finally {
+      await done(erasing, redacting, redacted)
+    }
+
+    expect(
+      (await admin.query('select old_value, new_value from audit_entries where id = $1', [entry]))
+        .rows,
+    ).toEqual([{ old_value: null, new_value: null }])
+  })
+
+  it.each([
+    ['a logged change', (client: PoolClient, tenant: string) => protocolLine(client, tenant)],
+    [
+      'file_naming_lock',
+      (client: PoolClient, tenant: string) =>
+        client.query('select public.file_naming_lock($1)', [tenant]),
+    ],
+    [
+      'file_named_by_a_value',
+      (client: PoolClient, tenant: string) =>
+        client.query("select public.file_named_by_a_value($1, repeat('f', 64))", [tenant]),
+    ],
+  ])('leave the first number of the sync at 1 when %s makes the counter', async (_name, lock) => {
+    const tenant = await tenantOfItsOwn()
+
+    // The tenant itself was logged when it came, which made its counter.
+    await admin.query('delete from sync_sequences where tenant_id = $1', [tenant])
+
+    const client = await begin(tenant)
+
+    try {
+      await lock(client, tenant)
+      expect(
+        (
+          await client.query<{ next_value: string }>(
+            'select next_value from sync_sequences where tenant_id = $1',
+            [tenant],
+          )
+        ).rows,
+      ).toEqual([{ next_value: '0' }])
+
+      await customer(client, tenant)
+      expect(
+        (
+          await client.query<{ change_sequence: string }>(
+            'select change_sequence from customers where tenant_id = $1',
+            [tenant],
+          )
+        ).rows,
+      ).toEqual([{ change_sequence: '1' }])
+    } finally {
+      await client.query('rollback').catch(() => undefined)
+      client.release()
+    }
+  })
 })
