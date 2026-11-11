@@ -142,6 +142,13 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Jede protokollierte Änderung eines Betriebs sperrt jetzt zuerst den Zähler des Abgleichs und dann die Kette des
+  Änderungsprotokolls, in derselben Reihenfolge wie jede Änderung einer abgeglichenen Zeile (#914, Migration 0142).
+  Bis jetzt nahm eine Änderung an einer Tabelle ohne Abgleich nur die Kette; das Löschen nach dem Löschkonzept
+  schrieb so zuerst seine Protokollzeile und danach abgeglichene Zeilen. Lief im selben Augenblick eine gewöhnliche
+  Änderung im selben Betrieb, warteten beide aufeinander, und PostgreSQL brach eine nach einer Sekunde ab. Dieselbe
+  Reihenfolge nehmen die Sperren aus #911. Warum: Eine Änderung im Büro oder auf dem Gerät soll nicht scheitern,
+  weil gleichzeitig ein Kunde oder eine Akte nach dem Löschkonzept geht.
 - Die Auskunft nach Art. 15 nennt zwei Dateien desselben Namens im PDF und in `daten.json` unter den Pfaden, die sie
   im ZIP haben, etwa `dateien/scan.pdf` und `dateien/scan (2).pdf` (#913). Warum: Das ZIP machte die Namen eindeutig,
   PDF und JSON nannten beide Male den ersten Pfad, und wer die Auskunft las, fand die zweite Datei dort nicht. Mit

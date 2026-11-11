@@ -85,10 +85,9 @@ export async function mayNameFile(
  * So either the name is written and the file stays, or the file is gone
  * before it is read.
  *
- * For a transaction that writes no row that travels. One that does locks the
- * counter of the sync before the chain with each such row, and holds the
- * chain after its first one: it reads its files after that write, and takes
- * no lock here, so that it never takes the two the other way round.
+ * The counter of the sync is locked before the chain, the order every logged
+ * change takes the two in (opengewerk#914), so the lock may be taken at any
+ * point of a transaction without waiting the other way round.
  */
 export async function lockFileNaming(tx: TenantTransaction, tenantId: string): Promise<void> {
   await tx.execute(sql`select public.file_naming_lock(${tenantId}::uuid)`)

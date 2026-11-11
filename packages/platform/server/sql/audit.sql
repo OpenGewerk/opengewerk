@@ -224,6 +224,19 @@ BEGIN
 	entry.database_role := session_user;
 	entry.fingerprint_version := 3;
 
+	-- The counter of the sync before the chain (opengewerk#914): a change of a
+	-- row that travels has locked the counter already (`stamp_sync_columns`),
+	-- and every other logged change takes it here as well, so that all of them
+	-- take the two in one order and no two transactions of a tenant wait for
+	-- each other in a circle. Locked without being moved; a row created here
+	-- has handed out no number yet, so that the first is still 1.
+	PERFORM 1 FROM public.sync_sequences WHERE tenant_id = entry.tenant_id FOR NO KEY UPDATE;
+
+	IF NOT FOUND THEN
+		INSERT INTO public.sync_sequences (tenant_id, next_value) VALUES (entry.tenant_id, 0) ON CONFLICT (tenant_id) DO NOTHING;
+		PERFORM 1 FROM public.sync_sequences WHERE tenant_id = entry.tenant_id FOR NO KEY UPDATE;
+	END IF;
+
 	INSERT INTO public.audit_chains (tenant_id)
 	VALUES (entry.tenant_id)
 	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now()

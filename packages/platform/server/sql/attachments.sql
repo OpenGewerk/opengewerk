@@ -104,8 +104,9 @@ END;
 $$;--> statement-breakpoint
 
 -- The lock under which a file of a tenant is named in a value rather than by
--- a key (opengewerk#911): the row of the tenant's chain of the log, the one
--- every logged change locks to the end of its transaction (`record_change`).
+-- a key (opengewerk#911): the rows of the tenant's counter of the sync and
+-- chain of the log, the ones every logged change locks to the end of its
+-- transaction (`record_change`).
 -- Taken by whoever is about to name a file in a value, before it reads
 -- `files`; a function that takes a file for good takes it as well before it
 -- asks whether a value names the file (`file_named_by_a_value`). So the two
@@ -114,14 +115,12 @@ $$;--> statement-breakpoint
 -- the chain anyway, and a second lock beside it could be taken the other way
 -- round and leave two transactions waiting for each other.
 --
--- The chain alone, as a change of a row that does not travel locks it. A
--- transaction that writes rows that travel takes the counter of the sync
--- before the chain (`stamp_sync_columns` before `record_change`); it names a
--- file after its first such write, when it holds both, so that no lock is
--- taken the other way round. SECURITY DEFINER because the application role
--- may not touch the chain, and only for the tenant of the transaction, so
--- that nobody holds up the writes of another tenant. The row is created on
--- first use, as the writer does.
+-- The counter first and the chain after it, in the order every logged change
+-- takes them (opengewerk#914), so that the lock never waits for a transaction
+-- that waits for it. SECURITY DEFINER because the application role may touch
+-- neither, and only for the tenant of the transaction, so that nobody holds
+-- up the writes of another tenant. The rows are created on first use, as the
+-- writers do.
 CREATE FUNCTION "file_naming_lock"(p_tenant uuid) RETURNS void
 	LANGUAGE plpgsql
 	SECURITY DEFINER
@@ -131,6 +130,13 @@ BEGIN
 	IF p_tenant IS NULL OR p_tenant::text IS DISTINCT FROM nullif(current_setting('app.tenant_id', true), '') THEN
 		RAISE EXCEPTION 'Gesperrt wird nur für den Mandanten der Transaktion.'
 			USING ERRCODE = 'OG001';
+	END IF;
+
+	PERFORM 1 FROM public.sync_sequences WHERE tenant_id = p_tenant FOR NO KEY UPDATE;
+
+	IF NOT FOUND THEN
+		INSERT INTO public.sync_sequences (tenant_id, next_value) VALUES (p_tenant, 0) ON CONFLICT (tenant_id) DO NOTHING;
+		PERFORM 1 FROM public.sync_sequences WHERE tenant_id = p_tenant FOR NO KEY UPDATE;
 	END IF;
 
 	INSERT INTO public.audit_chains (tenant_id)
@@ -145,10 +151,10 @@ $$;--> statement-breakpoint
 -- foundation does not know where an application keeps a file in a value; an
 -- application that does defines `application_file_named_by_a_value(uuid, text)`
 -- in a migration of its own and answers there. Without it, no value names a
--- file. The chain of the tenant is locked first, as `file_naming_lock` does,
--- so that the answer includes a name written by a transaction that held it. A
--- deletion has locked the chain already with its own protocol, so the
--- question adds no lock to it, and none in another order.
+-- file. The counter and the chain of the tenant are locked first, in the
+-- order `file_naming_lock` and every logged change take them, so that the
+-- answer includes a name written by a transaction that held them. A deletion
+-- holds both already with its own protocol, so the question adds no lock.
 CREATE FUNCTION "file_named_by_a_value"(p_tenant uuid, p_hash text) RETURNS boolean
 	LANGUAGE plpgsql
 	VOLATILE
@@ -157,6 +163,13 @@ AS $$
 DECLARE
 	named boolean;
 BEGIN
+	PERFORM 1 FROM public.sync_sequences WHERE tenant_id = p_tenant FOR NO KEY UPDATE;
+
+	IF NOT FOUND THEN
+		INSERT INTO public.sync_sequences (tenant_id, next_value) VALUES (p_tenant, 0) ON CONFLICT (tenant_id) DO NOTHING;
+		PERFORM 1 FROM public.sync_sequences WHERE tenant_id = p_tenant FOR NO KEY UPDATE;
+	END IF;
+
 	INSERT INTO public.audit_chains (tenant_id)
 	VALUES (p_tenant)
 	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();
