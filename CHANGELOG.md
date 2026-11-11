@@ -142,6 +142,11 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Kann der Dateispeicher eine Datei der Auskunft nach Art. 15 nicht mehr lesen, liegt der Hinweis darauf im ZIP jetzt
+  im eigenen Ordner `fehlende Dateien`, etwa `fehlende Dateien/Bericht.pdf.txt`, statt als
+  `dateien/Bericht.pdf (fehlt).txt` neben den gespeicherten Dateien (#916). Warum: Hieß eine gespeicherte Datei
+  derselben Person genau wie der Hinweis, gab das ZIP ihr einen anderen Namen als PDF und `daten.json`, und wer die
+  Auskunft las, fand sie dort nicht. Im eigenen Ordner kann keine gespeicherte Datei liegen.
 - Jede protokollierte Änderung eines Betriebs sperrt jetzt zuerst den Zähler des Abgleichs und dann die Kette des
   Änderungsprotokolls, in derselben Reihenfolge wie jede Änderung einer abgeglichenen Zeile (#914, Migration 0142).
   Bis jetzt nahm eine Änderung an einer Tabelle ohne Abgleich nur die Kette; das Löschen nach dem Löschkonzept

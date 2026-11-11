@@ -31,6 +31,7 @@ import { nameMaker, type ZipEntry } from './zip.js'
  * - `daten.json`, to carry over (Art. 20): the same rows with every column
  *   but the withheld ones, as the database holds them.
  * - `dateien/`, the stored files.
+ * - `fehlende Dateien/`, only when the store lost one: a note in its place.
  */
 
 /** Everything the answer is made of. */
@@ -60,6 +61,17 @@ const language = auditLanguage(auditVocabulary)
 /** The two files of the answer itself, first in the archive. */
 const answerNames = ['Auskunft.pdf', 'daten.json'] as const
 
+/** The folder of the stored files: every path `filePaths` gives starts in it. */
+const filesFolder = 'dateien'
+
+/**
+ * The folder of the notes on files the store lost (opengewerk#916), beside
+ * the one of the files. A note inside that one could have the name of a stored
+ * file, "Bericht.pdf (fehlt).txt", and the archive would then name that file
+ * otherwise than the PDF and `daten.json` do; here no stored file can lie.
+ */
+const missingFolder = 'fehlende Dateien'
+
 /**
  * Where a file of the report lies in the archive, as the archive names it
  * (opengewerk#913): made unique the way `zipPieces` does, after the two files
@@ -79,7 +91,7 @@ export function filePaths(report: AccessReport): string[] {
     const extension = extensionOf(file.mediaType, file.name)
 
     return unique(
-      `dateien/${file.name.endsWith(extension) ? file.name : `${file.name}${extension}`}`,
+      `${filesFolder}/${file.name.endsWith(extension) ? file.name : `${file.name}${extension}`}`,
     )
   })
 }
@@ -343,10 +355,21 @@ export function accessJson(answer: AccessAnswer): string {
 }
 
 /**
+ * Where the note on a file the store lost lies: under its path in the folder
+ * of the files, in the folder of the notes, "fehlende Dateien/Bericht.pdf.txt".
+ * The paths are unique, and so are the notes.
+ */
+function missingNote(path: string): string {
+  const inFolder = path.startsWith(`${filesFolder}/`) ? path.slice(filesFolder.length + 1) : path
+
+  return `${missingFolder}/${inFolder}.txt`
+}
+
+/**
  * What goes into the archive, in order: the PDF, the JSON and the files, each
  * read when its turn comes. A file the store no longer has, or has damaged,
- * becomes a line of text in its place, so that the answer still comes and
- * says what is missing.
+ * becomes a line of text in the folder of the notes, so that the answer still
+ * comes and says what is missing.
  */
 export function accessEntries(
   answer: AccessAnswer,
@@ -360,7 +383,7 @@ export function accessEntries(
     { name: answerNames[0], bytes: () => Promise.resolve(pdf) },
     { name: answerNames[1], bytes: () => Promise.resolve(encoder.encode(accessJson(answer))) },
     ...answer.report.files.map((file, index) => {
-      const path = paths[index] ?? `dateien/${file.name}`
+      const path = paths[index] ?? `${filesFolder}/${file.name}`
 
       return {
         name: path,
@@ -369,7 +392,7 @@ export function accessEntries(
             return await read(file.sha256)
           } catch {
             return {
-              name: `${path} (fehlt).txt`,
+              name: missingNote(path),
               bytes: encoder.encode(
                 `Diese Datei (${file.name}) ist im Dateispeicher des Betriebs nicht mehr lesbar. Ihr Fingerabdruck: ${file.sha256}.\n`,
               ),
