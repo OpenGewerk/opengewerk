@@ -168,7 +168,7 @@ describe('the tables', () => {
       'document_file_takes_its_file()':
         'the file of a document goes with its customer, and the application may not delete files (#845)',
       'qualification_takes_its_certificate()':
-        'the certificate of a qualification goes with the file of its person, and the application may not delete files (#846)',
+        'the certificate of a qualification goes with the file of its person or when it is replaced, and the application may not delete files (#846, #802)',
     })
 
     expect(reading).toEqual({ unexplained: [], stale: [], openToEveryRole: [] })

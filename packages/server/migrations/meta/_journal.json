@@ -974,6 +974,13 @@
       "when": 1794356943321,
       "tag": "0138_qualification_certificate_name",
       "breakpoints": true
+    },
+    {
+      "idx": 139,
+      "version": "7",
+      "when": 1794359840500,
+      "tag": "0139_certificate_named_by_a_value",
+      "breakpoints": true
     }
   ]
 }

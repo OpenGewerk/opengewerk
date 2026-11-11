@@ -557,8 +557,38 @@ function Qualifications({
       {row.kindLevel ? (
         <span className="block text-[12px] text-ink-muted">{personLevelLabel[row.kindLevel]}</span>
       ) : null}
+      {/* The note in the file, since the column "Nachweis" took its place. */}
+      {row.note ? (
+        <span className="block text-[12px] text-ink-faint [overflow-wrap:anywhere]">
+          {row.note}
+        </span>
+      ) : null}
     </>
   )
+  // Plain in the table, as the board draws it; underlined in a box, where no
+  // pointer shows that it is a link.
+  const certificateOf = (row: QualificationRow, look = 'truncate no-underline hover:underline') =>
+    row.certificateName ? (
+      <a
+        href={certificatePath(file.id, row.id)}
+        target="_blank"
+        rel="noopener"
+        className={`text-ink ${look}`}
+      >
+        {row.certificateName}
+      </a>
+    ) : null
+  const changeOf = (row: QualificationRow) =>
+    writes ? (
+      <IconButton
+        label={`${row.kindLabel} ändern`}
+        onClick={() => {
+          onAsk(row)
+        }}
+      >
+        <Pencil size={16} aria-hidden="true" />
+      </IconButton>
+    ) : null
 
   return (
     <TablePanel
@@ -580,14 +610,26 @@ function Qualifications({
       cards={file.qualifications.map((row) => ({
         key: row.id,
         title: row.kindLabel,
-        sub:
-          (row.validUntil ? `bis ${date(row.validUntil)}` : 'läuft nicht ab') +
-          (row.certificateName ? ' · Nachweis' : ''),
+        // What the columns of the table hold, the certificate as the way to
+        // open it and the note under the date, as in the table.
+        sub: (
+          <>
+            {row.validUntil ? `bis ${date(row.validUntil)}` : 'läuft nicht ab'}
+            {row.certificateName ? (
+              <>
+                {' · '}
+                {certificateOf(row, 'underline')}
+              </>
+            ) : null}
+            {row.note ? <span className="block">{row.note}</span> : null}
+          </>
+        ),
         right: (
           <Status tone={standingTone[row.standing]}>
             {qualificationStandingLabel[row.standing]}
           </Status>
         ),
+        actions: changeOf(row),
       }))}
       note={note}
     >
@@ -611,30 +653,14 @@ function Qualifications({
                 <Status tone={standingTone[row.standing]}>
                   {qualificationStandingLabel[row.standing]}
                 </Status>
-                {writes ? (
-                  <IconButton
-                    label={`${row.kindLabel} ändern`}
-                    onClick={() => {
-                      onAsk(row)
-                    }}
-                  >
-                    <Pencil size={16} aria-hidden="true" />
-                  </IconButton>
-                ) : null}
+                {changeOf(row)}
               </span>
             </Cell>
             <Cell>
               {row.certificateName ? (
                 <span className="inline-flex min-w-0 items-center gap-1.5">
                   <Paperclip size={14} aria-hidden="true" className="shrink-0 text-ink-muted" />
-                  <a
-                    href={certificatePath(file.id, row.id)}
-                    target="_blank"
-                    rel="noopener"
-                    className="truncate text-ink no-underline hover:underline"
-                  >
-                    {row.certificateName}
-                  </a>
+                  {certificateOf(row)}
                 </span>
               ) : (
                 <span className="text-ink-faint">Kein Nachweis</span>

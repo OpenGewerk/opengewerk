@@ -6,15 +6,6 @@
 -- nothing to refuse. The column and the checks are the foundation's
 -- (`qualificationSchema`); every application adds them with a migration of
 -- its own.
---
--- A certificate that is replaced, or taken off, goes like one whose
--- qualification goes with the file of its person (0131): the trigger of 0131
--- takes the file it named, as the owner of the tables through the lock of
--- 0087, unless another key still names it. Without this, the file of an
--- earlier certificate would stay in the store after the file of its person
--- is deleted, since no row would name it any more.
 ALTER TABLE "qualifications" ADD COLUMN "certificate_name" text;--> statement-breakpoint
 ALTER TABLE "qualifications" ADD CONSTRAINT "qualifications_certificate_named" CHECK (num_nonnulls("qualifications"."certificate_sha256", "qualifications"."certificate_name") in (0, 2));--> statement-breakpoint
-ALTER TABLE "qualifications" ADD CONSTRAINT "qualifications_certificate_name_fits" CHECK ("qualifications"."certificate_name" is null or char_length("qualifications"."certificate_name") between 1 and 200);--> statement-breakpoint
-CREATE TRIGGER "qualifications_take_their_replaced_certificate" AFTER UPDATE OF "certificate_sha256" ON "qualifications"
-	FOR EACH ROW WHEN (old.certificate_sha256 IS DISTINCT FROM new.certificate_sha256) EXECUTE FUNCTION "qualification_takes_its_certificate"();
+ALTER TABLE "qualifications" ADD CONSTRAINT "qualifications_certificate_name_fits" CHECK ("qualifications"."certificate_name" is null or char_length("qualifications"."certificate_name") between 1 and 200);

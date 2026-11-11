@@ -442,25 +442,28 @@ describe('the certificate of a qualification', () => {
     expect(Buffer.from(answer.body as Buffer).equals(other)).toBe(true)
   })
 
+  /** How many rows of `files` this business holds for a hash. */
+  async function stored(hash: string): Promise<number> {
+    const { rows } = await admin.query<{ n: number }>(
+      'select count(*)::int as n from files where tenant_id = $1 and sha256 = $2',
+      [north.id, hash],
+    )
+
+    return rows[0]?.n ?? 0
+  }
+
+  /** A qualification of Anna with a certificate the owner uploads. */
+  async function added(bytes: Buffer, fileName: string): Promise<string> {
+    return (
+      await send('post', `/people/${annasFile}/qualifications`, {
+        kindKey: 'core.driving_licence',
+        certificateSha256: await upload(bytes),
+        certificateName: fileName,
+      })
+    ).id
+  }
+
   it('takes the file it replaces out of the store, unless another qualification still names it', async () => {
-    async function stored(hash: string): Promise<number> {
-      const { rows } = await admin.query<{ n: number }>(
-        'select count(*)::int as n from files where tenant_id = $1 and sha256 = $2',
-        [north.id, hash],
-      )
-
-      return rows[0]?.n ?? 0
-    }
-    async function added(bytes: Buffer, fileName: string): Promise<string> {
-      return (
-        await send('post', `/people/${annasFile}/qualifications`, {
-          kindKey: 'core.driving_licence',
-          certificateSha256: await upload(bytes),
-          certificateName: fileName,
-        })
-      ).id
-    }
-
     const first = Buffer.from('%PDF-1.7\n% erster Nachweis\n%%EOF\n')
     const replacing = Buffer.from('%PDF-1.7\n% neuer Nachweis\n%%EOF\n')
     const shared = Buffer.from('%PDF-1.7\n% Nachweis für zwei\n%%EOF\n')
@@ -482,6 +485,63 @@ describe('the certificate of a qualification', () => {
     expect(await stored(hashOf(shared))).toBe(1)
     await read(takenOff).expect(404)
     expect(Buffer.from((await read(keeping).expect(200)).body as Buffer).equals(shared)).toBe(true)
+  })
+
+  it('leaves the file it replaces where a price list import or a written document names it by a value', async () => {
+    const priceList = Buffer.from('DATANORM 001 Preisliste des Lieferanten\n')
+    const logo = Buffer.from('%PDF-1.7\n% Logo des Briefkopfs\n%%EOF\n')
+    const { rows: suppliers } = await admin.query<{ id: string }>(
+      "insert into suppliers (tenant_id, name) values ($1, 'Hansa Elektro') returning id",
+      [north.id],
+    )
+    const { rows: customers } = await admin.query<{ id: string }>(
+      "insert into customers (tenant_id, kind, name) values ($1, 'business', 'Logo GmbH') returning id",
+      [north.id],
+    )
+    const { rows: documents } = await admin.query<{ id: string }>(
+      `insert into documents (tenant_id, customer_id, kind, document_date)
+       values ($1, $2, 'quote', '2026-10-01') returning id`,
+      [north.id, customers[0]?.id],
+    )
+
+    // Both name their file with no key: the import in its list of files,
+    // the document in what it wrote, as the logo of its letterhead then.
+    await admin.query(
+      `insert into article_imports (tenant_id, supplier_id, files, valid_from)
+       values ($1, $2, $3, '2026-10-01')`,
+      [
+        north.id,
+        suppliers[0]?.id,
+        JSON.stringify([
+          { name: 'preise.001', sha256: hashOf(priceList), bytes: priceList.length },
+        ]),
+      ],
+    )
+    await admin.query(
+      'insert into document_snapshots (tenant_id, document_id, content) values ($1, $2, $3)',
+      [
+        north.id,
+        documents[0]?.id,
+        JSON.stringify({
+          issuer: { logo: { fileId: newId(), sha256: hashOf(logo), mediaType: 'application/pdf' } },
+        }),
+      ],
+    )
+
+    const imported = await added(priceList, 'preise.pdf')
+    const letterhead = await added(logo, 'logo.pdf')
+
+    await send('patch', `/people/${annasFile}/qualifications/${imported}`, {
+      certificateSha256: null,
+      certificateName: null,
+    })
+    await send('patch', `/people/${annasFile}/qualifications/${letterhead}`, {
+      certificateSha256: await upload(Buffer.from('%PDF-1.7\n% anderer Nachweis\n%%EOF\n')),
+      certificateName: 'anderer.pdf',
+    })
+
+    expect(await stored(hashOf(priceList))).toBe(1)
+    expect(await stored(hashOf(logo))).toBe(1)
   })
 
   it.each([
@@ -515,12 +575,44 @@ describe('the certificate of a qualification', () => {
     )
 
     expect(refused.message).toBe(
-      'Diese Datei liegt nicht im Speicher dieses Betriebs. Laden Sie den Nachweis noch einmal hoch.',
+      'Diese Datei liegt hier nicht im Speicher. Laden Sie den Nachweis noch einmal hoch.',
     )
     const changed = await send(
       'patch',
       `/people/${annasFile}/qualifications/${held}`,
       { certificateSha256: hashOf(theirs), certificateName: name },
+      owner,
+      400,
+    )
+
+    expect(changed.message).toBe(refused.message)
+  })
+
+  it('names no file of this business the owner neither stored nor sees named by a qualification', async () => {
+    const theOffices = Buffer.from('%PDF-1.7\n% vom Büro hochgeladen\n%%EOF\n')
+
+    await upload(theOffices, britta)
+
+    const refused = await send(
+      'post',
+      `/people/${annasFile}/qualifications`,
+      {
+        kindKey: 'core.driving_licence',
+        certificateSha256: hashOf(theOffices),
+        certificateName: name,
+      },
+      owner,
+      400,
+    )
+
+    expect(refused.message).toBe(
+      'Diese Datei liegt hier nicht im Speicher. Laden Sie den Nachweis noch einmal hoch.',
+    )
+
+    const changed = await send(
+      'patch',
+      `/people/${annasFile}/qualifications/${held}`,
+      { certificateSha256: hashOf(theOffices), certificateName: name },
       owner,
       400,
     )

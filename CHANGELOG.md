@@ -102,9 +102,13 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Qualifikation nennt es mit Hash und Namen (Spalte `certificate_name`, Migration 0138). Die Akte zeigt eine Spalte
   „Nachweis“ mit dem Namen der Datei, der sie in einem neuen Tab öffnet, über die Route
   `GET /people/:id/qualifications/:qualificationId/certificate` unter dem Recht der Akten, nicht unter dem der
-  Ablage. Ein Hash, den dieser Betrieb nicht gespeichert hat, wird abgelehnt. Die eigene Akte unter „Konto“ nennt,
-  dass es einen Nachweis gibt, öffnet ihn aber nicht. Wird ein Nachweis ersetzt oder abgenommen, geht die alte
-  Datei aus dem Speicher, sobald kein anderer Datensatz sie mehr nennt, wie beim Löschen der Akte. Warum: Ein
+  Ablage. Abgelehnt wird ein Hash, den dieser Betrieb nicht gespeichert hat oder den die Person nicht nennen darf,
+  weil sie die Datei weder selbst hochgeladen hat noch eine Qualifikation sieht, die sie nennt. Die Notiz steht
+  unter Art und Stufe, auf dem Telefon öffnet der Kasten den Nachweis und hat den Knopf zum Ändern. Die eigene
+  Akte unter „Konto“ nennt, dass es einen Nachweis gibt, öffnet ihn aber nicht. Wird ein Nachweis ersetzt oder
+  abgenommen, geht die alte Datei aus dem Speicher, wie beim Löschen der Akte (Migration 0139); in beiden Fällen
+  bleibt sie, solange ein anderer Datensatz sie nennt, auch die Dateien eines DATANORM-Imports und das Logo im
+  festgeschriebenen Inhalt eines Belegs, die eine Datei ohne Fremdschlüssel nennen. Warum: Ein
   Gesellenbrief oder eine Unterweisung gehört zur Qualifikation, und nach ADR 0012 liest ihn nur, wer die Akte
   liest. Einschränkung: Eine Datei, die hochgeladen wurde, deren Qualifikation dann aber nicht gespeichert wird
   (Netz weg, Ablehnung durch den Server), bleibt im Speicher des Betriebs.

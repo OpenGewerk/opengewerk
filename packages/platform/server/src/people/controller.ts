@@ -52,6 +52,7 @@ import type { PeopleTables } from '../database/schema/people.js'
 import type { qualificationSchema } from '../database/schema/qualifications.js'
 import { FILE_STORE } from '../files/controller.js'
 import { dispositionFor } from '../files/media-type.js'
+import { type FilePlace, mayNameFile } from '../files/naming.js'
 import { type FileStorage, noFileStorage } from '../files/store.js'
 
 export const PEOPLE_ROUTES = Symbol('PeopleRoutes')
@@ -68,7 +69,7 @@ const notBefore = 'Eine Arbeitszeit gilt ab heute oder später.'
 const kindHeld = 'Diese Art hält noch jemand. Erst die Qualifikationen ändern.'
 const noCertificate = 'Zu dieser Qualifikation gibt es keinen Nachweis.'
 const notStored =
-  'Diese Datei liegt nicht im Speicher dieses Betriebs. Laden Sie den Nachweis noch einmal hoch.'
+  'Diese Datei liegt hier nicht im Speicher. Laden Sie den Nachweis noch einmal hoch.'
 
 /** The tables of the people and their qualifications, as an application binds them. */
 export type PeopleRouteTables = PeopleTables & ReturnType<typeof qualificationSchema>
@@ -308,12 +309,17 @@ async function requireKind(
 /**
  * The file a certificate names, stored for this tenant (opengewerk#802): a
  * hash of another tenant's file, or of none, is refused in words, before the
- * key of the database would refuse it without them.
+ * key of the database would refuse it without them. And one the person may
+ * name (`mayNameFile`): stored by them, or named by a qualification already,
+ * since the route of the certificate hands its bytes to whoever reads the
+ * file of the person. A file of the tenant they may not name is answered like
+ * one that is not there.
  */
 async function requireStored(
   tx: TenantTransaction,
   tenantId: RequestIdentity['tenantId'],
   values: Readonly<Record<string, unknown>>,
+  named: FilePlace,
 ): Promise<void> {
   const sha256 = values['certificateSha256']
 
@@ -326,7 +332,7 @@ async function requireStored(
     .from(files)
     .where(and(eq(files.tenantId, tenantId), eq(files.sha256, sha256)))
 
-  if (!found) {
+  if (!found || !(await mayNameFile(tx, sha256, [named]))) {
     throw new BadRequestException(notStored)
   }
 }
@@ -652,7 +658,12 @@ function peopleController(rights: PeopleRights<string>): Type<unknown> {
 
         refuse(qualificationProblems({ ...values, personId: person.id }))
         await requireKind(tx, this.routes, values)
-        await requireStored(tx, identity.tenantId, values)
+        await requireStored(
+          tx,
+          identity.tenantId,
+          values,
+          this.routes.tables.qualifications.certificateSha256,
+        )
 
         const [added] = await tx
           .insert(this.routes.tables.qualifications)
@@ -686,7 +697,12 @@ function peopleController(rights: PeopleRights<string>): Type<unknown> {
 
         refuse(qualificationProblems(after))
         await requireKind(tx, this.routes, kind)
-        await requireStored(tx, identity.tenantId, values)
+        await requireStored(
+          tx,
+          identity.tenantId,
+          values,
+          this.routes.tables.qualifications.certificateSha256,
+        )
 
         const { qualifications } = this.routes.tables
         const [changed] = await tx

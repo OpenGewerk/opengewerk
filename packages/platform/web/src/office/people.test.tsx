@@ -128,7 +128,7 @@ const anna: PersonFile = {
       kindKey: 'core.driving_licence',
       ownKindId: null,
       validUntil: null,
-      note: null,
+      note: 'Klasse BE',
       certificateSha256: 'b'.repeat(64),
       certificateName: 'fuehrerschein.pdf',
       kindLabel: 'Führerschein',
@@ -316,6 +316,34 @@ describe('the certificate of a qualification', () => {
     expect(link.getAttribute('href')).toBe('/people/anna/qualifications/q-licence/certificate')
     expect(link.getAttribute('target')).toBe('_blank')
     expect(screen.getByText('Kein Nachweis')).toBeTruthy()
+  })
+
+  it('is opened from its box on a phone, where the note and a way to change it are as well', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }))
+    render(inQueries(<PersonScreen {...screenProps} personId="anna" mayWrite />))
+
+    const boxes = await screen.findByRole('list', { name: 'Qualifikationen' })
+    const licence = within(boxes).getByText('Führerschein').closest('li') as HTMLElement
+
+    expect(
+      within(licence).getByRole('link', { name: 'fuehrerschein.pdf' }).getAttribute('href'),
+    ).toBe('/people/anna/qualifications/q-licence/certificate')
+    expect(within(licence).getByText('Klasse BE')).toBeTruthy()
+    expect(within(licence).getByRole('button', { name: 'Führerschein ändern' })).toBeTruthy()
+  })
+
+  it('leaves the note in the table, under the kind', async () => {
+    render(inQueries(<PersonScreen {...screenProps} personId="anna" mayWrite />))
+
+    const table = await screen.findByRole('table', { name: 'Qualifikationen' })
+    const row = within(table).getByText('Führerschein').closest('tr') as HTMLElement
+
+    expect(within(row).getByText('Klasse BE')).toBeTruthy()
   })
 
   it('is stored by its hash and then named by the qualification', async () => {
