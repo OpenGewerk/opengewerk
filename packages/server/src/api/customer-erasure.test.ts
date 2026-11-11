@@ -295,7 +295,7 @@ beforeEach(async () => {
      delete from early_start_requests; delete from job_notes; delete from appointments; delete from jobs;
      delete from communications; delete from prospects; delete from secrets; delete from site_accesses;
      delete from contacts; delete from installations; delete from sites; delete from customers;
-     delete from deadline_settings; commit;`,
+     delete from deadline_settings; delete from article_imports; delete from suppliers; commit;`,
   )
 })
 
@@ -742,6 +742,62 @@ describe('deleting a customer (#845)', () => {
     )
 
     expect(chain.rows.filter((row) => row.problem !== null)).toEqual([])
+  })
+
+  // A file named by a value and not by a key (opengewerk#911): the files of a
+  // price list import, and the logo in what a document of another customer
+  // wrote. The keys onto `files` do not hold them.
+  async function namedByValues(pdf: string, photo: string): Promise<string> {
+    const { rows: suppliers } = await admin.query<{ id: string }>(
+      `insert into suppliers (tenant_id, name) values ($1, 'Hansa Elektro') returning id`,
+      [north],
+    )
+    const { rows: others } = await admin.query<{ id: string }>(
+      `insert into customers (tenant_id, kind, name) values ($1, 'business', 'Logo GmbH') returning id`,
+      [north],
+    )
+    const { rows: documents } = await admin.query<{ id: string }>(
+      `insert into documents (tenant_id, customer_id, kind, document_date)
+       values ($1, $2, 'quote', '2026-10-01') returning id`,
+      [north, others[0]?.id],
+    )
+
+    await admin.query(
+      'insert into document_snapshots (tenant_id, document_id, content) values ($1, $2, $3)',
+      [
+        north,
+        documents[0]?.id,
+        JSON.stringify({
+          issuer: { logo: { fileId: newId(), sha256: photo, mediaType: 'image/jpeg' } },
+        }),
+      ],
+    )
+
+    return (
+      await admin.query<{ id: string }>(
+        `insert into article_imports (tenant_id, supplier_id, files, valid_from)
+         values ($1, $2, $3, '2026-10-01') returning id`,
+        [north, suppliers[0]?.id, JSON.stringify([{ name: 'preise.001', sha256: pdf, bytes: 10 }])],
+      )
+    ).rows[0]?.id as string
+  }
+
+  it('keeps a file of its documents or its own that an import or another document still names by a value', async () => {
+    const { customer } = await vossberg()
+
+    await namedByValues(hex('a'), hex('b'))
+    await record(customer).expect(201)
+    await erase(customer).expect(201)
+
+    // The PDF of its invoice, named by the import, and the photo of its
+    // archive, named as the logo of another document.
+    expect(
+      (
+        await admin.query('select sha256 from files where sha256 = any($1) order by sha256', [
+          [hex('a'), hex('b')],
+        ])
+      ).rows,
+    ).toEqual([{ sha256: hex('a') }, { sha256: hex('b') }])
   })
 
   it('is for whoever leads the business, at the route and in the database', async () => {

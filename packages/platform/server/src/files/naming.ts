@@ -75,3 +75,16 @@ export async function mayNameFile(
 
   return false
 }
+
+/**
+ * Takes the lock under which a transaction names files of its tenant in a
+ * value rather than by a key (opengewerk#911), to its end, before it reads
+ * them in `files`: the tenant's chain of the log, which every logged change
+ * locks as well. A file that goes for good takes the same lock before it asks
+ * whether a value names it (`file_named_by_a_value`, block `attachments.sql`).
+ * So either the name is written and the file stays, or the file is gone
+ * before it is read.
+ */
+export async function lockFileNaming(tx: TenantTransaction, tenantId: string): Promise<void> {
+  await tx.execute(sql`select public.file_naming_lock(${tenantId}::uuid)`)
+}

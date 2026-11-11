@@ -14,7 +14,7 @@ import {
   type SiteContent,
   type TenantId,
 } from '@opengewerk/domain'
-import type { TenantTransaction } from '@opengewerk/platform-server'
+import { lockFileNaming, type TenantTransaction } from '@opengewerk/platform-server'
 import { and, asc, eq, inArray, isNotNull, isNull } from 'drizzle-orm'
 
 import { parameterAt } from '../database/parameters.js'
@@ -98,10 +98,24 @@ export async function issuerOf(tx: TenantTransaction, tenantId: TenantId): Promi
   let logo: LogoContent | null = null
 
   if (letterhead?.logoFileId) {
-    const [file] = await tx
-      .select({ id: files.id, sha256: files.sha256, mediaType: files.mediaType })
-      .from(files)
-      .where(eq(files.id, letterhead.logoFileId))
+    const logoFileId = letterhead.logoFileId
+    const logoOf = async () => {
+      const [file] = await tx
+        .select({ id: files.id, sha256: files.sha256, mediaType: files.mediaType })
+        .from(files)
+        .where(eq(files.id, logoFileId))
+
+      return file
+    }
+    const found = await logoOf()
+
+    if (found) {
+      // What a document writes names the logo by a value (opengewerk#911):
+      // read once more under the lock, in case it went for good meanwhile.
+      await lockFileNaming(tx, tenantId)
+    }
+
+    const file = found ? await logoOf() : undefined
 
     logo = file ? { fileId: file.id, sha256: file.sha256, mediaType: file.mediaType } : null
   }
