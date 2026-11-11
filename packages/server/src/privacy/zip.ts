@@ -64,6 +64,27 @@ function unfit(character: string): boolean {
   return character.charCodeAt(0) < 0x20 || '<>:"|?*'.includes(character)
 }
 
+/**
+ * A name as the archive may hold it: backslashes become slashes, slashes
+ * separate folders, empty parts and dots do not survive, and a name with
+ * nothing left is "Datei".
+ */
+export function cleanName(raw: string): string {
+  const name = raw
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((part) =>
+      [...part]
+        .map((character) => (unfit(character) ? '_' : character))
+        .join('')
+        .trim(),
+    )
+    .filter((part) => part !== '' && part !== '.' && part !== '..')
+    .join('/')
+
+  return name === '' ? 'Datei' : name
+}
+
 /** Makes each name it is given unique among those it made before. */
 export function nameMaker(): (raw: string) => string {
   const taken = new Set<string>()
@@ -72,18 +93,7 @@ export function nameMaker(): (raw: string) => string {
   const counters = new Map<string, number>()
 
   return (raw) => {
-    const name = raw
-      .replace(/\\/g, '/')
-      .split('/')
-      .map((part) =>
-        [...part]
-          .map((character) => (unfit(character) ? '_' : character))
-          .join('')
-          .trim(),
-      )
-      .filter((part) => part !== '' && part !== '.' && part !== '..')
-      .join('/')
-    const fallback = name === '' ? 'Datei' : name
+    const fallback = cleanName(raw)
     const dot = fallback.lastIndexOf('.')
     const slash = fallback.lastIndexOf('/')
     const [stem, extension] =

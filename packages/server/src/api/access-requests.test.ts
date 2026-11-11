@@ -602,6 +602,45 @@ describe('the answer to a customer', () => {
       ].sort(),
     )
   })
+
+  it('keeps every file in its folder and gives each lost one a note of its own', async () => {
+    const file = await tomsFile()
+    const dots = new TextEncoder().encode('Eine Datei, die nur zwei Punkte heißt')
+    const folder = new TextEncoder().encode('Eine Datei, die wie der Ordner heißt')
+    /** The name of some bytes in the store. */
+    const hashOf = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
+
+    // Neither is in the store. ".." once became the path "dateien", beside
+    // the folder, and its note the one of the file "dateien" (opengewerk#916).
+    await admin.query(
+      `begin;
+       set local app.user_id = 'lena';
+       insert into files (tenant_id, sha256, size_bytes, media_type)
+         values ('${north}', '${hashOf(dots)}', ${String(dots.length)}, 'text/plain'),
+                ('${north}', '${hashOf(folder)}', ${String(folder.length)}, 'text/plain');
+       insert into qualifications (tenant_id, person_id, kind_key, certificate_sha256, certificate_name)
+         values ('${north}', '${file}', 'core.work_at_height', '${hashOf(folder)}', 'dateien');
+       update qualifications set certificate_sha256 = '${hashOf(dots)}', certificate_name = '..'
+        where person_id = '${file}';
+       commit;`,
+    )
+
+    const id = (await record('person', file).expect(201)).body.request.id as string
+    const { entries, text } = await answerOf(id)
+    const files = (JSON.parse(text) as { files: { path: string; sha256: string }[] }).files
+
+    expect(files.map((each) => each.path)).toEqual(['dateien/Datei', 'dateien/dateien'])
+    expect(entries.get('fehlende Dateien/Datei.txt')?.toString('utf8')).toContain(hashOf(dots))
+    expect(entries.get('fehlende Dateien/dateien.txt')?.toString('utf8')).toContain(hashOf(folder))
+    expect([...entries.keys()].sort()).toEqual(
+      [
+        'Auskunft.pdf',
+        'daten.json',
+        'fehlende Dateien/Datei.txt',
+        'fehlende Dateien/dateien.txt',
+      ].sort(),
+    )
+  })
 })
 
 describe('the answer to the others', () => {

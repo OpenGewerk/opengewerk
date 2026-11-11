@@ -146,7 +146,10 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   im eigenen Ordner `fehlende Dateien`, etwa `fehlende Dateien/Bericht.pdf.txt`, statt als
   `dateien/Bericht.pdf (fehlt).txt` neben den gespeicherten Dateien (#916). Warum: Hieß eine gespeicherte Datei
   derselben Person genau wie der Hinweis, gab das ZIP ihr einen anderen Namen als PDF und `daten.json`, und wer die
-  Auskunft las, fand sie dort nicht. Im eigenen Ordner kann keine gespeicherte Datei liegen.
+  Auskunft las, fand sie dort nicht. Im eigenen Ordner kann keine gespeicherte Datei liegen. Dazu liegt jede Datei
+  jetzt im Ordner `dateien`, auch eine, deren Name nur aus Punkten oder Schrägstrichen besteht: sie heißt dort
+  `Datei`. Bisher wurde ihr Pfad `dateien` selbst, neben dem Ordner, und ihr Hinweis konnte den Namen eines anderen
+  bekommen.
 - Jede protokollierte Änderung eines Betriebs sperrt jetzt zuerst den Zähler des Abgleichs und dann die Kette des
   Änderungsprotokolls, in derselben Reihenfolge wie jede Änderung einer abgeglichenen Zeile (#914, Migration 0142).
   Bis jetzt nahm eine Änderung an einer Tabelle ohne Abgleich nur die Kette; das Löschen nach dem Löschkonzept

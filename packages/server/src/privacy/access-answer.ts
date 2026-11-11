@@ -19,7 +19,7 @@ import { type PrintJob, present, text } from '@opengewerk/platform-server'
 import { momentText } from '../forms/defect-report.js'
 import { type GridParty, sheetHead, sheetJob } from '../forms/grid-documents.js'
 import { type AccessReport, type ReportRow } from './access-report.js'
-import { nameMaker, type ZipEntry } from './zip.js'
+import { cleanName, nameMaker, type ZipEntry } from './zip.js'
 
 /**
  * The answer to a request for access (#318) as the person gets it, one ZIP:
@@ -90,9 +90,12 @@ export function filePaths(report: AccessReport): string[] {
   return report.files.map((file) => {
     const extension = extensionOf(file.mediaType, file.name)
 
-    return unique(
-      `${filesFolder}/${file.name.endsWith(extension) ? file.name : `${file.name}${extension}`}`,
-    )
+    const named = file.name.endsWith(extension) ? file.name : `${file.name}${extension}`
+
+    // Cleaned before it goes into the folder (opengewerk#916): a name of only
+    // dots or slashes would leave "dateien" itself as the path, beside the
+    // folder and not in it, and its note could take the name of another.
+    return unique(`${filesFolder}/${cleanName(named)}`)
   })
 }
 
@@ -357,12 +360,11 @@ export function accessJson(answer: AccessAnswer): string {
 /**
  * Where the note on a file the store lost lies: under its path in the folder
  * of the files, in the folder of the notes, "fehlende Dateien/Bericht.pdf.txt".
- * The paths are unique, and so are the notes.
+ * Every path starts in the folder of the files and the paths are unique, and
+ * so are the notes.
  */
 function missingNote(path: string): string {
-  const inFolder = path.startsWith(`${filesFolder}/`) ? path.slice(filesFolder.length + 1) : path
-
-  return `${missingFolder}/${inFolder}.txt`
+  return `${missingFolder}/${path.slice(filesFolder.length + 1)}.txt`
 }
 
 /**
