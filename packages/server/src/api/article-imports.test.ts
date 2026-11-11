@@ -1309,6 +1309,11 @@ describe('an import that cannot start or run', () => {
       await taking.query('begin')
       await taking.query('select public.file_named_by_a_value($1, $2)', [north.id, sha256])
       await taking.query('set local session_replication_role = replica')
+      // The key would take the uploads of the file with it; not so as the replica.
+      await taking.query('delete from file_uploads where tenant_id = $1 and sha256 = $2', [
+        north.id,
+        sha256,
+      ])
       await taking.query('delete from files where tenant_id = $1 and sha256 = $2', [
         north.id,
         sha256,
