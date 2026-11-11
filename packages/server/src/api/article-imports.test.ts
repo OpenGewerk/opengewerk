@@ -1330,6 +1330,7 @@ describe('an import that cannot start or run', () => {
         'Die Datei DATANORM.001 ist nicht hochgeladen worden.',
       ])
     } finally {
+      await taking.query('rollback').catch(() => undefined)
       taking.release()
     }
   })

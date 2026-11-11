@@ -377,6 +377,7 @@ describe('a logo on the letterhead', () => {
 
       expect(await issuing).toBe(201)
     } finally {
+      await taking.query('rollback').catch(() => undefined)
       taking.release()
       await admin.query(
         `begin; set local session_replication_role = replica;

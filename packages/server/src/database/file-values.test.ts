@@ -109,7 +109,9 @@ describe('the values that name a file', () => {
 
       expect((await asking).rows).toEqual([{ named: true }])
     } finally {
-      await taking.query('rollback')
+      // The import first: a question still waiting for it ends with it.
+      await naming.query('rollback').catch(() => undefined)
+      await taking.query('rollback').catch(() => undefined)
       naming.release()
       taking.release()
     }
@@ -122,6 +124,7 @@ describe('the values that name a file', () => {
 
     const writing = await admin.connect()
     const naming = await admin.connect()
+    let named: Promise<unknown> = Promise.resolve()
 
     try {
       // A change of a row that travels: stamped first, which locks the counter.
@@ -133,7 +136,7 @@ describe('the values that name a file', () => {
       await naming.query('begin')
       await naming.query("select set_config('app.tenant_id', $1, true)", [tenant])
 
-      const named = naming
+      named = naming
         .query('select public.file_naming_lock($1)', [tenant])
         .then(() => naming.query('select public.next_sync_sequence($1)', [tenant]))
 
@@ -149,6 +152,10 @@ describe('the values that name a file', () => {
       await named
       await naming.query('commit')
     } finally {
+      // The change first: the lock still waiting for it ends with it.
+      await writing.query('rollback').catch(() => undefined)
+      await named.catch(() => undefined)
+      await naming.query('rollback').catch(() => undefined)
       writing.release()
       naming.release()
     }
