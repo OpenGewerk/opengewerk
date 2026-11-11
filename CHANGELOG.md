@@ -97,6 +97,17 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   zuerst seine Nummer. Warum: Ein Serviceauftrag kommt per Telefon und muss Sekunden später auf einem Bildschirm und
   auf dem Telefon des Monteurs stehen, und ein Verbraucher, der ohne Angebot beauftragt, hat dieselben Rechte wie
   einer mit Angebot.
+- Der Nachweis einer Qualifikation als Datei (#802): Im Dialog „Qualifikation hinzufügen“ und beim Ändern wählt
+  der Inhaber ein PDF oder Foto, es geht über `PUT /files/:sha256` in den Speicher des Betriebs, und die
+  Qualifikation nennt es mit Hash und Namen (Spalte `certificate_name`, Migration 0138). Die Akte zeigt eine Spalte
+  „Nachweis“ mit dem Namen der Datei, der sie in einem neuen Tab öffnet, über die Route
+  `GET /people/:id/qualifications/:qualificationId/certificate` unter dem Recht der Akten, nicht unter dem der
+  Ablage. Ein Hash, den dieser Betrieb nicht gespeichert hat, wird abgelehnt. Die eigene Akte unter „Konto“ nennt,
+  dass es einen Nachweis gibt, öffnet ihn aber nicht. Wird ein Nachweis ersetzt oder abgenommen, geht die alte
+  Datei aus dem Speicher, sobald kein anderer Datensatz sie mehr nennt, wie beim Löschen der Akte. Warum: Ein
+  Gesellenbrief oder eine Unterweisung gehört zur Qualifikation, und nach ADR 0012 liest ihn nur, wer die Akte
+  liest. Einschränkung: Eine Datei, die hochgeladen wurde, deren Qualifikation dann aber nicht gespeichert wird
+  (Netz weg, Ablehnung durch den Server), bleibt im Speicher des Betriebs.
 
 ### Geändert
 

@@ -1167,8 +1167,8 @@ const crossings: readonly {
   {
     key: 'qualifications_certificate_stored',
     write: (own, other) =>
-      sql`insert into qualifications (tenant_id, person_id, kind_key, certificate_sha256)
-            values (${own.tenant}, ${own.person}, 'core.driving_licence', ${other.fileHash})`,
+      sql`insert into qualifications (tenant_id, person_id, kind_key, certificate_sha256, certificate_name)
+            values (${own.tenant}, ${own.person}, 'core.driving_licence', ${other.fileHash}, 'fuehrerschein.pdf')`,
   },
   // An appointment at a job here, and who goes to it (#290): somebody who works
   // here, at an appointment here. Inserts, because the application may only

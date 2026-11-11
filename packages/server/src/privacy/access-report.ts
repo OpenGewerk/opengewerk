@@ -569,7 +569,11 @@ async function filesOf(tx: TenantTransaction, reached: Reached): Promise<ReportF
         recordId: String(row['id']),
         sha256: file.sha256,
         mediaType: file.media_type,
-        name: `Zertifikat ${String(row['kind_key'] ?? '')}`.trim(),
+        // By the name it was chosen under (opengewerk#802), as the file of it.
+        name:
+          typeof row['certificate_name'] === 'string'
+            ? row['certificate_name']
+            : `Zertifikat ${String(row['kind_key'] ?? '')}`.trim(),
       })
     }
   }

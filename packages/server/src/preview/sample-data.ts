@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import type { IsoDate } from '@opengewerk/domain'
 import {
   addDays,
@@ -37,6 +39,25 @@ async function send(base: string, method: string, path: string, body?: unknown):
   }
 
   return answer
+}
+
+/**
+ * A file into the store by its hash, as the office stores one ahead of the
+ * record that names it (`PUT /files/:sha256`).
+ */
+async function stored(base: string, bytes: Buffer, mediaType: string): Promise<string> {
+  const sha256 = createHash('sha256').update(bytes).digest('hex')
+  const response = await fetch(new URL(`/files/${sha256}`, base), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/octet-stream', 'X-Media-Type': mediaType },
+    body: bytes,
+  })
+
+  if (!response.ok) {
+    throw new Error(`The sample data broke at PUT /files/${sha256}: ${String(response.status)}`)
+  }
+
+  return sha256
 }
 
 function idOf(answer: Answer): string {
@@ -1414,6 +1435,13 @@ async function plantPeople(base: string, today: IsoDate): Promise<void> {
       kindKey: 'core.work_at_height',
       validUntil: addDays(today, 29),
       note: 'Unterweisung PSA gegen Absturz, jährlich',
+      // The certificate the board "Akte" draws (opengewerk#802).
+      certificateSha256: await stored(
+        base,
+        Buffer.from('%PDF-1.7\n% Unterweisung PSA gegen Absturz\n%%EOF\n'),
+        'application/pdf',
+      ),
+      certificateName: 'unterweisung-psaga-2026.pdf',
     },
     { ownKindId: firstAid.id, validUntil: addDays(today, -17) },
   ]) {

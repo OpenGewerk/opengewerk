@@ -6,7 +6,7 @@ import type {
   QualificationStanding,
 } from '@opengewerk/platform-domain'
 
-import { request } from '../sync/transport.js'
+import { httpTransport, request } from '../sync/transport.js'
 
 /**
  * The routes of the files of the people (ADR 0016, opengewerk#287) as the
@@ -68,6 +68,8 @@ export interface QualificationRow {
   readonly validUntil: IsoDate | null
   readonly note: string | null
   readonly certificateSha256: string | null
+  /** The name the file of the certificate was chosen under (opengewerk#802). */
+  readonly certificateName: string | null
   readonly kindLabel: string
   readonly kindLevel: PersonLevel | null
   readonly standing: QualificationStanding
@@ -183,6 +185,38 @@ export function removeQualification(personId: string, qualificationId: string): 
   return request(`${at(personId)}/qualifications/${encodeURIComponent(qualificationId)}`, {
     method: 'DELETE',
   })
+}
+
+/**
+ * Where the certificate of a qualification is read (opengewerk#802): at the
+ * qualification, under the right of the files of the people, and not from
+ * the files every role reads (ADR 0012).
+ */
+export function certificatePath(personId: string, qualificationId: string): string {
+  return `${at(personId)}/qualifications/${encodeURIComponent(qualificationId)}/certificate`
+}
+
+/**
+ * A chosen file stored as the certificate of a qualification (opengewerk#802):
+ * its bytes into the store of the tenant by their hash (`PUT /files/:sha256`),
+ * and back the hash and the name the qualification names it by.
+ */
+export async function storeCertificate(
+  file: File,
+): Promise<{ readonly certificateSha256: string; readonly certificateName: string }> {
+  const bytes = await file.arrayBuffer()
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  const sha256 = [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+
+  await httpTransport.upload?.(
+    sha256,
+    bytes,
+    file.type === '' ? 'application/octet-stream' : file.type,
+  )
+
+  return { certificateSha256: sha256, certificateName: file.name }
 }
 
 export function qualificationKindsOf(): Promise<QualificationKinds> {

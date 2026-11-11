@@ -127,4 +127,40 @@ describe('a qualification', () => {
       validUntil: 'Gültig bis ist ein Tag, geschrieben 2026-10-03, oder leer.',
     })
   })
+
+  /** The file of a certificate and the name it is shown by, both or neither (opengewerk#802). */
+  it('holds a certificate as a file of the store with its name, or none', () => {
+    const named = { personId: 'u-1', kindKey: 'elektro.skilled' }
+    const hash = 'a'.repeat(64)
+
+    expect(
+      qualificationProblems({ ...named, certificateSha256: hash, certificateName: 'psaga.pdf' }),
+    ).toEqual({})
+    expect(
+      qualificationProblems({ ...named, certificateSha256: null, certificateName: null }),
+    ).toEqual({})
+    expect(qualificationProblems({ ...named, certificateSha256: hash })).toEqual({
+      certificate: 'Ein Nachweis ist eine Datei mit ihrem Namen.',
+    })
+    expect(qualificationProblems({ ...named, certificateName: 'psaga.pdf' })).toEqual({
+      certificate: 'Ein Nachweis ist eine Datei mit ihrem Namen.',
+    })
+    expect(
+      qualificationProblems({ ...named, certificateSha256: 'A1B2', certificateName: 'psaga.pdf' }),
+    ).toEqual({ certificate: 'Die Prüfsumme der Datei ist kein SHA-256 in Kleinbuchstaben.' })
+    expect(
+      qualificationProblems({
+        ...named,
+        certificateSha256: hash,
+        certificateName: 'x'.repeat(qualificationLimits.certificateName + 1),
+      }),
+    ).toEqual({
+      certificate: `Der Name der Datei hat 1 bis ${String(qualificationLimits.certificateName)} Zeichen.`,
+    })
+    expect(
+      qualificationProblems({ ...named, certificateSha256: hash, certificateName: '  ' }),
+    ).toEqual({
+      certificate: `Der Name der Datei hat 1 bis ${String(qualificationLimits.certificateName)} Zeichen.`,
+    })
+  })
 })

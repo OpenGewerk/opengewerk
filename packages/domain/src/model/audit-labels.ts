@@ -635,6 +635,7 @@ export const auditTables: Readonly<Record<string, AuditTableWords>> = {
       valid_until: 'Gültig bis',
       note: 'Notiz',
       certificate_sha256: 'Nachweis',
+      certificate_name: 'Name des Nachweises',
     },
   },
   stores: {

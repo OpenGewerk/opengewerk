@@ -122,8 +122,8 @@ async function kraft(withLaterYears = true): Promise<Fixture> {
        values ('${north}', '${id}', '${String(oldYear - 3)}-03-01', 480, 480);
      insert into files (tenant_id, sha256, size_bytes, media_type)
        values ('${north}', '${certificate}', 12, 'application/pdf');
-     insert into qualifications (tenant_id, person_id, kind_key, valid_until, note, certificate_sha256)
-       values ('${north}', '${id}', 'electrician', '2030-01-01', 'Prüfung bei ${family}', '${certificate}');
+     insert into qualifications (tenant_id, person_id, kind_key, valid_until, note, certificate_sha256, certificate_name)
+       values ('${north}', '${id}', 'electrician', '2030-01-01', 'Prüfung bei ${family}', '${certificate}', 'pruefung-${family}.pdf');
      insert into absences (id, tenant_id, person_id, kind, state, first_day, last_day, note)
        values ('${vacation}', '${north}', '${id}', 'vacation', 'approved', '${o}-08-01', '${o}-08-14', 'Urlaub der ${family}s'),
               ('${oldSickness}', '${north}', '${id}', 'sickness', 'approved', '${o}-05-06', '${o}-05-10', null);

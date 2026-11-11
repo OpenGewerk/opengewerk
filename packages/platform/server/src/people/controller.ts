@@ -5,12 +5,15 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Inject,
   NotFoundException,
+  Optional,
   Param,
   Patch,
   Post,
   type Provider,
+  StreamableFile,
   type Type,
 } from '@nestjs/common'
 import {
@@ -43,9 +46,13 @@ import type { AccessRules } from '../authentication/access.js'
 import { accountsOf } from '../authentication/administration.js'
 import { Database, type TenantTransaction } from '../database/database.js'
 import { isUuid } from '../database/identifier.js'
+import { files } from '../database/schema/files.js'
 import { memberships } from '../database/schema/memberships.js'
 import type { PeopleTables } from '../database/schema/people.js'
 import type { qualificationSchema } from '../database/schema/qualifications.js'
+import { FILE_STORE } from '../files/controller.js'
+import { dispositionFor } from '../files/media-type.js'
+import { type FileStorage, noFileStorage } from '../files/store.js'
 
 export const PEOPLE_ROUTES = Symbol('PeopleRoutes')
 
@@ -59,6 +66,9 @@ const hasBegun =
   'Diese Arbeitszeit gilt schon und bleibt, wie sie ist. Eine Änderung ist eine neue Arbeitszeit ab einem späteren Tag.'
 const notBefore = 'Eine Arbeitszeit gilt ab heute oder später.'
 const kindHeld = 'Diese Art hält noch jemand. Erst die Qualifikationen ändern.'
+const noCertificate = 'Zu dieser Qualifikation gibt es keinen Nachweis.'
+const notStored =
+  'Diese Datei liegt nicht im Speicher dieses Betriebs. Laden Sie den Nachweis noch einmal hoch.'
 
 /** The tables of the people and their qualifications, as an application binds them. */
 export type PeopleRouteTables = PeopleTables & ReturnType<typeof qualificationSchema>
@@ -109,7 +119,14 @@ const today = (): IsoDate => berlinClock(new Date()).day
 
 const personFields = ['name', 'userId', 'joinedOn', 'leftOn'] as const
 const timeFields = ['validFrom', ...weekdays.map((day) => weekdayMinutes[day])] as const
-const qualificationFields = ['kindKey', 'ownKindId', 'validUntil', 'note'] as const
+const qualificationFields = [
+  'kindKey',
+  'ownKindId',
+  'validUntil',
+  'note',
+  'certificateSha256',
+  'certificateName',
+] as const
 
 /** A conflict the database found, in words, or the error as it was. */
 function conflictOf(error: unknown): unknown {
@@ -288,6 +305,32 @@ async function requireKind(
   }
 }
 
+/**
+ * The file a certificate names, stored for this tenant (opengewerk#802): a
+ * hash of another tenant's file, or of none, is refused in words, before the
+ * key of the database would refuse it without them.
+ */
+async function requireStored(
+  tx: TenantTransaction,
+  tenantId: RequestIdentity['tenantId'],
+  values: Readonly<Record<string, unknown>>,
+): Promise<void> {
+  const sha256 = values['certificateSha256']
+
+  if (typeof sha256 !== 'string') {
+    return
+  }
+
+  const [found] = await tx
+    .select({ sha256: files.sha256 })
+    .from(files)
+    .where(and(eq(files.tenantId, tenantId), eq(files.sha256, sha256)))
+
+  if (!found) {
+    throw new BadRequestException(notStored)
+  }
+}
+
 /** The minutes of a working time as the body names them, with none for a day it leaves out. */
 function timeValues(body: unknown): Record<string, unknown> {
   const values: Record<string, unknown> = { ...tidiedAll(pick(body, [...timeFields])) }
@@ -314,10 +357,17 @@ function timeValues(body: unknown): Record<string, unknown> {
 function peopleController(rights: PeopleRights<string>): Type<unknown> {
   @Controller('people')
   class PeopleController {
+    readonly store: FileStorage
+
     constructor(
       readonly database: Database,
       @Inject(PEOPLE_ROUTES) readonly routes: PeopleRoutes,
-    ) {}
+      // An application without a file store keeps no certificates, and its
+      // files answer that there is none to read.
+      @Optional() @Inject(FILE_STORE) store?: FileStorage,
+    ) {
+      this.store = store ?? noFileStorage
+    }
 
     /** Everybody with a file, with their account, the hours of this week's working time and what runs out. */
     @Get()
@@ -602,6 +652,7 @@ function peopleController(rights: PeopleRights<string>): Type<unknown> {
 
         refuse(qualificationProblems({ ...values, personId: person.id }))
         await requireKind(tx, this.routes, values)
+        await requireStored(tx, identity.tenantId, values)
 
         const [added] = await tx
           .insert(this.routes.tables.qualifications)
@@ -635,6 +686,7 @@ function peopleController(rights: PeopleRights<string>): Type<unknown> {
 
         refuse(qualificationProblems(after))
         await requireKind(tx, this.routes, kind)
+        await requireStored(tx, identity.tenantId, values)
 
         const { qualifications } = this.routes.tables
         const [changed] = await tx
@@ -662,6 +714,49 @@ function peopleController(rights: PeopleRights<string>): Type<unknown> {
           .update(qualifications)
           .set({ deletedAt: new Date(), updatedAt: new Date() })
           .where(eq(qualifications.id, current.id))
+      })
+    }
+
+    /**
+     * The certificate of a qualification, as it was stored (opengewerk#802):
+     * under the right of the files of the people, and not from the files
+     * every role reads (ADR 0012).
+     */
+    @Get(':id/qualifications/:qualificationId/certificate')
+    @RequiresPermission(rights.read)
+    @Header('Cache-Control', 'no-store')
+    async certificate(
+      @CurrentIdentity() identity: RequestIdentity,
+      @Param('id') id: string,
+      @Param('qualificationId') qualificationId: string,
+    ): Promise<StreamableFile> {
+      const found = await this.database.forTenant(identity, async (tx) => {
+        const current = await this.qualificationOf(tx, id, qualificationId)
+
+        if (current.certificateSha256 === null) {
+          return null
+        }
+
+        const [file] = await tx
+          .select({ sha256: files.sha256, mediaType: files.mediaType })
+          .from(files)
+          .where(
+            and(eq(files.tenantId, identity.tenantId), eq(files.sha256, current.certificateSha256)),
+          )
+
+        return file ? { ...file, name: current.certificateName ?? 'Nachweis' } : null
+      })
+
+      if (!found) {
+        throw new NotFoundException(noCertificate)
+      }
+
+      const bytes = await this.store.get(found.sha256)
+
+      return new StreamableFile(Buffer.from(bytes), {
+        type: found.mediaType,
+        disposition: dispositionFor(found.mediaType, found.name),
+        length: bytes.byteLength,
       })
     }
 

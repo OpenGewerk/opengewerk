@@ -55,6 +55,7 @@ function qualificationParts() {
     validUntil: date('valid_until', { mode: 'string' }),
     note: text('note'),
     certificateSha256: text('certificate_sha256'),
+    certificateName: text('certificate_name'),
     ...timestamps,
     ...syncColumns,
   }
@@ -105,6 +106,16 @@ export function qualificationSchema({ people }: Pick<PeopleTables, 'people'>) {
     check(
       'qualifications_certificate_is_a_hash',
       sql`${table.certificateSha256} is null or ${table.certificateSha256} ~ '^[0-9a-f]{64}$'`,
+    ),
+    // The file of a certificate and the name it is shown by, both or neither
+    // (opengewerk#802).
+    check(
+      'qualifications_certificate_named',
+      sql`num_nonnulls(${table.certificateSha256}, ${table.certificateName}) in (0, 2)`,
+    ),
+    check(
+      'qualifications_certificate_name_fits',
+      sql`${table.certificateName} is null or ${fits(table.certificateName, qualificationLimits.certificateName)}`,
     ),
   ])
 

@@ -1,7 +1,12 @@
+import { createHash } from 'node:crypto'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import { addDays, berlinClock } from '@opengewerk/domain'
-import { Database, newId } from '@opengewerk/platform-server'
+import { Database, dispositionFor, FileStore, newId } from '@opengewerk/platform-server'
 import type { Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -9,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { qualificationsRunningOut } from '../deadlines/sources.js'
 import { ApiModule } from './api.module.js'
+import { binary } from './test-binary.js'
 import { as, testIdentities as identities } from './test-identity.js'
 
 /**
@@ -26,6 +32,7 @@ const south = { id: newId<'tenant'>(), name: 'Elektro Süd GmbH' }
 let admin: Pool
 let database: Database
 let app: INestApplication
+let storageRoot: string
 
 const owner = as(north.id, 'owner')
 const office = as(north.id, 'office')
@@ -117,10 +124,11 @@ beforeAll(async () => {
     [north.id, south.id],
   )
 
+  storageRoot = mkdtempSync(join(tmpdir(), 'opengewerk-people-'))
   database = Database.connect(applicationDatabaseUrl())
 
   const built = await Test.createTestingModule({
-    imports: [ApiModule.create(database, identities)],
+    imports: [ApiModule.create(database, identities, { files: new FileStore(storageRoot) })],
   }).compile()
 
   app = built.createNestApplication()
@@ -142,6 +150,7 @@ afterAll(async () => {
   await app.close()
   await database.close()
   await admin.end()
+  rmSync(storageRoot, { recursive: true, force: true })
 })
 
 describe('who reads and keeps the files', () => {
@@ -351,6 +360,184 @@ describe('the qualifications of a person', () => {
     await send('patch', `/people/${annasFile}`, { leftOn: addDays(today, -1) })
     expect(await running()).toEqual([])
     await send('patch', `/people/${annasFile}`, { leftOn: null })
+  })
+})
+
+/**
+ * The certificate of a qualification (opengewerk#802, ADR 0012): a file of
+ * the store, which the qualification names with the name it was chosen
+ * under, read back under the right of the files of the people and not from
+ * the files every role reads.
+ */
+describe('the certificate of a qualification', () => {
+  const certificate = Buffer.from('%PDF-1.7\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n')
+  const name = 'unterweisung-psaga-2026.pdf'
+
+  function hashOf(bytes: Buffer): string {
+    return createHash('sha256').update(bytes).digest('hex')
+  }
+
+  async function upload(bytes: Buffer, who = owner) {
+    await http()
+      .put(`/files/${hashOf(bytes)}`)
+      .set('x-test-identity', who)
+      .set('Content-Type', 'application/octet-stream')
+      .set('X-Media-Type', 'application/pdf')
+      .send(bytes)
+      .expect(200)
+
+    return hashOf(bytes)
+  }
+
+  function read(qualificationId: string, who = owner) {
+    return http()
+      .get(`/people/${annasFile}/qualifications/${qualificationId}/certificate`)
+      .set('x-test-identity', who)
+      .buffer(true)
+      .parse(binary)
+  }
+
+  let held = ''
+
+  beforeAll(async () => {
+    held = (
+      await send('post', `/people/${annasFile}/qualifications`, {
+        kindKey: 'core.work_at_height',
+        validUntil: addDays(today, 400),
+        certificateSha256: await upload(certificate),
+        certificateName: name,
+      })
+    ).id
+  })
+
+  it('is kept by the owner and read again by the name it was chosen under', async () => {
+    const answer = await read(held).expect(200)
+
+    expect(answer.headers['content-type']).toContain('application/pdf')
+    expect(answer.headers['content-disposition']).toBe(dispositionFor('application/pdf', name))
+    expect(answer.headers['cache-control']).toBe('no-store')
+    expect(Buffer.from(answer.body as Buffer).equals(certificate)).toBe(true)
+
+    const file = (await get(`/people/${annasFile}`)) as unknown as {
+      qualifications: { id: string; certificateName: string | null }[]
+    }
+
+    expect(file.qualifications.find((each) => each.id === held)?.certificateName).toBe(name)
+  })
+
+  it('is put to a qualification when it is changed as well', async () => {
+    const other = Buffer.from('%PDF-1.7\n% zweiter Nachweis\n%%EOF\n')
+    const added = await send('post', `/people/${annasFile}/qualifications`, {
+      kindKey: 'core.driving_licence',
+    })
+
+    await read(added.id).expect(404)
+    await send('patch', `/people/${annasFile}/qualifications/${added.id}`, {
+      certificateSha256: await upload(other),
+      certificateName: 'fuehrerschein.pdf',
+    })
+
+    const answer = await read(added.id).expect(200)
+
+    expect(Buffer.from(answer.body as Buffer).equals(other)).toBe(true)
+  })
+
+  it('takes the file it replaces out of the store, unless another qualification still names it', async () => {
+    async function stored(hash: string): Promise<number> {
+      const { rows } = await admin.query<{ n: number }>(
+        'select count(*)::int as n from files where tenant_id = $1 and sha256 = $2',
+        [north.id, hash],
+      )
+
+      return rows[0]?.n ?? 0
+    }
+    async function added(bytes: Buffer, fileName: string): Promise<string> {
+      return (
+        await send('post', `/people/${annasFile}/qualifications`, {
+          kindKey: 'core.driving_licence',
+          certificateSha256: await upload(bytes),
+          certificateName: fileName,
+        })
+      ).id
+    }
+
+    const first = Buffer.from('%PDF-1.7\n% erster Nachweis\n%%EOF\n')
+    const replacing = Buffer.from('%PDF-1.7\n% neuer Nachweis\n%%EOF\n')
+    const shared = Buffer.from('%PDF-1.7\n% Nachweis für zwei\n%%EOF\n')
+    const replaced = await added(first, 'erster.pdf')
+    const takenOff = await added(shared, 'fuer-zwei.pdf')
+    const keeping = await added(shared, 'fuer-zwei.pdf')
+
+    await send('patch', `/people/${annasFile}/qualifications/${replaced}`, {
+      certificateSha256: await upload(replacing),
+      certificateName: 'neuer.pdf',
+    })
+    await send('patch', `/people/${annasFile}/qualifications/${takenOff}`, {
+      certificateSha256: null,
+      certificateName: null,
+    })
+
+    expect(await stored(hashOf(first))).toBe(0)
+    expect(await stored(hashOf(replacing))).toBe(1)
+    expect(await stored(hashOf(shared))).toBe(1)
+    await read(takenOff).expect(404)
+    expect(Buffer.from((await read(keeping).expect(200)).body as Buffer).equals(shared)).toBe(true)
+  })
+
+  it.each([
+    ['the office', office],
+    ['a technician', technician],
+    ['the technician whose file it is', anna],
+    ['somebody of the office by their account', britta],
+  ])('is not read by %s', async (_who, who) => {
+    await read(held, who).expect(403)
+  })
+
+  it('is shown as there to the person whose file it is, in their own file', async () => {
+    const mine = (await get('/people/mine', anna)) as unknown as {
+      qualifications: { id: string; certificateName: string | null }[]
+    }
+
+    expect(mine.qualifications.find((each) => each.id === held)?.certificateName).toBe(name)
+  })
+
+  it('names a file of this business alone', async () => {
+    const theirs = Buffer.from('%PDF-1.7\n% Nachweis aus Süd\n%%EOF\n')
+
+    await upload(theirs, elsewhere)
+
+    const refused = await send(
+      'post',
+      `/people/${annasFile}/qualifications`,
+      { kindKey: 'core.driving_licence', certificateSha256: hashOf(theirs), certificateName: name },
+      owner,
+      400,
+    )
+
+    expect(refused.message).toBe(
+      'Diese Datei liegt nicht im Speicher dieses Betriebs. Laden Sie den Nachweis noch einmal hoch.',
+    )
+    const changed = await send(
+      'patch',
+      `/people/${annasFile}/qualifications/${held}`,
+      { certificateSha256: hashOf(theirs), certificateName: name },
+      owner,
+      400,
+    )
+
+    expect(changed.message).toBe(refused.message)
+  })
+
+  it('is a file with its name, or none', async () => {
+    const refused = await send(
+      'post',
+      `/people/${annasFile}/qualifications`,
+      { kindKey: 'core.driving_licence', certificateSha256: hashOf(certificate) },
+      owner,
+      400,
+    )
+
+    expect(refused.message).toBe('Ein Nachweis ist eine Datei mit ihrem Namen.')
   })
 })
 

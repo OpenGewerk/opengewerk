@@ -34,7 +34,12 @@ describe('the tables of the qualifications', () => {
       ]),
     )
     expect(getTableConfig(qualifications).checks.map((each) => each.name)).toEqual(
-      expect.arrayContaining(['qualifications_one_kind', 'qualifications_certificate_is_a_hash']),
+      expect.arrayContaining([
+        'qualifications_one_kind',
+        'qualifications_certificate_is_a_hash',
+        'qualifications_certificate_named',
+        'qualifications_certificate_name_fits',
+      ]),
     )
     expect(getTableConfig(qualificationKinds).checks.map((each) => each.name)).toEqual(
       expect.arrayContaining(['qualification_kinds_level_known']),
@@ -46,6 +51,7 @@ describe('the tables of the qualifications', () => {
         'own_kind_id',
         'valid_until',
         'certificate_sha256',
+        'certificate_name',
       ]),
     )
   })

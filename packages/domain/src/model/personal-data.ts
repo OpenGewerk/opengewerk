@@ -309,6 +309,7 @@ export const personalDataCatalogue: Readonly<Record<string, PersonalData>> = {
     'valid_until',
     'note',
     'certificate_sha256',
+    'certificate_name',
   ),
   second_factor_changes: ofPerson('user_id'),
   secrets: { about: ['customer'], columns: ['record_id', 'sealed'] },
