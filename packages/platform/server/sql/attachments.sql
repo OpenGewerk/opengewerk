@@ -114,9 +114,13 @@ $$;--> statement-breakpoint
 -- the chain anyway, and a second lock beside it could be taken the other way
 -- round and leave two transactions waiting for each other.
 --
--- SECURITY DEFINER because the application role may not touch the chain, and
--- only for the tenant of the transaction, so that nobody holds up the writes
--- of another tenant. The row is created on first use, as the writer does.
+-- The counter of the sync is locked first and the chain after it, the order a
+-- change of a row that travels takes them in (`stamp_sync_columns` before
+-- `record_change`), so that the lock never waits for a transaction that waits
+-- for it. SECURITY DEFINER because the application role may touch neither,
+-- and only for the tenant of the transaction, so that nobody holds up the
+-- writes of another tenant. The rows are created on first use, as the
+-- writers do.
 CREATE FUNCTION "file_naming_lock"(p_tenant uuid) RETURNS void
 	LANGUAGE plpgsql
 	SECURITY DEFINER
@@ -127,6 +131,10 @@ BEGIN
 		RAISE EXCEPTION 'Gesperrt wird nur für den Mandanten der Transaktion.'
 			USING ERRCODE = 'OG001';
 	END IF;
+
+	INSERT INTO public.sync_sequences (tenant_id)
+	VALUES (p_tenant)
+	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();
 
 	INSERT INTO public.audit_chains (tenant_id)
 	VALUES (p_tenant)
@@ -140,8 +148,9 @@ $$;--> statement-breakpoint
 -- foundation does not know where an application keeps a file in a value; an
 -- application that does defines `application_file_named_by_a_value(uuid, text)`
 -- in a migration of its own and answers there. Without it, no value names a
--- file. The chain of the tenant is locked first, as `file_naming_lock` does,
--- so that the answer includes a name written by a transaction that held it.
+-- file. The counter and the chain of the tenant are locked first, in the
+-- order `file_naming_lock` takes them, so that the answer includes a name
+-- written by a transaction that held them.
 CREATE FUNCTION "file_named_by_a_value"(p_tenant uuid, p_hash text) RETURNS boolean
 	LANGUAGE plpgsql
 	VOLATILE
@@ -150,6 +159,10 @@ AS $$
 DECLARE
 	named boolean;
 BEGIN
+	INSERT INTO public.sync_sequences (tenant_id)
+	VALUES (p_tenant)
+	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();
+
 	INSERT INTO public.audit_chains (tenant_id)
 	VALUES (p_tenant)
 	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();

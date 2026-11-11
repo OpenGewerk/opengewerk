@@ -115,6 +115,45 @@ describe('the values that name a file', () => {
     }
   })
 
+  it('are locked in the order a change of a row that travels takes the locks, so that nothing waits in a circle', async () => {
+    const tenant = newId<'tenant'>()
+
+    await admin.query("insert into tenants (id, name) values ($1, 'Elektro Süd GmbH')", [tenant])
+
+    const writing = await admin.connect()
+    const naming = await admin.connect()
+
+    try {
+      // A change of a row that travels: stamped first, which locks the counter.
+      await writing.query('begin')
+      await writing.query("select set_config('app.tenant_id', $1, true)", [tenant])
+      await writing.query('select public.next_sync_sequence($1)', [tenant])
+
+      // About to name a file, and to write a row that travels after.
+      await naming.query('begin')
+      await naming.query("select set_config('app.tenant_id', $1, true)", [tenant])
+
+      const named = naming
+        .query('select public.file_naming_lock($1)', [tenant])
+        .then(() => naming.query('select public.next_sync_sequence($1)', [tenant]))
+
+      await waitingForALock(admin, named)
+
+      // The change is logged: the chain, which the lock must not hold yet.
+      await writing.query(
+        `insert into audit_chains (tenant_id) values ($1)
+         on conflict (tenant_id) do update set updated_at = now()`,
+        [tenant],
+      )
+      await writing.query('commit')
+      await named
+      await naming.query('commit')
+    } finally {
+      writing.release()
+      naming.release()
+    }
+  })
+
   it('are locked only for the tenant of the transaction', async () => {
     const tenant = newId<'tenant'>()
     const other = newId<'tenant'>()

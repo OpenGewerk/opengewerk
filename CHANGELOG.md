@@ -145,9 +145,10 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 - Eine Datei geht nur noch endgültig, wenn weder ein Fremdschlüssel noch ein Wert sie nennt, auf jedem Weg, der eine
   Datei nimmt (#911): die Fassungen der Ablage, wenn ein Dokument mit seinem Kunden geht, und die Dateien eines
   Belegs fragen jetzt wie die Nachweise einer Qualifikation, ob ein DATANORM-Import sie als Datei oder ein
-  festgeschriebener Beleg sie als Logo nennt. Dazu sperrt jede solche Prüfung die Kette des Änderungsprotokolls des
-  Betriebs, und der Import und das Festschreiben eines Belegs nehmen dieselbe Sperre, bevor sie eine Datei lesen,
-  die sie gleich per Wert nennen; ist das alte Logo im selben Augenblick endgültig gegangen, wird der Beleg ohne
+  festgeschriebener Beleg sie als Logo nennt. Dazu sperrt jede solche Prüfung den Zähler des Abgleichs und die
+  Kette des Änderungsprotokolls des Betriebs, in der Reihenfolge, in der jede Änderung sie nimmt, und der Import
+  und das Festschreiben eines Belegs nehmen dieselbe Sperre, bevor sie eine Datei lesen, die sie gleich per Wert
+  nennen; ist das alte Logo im selben Augenblick endgültig gegangen, wird der Beleg ohne
   Logo festgeschrieben. Im Fundament stehen dafür `file_named_by_a_value` mit dem Haken
   `application_file_named_by_a_value` der Anwendung und `file_naming_lock` im Baustein `attachments.sql`
   (Migration 0140). Warum: Lag das Logo des Briefkopfs zugleich als Anhang bei einem Kunden, der nach dem
