@@ -35,11 +35,17 @@ describe('the paths of the files of an answer', () => {
         { mediaType: 'application/pdf', name: 'ä'.repeat(100_000) },
         { mediaType: 'application/pdf', name: `${'C'.repeat(197)}.pdf` },
         { mediaType: 'application/octet-stream', name: `${'D'.repeat(197)}.docx` },
+        { mediaType: 'application/pdf', name: `${'B'.repeat(194)} 12.05.2026 Lena` },
+        { mediaType: 'text/plain', name: `${'B'.repeat(194)} 12.05.2026 Lena` },
+        { mediaType: 'application/pdf', name: `${'C'.repeat(195)}/${'D'.repeat(100)}.pdf` },
+        { mediaType: 'text/plain', name: `${'E'.repeat(194)}.bc.056 Ende` },
       ]),
     )
 
     // The sync lets a name of 100 000 characters through (opengewerk#916);
-    // what is cut is the stem, and the extension stays.
+    // what is cut is the stem, and the extension stays. A name without one
+    // gets none from the cut ("12.05"), and the one of its media type comes
+    // behind it; a cut behind a slash leaves no ".pdf" on its own.
     expect(paths).toEqual([
       'dateien/Datei',
       'dateien/x',
@@ -47,6 +53,10 @@ describe('the paths of the files of an answer', () => {
       `dateien/${'ä'.repeat(200)}.pdf`,
       `dateien/${'C'.repeat(196)}.pdf`,
       `dateien/${'D'.repeat(195)}.docx`,
+      `dateien/${'B'.repeat(194)} 12.pdf`,
+      `dateien/${'B'.repeat(194)} 12`,
+      `dateien/${'C'.repeat(195)}.pdf`,
+      `dateien/${'E'.repeat(194)}`,
     ])
 
     const names = ['Auskunft.pdf', 'daten.json', ...paths]

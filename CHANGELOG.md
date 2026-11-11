@@ -153,9 +153,11 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   `dateien` selbst ergeben, neben dem Ordner, sein Hinweis den Namen eines anderen bekommen, und an `dateien/...`
   scheiterte das Entpacken unter Windows. Für den Pfad wird ein Name auf 200 Zeichen gekürzt, seine Endung bleibt,
   und das ZIP lehnt einen Namen über 65 535 Byte ab, statt sein Längenfeld überlaufen zu lassen: Der Abgleich lässt
-  Namen bis 100 000 Zeichen durch, und ein solcher Name hätte das ZIP der Auskunft unlesbar gemacht. Gleiche Namen
-  erkennt das ZIP in Großbuchstaben, wie Windows sie vergleicht; in Kleinbuchstaben hing das Sigma am Wortende vom
-  Zusammenhang ab, und ein Hinweis trug nicht immer den Namen seiner Datei.
+  Namen bis 100 000 Zeichen durch, und ein solcher Name hätte das ZIP der Auskunft unlesbar gemacht. Hatte der Name
+  keine Endung, erzeugt auch das Kürzen keine, und die Endung seiner Art kommt dahinter. Gleiche Namen erkennt das ZIP
+  in Großbuchstaben statt in Kleinbuchstaben: in Kleinbuchstaben hing das Sigma am Wortende vom Zusammenhang ab, und
+  ein Hinweis trug nicht immer den Namen seiner Datei. In Großbuchstaben gelten auch `ß` und `SS` als gleich, das
+  gibt höchstens ein `(2)` mehr.
 - Jede protokollierte Änderung eines Betriebs sperrt jetzt zuerst den Zähler des Abgleichs und dann die Kette des
   Änderungsprotokolls, in derselben Reihenfolge wie jede Änderung einer abgeglichenen Zeile (#914, Migration 0142).
   Bis jetzt nahm eine Änderung an einer Tabelle ohne Abgleich nur die Kette; das Löschen nach dem Löschkonzept

@@ -73,8 +73,13 @@ const extensionAtEnd = /\.[a-z0-9]{2,5}$/i
 
 /**
  * A cleaned name cut to `nameCharacters` by characters, so that no half of
- * one is left, its extension kept: "Angebot …x.pdf" and not "Angebot …x.pd",
- * which would pass for one of its own.
+ * one is left, and cleaned again: its extension kept, "Angebot …x.pdf" and
+ * not "Angebot …x.pd", which would pass for one of its own. Where the name
+ * had none, the cut makes none either: "Begehung 12.05.2026" cut after "12.05"
+ * would pass for a file of the kind ".05", and the one of its media type
+ * would not come behind it; and "a.bc.05" loses both, not only ".05". The
+ * stem is cleaned before the extension comes back, so that a cut behind a
+ * slash leaves no ".pdf" on its own.
  */
 function cut(name: string): string {
   const characters = [...name]
@@ -84,8 +89,14 @@ function cut(name: string): string {
   }
 
   const extension = extensionAtEnd.exec(name)?.[0] ?? ''
+  let stem = cleanName(characters.slice(0, nameCharacters - extension.length).join(''))
 
-  return cleanName(characters.slice(0, nameCharacters - extension.length).join('') + extension)
+  // Each round takes three characters at least, of no more than 200.
+  while (extension === '' && extensionAtEnd.test(stem)) {
+    stem = cleanName(stem.replace(extensionAtEnd, ''))
+  }
+
+  return `${stem}${extension}`
 }
 
 /** The folder of the stored files: every path `filePaths` gives starts in it. */
@@ -118,10 +129,11 @@ export function filePaths(report: AccessReport): string[] {
     // Cleaned and cut before it goes into the folder and before its
     // extension (opengewerk#916): a name of only dots or slashes would leave
     // "dateien" itself as the path, beside the folder and not in it, or
-    // "dateien/...", and a PDF called ".." would be "...pdf".
-    const named = cut(cleanName(file.name))
+    // "dateien/...", and a PDF called ".." would be "...pdf". Whether the
+    // name has an extension of its own is asked before the cut.
+    const cleaned = cleanName(file.name)
 
-    return unique(`${filesFolder}/${named}${extensionOf(file.mediaType, named)}`)
+    return unique(`${filesFolder}/${cut(cleaned)}${extensionOf(file.mediaType, cleaned)}`)
   })
 }
 

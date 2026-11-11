@@ -111,10 +111,12 @@ export function cleanName(raw: string): string {
 }
 
 /**
- * A name as the archive compares it: in capitals, as Windows does. Lower case
- * would not do, it writes a sigma at the end of a word otherwise than inside
- * one, and "aΣ" and "aσ" stayed two names until ".txt" came after them
- * (opengewerk#916).
+ * A name as the archive compares it: in capitals, close to Windows, which
+ * compares in capitals one character at a time. Where the two differ, this
+ * takes more names for the same ("ß" and "SS"), which gives one "(2)" more
+ * and never two files one name. Lower case would not do: it writes a sigma at
+ * the end of a word otherwise than inside one, and "aΣ" and "aσ" stayed two
+ * names until ".txt" came after them (opengewerk#916).
  */
 function folded(name: string): string {
   return name.toUpperCase()
