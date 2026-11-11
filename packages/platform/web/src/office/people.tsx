@@ -1090,6 +1090,10 @@ function QualificationDialog({
   // The certificate chosen now, which replaces the one kept (opengewerk#802).
   const [chosen, setChosen] = useState<File | null>(null)
   const picker = useRef<HTMLInputElement>(null)
+  // A second press while the file is still on its way would store it again
+  // and, when adding, add the qualification twice.
+  const saving = useRef(false)
+  const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
   const options = [
     { value: '', label: 'Bitte wählen' },
@@ -1118,6 +1122,13 @@ function QualificationDialog({
   async function save(event: FormEvent) {
     event.preventDefault()
 
+    if (saving.current) {
+      return
+    }
+
+    saving.current = true
+    setBusy(true)
+
     const fields = {
       kindKey: kind.startsWith('key:') ? kind.slice(4) : null,
       ownKindId: kind.startsWith('own:') ? kind.slice(4) : null,
@@ -1136,6 +1147,9 @@ function QualificationDialog({
       onClose()
     } catch (error) {
       setProblem(problemOf(error))
+    } finally {
+      saving.current = false
+      setBusy(false)
     }
   }
 
@@ -1281,7 +1295,16 @@ function QualificationDialog({
               tabIndex={-1}
               onChange={(event) => {
                 const picked = event.target.files?.[0] ?? null
-                const tooLarge = picked === null ? null : fileSizeProblem(picked.size)
+
+                // Empty again, so that the same file chosen once more is
+                // checked once more.
+                event.target.value = ''
+
+                if (picked === null) {
+                  return
+                }
+
+                const tooLarge = fileSizeProblem(picked.size)
 
                 setProblem(tooLarge)
                 setChosen(tooLarge === null ? picked : null)
@@ -1300,7 +1323,12 @@ function QualificationDialog({
             </Button>
           )}
           <Button onClick={onClose}>Abbrechen</Button>
-          <Button type="submit" tone="primary" icon={qualification === null ? Plus : Check}>
+          <Button
+            type="submit"
+            tone="primary"
+            icon={qualification === null ? Plus : Check}
+            disabled={busy}
+          >
             {qualification === null ? 'Hinzufügen' : 'Speichern'}
           </Button>
         </DialogActions>

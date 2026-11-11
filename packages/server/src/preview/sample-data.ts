@@ -60,6 +60,43 @@ async function stored(base: string, bytes: Buffer, mediaType: string): Promise<s
   return sha256
 }
 
+/**
+ * A PDF of one page with one line of text that a viewer opens, built by hand
+ * so that the sample data need no PDF engine (opengewerk#802). The line is
+ * printable ASCII without parentheses or backslashes, so that every character
+ * is one byte and needs no escape.
+ */
+function onePagePdf(line: string): Buffer {
+  if (!/^[\x20-\x27\x2a-\x5b\x5d-\x7e]*$/.test(line)) {
+    throw new Error('The sample PDF takes printable ASCII without parentheses or backslashes')
+  }
+
+  const content = `BT /F1 16 Tf 72 760 Td (${line}) Tj ET`
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+  ]
+  const offsets: number[] = []
+  let pdf = '%PDF-1.7\n'
+
+  objects.forEach((object, index) => {
+    offsets.push(pdf.length)
+    pdf += `${String(index + 1)} 0 obj\n${object}\nendobj\n`
+  })
+
+  const table = pdf.length
+
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`
+  pdf += offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\n`
+  pdf += `startxref\n${String(table)}\n%%EOF\n`
+
+  return Buffer.from(pdf, 'latin1')
+}
+
 function idOf(answer: Answer): string {
   const id = answer['id']
 
@@ -1438,7 +1475,7 @@ async function plantPeople(base: string, today: IsoDate): Promise<void> {
       // The certificate the board "Akte" draws (opengewerk#802).
       certificateSha256: await stored(
         base,
-        Buffer.from('%PDF-1.7\n% Unterweisung PSA gegen Absturz\n%%EOF\n'),
+        onePagePdf('Unterweisung PSA gegen Absturz'),
         'application/pdf',
       ),
       certificateName: 'unterweisung-psaga-2026.pdf',

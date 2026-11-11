@@ -355,6 +355,33 @@ describe('the certificate of a qualification', () => {
     ).toBeLessThan(calls.findIndex((call) => call.method === 'POST'))
   })
 
+  it('is stored and named once when the button is pressed again while it travels', async () => {
+    serverSays('POST', '/people/anna/qualifications', { id: 'q-new' }, 201)
+    render(inQueries(<PersonScreen {...screenProps} personId="anna" mayWrite />))
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Qualifikation hinzufügen' }))
+
+    const dialog = screen.getByRole('dialog')
+
+    await userEvent.selectOptions(within(dialog).getByLabelText(/^Art/), 'key:core.work_at_height')
+    await userEvent.upload(
+      within(dialog).getByLabelText('Datei des Nachweises'),
+      new File([bytes], 'unterweisung-psaga-2026.pdf', { type: 'application/pdf' }),
+    )
+
+    const add = within(dialog).getByRole('button', { name: 'Hinzufügen' })
+
+    // Twice before React has drawn the first press.
+    add.click()
+    add.click()
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+    expect(sent('POST', '/people/anna/qualifications')).toHaveLength(1)
+    expect(calls.filter((call) => call.method === 'PUT')).toHaveLength(1)
+  })
+
   it('keeps the one there when no other is chosen, and sends none', async () => {
     render(inQueries(<PersonScreen {...screenProps} personId="anna" mayWrite />))
 
