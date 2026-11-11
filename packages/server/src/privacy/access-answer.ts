@@ -88,14 +88,13 @@ export function filePaths(report: AccessReport): string[] {
   }
 
   return report.files.map((file) => {
-    const extension = extensionOf(file.mediaType, file.name)
+    // Cleaned before it goes into the folder and before its extension
+    // (opengewerk#916): a name of only dots or slashes would leave "dateien"
+    // itself as the path, beside the folder and not in it, or "dateien/...",
+    // and a PDF called ".." would be "...pdf".
+    const named = cleanName(file.name)
 
-    const named = file.name.endsWith(extension) ? file.name : `${file.name}${extension}`
-
-    // Cleaned before it goes into the folder (opengewerk#916): a name of only
-    // dots or slashes would leave "dateien" itself as the path, beside the
-    // folder and not in it, and its note could take the name of another.
-    return unique(`${filesFolder}/${cleanName(named)}`)
+    return unique(`${filesFolder}/${named}${extensionOf(file.mediaType, named)}`)
   })
 }
 
@@ -214,7 +213,7 @@ export function accessPrintJob(answer: AccessAnswer): Required<Omit<PrintJob, 's
   const mails = report.tables.get('mail_outbox')?.length ?? 0
   const paths = filePaths(report)
   const intro = `<div class="box"><div class="box-title">Was diese Auskunft enthält</div>${text(
-    `Sie haben am ${accessDay(answer.request.receivedOn)} gefragt, welche Daten ${answer.keeper.name} über Sie gespeichert hat. Hier steht alles, was der Betrieb zu Ihnen als ${accessSubjectLabel[subject]} führt, Stand ${accessDay(answer.on)}. Dieselben Daten liegen im ZIP als daten.json zum Übertragen in eine andere Anwendung (Art. 20 DSGVO)${paths.length === 0 ? '' : ', die gespeicherten Dateien im Ordner dateien'}.`,
+    `Sie haben am ${accessDay(answer.request.receivedOn)} gefragt, welche Daten ${answer.keeper.name} über Sie gespeichert hat. Hier steht alles, was der Betrieb zu Ihnen als ${accessSubjectLabel[subject]} führt, Stand ${accessDay(answer.on)}. Dieselben Daten liegen im ZIP als daten.json zum Übertragen in eine andere Anwendung (Art. 20 DSGVO)${paths.length === 0 ? '' : `, die gespeicherten Dateien im Ordner dateien. Kann der Betrieb eine davon nicht mehr lesen, liegt an ihrer Stelle ein Hinweis im Ordner „${missingFolder}“`}.`,
   )}</div>`
 
   const tables = [...report.tables.entries()]

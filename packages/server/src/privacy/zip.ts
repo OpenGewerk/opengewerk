@@ -66,8 +66,10 @@ function unfit(character: string): boolean {
 
 /**
  * A name as the archive may hold it: backslashes become slashes, slashes
- * separate folders, empty parts and dots do not survive, and a name with
- * nothing left is "Datei".
+ * separate folders, and a part loses the dots and spaces at its end, which
+ * Windows drops when it unpacks (opengewerk#916); "Foto." would be "Foto"
+ * there and "..." the folder it stands in. A part with nothing left does not
+ * survive, "." and ".." among them, and a name with nothing left is "Datei".
  */
 export function cleanName(raw: string): string {
   const name = raw
@@ -77,9 +79,10 @@ export function cleanName(raw: string): string {
       [...part]
         .map((character) => (unfit(character) ? '_' : character))
         .join('')
-        .trim(),
+        .trim()
+        .replace(/[. ]+$/, ''),
     )
-    .filter((part) => part !== '' && part !== '.' && part !== '..')
+    .filter((part) => part !== '')
     .join('/')
 
   return name === '' ? 'Datei' : name

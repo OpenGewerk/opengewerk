@@ -42,6 +42,16 @@ describe('the names in an archive', () => {
   it('give a nameless entry a name', () => {
     expect(uniqueNames(['', '..'])).toEqual(['Datei', 'Datei (2)'])
   })
+
+  it('lose the dots and spaces Windows drops at the end of a part', () => {
+    expect(uniqueNames(['Foto.', 'Foto', '...', 'a. ./b .pdf', 'dateien/. .'])).toEqual([
+      'Foto',
+      'Foto (2)',
+      'Datei',
+      'a/b .pdf',
+      'dateien',
+    ])
+  })
 })
 
 describe('the moment of an archive', () => {
