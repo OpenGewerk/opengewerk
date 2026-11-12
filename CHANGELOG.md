@@ -159,7 +159,9 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   in Großbuchstaben statt in Kleinbuchstaben: in Kleinbuchstaben hing das Sigma am Wortende vom Zusammenhang ab, und
   ein Hinweis trug nicht immer den Namen seiner Datei. In Großbuchstaben gelten auch `ß` und `SS` als gleich, das
   gibt höchstens ein `(2)` mehr. Ein halbes Zeichen (ein Surrogat ohne seine andere Hälfte) wird `_`, weil das ZIP es
-  als U+FFFD und `daten.json` es als `\ud800` geschrieben hätte.
+  als U+FFFD und `daten.json` es als `\ud800` geschrieben hätte. Ein Schrägstrich in einem Dateinamen wird `_`, statt
+  im ZIP einen Ordner anzulegen (#919): `a` und `a/b.pdf` machten `a` zugleich zur Datei und zum Ordner, und das ZIP
+  ließ sich nicht vollständig entpacken.
 - Jede protokollierte Änderung eines Betriebs sperrt jetzt zuerst den Zähler des Abgleichs und dann die Kette des
   Änderungsprotokolls, in derselben Reihenfolge wie jede Änderung einer abgeglichenen Zeile (#914, Migration 0142).
   Bis jetzt nahm eine Änderung an einer Tabelle ohne Abgleich nur die Kette; das Löschen nach dem Löschkonzept

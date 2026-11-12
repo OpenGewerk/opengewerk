@@ -122,7 +122,7 @@ function cut(name: string): string {
   return `${stem}${extension}`
 }
 
-/** The folder of the stored files: every path `filePaths` gives starts in it. */
+/** The folder of the stored files: every path `filePaths` gives is one name in it. */
 const filesFolder = 'dateien'
 
 /**
@@ -153,8 +153,10 @@ export function filePaths(report: AccessReport): string[] {
     // extension (opengewerk#916): a name of only dots or slashes would leave
     // "dateien" itself as the path, beside the folder and not in it, or
     // "dateien/...", and a PDF called ".." would be "...pdf". Whether the
-    // name has an extension of its own is asked before the cut.
-    const cleaned = cleanName(file.name)
+    // name has an extension of its own is asked before the cut. Its folders
+    // become part of the name (opengewerk#919): "a" and "a/b.pdf" would make
+    // "a" a file and a folder at once, and the archive could not be unpacked.
+    const cleaned = cleanName(file.name).replaceAll('/', '_')
 
     return unique(`${filesFolder}/${cut(cleaned)}${extensionOf(file.mediaType, cleaned)}`)
   })
@@ -424,11 +426,10 @@ const noteName = 'fehlt.txt'
 /**
  * Where the note on a file the store lost lies: in the folder of the notes,
  * in a folder of the path the file has in the folder of the files,
- * "fehlende Dateien/Bericht.pdf/fehlt.txt". Every path starts in the folder of
- * the files and the paths are unique, and so are the notes. A note is the
- * folder of another only where a path is the folder of another (#919): with
- * ".txt" behind its path, the note of "a" would be "a.txt", the folder of the
- * note of "a.txt/b".
+ * "fehlende Dateien/Bericht.pdf/fehlt.txt". Every path is one name in the
+ * folder of the files and the paths are unique, and so are the notes; no note
+ * is the folder of another. With ".txt" behind its path, the note of "a" would
+ * have been "a.txt", the folder of the note of "a.txt/b".
  */
 function missingNote(path: string): string {
   return `${missingFolder}/${path.slice(filesFolder.length + 1)}/${noteName}`

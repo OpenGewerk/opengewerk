@@ -37,7 +37,7 @@ describe('the paths of the files of an answer', () => {
         { mediaType: 'application/octet-stream', name: `${'D'.repeat(197)}.docx` },
         { mediaType: 'application/pdf', name: `${'B'.repeat(194)} 12.05.2026 Lena` },
         { mediaType: 'text/plain', name: `${'B'.repeat(194)} 12.05.2026 Lena` },
-        { mediaType: 'application/pdf', name: `${'C'.repeat(195)}/${'D'.repeat(100)}.pdf` },
+        { mediaType: 'application/pdf', name: `${'C'.repeat(195)} ${'D'.repeat(100)}.pdf` },
         { mediaType: 'text/plain', name: `${'E'.repeat(194)}.bc.056 Ende` },
         { mediaType: 'image/png', name: String.fromCodePoint(0x1f600).repeat(1000) },
       ]),
@@ -46,7 +46,7 @@ describe('the paths of the files of an answer', () => {
     // The sync lets a name of 100 000 characters through (opengewerk#916);
     // what is cut is the stem, to 200 bytes, and the extension stays. A name
     // without one gets none from the cut ("12.05"), and the one of its media
-    // type comes behind it; a cut behind a slash leaves no ".pdf" on its own.
+    // type comes behind it; a cut behind a space leaves no " .pdf".
     expect(paths).toEqual([
       'dateien/Datei',
       'dateien/x',
@@ -90,20 +90,29 @@ describe('the paths of the files of an answer', () => {
     expect(uniqueNames(names)).toEqual(names)
   })
 
-  it('make no note the folder of another where no path is the folder of another', async () => {
-    // With ".txt" behind the path, the note of "a" was "a.txt", the folder of
-    // the note of "a.txt/b", and the two could not both be unpacked.
-    const report = reportOf([
-      { mediaType: 'text/plain', name: 'a' },
-      { mediaType: 'text/plain', name: 'a.txt/b' },
-    ])
-    const notes = await notesOf(report)
+  it('make no path and no note a file and a folder at once', async () => {
+    // "a" and "a/b.pdf" made "a" both (opengewerk#919), and with ".txt" behind
+    // the path the note of "a" was "a.txt", the folder of the note of "a.txt/b".
+    const names = ['a', 'a/b.pdf', 'a/fehlt.txt', 'a.txt/b']
 
-    expect(filePaths(report)).toEqual(['dateien/a', 'dateien/a.txt/b'])
-    expect(notes).toEqual(['fehlende Dateien/a/fehlt.txt', 'fehlende Dateien/a.txt/b/fehlt.txt'])
+    for (const order of [names, [...names].reverse()]) {
+      const report = reportOf(order.map((name) => ({ mediaType: 'text/plain', name })))
+      const paths = filePaths(report)
+      const notes = await notesOf(report)
 
-    for (const note of notes) {
-      expect(notes.filter((other) => other.startsWith(`${note}/`))).toEqual([])
+      expect([...paths].sort()).toEqual([
+        'dateien/a',
+        'dateien/a.txt_b',
+        'dateien/a_b.pdf',
+        'dateien/a_fehlt.txt',
+      ])
+      expect(notes).toEqual(
+        paths.map((path) => `fehlende ${path.replace('dateien/', 'Dateien/')}/fehlt.txt`),
+      )
+
+      for (const name of [...paths, ...notes]) {
+        expect([...paths, ...notes].filter((other) => other.startsWith(`${name}/`))).toEqual([])
+      }
     }
   })
 })
