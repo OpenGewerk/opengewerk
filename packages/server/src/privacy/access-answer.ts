@@ -255,7 +255,10 @@ function bounded(name: string): string {
   }
 
   const tail = name.slice(end - rawEnd, end)
-  const lowHalf = tail.charCodeAt(0) >= 0xdc00 && tail.charCodeAt(0) <= 0xdfff
+  // Only where something lies between them: an end right behind the start
+  // goes on a character whole.
+  const lowHalf =
+    end - rawEnd > rawStart && tail.charCodeAt(0) >= 0xdc00 && tail.charCodeAt(0) <= 0xdfff
 
   return `${name.slice(0, rawStart)}${lowHalf ? `_${tail.slice(1)}` : tail}`
 }

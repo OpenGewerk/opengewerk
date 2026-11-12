@@ -142,6 +142,16 @@ describe('the raw names of the files of an answer (opengewerk#929)', () => {
     }
     expect(dotted).toMatch(/^dateien\/b+\.zip$/)
     expect(seams).toBe(`dateien/__${'c'.repeat(27)}.pdf`)
+
+    // An end right behind the start keeps a character whole across them.
+    const face = String.fromCodePoint(0x1f600)
+    const [whole] = filePaths(
+      reportOf([
+        { mediaType: 'application/pdf', name: `${' '.repeat(999)}${face}${'b'.repeat(27)}.pdf ` },
+      ]),
+    )
+
+    expect(whole).toBe(`dateien/${face}${'b'.repeat(27)}.pdf`)
   })
 
   it('give way to other requests after 16 ms of work as well', async () => {
