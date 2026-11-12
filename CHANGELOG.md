@@ -162,9 +162,9 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   bräuchte, zwei Dateien tragen aber nie denselben Namen.
   Ein Name, den Windows einem Gerät vorbehält (`CON`, `NUL`, `COM1` und so weiter, auch mit Endung oder mit Leerzeichen davor), bekommt ein `_`
   dahinter, etwa `CON_.pdf`, weil Windows ihn sonst nicht anlegt. Namen, die sich nur in der Unicode-Form unterscheiden
-  (`für` aus einem oder aus zwei Zeichen, wie iPhone und Mac es schreiben), gelten als gleich, weil macOS sie beim
-  Entpacken auf einen Namen legt. Ein Zeichen, das ein Entpacker unter Windows beim Umwandeln in seine Codepage zu
-  einem Punkt, Schrägstrich oder Doppelpunkt machen könnte (etwa `／`, `．`, `¥` oder `½`), wird `_`, damit aus
+  (`für` aus einem oder aus zwei Zeichen, wie iPhone und Mac es schreiben), stehen in der Form aus einem Zeichen und
+  gelten als gleich, weil macOS sie beim Entpacken auf einen Namen legt. Ein Zeichen, das ein Entpacker unter Windows beim Umwandeln in seine Codepage zu
+  einem Punkt, Schrägstrich oder Doppelpunkt machen könnte (etwa `／`, `．`, `¥` oder `´`), wird `_`, damit aus
   `．．／` kein `../` wird, das aus dem Ordner führt. Ein halbes Zeichen (ein Surrogat ohne seine andere Hälfte) wird `_`, weil das ZIP es
   als U+FFFD und `daten.json` es als `\ud800` geschrieben hätte. Ein Schrägstrich in einem Dateinamen wird `_`, statt
   im ZIP einen Ordner anzulegen (#919): `a` und `a/b.pdf` machten `a` zugleich zur Datei und zum Ordner, und das ZIP

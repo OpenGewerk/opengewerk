@@ -104,10 +104,8 @@ describe('the names in an archive', () => {
     const decomposed = `fu${String.fromCharCode(0x308)}r.pdf`
 
     expect(composed).not.toBe(decomposed)
-    expect(uniqueNames([composed, decomposed])).toEqual([
-      composed,
-      `fu${String.fromCharCode(0x308)}r (2).pdf`,
-    ])
+    // Both are kept in one form, of one character for "ü".
+    expect(uniqueNames([composed, decomposed])).toEqual([composed, 'für (2).pdf'])
   })
 
   it('take "ẞ", "ß" and "SS" for the same name, as macOS folds them', () => {
@@ -128,6 +126,15 @@ describe('the names in an archive', () => {
       `${dotted}.pdf`,
       `i${dot} (2).pdf`,
     ])
+
+    // In capitals "ΐ" is three characters, of which one form holds two.
+    const small = String.fromCodePoint(0x390)
+    const capital = String.fromCodePoint(0x3aa, 0x301)
+
+    expect(uniqueNames([`${small}.pdf`, `${capital}.pdf`])).toEqual([
+      `${small}.pdf`,
+      `${capital} (2).pdf`,
+    ])
   })
 
   it('lose characters an unpacker could make a dot, a slash or a colon of', () => {
@@ -136,16 +143,25 @@ describe('the names in an archive', () => {
     const half = String.fromCodePoint(0xbd)
     const ratio = String.fromCodePoint(0x2236)
     const enDash = String.fromCodePoint(0x2013)
+    const acute = String.fromCodePoint(0xb4)
 
     expect(
       uniqueNames([
         `${wide}x.pdf`,
         `${yen}a${yen}b`,
-        `1${half}.pdf`,
+        `1${half} Zimmer.pdf`,
         `a${ratio}b`,
-        `Ångström ${enDash} „Test“ € 😀.pdf`,
+        `..${acute}..${acute}x.pdf`,
+        `Ångström ${enDash} „Test“ € 😀 Šimek.pdf`,
       ]),
-    ).toEqual(['______x.pdf', '_a_b', '1_.pdf', 'a_b', `Ångström ${enDash} „Test“ € 😀.pdf`])
+    ).toEqual([
+      '______x.pdf',
+      '_a_b',
+      `1${half} Zimmer.pdf`,
+      'a_b',
+      '.._.._x.pdf',
+      `Ångström ${enDash} „Test“ € 😀 Šimek.pdf`,
+    ])
   })
 
   it('come back the same when they are cleaned again', () => {

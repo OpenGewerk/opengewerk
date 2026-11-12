@@ -63,19 +63,44 @@ export function uniqueNames(names: readonly string[]): string[] {
 }
 
 /**
- * What a character beyond ASCII may not be, nor hold in its compatibility
- * form (opengewerk#916): a dot, a slash, a backslash, a colon or another
- * character Windows refuses, and the ones a Windows unpacker that turns names
- * into its code page by best fit makes one of. "／" is "/" in that form and
- * "½" is "1⁄2"; "¥" and "₩" are the backslash of Japanese and Korean code
- * pages; the others are slashes and colons of mathematics and phonetics.
+ * What a character beyond ASCII may not hold in its compatibility form
+ * (opengewerk#916): a dot, a slash, a backslash, a colon or another character
+ * of ASCII that Windows refuses. "／" is "/" in that form, "．" is ".".
  */
-const separatorsByFit = new Set([
-  ...'/.:"<>|?*',
-  String.fromCodePoint(0x5c),
-  ...String.fromCodePoint(0xa5, 0x20a9, 0x2044, 0x2215, 0x2216, 0x29f5, 0x29f8, 0x29f9),
-  ...String.fromCodePoint(0x2236, 0x2d0, 0x2f8, 0xa789, 0x589, 0x5c3),
-])
+const asciiSeparators = new Set([...'/.:"<>|?*', String.fromCodePoint(0x5c)])
+
+/**
+ * Characters beyond ASCII that a Windows unpacker which turns names into its
+ * code page by best fit makes a dot, a slash, a backslash or a colon of,
+ * checked against the character itself: "¥" and "₩" are the backslash of
+ * Japanese and Korean code pages, "´" is a slash in the Greek one, the others
+ * are slashes and colons of mathematics and phonetics. Other characters
+ * Windows refuses after best fit stay, they are part of ordinary names ("„",
+ * "∗"), and a name with one fails there as with any character the code page
+ * lacks. So do the combining acute and "Š", which only DOS code pages (860,
+ * 861, 865) make a slash or a backslash of: they are accents and letters of
+ * many names.
+ */
+const separatorsByFit = new Set(
+  String.fromCodePoint(
+    0xa5,
+    0x20a9,
+    0x2044,
+    0x2215,
+    0x2216,
+    0x29f5,
+    0x29f8,
+    0x29f9,
+    0x2236,
+    0x2d0,
+    0x2f8,
+    0xa789,
+    0x589,
+    0x5c3,
+    0xb4,
+    0x2ca,
+  ),
+)
 
 /**
  * A character no unpacker should be asked to put into a name: a control
@@ -92,7 +117,9 @@ function unfit(character: string): boolean {
     code < 0x20 ||
     '<>:"|?*'.includes(character) ||
     (character.length === 1 && code >= 0xd800 && code <= 0xdfff) ||
-    (code >= 0x80 && [...character.normalize('NFKC')].some((part) => separatorsByFit.has(part)))
+    (code >= 0x80 &&
+      (separatorsByFit.has(character) ||
+        [...character.normalize('NFKC')].some((part) => asciiSeparators.has(part))))
   )
 }
 
@@ -144,6 +171,7 @@ function withoutEnd(part: string): string {
  */
 export function cleanName(raw: string): string {
   const name = raw
+    .normalize('NFC')
     .replace(/\\/g, '/')
     .split('/')
     .map((part) =>
@@ -172,7 +200,7 @@ export function cleanName(raw: string): string {
  * capitals both are "Σ" again.
  */
 function folded(name: string): string {
-  return name.normalize('NFC').toLowerCase().toUpperCase()
+  return name.normalize('NFC').toLowerCase().toUpperCase().normalize('NFC')
 }
 
 /** Makes each name it is given unique among those it made before. */
