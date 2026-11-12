@@ -149,7 +149,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Auskunft las, fand sie dort nicht. Im eigenen Ordner kann keine gespeicherte Datei liegen, und das PDF sagt, wo die
   Hinweise liegen.
 - Die Namen im ZIP der Auskunft lassen sich auf Windows, macOS und Linux unter dem Namen entpacken, den PDF und
-  `daten.json` nennen (#916, #919). Warum: Der Abgleich lässt Dateinamen bis 100 000 Zeichen und mit beliebigen
+  `daten.json` nennen (#916, #919, #920). Warum: Der Abgleich lässt Dateinamen bis 100 000 Zeichen und mit beliebigen
   Zeichen durch, und manche davon legt ein Entpacker anders oder gar nicht an. Im Einzelnen:
   - Jeder Teil eines Namens verliert den Leerraum am Anfang und die Punkte und den Leerraum am Ende, wie Windows sie
     streicht, bevor die Endung seiner Art dazukommt: Ein Nachweis `..` als PDF heißt `Datei.pdf`, eine Datei `...`
@@ -162,7 +162,11 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
     eines Pfads unter den 255 Byte, die ext4 und macOS zulassen. Das ZIP lehnt einen Namen über 65 535 Byte ab, statt
     sein Längenfeld überlaufen zu lassen, das hätte die Auskunft unlesbar gemacht.
   - Ein Name, den Windows einem Gerät vorbehält (`CON`, `NUL`, `COM1` und so weiter, auch mit Endung oder mit
-    Leerzeichen davor), bekommt ein `_` dahinter, etwa `CON_.pdf`.
+    Leerzeichen davor), bekommt ein `_` dahinter, etwa `CON_.pdf`. Das gilt auch für einen Namen, den erst ein
+    Entpacker unter Windows beim Umwandeln in seine Codepage zu einem Gerät macht, etwa `ＣＯＮ.pdf` aus
+    Vollbreitenzeichen, `ĈON.pdf`, `ŁPT1.txt` oder einen Namen, aus dem er Akzente streicht (#920); geprüft gegen
+    die Umwandlung von Windows in 32 Codepages. Unter einem solchen Namen legte Windows die Datei je nach Fassung
+    nicht an.
   - Namen stehen in der Unicode-Form aus einem Zeichen je Buchstaben (`für`, wie iPhone und Mac es auch zerlegt
     schreiben). Gleiche Namen erkennt das ZIP erst in Klein-, dann in Großbuchstaben, so wie macOS `ẞ`, `ß` und `SS`
     gleich behandelt; ein Name bekommt dabei höchstens eine Nummer wie `(2)`, die Windows nicht bräuchte, zwei Dateien

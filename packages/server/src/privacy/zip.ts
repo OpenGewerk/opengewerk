@@ -126,21 +126,163 @@ function unfit(character: string): boolean {
 }
 
 /**
- * A name Windows keeps for a device, with or without an extension and with
- * spaces before it, as Windows reads it: what comes before the first dot,
- * without its spaces at the end. "CON", "nul.txt", "CON .pdf", "CONIN$".
+ * The names Windows keeps for devices, in capitals as `plain` gives them. What
+ * comes before the first dot of a name, without the spaces at its end, may be
+ * none of them: "CON", "nul.txt", "CON .pdf" and "CONIN$" are devices.
  */
-const device = /^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?: *\..*)?$/is
+const deviceNames = [
+  'CON',
+  'PRN',
+  'AUX',
+  'NUL',
+  'CONIN$',
+  'CONOUT$',
+  ...['COM', 'LPT'].flatMap((stem) => [...'123456789'].map((digit) => `${stem}${digit}`)),
+]
+
+/** What `plain` drops: marks, and U+06DE, which Windows takes for one. */
+const dropped = new RegExp(`[\\p{M}${String.fromCodePoint(0x6de)}]`, 'gu')
+
+/**
+ * What a character is to a Windows unpacker that turns names into its code
+ * page by best fit, as near as a rule can say (opengewerk#920): without its
+ * marks, in its compatibility form and in capitals. "Ｃ", "Ĉ" and "c" are "C",
+ * "¹" is "1", and a mark alone is nothing, as an unpacker that asks Windows to
+ * drop such marks (WC_DISCARDNS) leaves of it; so is U+06DE, which Windows
+ * takes for a mark.
+ */
+function plain(character: string): string {
+  return character.normalize('NFKD').replace(dropped, '').toUpperCase()
+}
+
+/**
+ * Characters that unpacker makes a letter or a digit of a device name of
+ * although `plain` does not (opengewerk#920): "Ł" is "L" in 1252, "Ø" is "O"
+ * in 437, the Arabic-Indic digits are digits in 1256. Found by turning every
+ * character of Unicode into 32 code pages with WideCharToMultiByte; none
+ * becomes another letter or digit of a device name there.
+ */
+const lettersByFit = new Map(
+  Object.entries({
+    A: [0xc6, 0xe6, 0x3b1],
+    C: [0xa2, 0xa9, 0xe8],
+    I: [0x131, 0x197],
+    L: [0xa3, 0x141, 0x142, 0x19a, 0x20a4, 0x221f, 0x2514, 0x2558, 0x2559, 0x255a],
+    N: [0x2229],
+    O: [
+      0xa4, 0xb0, 0xd8, 0xf8, 0x152, 0x153, 0x19f, 0x3a9, 0x20dd, 0x2126, 0x2205, 0x263a, 0x263b,
+      0x3007,
+    ],
+    P: [0x3c0, 0x20a7, 0x2118],
+    R: [0xae],
+    T: [
+      0xde, 0xfe, 0x166, 0x167, 0x1ab, 0x1ae, 0x398, 0x3c4, 0x2122, 0x252c, 0x2564, 0x2565, 0x2566,
+    ],
+    U: [0xb5, 0x3bc],
+    X: [0xd7],
+    1: [0xbc, 0xbd, 0x661],
+    2: [0x662],
+    3: [0xb9, 0xbe, 0x663],
+    4: [0x664],
+    5: [0x665],
+    6: [0x666],
+    7: [0x667],
+    8: [0x221e, 0x668],
+    9: [0x2078, 0x669],
+  }).flatMap(([letter, codes]) =>
+    codes.map((code) => [String.fromCodePoint(code), letter] as const),
+  ),
+)
+
+/**
+ * What a character may be to that unpacker: what `plain` gives, and the
+ * letter of `lettersByFit` if it has one. "⃝" is nothing or "O", "¹" is "1"
+ * or "3".
+ */
+function readings(character: string): string[] {
+  const plainly = plain(character)
+  const letter = lettersByFit.get(character)
+
+  return letter === undefined || letter === plainly ? [plainly] : [plainly, letter]
+}
+
+/** A reading of spaces or of nothing, which Windows drops before a dot. */
+const blankReading = /^ *$/
+
+/**
+ * How many characters at the start of a stem make the name of a device when
+ * each is read as one of its `readings`, with nothing after them that cannot
+ * be read as spaces or as nothing; the fewest that do, or undefined. One pass
+ * for each device name, which stops as soon as no reading still spells it.
+ */
+function deviceLength(stem: readonly string[]): number | undefined {
+  const read = stem.map(readings)
+  // Whether every character from an index on may be read as spaces or nothing.
+  const blank = Array.from({ length: stem.length + 1 }, () => true)
+
+  for (let index = stem.length - 1; index >= 0; index -= 1) {
+    blank[index] =
+      (blank[index + 1] ?? true) && (read[index] ?? []).some((text) => blankReading.test(text))
+  }
+
+  let fewest: number | undefined
+
+  for (const name of deviceNames) {
+    // How far into the name the characters so far may reach.
+    let reached = new Set([0])
+
+    for (let index = 0; index <= stem.length && reached.size > 0; index += 1) {
+      if (reached.has(name.length) && blank[index] === true) {
+        fewest = Math.min(fewest ?? index, index)
+        break
+      }
+
+      const next = new Set<number>()
+
+      // A reading of nothing stays where it is. No reading of a character
+      // has spaces after a letter, so a name ends between two characters.
+      for (const at of reached) {
+        for (const text of read[index] ?? []) {
+          if (name.startsWith(text, at)) {
+            next.add(at + text.length)
+          }
+        }
+      }
+
+      reached = next
+    }
+  }
+
+  return fewest
+}
+
+/** A character that is a mark and goes with the one before it. */
+const mark = /^\p{M}/u
 
 /**
  * A part that is not the name of a device: Windows makes no file "CON" or
  * "NUL.txt", so it gets a "_" behind the device, "CON_", "NUL_.txt" and
- * "CON_ .pdf".
+ * "CON_ .pdf". Also when only an unpacker that converts by best fit makes a
+ * device of it, "ＣＯＮ", "ĈON" or "ŁPT1" (opengewerk#920). The "_" comes after
+ * the marks of the last character, which would otherwise go with the "_", and
+ * an acute among them would be lost when the name is cleaned again.
  */
 function notADevice(part: string): string {
-  const found = device.exec(part)?.[1]
+  const dot = part.indexOf('.')
+  const stem = [...(dot === -1 ? part : part.slice(0, dot))]
+  let count = deviceLength(stem)
 
-  return found === undefined ? part : `${found}_${part.slice(found.length)}`
+  if (count === undefined) {
+    return part
+  }
+
+  while (count < stem.length && mark.test(stem[count] ?? '')) {
+    count += 1
+  }
+
+  const device = stem.slice(0, count).join('')
+
+  return `${device}_${part.slice(device.length)}`
 }
 
 /**
