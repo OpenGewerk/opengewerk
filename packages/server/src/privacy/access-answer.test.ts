@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { type AccessAnswer, accessEntries, filePaths, prepareFilePaths } from './access-answer.js'
 import type { AccessReport, ReportFile } from './access-report.js'
@@ -54,10 +54,10 @@ describe('the paths of the files of an answer (opengewerk#922)', () => {
     }))
     const report = reportOf(files)
     const order: string[] = []
-    const preparing = prepareFilePaths(report).then(() => order.push('paths'))
 
+    // Asked for before the paths: it runs first only if they pause.
     setImmediate(() => order.push('other'))
-    await preparing
+    await prepareFilePaths(report).then(() => order.push('paths'))
 
     expect(order).toEqual(['other', 'paths'])
     // The same paths as worked out at once for the same files.
@@ -89,22 +89,25 @@ describe('the raw names of the files of an answer (opengewerk#929)', () => {
     expect(long).toMatch(/^dateien\/Bericht a+\.jpeg$/)
   })
 
-  it('give way to other requests after a few slow names as well', async () => {
-    // Fewer than a batch, each slow to clean: the pause comes by time.
-    const busy = [0xf0, 0x141, 0x300, 0xe8, 0x2021, 0x2205]
-      .map((code) => String.fromCodePoint(code))
-      .join('')
+  it('give way to other requests after 16 ms of work as well', async () => {
+    // Fewer files than a batch, on a clock that moves 20 ms each time it is
+    // read: the pause can only come by time.
+    let now = 0
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => (now += 20))
     const report = reportOf(
-      Array.from({ length: 200 }, (_, index) => ({
+      Array.from({ length: 10 }, (_, index) => ({
         mediaType: 'text/plain',
-        name: `${String(index)} ${busy.repeat(170)}`,
+        name: `Foto ${String(index)}`,
       })),
     )
     const order: string[] = []
-    const preparing = prepareFilePaths(report).then(() => order.push('paths'))
 
-    setImmediate(() => order.push('other'))
-    await preparing
+    try {
+      setImmediate(() => order.push('other'))
+      await prepareFilePaths(report).then(() => order.push('paths'))
+    } finally {
+      clock.mockRestore()
+    }
 
     expect(order).toEqual(['other', 'paths'])
   })
