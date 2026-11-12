@@ -210,10 +210,21 @@ describe('the names in an archive', () => {
     expect(cleanName(cleaned)).toBe(cleaned)
   })
 
+  it('look past a long run of U+06DE in time that grows with its length', () => {
+    const rub = String.fromCodePoint(0x6de)
+    const started = performance.now()
+
+    cleanName(`.${rub.repeat(100_000)}Š`)
+    cleanName(rub.repeat(100_000))
+    expect(performance.now() - started).toBeLessThan(500)
+  })
+
   it('make no "../" of an acute or an "Š" that a DOS code page turns into a separator', () => {
     const acute = String.fromCodePoint(0x301)
     // A mark between a dot and an "Š", which a conversion may drop.
     const umlaut = String.fromCodePoint(0x308)
+    // Which a conversion drops as well.
+    const rub = String.fromCodePoint(0x6de)
 
     expect(
       uniqueNames([
@@ -224,6 +235,8 @@ describe('the names in an archive', () => {
         `${acute}x.pdf`,
         'xŠ.pdf',
         `..${umlaut}Š${umlaut}..${umlaut}Š${umlaut}x.pdf`,
+        `..${rub}Š..${rub}Šx.pdf`,
+        `xŠ${umlaut}.pdf`,
       ]),
     ).toEqual([
       '.._.._x.pdf',
@@ -233,6 +246,8 @@ describe('the names in an archive', () => {
       '_x.pdf',
       'x_.pdf',
       `..${umlaut}_${umlaut}..${umlaut}_${umlaut}x.pdf`,
+      `..${rub}_..${rub}_x.pdf`,
+      `x_${umlaut}.pdf`,
     ])
   })
 
