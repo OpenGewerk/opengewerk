@@ -55,8 +55,8 @@ function header(size: number): { readonly bytes: Uint8Array; readonly view: Data
 
 /**
  * Names made unique within the archive: a second "Foto.jpg" in the same
- * folder becomes "Foto (2).jpg". Slashes separate folders, backslashes and
- * a leading slash or dots do not survive.
+ * folder becomes "Foto (2).jpg". Slashes separate folders, backslashes
+ * become slashes, and a leading slash and parts of only dots do not survive.
  */
 export function uniqueNames(names: readonly string[]): string[] {
   return names.map(nameMaker())
@@ -74,7 +74,8 @@ const asciiSeparators = new Set([...'/.:"<>|?*', String.fromCodePoint(0x5c)])
  * code page by best fit makes a dot, a slash, a backslash or a colon of,
  * checked against the character itself: "¥" and "₩" are the backslash of
  * Japanese and Korean code pages, "´" is a slash in the Greek one, the others
- * are slashes and colons of mathematics and phonetics. Other characters
+ * are slashes and colons of mathematics and phonetics and the full stop and
+ * the colon of the Armenian and the Hebrew script. Other characters
  * Windows refuses after best fit stay, they are part of ordinary names ("„",
  * "∗"), and a name with one fails there as with any character the code page
  * lacks. So do the combining acute and "Š", which only DOS code pages (860,
@@ -141,6 +142,28 @@ function notADevice(part: string): string {
   return found === undefined ? part : `${found}_${part.slice(found.length)}`
 }
 
+/**
+ * A run of more marks than 30, the most a stream-safe text holds after one
+ * character (UAX #15), and more than any writing needs: it is cut to 30
+ * before and after the name is brought into one form (opengewerk#916). The
+ * form orders a run by inserting, in time that grows with the square of its
+ * length, and a name of 100 000 marks held the server for seconds. After it
+ * once more, as the form may make two marks of one.
+ */
+const markRun = /(\p{M}{30})\p{M}+/gu
+
+/**
+ * Where a DOS code page (860, 861, 865) would make "../" or "..\" of a name
+ * by best fit (opengewerk#916): an acute after something that is no letter,
+ * which those code pages make a slash, and "Š" beside a dot, which 860 makes
+ * a backslash. Elsewhere both stay, they are accents and letters of many
+ * names.
+ */
+const dosSeparators = new RegExp(
+  `(?<!\\p{L})${String.fromCodePoint(0x301)}|(?<=\\.)${String.fromCodePoint(0x160)}|${String.fromCodePoint(0x160)}(?=\\.)`,
+  'gu',
+)
+
 /** What a part of a name loses at its end: white space and dots. */
 const endOfPart = /^[\s.]$/
 
@@ -171,13 +194,18 @@ function withoutEnd(part: string): string {
  */
 export function cleanName(raw: string): string {
   const name = raw
+    .replace(markRun, '$1')
     .normalize('NFC')
+    .replace(markRun, '$1')
     .replace(/\\/g, '/')
     .split('/')
     .map((part) =>
       notADevice(
         withoutEnd(
-          [...part].map((character) => (unfit(character) ? '_' : character)).join(''),
+          [...part]
+            .map((character) => (unfit(character) ? '_' : character))
+            .join('')
+            .replace(dosSeparators, '_'),
         ).trimStart(),
       ),
     )

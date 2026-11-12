@@ -195,6 +195,30 @@ describe('the names in an archive', () => {
     expect(performance.now() - started).toBeLessThan(500)
   })
 
+  it('cut a long run of marks before they are put in order', () => {
+    const marks = `a${String.fromCodePoint(0x301).repeat(50_000)}${String.fromCodePoint(0x334).repeat(49_999)}`
+    const started = performance.now()
+    const cleaned = cleanName(marks)
+
+    expect(performance.now() - started).toBeLessThan(500)
+    expect([...cleaned].length).toBeLessThanOrEqual(31)
+    expect(cleanName(cleaned)).toBe(cleaned)
+  })
+
+  it('make no "../" of an acute or an "Š" that a DOS code page turns into a separator', () => {
+    const acute = String.fromCodePoint(0x301)
+
+    expect(
+      uniqueNames([
+        `..${acute}..${acute}x.pdf`,
+        '..Š..Šx.pdf',
+        'Šimek.pdf',
+        `Ива${acute}н.pdf`,
+        `${acute}x.pdf`,
+      ]),
+    ).toEqual(['.._.._x.pdf', '.._.._x (2).pdf', 'Šimek.pdf', `Ива${acute}н.pdf`, '_x.pdf'])
+  })
+
   it('refuse a name longer than its field holds', async () => {
     const bytes = () => Promise.resolve(new Uint8Array([1]))
     const moment = { time: 0, date: 0 }

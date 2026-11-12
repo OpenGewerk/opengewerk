@@ -147,28 +147,32 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   `dateien/Bericht.pdf (fehlt).txt` neben den gespeicherten Dateien (#916). Warum: Hieß eine gespeicherte Datei
   derselben Person genau wie der Hinweis, gab das ZIP ihr einen anderen Namen als PDF und `daten.json`, und wer die
   Auskunft las, fand sie dort nicht. Im eigenen Ordner kann keine gespeicherte Datei liegen, und das PDF sagt, wo die
-  Hinweise liegen. Dazu verliert jeder Teil eines Namens im ZIP den Leerraum an seinem Anfang und die Punkte und den
-  Leerraum an seinem Ende, wie Windows sie beim Entpacken streicht, bevor die Endung seiner Art dazukommt: Ein
-  Nachweis `..` als PDF heißt dort `Datei.pdf`, eine Datei `...` heißt `Datei`. Bisher konnte so ein Name den Pfad
-  `dateien` selbst ergeben, neben dem Ordner, sein Hinweis den Namen eines anderen bekommen, und an `dateien/...`
-  scheiterte das Entpacken unter Windows. Für den Pfad wird ein Name auf 200 Byte gekürzt, seine Endung bleibt, sodass
-  jeder Teil eines Pfads mit Endung und einem `(2)` unter den 255 Byte bleibt, die ext4 und macOS zulassen, und das ZIP
-  lehnt einen Namen über 65 535 Byte ab, statt sein Längenfeld überlaufen zu lassen: Der Abgleich lässt
-  Namen bis 100 000 Zeichen durch, und ein solcher Name hätte das ZIP der Auskunft unlesbar gemacht. Hatte der Name
-  keine Endung, erzeugt auch das Kürzen keine, und die Endung seiner Art kommt dahinter. Gleiche Namen erkennt das ZIP
-  erst in Klein-, dann in Großbuchstaben statt nur in Kleinbuchstaben: in Kleinbuchstaben allein hing das Sigma am
-  Wortende vom Zusammenhang ab, und ein Hinweis trug nicht immer den Namen seiner Datei. Dabei gelten auch `ẞ`, `ß`
-  und `SS` als gleich, wie macOS sie vergleicht; so ein Name bekommt dann eine Nummer wie `(2)`, die Windows nicht
-  bräuchte, zwei Dateien tragen aber nie denselben Namen.
-  Ein Name, den Windows einem Gerät vorbehält (`CON`, `NUL`, `COM1` und so weiter, auch mit Endung oder mit Leerzeichen davor), bekommt ein `_`
-  dahinter, etwa `CON_.pdf`, weil Windows ihn sonst nicht anlegt. Namen, die sich nur in der Unicode-Form unterscheiden
-  (`für` aus einem oder aus zwei Zeichen, wie iPhone und Mac es schreiben), stehen in der Form aus einem Zeichen und
-  gelten als gleich, weil macOS sie beim Entpacken auf einen Namen legt. Ein Zeichen, das ein Entpacker unter Windows beim Umwandeln in seine Codepage zu
-  einem Punkt, Schrägstrich oder Doppelpunkt machen könnte (etwa `／`, `．`, `¥` oder `´`), wird `_`, damit aus
-  `．．／` kein `../` wird, das aus dem Ordner führt. Ein halbes Zeichen (ein Surrogat ohne seine andere Hälfte) wird `_`, weil das ZIP es
-  als U+FFFD und `daten.json` es als `\ud800` geschrieben hätte. Ein Schrägstrich in einem Dateinamen wird `_`, statt
-  im ZIP einen Ordner anzulegen (#919): `a` und `a/b.pdf` machten `a` zugleich zur Datei und zum Ordner, und das ZIP
-  ließ sich nicht vollständig entpacken.
+  Hinweise liegen.
+- Die Namen im ZIP der Auskunft lassen sich auf Windows, macOS und Linux unter dem Namen entpacken, den PDF und
+  `daten.json` nennen (#916, #919). Warum: Der Abgleich lässt Dateinamen bis 100 000 Zeichen und mit beliebigen
+  Zeichen durch, und manche davon legt ein Entpacker anders oder gar nicht an. Im Einzelnen:
+  - Jeder Teil eines Namens verliert den Leerraum am Anfang und die Punkte und den Leerraum am Ende, wie Windows sie
+    streicht, bevor die Endung seiner Art dazukommt: Ein Nachweis `..` als PDF heißt `Datei.pdf`, eine Datei `...`
+    heißt `Datei`. Bisher konnte so ein Name den Pfad `dateien` selbst ergeben oder `dateien/...`, an dem das
+    Entpacken unter Windows scheiterte.
+  - Ein Schrägstrich in einem Dateinamen wird `_`, statt einen Ordner anzulegen (#919): `a` und `a/b.pdf` machten `a`
+    zugleich zur Datei und zum Ordner.
+  - Ein Name wird auf 200 Byte gekürzt, seine Endung bleibt, und das Kürzen erzeugt keine neue; so bleibt jeder Teil
+    eines Pfads unter den 255 Byte, die ext4 und macOS zulassen. Das ZIP lehnt einen Namen über 65 535 Byte ab, statt
+    sein Längenfeld überlaufen zu lassen, das hätte die Auskunft unlesbar gemacht.
+  - Ein Name, den Windows einem Gerät vorbehält (`CON`, `NUL`, `COM1` und so weiter, auch mit Endung oder mit
+    Leerzeichen davor), bekommt ein `_` dahinter, etwa `CON_.pdf`.
+  - Namen stehen in der Unicode-Form aus einem Zeichen je Buchstaben (`für`, wie iPhone und Mac es auch zerlegt
+    schreiben). Gleiche Namen erkennt das ZIP erst in Klein-, dann in Großbuchstaben, so wie macOS `ẞ`, `ß` und `SS`
+    gleich behandelt; ein Name bekommt dabei höchstens eine Nummer wie `(2)`, die Windows nicht bräuchte, zwei Dateien
+    tragen nie denselben Namen. In Kleinbuchstaben allein hing das Sigma am Wortende vom Zusammenhang ab.
+  - Ein Zeichen, das ein Entpacker unter Windows beim Umwandeln in seine ANSI-Codepage zu einem Punkt, Schrägstrich
+    oder Doppelpunkt machen könnte (etwa `／`, `．`, `¥` oder `´`), wird `_`, damit aus `．．／` kein `../` wird. In den
+    DOS-Codepages 860, 861 und 865 bleiben ein Akut nach einem Buchstaben und `Š` stehen, sie sind Akzente und
+    Buchstaben vieler Namen; neben einem Punkt werden auch sie `_`, sodass auch dort kein `../` entsteht.
+  - Ein halbes Zeichen (ein Surrogat ohne seine andere Hälfte) wird `_`, weil das ZIP es als U+FFFD und `daten.json`
+    es als `\ud800` geschrieben hätte. Folgen von mehr als 30 kombinierenden Zeichen werden auf 30 gekürzt, weil ihre
+    Ordnung sonst mit dem Quadrat ihrer Länge Zeit braucht.
 - Jede protokollierte Änderung eines Betriebs sperrt jetzt zuerst den Zähler des Abgleichs und dann die Kette des
   Änderungsprotokolls, in derselben Reihenfolge wie jede Änderung einer abgeglichenen Zeile (#914, Migration 0142).
   Bis jetzt nahm eine Änderung an einer Tabelle ohne Abgleich nur die Kette; das Löschen nach dem Löschkonzept
