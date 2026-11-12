@@ -9,7 +9,9 @@ import { crc32 } from 'node:zlib'
  *
  * Names are UTF-8 (bit 11), which every current unpacker reads, umlauts
  * included. Without ZIP64: an archive stops at 65 535 entries and 4 GiB, and
- * one that would go beyond is refused before its first byte.
+ * one that would go beyond is refused before its first byte. A name stops at
+ * 65 535 bytes, the most its field holds; a longer one is refused when it is
+ * its turn.
  */
 
 /**
@@ -28,6 +30,7 @@ export class ZipTooLargeError extends Error {}
 const utf8 = new TextEncoder()
 const maxEntries = 0xffff
 const maxBytes = 0xffffffff
+const maxName = 0xffff
 
 /** The date and time as an archive keeps them, in the local time it is given. */
 export function dosMoment(at: {
@@ -52,16 +55,193 @@ function header(size: number): { readonly bytes: Uint8Array; readonly view: Data
 
 /**
  * Names made unique within the archive: a second "Foto.jpg" in the same
- * folder becomes "Foto (2).jpg". Slashes separate folders, backslashes and
- * a leading slash or dots do not survive.
+ * folder becomes "Foto (2).jpg". Slashes separate folders, backslashes
+ * become slashes, and a leading slash and parts of only dots do not survive.
  */
 export function uniqueNames(names: readonly string[]): string[] {
   return names.map(nameMaker())
 }
 
-/** A character no unpacker should be asked to put into a name: a control character or one Windows refuses. */
+/**
+ * What a character beyond ASCII may not hold in its compatibility form
+ * (opengewerk#916): a dot, a slash, a backslash, a colon or another character
+ * of ASCII that Windows refuses. "／" is "/" in that form, "．" is ".".
+ */
+const asciiSeparators = new Set([...'/.:"<>|?*', String.fromCodePoint(0x5c)])
+
+/**
+ * Characters beyond ASCII that a Windows unpacker which turns names into its
+ * code page by best fit makes a dot, a slash, a backslash or a colon of,
+ * checked against the character itself: "¥" and "₩" are the backslash of
+ * Japanese and Korean code pages, "´" is a slash in the Greek one. The
+ * others look like a slash or a colon (of mathematics and phonetics, the full
+ * stop and the colon of the Armenian and the Hebrew script); not every code
+ * page makes one of them, and they are replaced all the same. Other characters
+ * Windows refuses after best fit stay, they are part of ordinary names ("„",
+ * "∗"), and a name with one fails there as with any character the code page
+ * lacks. So do the combining acute and "Š", which only DOS code pages (860,
+ * 861, 865) make a slash or a backslash of: they are accents and letters of
+ * many names.
+ */
+const separatorsByFit = new Set(
+  String.fromCodePoint(
+    0xa5,
+    0x20a9,
+    0x2044,
+    0x2215,
+    0x2216,
+    0x29f5,
+    0x29f8,
+    0x29f9,
+    0x2236,
+    0x2d0,
+    0x2f8,
+    0xa789,
+    0x589,
+    0x5c3,
+    0xb4,
+    0x2ca,
+  ),
+)
+
+/**
+ * A character no unpacker should be asked to put into a name: a control
+ * character, one Windows refuses, half of one (a surrogate without its other
+ * half), which the archive would write as U+FFFD and `daten.json` as
+ * "\ud800", so that the two named the file differently, or one beyond ASCII
+ * that an unpacker could make a separator of, as "．．／" would be "../"
+ * (opengewerk#916).
+ */
 function unfit(character: string): boolean {
-  return character.charCodeAt(0) < 0x20 || '<>:"|?*'.includes(character)
+  const code = character.charCodeAt(0)
+
+  return (
+    code < 0x20 ||
+    '<>:"|?*'.includes(character) ||
+    (character.length === 1 && code >= 0xd800 && code <= 0xdfff) ||
+    (code >= 0x80 &&
+      (separatorsByFit.has(character) ||
+        [...character.normalize('NFKC')].some((part) => asciiSeparators.has(part))))
+  )
+}
+
+/**
+ * A name Windows keeps for a device, with or without an extension and with
+ * spaces before it, as Windows reads it: what comes before the first dot,
+ * without its spaces at the end. "CON", "nul.txt", "CON .pdf", "CONIN$".
+ */
+const device = /^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?: *\..*)?$/is
+
+/**
+ * A part that is not the name of a device: Windows makes no file "CON" or
+ * "NUL.txt", so it gets a "_" behind the device, "CON_", "NUL_.txt" and
+ * "CON_ .pdf".
+ */
+function notADevice(part: string): string {
+  const found = device.exec(part)?.[1]
+
+  return found === undefined ? part : `${found}_${part.slice(found.length)}`
+}
+
+/**
+ * A run of more marks than 30, the most a stream-safe text holds after one
+ * character (UAX #15), and more than any writing needs: it is cut to 30
+ * before and after the name is brought into one form (opengewerk#916). The
+ * form orders a run by inserting, in time that grows with the square of its
+ * length, and a name of 100 000 marks held the server for seconds. After it
+ * once more, as the form may make two marks of one.
+ */
+const markRun = /(\p{M}{30})\p{M}+/gu
+
+/**
+ * Where a DOS code page (860, 861, 865) would make "../" or "..\" of a name
+ * by best fit (opengewerk#916): an acute after something that is no letter
+ * or its marks,
+ * which those code pages make a slash, and "Š" beside a dot, which 860 makes
+ * a backslash. Elsewhere both stay, they are accents and letters of many
+ * names.
+ */
+const dosSeparators = new RegExp(
+  [
+    // A letter may bear other marks before the acute ("ɔ̃́"); the runs of
+    // marks are cut to 30 before, so the look back stays short.
+    `(?<!\\p{L}\\p{M}*)${String.fromCodePoint(0x301)}`,
+    // Also with marks between them, which a conversion may drop, and U+06DE,
+    // which it drops as well.
+    `(?<=\\.[\\p{M}${String.fromCodePoint(0x6de)}]*)${String.fromCodePoint(0x160)}`,
+    `${String.fromCodePoint(0x160)}(?=[\\p{M}${String.fromCodePoint(0x6de)}]*\\.)`,
+  ].join('|'),
+  'gu',
+)
+
+/** What a part of a name loses at its end: white space and dots. */
+const endOfPart = /^[\s.]$/
+
+/**
+ * A part without the white space and dots at its end, one character at a
+ * time (opengewerk#916): a pattern for the whole run would try every place in
+ * it as its start, and a name of many dots would hold the server for seconds.
+ */
+function withoutEnd(part: string): string {
+  let end = part.length
+
+  while (end > 0 && endOfPart.test(part.charAt(end - 1))) {
+    end -= 1
+  }
+
+  return part.slice(0, end)
+}
+
+/**
+ * A name as the archive may hold it: backslashes become slashes, slashes
+ * separate folders, and a part loses the white space at its start and the
+ * white space and dots at its end, which Windows drops when it unpacks
+ * (opengewerk#916); "Foto." would be "Foto" there and "..." the folder it
+ * stands in. A part with nothing left does not survive, "." and ".." among
+ * them, and a name with nothing left is "Datei". A name it gives back comes
+ * back the same when it is cleaned again, so that the archive keeps the names
+ * the answer gave it.
+ */
+export function cleanName(raw: string): string {
+  const name = raw
+    .replace(markRun, '$1')
+    .normalize('NFC')
+    .replace(markRun, '$1')
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((part) =>
+      notADevice(
+        withoutEnd(
+          [...part]
+            .map((character) => (unfit(character) ? '_' : character))
+            .join('')
+            // Twice: an "Š" after a dot becomes "_", and only then is the
+            // acute behind it one with no letter before it.
+            .replace(dosSeparators, '_')
+            .replace(dosSeparators, '_'),
+        ).trimStart(),
+      ),
+    )
+    .filter((part) => part !== '')
+    .join('/')
+
+  return name === '' ? 'Datei' : name
+}
+
+/**
+ * A name as the archive compares it: in one Unicode form, as macOS does, so
+ * that "für" of one character and of two are one name; then in lower case and
+ * from there in capitals, so that "ẞ", "ß" and "SS" are one name, as macOS
+ * folds them, and close to Windows, which compares in capitals one character
+ * at a time. Where the two differ, this takes more names for the same, which
+ * can give a name a number Windows would not need, more than one where it has
+ * several "ß", and never two files one name. Lower case alone would not do: it
+ * writes a sigma at the end of a word otherwise than inside one, and "aΣ" and
+ * "aσ" stayed two names until ".txt" came after them (opengewerk#916); in
+ * capitals both are "Σ" again.
+ */
+function folded(name: string): string {
+  return name.normalize('NFC').toLowerCase().toUpperCase().normalize('NFC')
 }
 
 /** Makes each name it is given unique among those it made before. */
@@ -72,33 +252,22 @@ export function nameMaker(): (raw: string) => string {
   const counters = new Map<string, number>()
 
   return (raw) => {
-    const name = raw
-      .replace(/\\/g, '/')
-      .split('/')
-      .map((part) =>
-        [...part]
-          .map((character) => (unfit(character) ? '_' : character))
-          .join('')
-          .trim(),
-      )
-      .filter((part) => part !== '' && part !== '.' && part !== '..')
-      .join('/')
-    const fallback = name === '' ? 'Datei' : name
+    const fallback = cleanName(raw)
     const dot = fallback.lastIndexOf('.')
     const slash = fallback.lastIndexOf('/')
     const [stem, extension] =
       dot > slash + 1 ? [fallback.slice(0, dot), fallback.slice(dot)] : [fallback, '']
-    const key = fallback.toLowerCase()
+    const key = folded(fallback)
     let candidate = fallback
     let counter = counters.get(key) ?? 2
 
-    while (taken.has(candidate.toLowerCase())) {
+    while (taken.has(folded(candidate))) {
       candidate = `${stem} (${String(counter)})${extension}`
       counter += 1
     }
 
     counters.set(key, counter)
-    taken.add(candidate.toLowerCase())
+    taken.add(folded(candidate))
 
     return candidate
   }
@@ -125,6 +294,10 @@ export async function* zipPieces(
     const bytes = got instanceof Uint8Array ? got : got.bytes
     const name = utf8.encode(unique(got instanceof Uint8Array ? entry.name : got.name))
     const checksum = crc32(bytes)
+
+    if (name.length > maxName) {
+      throw new ZipTooLargeError('Ein Name im Archiv wäre länger als 65 535 Byte.')
+    }
 
     if (offset + 30 + name.length + bytes.length > maxBytes) {
       throw new ZipTooLargeError('Das Archiv würde größer als 4 GiB.')

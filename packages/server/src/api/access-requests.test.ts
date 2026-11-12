@@ -548,9 +548,115 @@ describe('the answer to a customer', () => {
 
     const id = (await record('customer', customer).expect(201)).body.request.id as string
     const { entries } = await answerOf(id)
-    const missing = entries.get(`dateien/haus-${family.toLowerCase()}.jpg (fehlt).txt`)
+    const missing = entries.get(`fehlende Dateien/haus-${family.toLowerCase()}.jpg/fehlt.txt`)
 
     expect(missing?.toString('utf8')).toContain(photo)
+    expect(entries.has(`dateien/haus-${family.toLowerCase()}.jpg`)).toBe(false)
+  })
+
+  it('keeps a stored file under its path when a lost one would leave a note of its name', async () => {
+    const file = await tomsFile()
+    const lost = new TextEncoder().encode('Bericht, den der Speicher verloren hat')
+    const kept = new TextEncoder().encode('Eine Datei, die wie ein Hinweis heißt')
+    /** The name of some bytes in the store. */
+    const hashOf = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
+
+    // Only the one of before is in the store. The certificate of now comes
+    // first in the answer, and its note would once have been the name of the
+    // one of before (opengewerk#916).
+    stored.set(hashOf(kept), kept)
+    await admin.query(
+      `begin;
+       set local app.user_id = 'lena';
+       insert into files (tenant_id, sha256, size_bytes, media_type)
+         values ('${north}', '${hashOf(lost)}', ${String(lost.length)}, 'application/pdf'),
+                ('${north}', '${hashOf(kept)}', ${String(kept.length)}, 'text/plain');
+       insert into qualifications (tenant_id, person_id, kind_key, certificate_sha256, certificate_name)
+         values ('${north}', '${file}', 'core.work_at_height', '${hashOf(kept)}', 'Bericht.pdf (fehlt).txt');
+       update qualifications set certificate_sha256 = '${hashOf(lost)}', certificate_name = 'Bericht.pdf'
+        where person_id = '${file}';
+       commit;`,
+    )
+
+    const id = (await record('person', file).expect(201)).body.request.id as string
+    const { entries, text, html } = await answerOf(id)
+    const files = (JSON.parse(text) as { files: { path: string; sha256: string }[] }).files
+
+    expect(files.map((each) => each.path)).toEqual([
+      'dateien/Bericht.pdf',
+      'dateien/Bericht.pdf (fehlt).txt',
+    ])
+    expect(entries.get('dateien/Bericht.pdf (fehlt).txt')?.toString('utf8')).toBe(
+      'Eine Datei, die wie ein Hinweis heißt',
+    )
+    expect(entries.get('fehlende Dateien/Bericht.pdf/fehlt.txt')?.toString('utf8')).toContain(
+      hashOf(lost),
+    )
+    expect(html).toContain('dateien/Bericht.pdf (fehlt).txt')
+    expect([...entries.keys()].sort()).toEqual(
+      [
+        'Auskunft.pdf',
+        'daten.json',
+        'dateien/Bericht.pdf (fehlt).txt',
+        'fehlende Dateien/Bericht.pdf/fehlt.txt',
+      ].sort(),
+    )
+  })
+
+  it('keeps every file in its folder and gives each lost one a note of its own', async () => {
+    const file = await tomsFile()
+    const dots = new TextEncoder().encode('Eine Datei, die nur zwei Punkte heißt')
+    const three = new TextEncoder().encode('Eine Datei, die drei Punkte heißt')
+    const pdf = new TextEncoder().encode('Ein PDF, das nur zwei Punkte heißt')
+    const folder = new TextEncoder().encode('Eine Datei, die wie der Ordner heißt')
+    /** The name of some bytes in the store. */
+    const hashOf = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
+
+    // None is in the store. ".." once became the path "dateien", beside the
+    // folder, and its note the one of the file "dateien"; "..." stayed
+    // "dateien/...", the folder itself on Windows, and a PDF ".." became
+    // "dateien/...pdf" (opengewerk#916).
+    await admin.query(
+      `begin;
+       set local app.user_id = 'lena';
+       insert into files (tenant_id, sha256, size_bytes, media_type)
+         values ('${north}', '${hashOf(dots)}', ${String(dots.length)}, 'text/plain'),
+                ('${north}', '${hashOf(three)}', ${String(three.length)}, 'text/plain'),
+                ('${north}', '${hashOf(pdf)}', ${String(pdf.length)}, 'application/pdf'),
+                ('${north}', '${hashOf(folder)}', ${String(folder.length)}, 'text/plain');
+       insert into qualifications (tenant_id, person_id, kind_key, certificate_sha256, certificate_name)
+         values ('${north}', '${file}', 'core.work_at_height', '${hashOf(folder)}', 'dateien');
+       update qualifications set certificate_sha256 = '${hashOf(three)}', certificate_name = '...'
+        where person_id = '${file}';
+       update qualifications set certificate_sha256 = '${hashOf(pdf)}', certificate_name = '..'
+        where person_id = '${file}';
+       update qualifications set certificate_sha256 = '${hashOf(dots)}', certificate_name = '..'
+        where person_id = '${file}';
+       commit;`,
+    )
+
+    const id = (await record('person', file).expect(201)).body.request.id as string
+    const { entries, text, html } = await answerOf(id)
+    const files = (JSON.parse(text) as { files: { path: string; sha256: string }[] }).files
+
+    expect(files.map((each) => each.path).sort()).toEqual([
+      'dateien/Datei',
+      'dateien/Datei (2)',
+      'dateien/Datei.pdf',
+      'dateien/dateien',
+    ])
+    expect(files.find((each) => each.path === 'dateien/Datei')?.sha256).toBe(hashOf(dots))
+
+    const notes = files.map(
+      (each) => `fehlende Dateien/${each.path.slice('dateien/'.length)}/fehlt.txt`,
+    )
+
+    for (const [index, each] of files.entries()) {
+      expect(entries.get(notes[index] as string)?.toString('utf8')).toContain(each.sha256)
+    }
+
+    expect([...entries.keys()].sort()).toEqual(['Auskunft.pdf', 'daten.json', ...notes].sort())
+    expect(html).toContain('ein Hinweis im Ordner „fehlende Dateien“')
   })
 })
 

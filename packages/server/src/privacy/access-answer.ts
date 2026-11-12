@@ -19,7 +19,7 @@ import { type PrintJob, present, text } from '@opengewerk/platform-server'
 import { momentText } from '../forms/defect-report.js'
 import { type GridParty, sheetHead, sheetJob } from '../forms/grid-documents.js'
 import { type AccessReport, type ReportRow } from './access-report.js'
-import { nameMaker, type ZipEntry } from './zip.js'
+import { cleanName, nameMaker, type ZipEntry } from './zip.js'
 
 /**
  * The answer to a request for access (#318) as the person gets it, one ZIP:
@@ -31,6 +31,7 @@ import { nameMaker, type ZipEntry } from './zip.js'
  * - `daten.json`, to carry over (Art. 20): the same rows with every column
  *   but the withheld ones, as the database holds them.
  * - `dateien/`, the stored files.
+ * - `fehlende Dateien/`, only when the store lost one: a note in its place.
  */
 
 /** Everything the answer is made of. */
@@ -61,6 +62,79 @@ const language = auditLanguage(auditVocabulary)
 const answerNames = ['Auskunft.pdf', 'daten.json'] as const
 
 /**
+ * The UTF-8 bytes of the name of a file the answer keeps for its path
+ * (opengewerk#916): the sync lets a name of 100 000 characters through, and
+ * ext4 and macOS hold at most 255 bytes for one part of a path. With the
+ * extension of its media type (5 bytes at most) and a " (65535)" that makes
+ * it unique (8), a part stays below that.
+ */
+const nameBytes = 200
+
+/** What `extensionOf` takes for an extension at the end of a name. */
+const extensionAtEnd = /\.[a-z0-9]{2,5}$/i
+
+const utf8 = new TextEncoder()
+
+/** The UTF-8 bytes of one character; a half of one is written as three, as U+FFFD. */
+function bytesOf(character: string): number {
+  const point = character.codePointAt(0) ?? 0
+
+  return point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4
+}
+
+/**
+ * A cleaned name cut to `nameBytes` by whole characters, so that no half of
+ * one is left, and cleaned again: its extension of two to five letters or
+ * digits kept, "Angebot …x.pdf" and
+ * not "Angebot …x.pd", which would pass for one of its own. Where the name
+ * had none, the cut makes none either: "Begehung 12.05.2026" cut after "12.05"
+ * would pass for a file of the kind ".05", and the one of its media type
+ * would not come behind it; and "a.bc.05" loses both, not only ".05". The
+ * stem is cleaned before the extension comes back, so that a cut behind a
+ * space leaves no " .pdf".
+ */
+function cut(name: string): string {
+  if (utf8.encode(name).length <= nameBytes) {
+    return name
+  }
+
+  const extension = extensionAtEnd.exec(name)?.[0] ?? ''
+  let room = nameBytes - extension.length
+  let kept = ''
+
+  for (const character of name) {
+    const size = bytesOf(character)
+
+    if (size > room) {
+      break
+    }
+
+    kept += character
+    room -= size
+  }
+
+  let stem = cleanName(kept)
+
+  // Each round takes three characters at least, of no more than 200.
+  while (extension === '' && extensionAtEnd.test(stem)) {
+    stem = cleanName(stem.replace(extensionAtEnd, ''))
+  }
+
+  return `${stem}${extension}`
+}
+
+/** The folder of the stored files: every path `filePaths` gives is one name in it. */
+const filesFolder = 'dateien'
+
+/**
+ * The folder of the notes on files the store lost (opengewerk#916), beside
+ * the one of the files. A note inside that one could have the name of a stored
+ * file, "Bericht.pdf (fehlt).txt", and the archive would then name that file
+ * otherwise than the PDF and `daten.json` do; here no stored file can lie.
+ */
+const missingFolder = 'fehlende Dateien'
+
+/**
  * Where a file of the report lies in the archive, as the archive names it
  * (opengewerk#913): made unique the way `zipPieces` does, after the two files
  * of the answer, so that two files of the same name stand in the PDF and in
@@ -76,11 +150,16 @@ export function filePaths(report: AccessReport): string[] {
   }
 
   return report.files.map((file) => {
-    const extension = extensionOf(file.mediaType, file.name)
+    // Cleaned and cut before it goes into the folder and before its
+    // extension (opengewerk#916): a name of only dots or slashes would leave
+    // "dateien" itself as the path, beside the folder and not in it, or
+    // "dateien/...", and a PDF called ".." would be "...pdf". Whether the
+    // name has an extension of its own is asked before the cut. Its folders
+    // become part of the name (opengewerk#919): "a" and "a/b.pdf" would make
+    // "a" a file and a folder at once, and the archive could not be unpacked.
+    const cleaned = cleanName(file.name).replaceAll('/', '_')
 
-    return unique(
-      `dateien/${file.name.endsWith(extension) ? file.name : `${file.name}${extension}`}`,
-    )
+    return unique(`${filesFolder}/${cut(cleaned)}${extensionOf(file.mediaType, cleaned)}`)
   })
 }
 
@@ -95,7 +174,7 @@ function extensionOf(mediaType: string, name: string): string {
     'text/xml': '.xml',
   }
 
-  return /\.[a-z0-9]{2,5}$/i.test(name) ? '' : (known[mediaType] ?? '')
+  return extensionAtEnd.test(name) ? '' : (known[mediaType] ?? '')
 }
 
 const isoMoment = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/
@@ -199,7 +278,7 @@ export function accessPrintJob(answer: AccessAnswer): Required<Omit<PrintJob, 's
   const mails = report.tables.get('mail_outbox')?.length ?? 0
   const paths = filePaths(report)
   const intro = `<div class="box"><div class="box-title">Was diese Auskunft enthält</div>${text(
-    `Sie haben am ${accessDay(answer.request.receivedOn)} gefragt, welche Daten ${answer.keeper.name} über Sie gespeichert hat. Hier steht alles, was der Betrieb zu Ihnen als ${accessSubjectLabel[subject]} führt, Stand ${accessDay(answer.on)}. Dieselben Daten liegen im ZIP als daten.json zum Übertragen in eine andere Anwendung (Art. 20 DSGVO)${paths.length === 0 ? '' : ', die gespeicherten Dateien im Ordner dateien'}.`,
+    `Sie haben am ${accessDay(answer.request.receivedOn)} gefragt, welche Daten ${answer.keeper.name} über Sie gespeichert hat. Hier steht alles, was der Betrieb zu Ihnen als ${accessSubjectLabel[subject]} führt, Stand ${accessDay(answer.on)}. Dieselben Daten liegen im ZIP als daten.json zum Übertragen in eine andere Anwendung (Art. 20 DSGVO)${paths.length === 0 ? '' : `, die gespeicherten Dateien im Ordner dateien. Kann der Betrieb eine davon nicht mehr lesen, liegt an ihrer Stelle ein Hinweis im Ordner „${missingFolder}“`}.`,
   )}</div>`
 
   const tables = [...report.tables.entries()]
@@ -342,11 +421,26 @@ export function accessJson(answer: AccessAnswer): string {
   )
 }
 
+/** The name of a note, in a folder of the path of its file. */
+const noteName = 'fehlt.txt'
+
+/**
+ * Where the note on a file the store lost lies: in the folder of the notes,
+ * in a folder of the path the file has in the folder of the files,
+ * "fehlende Dateien/Bericht.pdf/fehlt.txt". Every path is one name in the
+ * folder of the files and the paths are unique, and so are the notes; no note
+ * is the folder of another. With ".txt" behind its path, the note of "a" would
+ * have been "a.txt", the folder of the note of "a.txt/b".
+ */
+function missingNote(path: string): string {
+  return `${missingFolder}/${path.slice(filesFolder.length + 1)}/${noteName}`
+}
+
 /**
  * What goes into the archive, in order: the PDF, the JSON and the files, each
  * read when its turn comes. A file the store no longer has, or has damaged,
- * becomes a line of text in its place, so that the answer still comes and
- * says what is missing.
+ * becomes a line of text in the folder of the notes, so that the answer still
+ * comes and says what is missing.
  */
 export function accessEntries(
   answer: AccessAnswer,
@@ -360,7 +454,7 @@ export function accessEntries(
     { name: answerNames[0], bytes: () => Promise.resolve(pdf) },
     { name: answerNames[1], bytes: () => Promise.resolve(encoder.encode(accessJson(answer))) },
     ...answer.report.files.map((file, index) => {
-      const path = paths[index] ?? `dateien/${file.name}`
+      const path = paths[index] ?? `${filesFolder}/${file.name}`
 
       return {
         name: path,
@@ -369,7 +463,7 @@ export function accessEntries(
             return await read(file.sha256)
           } catch {
             return {
-              name: `${path} (fehlt).txt`,
+              name: missingNote(path),
               bytes: encoder.encode(
                 `Diese Datei (${file.name}) ist im Dateispeicher des Betriebs nicht mehr lesbar. Ihr Fingerabdruck: ${file.sha256}.\n`,
               ),
