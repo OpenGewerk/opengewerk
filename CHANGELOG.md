@@ -170,7 +170,9 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   - Namen stehen in der Unicode-Form aus einem Zeichen je Buchstaben (`für`, wie iPhone und Mac es auch zerlegt
     schreiben). Gleiche Namen erkennt das ZIP erst in Klein-, dann in Großbuchstaben, so wie macOS `ẞ`, `ß` und `SS`
     gleich behandelt; ein Name bekommt dabei höchstens eine Nummer wie `(2)`, die Windows nicht bräuchte, zwei Dateien
-    tragen nie denselben Namen. In Kleinbuchstaben allein hing das Sigma am Wortende vom Zusammenhang ab.
+    tragen im ZIP nie denselben Namen. In Kleinbuchstaben allein hing das Sigma am Wortende vom Zusammenhang ab.
+    Einschränkung: Ein Entpacker, der Namen per Best-Fit in seine Codepage umwandelt, kann aus zwei Namen noch einen
+    machen, etwa aus `Ｆｏｔｏ.jpg` und `Foto.jpg` (#922).
   - Ein Zeichen, das ein Entpacker unter Windows beim Umwandeln in seine ANSI-Codepage zu einem Punkt, Schrägstrich
     oder Doppelpunkt machen könnte (etwa `／`, `．`, `¥` oder `´`), wird `_`, damit aus `．．／` kein `../` wird. In den
     DOS-Codepages 860, 861 und 865 bleiben ein Akut nach einem Buchstaben, auch mit weiteren Akzenten dazwischen, und
