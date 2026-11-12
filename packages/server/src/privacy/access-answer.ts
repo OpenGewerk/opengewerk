@@ -197,17 +197,35 @@ const pauseAfter = 16
 const rawStart = 1000
 const rawEnd = 32
 
+/** What cleaning drops at the end of a name, and so never brings an extension. */
+const droppedAtEnd = /^[\s./\\]$/
+
 /**
- * A raw name with no more than its first 1000 and its last 32 UTF-16 units
- * (opengewerk#929). The path keeps 200 bytes of it, the end brings the
- * extension; cleaning all of a name of 100 000 characters cost the server
- * tens of milliseconds for each file. A character cut in half at a seam is a
- * "_" once cleaned, as any half character is.
+ * A raw name with no more than its first 1000 and 32 more UTF-16 units from
+ * its end (opengewerk#929). The path keeps 200 bytes of it, the end brings
+ * the extension; cleaning all of a name of 100 000 characters cost the server
+ * tens of milliseconds for each file. The 32 are taken before the white
+ * space, dots and slashes at the end, which cleaning drops, so that
+ * "Bericht.docx" and 40 spaces keep ".docx". A character cut in half at a
+ * seam becomes "_", as cleaning makes of any half character; the half at the
+ * start of the end becomes "_" at once, so that it does not make a character
+ * of its own with a half at the end of the start.
  */
 function bounded(name: string): string {
-  return name.length <= rawStart + rawEnd
-    ? name
-    : `${name.slice(0, rawStart)}${name.slice(-rawEnd)}`
+  if (name.length <= rawStart + rawEnd) {
+    return name
+  }
+
+  let end = name.length
+
+  while (end > rawStart + rawEnd && droppedAtEnd.test(name.charAt(end - 1))) {
+    end -= 1
+  }
+
+  const tail = name.slice(end - rawEnd, end)
+  const lowHalf = tail.charCodeAt(0) >= 0xdc00 && tail.charCodeAt(0) <= 0xdfff
+
+  return `${name.slice(0, rawStart)}${lowHalf ? `_${tail.slice(1)}` : tail}`
 }
 
 /**

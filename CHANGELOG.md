@@ -194,9 +194,9 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   - Ein halbes Zeichen (ein Surrogat ohne seine andere Hälfte) wird `_`, weil das ZIP es als U+FFFD und `daten.json`
     es als `\ud800` geschrieben hätte. Folgen von mehr als 30 kombinierenden Zeichen werden auf 30 gekürzt, weil ihre
     Ordnung sonst mit dem Quadrat ihrer Länge Zeit braucht.
-  - Vom Namen einer Datei liest die Auskunft nur die ersten 1000 und die letzten 32 Zeichen, bevor sie ihn reinigt
-    und auf 200 Byte kürzt, und sie gibt beim Ausrechnen der Pfade auch nach 16 ms Arbeit für andere Anfragen ab, nicht
-    nur nach 256 Dateien (#929). Warum: Der Abgleich lässt Namen bis 100 000 Zeichen durch; ganz gereinigt kostete
+  - Vom Namen einer Datei liest die Auskunft nur die ersten 1000 Zeichen und 32 vom Ende, vor den Leerzeichen, Punkten
+    und Schrägstrichen am Schluss, bevor sie ihn reinigt und auf 200 Byte kürzt; so bleibt die Endung. Sie gibt beim
+    Ausrechnen der Pfade auch nach 16 ms Arbeit für andere Anfragen ab, nicht nur nach 256 Dateien (#929). Warum: Der Abgleich lässt Namen bis 100 000 Zeichen durch; ganz gereinigt kostete
     ein solcher Name rund 56 ms, und 256 davon hielten den Server rund 13 s am Stück auf.
 - Jede protokollierte Änderung eines Betriebs sperrt jetzt zuerst den Zähler des Abgleichs und dann die Kette des
   Änderungsprotokolls, in derselben Reihenfolge wie jede Änderung einer abgeglichenen Zeile (#914, Migration 0142).
