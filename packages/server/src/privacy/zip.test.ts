@@ -102,8 +102,9 @@ describe('the names in an archive', () => {
   it('are no names a code page makes a device of by best fit (opengewerk#920)', () => {
     const marks = String.fromCodePoint(0x308, 0x301)
 
+    // Each on its own: some of them are one name to such an unpacker.
     expect(
-      uniqueNames([
+      [
         'ＣＯＮ.pdf',
         'ｎｕｌ',
         'ĈON.pdf',
@@ -123,7 +124,7 @@ describe('the names in an archive', () => {
         'Łódź.pdf',
         'COM0',
         'ŁPT.pdf',
-      ]),
+      ].map((name) => cleanName(name)),
     ).toEqual([
       'ＣＯＮ_.pdf',
       'ｎｕｌ_',
@@ -142,6 +143,57 @@ describe('the names in an archive', () => {
       'Łódź.pdf',
       'COM0',
       'ŁPT.pdf',
+    ])
+  })
+
+  it('are no one name to an unpacker that converts them by best fit (opengewerk#922)', () => {
+    const grave = String.fromCodePoint(0x300)
+
+    expect(
+      uniqueNames([
+        'dateien/Ｆｏｔｏ.jpg',
+        'dateien/Foto.jpg',
+        // "Ł" is "L" in 1251, which turns "ó" and "ź" into "o" and "z".
+        'Łódź.pdf',
+        'Lodz.pdf',
+        // "è" is "c" in 775.
+        'è.pdf',
+        'c.pdf',
+        // "ð" is "d" in 437 and "e" in 936.
+        'ð.txt',
+        'D.txt',
+        'E.txt',
+        // "è" is "c" in 775 and 852, where the grave is "`" and gone only
+        // when marks are dropped.
+        `è${grave}x.pdf`,
+        'cx.pdf',
+        // With the grave gone, Windows drops the dot at the end.
+        'y',
+        `y.${grave}`,
+        // Letters and digits stay apart.
+        'cat.pdf',
+        'eat.pdf',
+        'a1.pdf',
+        'a3.pdf',
+      ]),
+    ).toEqual([
+      'dateien/Ｆｏｔｏ.jpg',
+      'dateien/Foto (2).jpg',
+      'Łódź.pdf',
+      'Lodz (2).pdf',
+      'è.pdf',
+      'c (2).pdf',
+      'ð.txt',
+      'D (2).txt',
+      'E (2).txt',
+      `è${grave}x.pdf`,
+      'cx (2).pdf',
+      'y',
+      `y (2).${grave}`,
+      'cat.pdf',
+      'eat.pdf',
+      'a1.pdf',
+      'a3.pdf',
     ])
   })
 
@@ -276,8 +328,9 @@ describe('the names in an archive', () => {
     // Which a conversion drops as well.
     const rub = String.fromCodePoint(0x6de)
 
+    // Each on its own: some of them are one name to such an unpacker.
     expect(
-      uniqueNames([
+      [
         `..${acute}..${acute}x.pdf`,
         '..Š..Šx.pdf',
         'Šimek.pdf',
@@ -289,10 +342,10 @@ describe('the names in an archive', () => {
         `xŠ${umlaut}.pdf`,
         `ɔ${String.fromCodePoint(0x303, 0x301)}.pdf`,
         `i${String.fromCodePoint(0x307, 0x301)}.pdf`,
-      ]),
+      ].map((name) => cleanName(name)),
     ).toEqual([
       '.._.._x.pdf',
-      '.._.._x (2).pdf',
+      '.._.._x.pdf',
       'Šimek.pdf',
       `Ива${acute}н.pdf`,
       '_x.pdf',

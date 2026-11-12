@@ -149,7 +149,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Auskunft las, fand sie dort nicht. Im eigenen Ordner kann keine gespeicherte Datei liegen, und das PDF sagt, wo die
   Hinweise liegen.
 - Die Namen im ZIP der Auskunft lassen sich auf Windows, macOS und Linux unter dem Namen entpacken, den PDF und
-  `daten.json` nennen (#916, #919, #920). Warum: Der Abgleich lässt Dateinamen bis 100 000 Zeichen und mit beliebigen
+  `daten.json` nennen (#916, #919, #920, #922). Warum: Der Abgleich lässt Dateinamen bis 100 000 Zeichen und mit beliebigen
   Zeichen durch, und manche davon legt ein Entpacker anders oder gar nicht an. Im Einzelnen:
   - Jeder Teil eines Namens verliert den Leerraum am Anfang und die Punkte und den Leerraum am Ende, wie Windows sie
     streicht, bevor die Endung seiner Art dazukommt: Ein Nachweis `..` als PDF heißt `Datei.pdf`, eine Datei `...`
@@ -171,8 +171,13 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
     schreiben). Gleiche Namen erkennt das ZIP erst in Klein-, dann in Großbuchstaben, so wie macOS `ẞ`, `ß` und `SS`
     gleich behandelt; ein Name bekommt dabei höchstens eine Nummer wie `(2)`, die Windows nicht bräuchte, zwei Dateien
     tragen im ZIP nie denselben Namen. In Kleinbuchstaben allein hing das Sigma am Wortende vom Zusammenhang ab.
-    Einschränkung: Ein Entpacker, der Namen per Best-Fit in seine Codepage umwandelt, kann aus zwei Namen noch einen
-    machen, etwa aus `Ｆｏｔｏ.jpg` und `Foto.jpg` (#922).
+  - Zwei Namen, die ein Entpacker unter Windows beim Umwandeln in seine Codepage zum selben Namen macht, gelten
+    ebenfalls als gleich, und der zweite bekommt eine Nummer (#922): `Ｆｏｔｏ.jpg` und `Foto.jpg`, `Łódź.pdf` und
+    `Lodz.pdf` (in 1251), `è.pdf` und `c.pdf` (in 775), auch wenn Windows dabei Akzente oder Punkte am Ende streicht.
+    Verglichen wird je Codepage, deshalb bleiben `cat.pdf` und `eat.pdf` zwei Namen, obwohl `è` je nach Codepage `c`
+    oder `e` wird. Die Abbildungen stehen als Tabelle in `privacy/best-fit.ts`, gewonnen mit WideCharToMultiByte über
+    jedes Zeichen in 32 Codepages (`scripts/best-fit-dump.ps1`, `scripts/best-fit-table.js`). Bisher konnte so ein
+    Entpacker eine Datei der Auskunft mit einer anderen überschreiben.
   - Ein Zeichen, das ein Entpacker unter Windows beim Umwandeln in seine ANSI-Codepage zu einem Punkt, Schrägstrich
     oder Doppelpunkt machen könnte (etwa `／`, `．`, `¥` oder `´`), wird `_`, damit aus `．．／` kein `../` wird. In den
     DOS-Codepages 860, 861 und 865 bleiben ein Akut nach einem Buchstaben, auch mit weiteren Akzenten dazwischen, und
