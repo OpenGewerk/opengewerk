@@ -206,6 +206,9 @@ export function cleanName(raw: string): string {
           [...part]
             .map((character) => (unfit(character) ? '_' : character))
             .join('')
+            // Twice: an "Š" after a dot becomes "_", and only then is the
+            // acute behind it one with no letter before it.
+            .replace(dosSeparators, '_')
             .replace(dosSeparators, '_'),
         ).trimStart(),
       ),

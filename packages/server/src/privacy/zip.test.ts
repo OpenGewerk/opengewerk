@@ -174,6 +174,8 @@ describe('the names in an archive', () => {
       `dateien/x${unbroken}.`,
       // The form makes two marks of each: 40, of which the second cut leaves 30.
       `a${String.fromCodePoint(0xf73).repeat(20)}`,
+      // The "Š" goes for the dot before it, then the acute for the "_".
+      `..Š${String.fromCodePoint(0x301)}x.pdf`,
     ]
 
     expect(cleanName(`x${unbroken}. .`)).toBe('x')
