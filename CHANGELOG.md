@@ -156,9 +156,10 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   lehnt einen Namen über 65 535 Byte ab, statt sein Längenfeld überlaufen zu lassen: Der Abgleich lässt
   Namen bis 100 000 Zeichen durch, und ein solcher Name hätte das ZIP der Auskunft unlesbar gemacht. Hatte der Name
   keine Endung, erzeugt auch das Kürzen keine, und die Endung seiner Art kommt dahinter. Gleiche Namen erkennt das ZIP
-  in Großbuchstaben statt in Kleinbuchstaben: in Kleinbuchstaben hing das Sigma am Wortende vom Zusammenhang ab, und
-  ein Hinweis trug nicht immer den Namen seiner Datei. In Großbuchstaben gelten auch `ß` und `SS` als gleich; so ein
-  Name bekommt dann eine Nummer wie `(2)`, die Windows nicht bräuchte, zwei Dateien tragen aber nie denselben Namen.
+  erst in Klein-, dann in Großbuchstaben statt nur in Kleinbuchstaben: in Kleinbuchstaben allein hing das Sigma am
+  Wortende vom Zusammenhang ab, und ein Hinweis trug nicht immer den Namen seiner Datei. Dabei gelten auch `ẞ`, `ß`
+  und `SS` als gleich, wie macOS sie vergleicht; so ein Name bekommt dann eine Nummer wie `(2)`, die Windows nicht
+  bräuchte, zwei Dateien tragen aber nie denselben Namen.
   Ein Name, den Windows einem Gerät vorbehält (`CON`, `NUL`, `COM1` und so weiter, auch mit Endung oder mit Leerzeichen davor), bekommt ein `_`
   dahinter, etwa `CON_.pdf`, weil Windows ihn sonst nicht anlegt. Namen, die sich nur in der Unicode-Form unterscheiden
   (`für` aus einem oder aus zwei Zeichen, wie iPhone und Mac es schreiben), gelten als gleich, weil macOS sie beim

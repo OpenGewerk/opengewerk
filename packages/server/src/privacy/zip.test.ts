@@ -110,12 +110,13 @@ describe('the names in an archive', () => {
     ])
   })
 
-  it('take "ß" and "SS" for the same name, as capitals write them', () => {
+  it('take "ẞ", "ß" and "SS" for the same name, as macOS folds them', () => {
     expect(uniqueNames(['aßß.pdf', 'aSSSS.pdf', 'aßSS.pdf'])).toEqual([
       'aßß.pdf',
       'aSSSS (2).pdf',
       'aßSS (3).pdf',
     ])
+    expect(uniqueNames(['straße.pdf', 'STRAẞE.pdf'])).toEqual(['straße.pdf', 'STRAẞE (2).pdf'])
   })
 
   it('come back the same when they are cleaned again', () => {

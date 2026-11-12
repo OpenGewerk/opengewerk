@@ -143,17 +143,18 @@ export function cleanName(raw: string): string {
 
 /**
  * A name as the archive compares it: in one Unicode form, as macOS does, so
- * that "für" of one character and of two are one name, and in capitals, close
- * to Windows, which
- * compares in capitals one character at a time. Where the two differ, this
- * takes more names for the same ("ß" and "SS"), which can give a name a
- * number Windows would not need, more than one where it has several "ß", and
- * never two files one name. Lower case would not do: it writes a sigma at
- * the end of a word otherwise than inside one, and "aΣ" and "aσ" stayed two
- * names until ".txt" came after them (opengewerk#916).
+ * that "für" of one character and of two are one name; then in lower case and
+ * from there in capitals, so that "ẞ", "ß" and "SS" are one name, as macOS
+ * folds them, and close to Windows, which compares in capitals one character
+ * at a time. Where the two differ, this takes more names for the same, which
+ * can give a name a number Windows would not need, more than one where it has
+ * several "ß", and never two files one name. Lower case alone would not do: it
+ * writes a sigma at the end of a word otherwise than inside one, and "aΣ" and
+ * "aσ" stayed two names until ".txt" came after them (opengewerk#916); in
+ * capitals both are "Σ" again.
  */
 function folded(name: string): string {
-  return name.normalize('NFC').toUpperCase()
+  return name.normalize('NFC').toLowerCase().toUpperCase()
 }
 
 /** Makes each name it is given unique among those it made before. */
