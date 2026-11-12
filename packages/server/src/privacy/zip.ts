@@ -373,6 +373,25 @@ function withoutCaronS(name: string): string {
 const endOfPart = /^[\s.]$/
 
 /**
+ * Whether `cleanName` may drop a character at the end of a name, so that it
+ * never brings an extension: a slash or a backslash, or one `plain` reads as
+ * white space, dots or nothing (opengewerk#929).
+ */
+export function droppedAtNameEnd(character: string): boolean {
+  if (character === '/' || character === String.fromCharCode(0x5c)) {
+    return true
+  }
+
+  for (const each of plain(character)) {
+    if (!endOfPart.test(each)) {
+      return false
+    }
+  }
+
+  return true
+}
+
+/**
  * A part without the white space and dots at its end, one character at a
  * time (opengewerk#916): a pattern for the whole run would try every place in
  * it as its start, and a name of many dots would hold the server for seconds.

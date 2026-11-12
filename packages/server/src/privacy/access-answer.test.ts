@@ -91,9 +91,12 @@ describe('the raw names of the files of an answer (opengewerk#929)', () => {
     // Also behind what cleaning drops at the end, for a type of no extension
     // of its own; and no character out of two halves at the seams.
     const word = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    const [spaced, dotted, seams] = filePaths(
+    const umlaut = String.fromCodePoint(0x308)
+    const [spaced, marked, dotted, seams] = filePaths(
       reportOf([
         { mediaType: word, name: `${'a'.repeat(2000)}.docx${' '.repeat(40)}` },
+        // Parts of a dot with a mark, which cleaning drops as well.
+        { mediaType: word, name: `${'d'.repeat(2000)}.docx${`/.${umlaut}`.repeat(20)}` },
         { mediaType: 'application/zip', name: `${'b'.repeat(2000)}.zip${'/.'.repeat(40)}` },
         {
           mediaType: 'application/pdf',
@@ -103,6 +106,7 @@ describe('the raw names of the files of an answer (opengewerk#929)', () => {
     )
 
     expect(spaced).toMatch(/^dateien\/a+\.docx$/)
+    expect(marked).toMatch(/^dateien\/d+\.docx$/)
     expect(dotted).toMatch(/^dateien\/b+\.zip$/)
     expect(seams).toBe(`dateien/__${'c'.repeat(27)}.pdf`)
   })

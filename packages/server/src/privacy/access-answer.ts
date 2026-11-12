@@ -19,7 +19,14 @@ import { type PrintJob, present, text } from '@opengewerk/platform-server'
 import { momentText } from '../forms/defect-report.js'
 import { type GridParty, sheetHead, sheetJob } from '../forms/grid-documents.js'
 import { type AccessReport, type ReportRow } from './access-report.js'
-import { cleanName, maxEntries, nameMaker, type ZipEntry, ZipTooLargeError } from './zip.js'
+import {
+  cleanName,
+  droppedAtNameEnd,
+  maxEntries,
+  nameMaker,
+  type ZipEntry,
+  ZipTooLargeError,
+} from './zip.js'
 
 /**
  * The answer to a request for access (#318) as the person gets it, one ZIP:
@@ -197,16 +204,14 @@ const pauseAfter = 16
 const rawStart = 1000
 const rawEnd = 32
 
-/** What cleaning drops at the end of a name, and so never brings an extension. */
-const droppedAtEnd = /^[\s./\\]$/
-
 /**
  * A raw name with no more than its first 1000 and 32 more UTF-16 units from
  * its end (opengewerk#929). The path keeps 200 bytes of it, the end brings
  * the extension; cleaning all of a name of 100 000 characters cost the server
- * tens of milliseconds for each file. The 32 are taken before the white
- * space, dots and slashes at the end, which cleaning drops, so that
- * "Bericht.docx" and 40 spaces keep ".docx". A character cut in half at a
+ * tens of milliseconds for each file. The 32 are taken before what cleaning
+ * may drop at the end (`droppedAtNameEnd`: white space, dots, slashes and
+ * what `plain` reads as those or as nothing), so that "Bericht.docx" and 40
+ * spaces, or parts of dots with marks, keep ".docx". A character cut in half at a
  * seam becomes "_", as cleaning makes of any half character; the half at the
  * start of the end becomes "_" at once, so that it does not make a character
  * of its own with a half at the end of the start.
@@ -218,7 +223,14 @@ function bounded(name: string): string {
 
   let end = name.length
 
-  while (end > rawStart + rawEnd && droppedAtEnd.test(name.charAt(end - 1))) {
+  // At most 1000 skipped, each read as `plain` reads it: a name that ends in
+  // more of what cleaning drops loses its extension, but not the server's
+  // time.
+  while (
+    end > rawStart + rawEnd &&
+    name.length - end < rawStart &&
+    droppedAtNameEnd(name.charAt(end - 1))
+  ) {
     end -= 1
   }
 
