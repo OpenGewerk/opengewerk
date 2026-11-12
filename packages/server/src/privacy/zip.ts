@@ -63,10 +63,27 @@ export function uniqueNames(names: readonly string[]): string[] {
 }
 
 /**
+ * What a character beyond ASCII may not be, nor hold in its compatibility
+ * form (opengewerk#916): a dot, a slash, a backslash, a colon or another
+ * character Windows refuses, and the ones a Windows unpacker that turns names
+ * into its code page by best fit makes one of. "／" is "/" in that form and
+ * "½" is "1⁄2"; "¥" and "₩" are the backslash of Japanese and Korean code
+ * pages; the others are slashes and colons of mathematics and phonetics.
+ */
+const separatorsByFit = new Set([
+  ...'/.:"<>|?*',
+  String.fromCodePoint(0x5c),
+  ...String.fromCodePoint(0xa5, 0x20a9, 0x2044, 0x2215, 0x2216, 0x29f5, 0x29f8, 0x29f9),
+  ...String.fromCodePoint(0x2236, 0x2d0, 0x2f8, 0xa789, 0x589, 0x5c3),
+])
+
+/**
  * A character no unpacker should be asked to put into a name: a control
- * character, one Windows refuses, or half of one (a surrogate without its
- * other half), which the archive would write as U+FFFD and `daten.json` as
- * "\ud800", so that the two named the file differently (opengewerk#916).
+ * character, one Windows refuses, half of one (a surrogate without its other
+ * half), which the archive would write as U+FFFD and `daten.json` as
+ * "\ud800", so that the two named the file differently, or one beyond ASCII
+ * that an unpacker could make a separator of, as "．．／" would be "../"
+ * (opengewerk#916).
  */
 function unfit(character: string): boolean {
   const code = character.charCodeAt(0)
@@ -74,7 +91,8 @@ function unfit(character: string): boolean {
   return (
     code < 0x20 ||
     '<>:"|?*'.includes(character) ||
-    (character.length === 1 && code >= 0xd800 && code <= 0xdfff)
+    (character.length === 1 && code >= 0xd800 && code <= 0xdfff) ||
+    (code >= 0x80 && [...character.normalize('NFKC')].some((part) => separatorsByFit.has(part)))
   )
 }
 

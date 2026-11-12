@@ -117,6 +117,35 @@ describe('the names in an archive', () => {
       'aßSS (3).pdf',
     ])
     expect(uniqueNames(['straße.pdf', 'STRAẞE.pdf'])).toEqual(['straße.pdf', 'STRAẞE (2).pdf'])
+
+    const theta = String.fromCodePoint(0x3f4)
+    const dotted = String.fromCodePoint(0x130)
+    const dot = String.fromCodePoint(0x307)
+
+    expect(uniqueNames([`${theta}.pdf`, 'Θ.pdf', `${dotted}.pdf`, `i${dot}.pdf`])).toEqual([
+      `${theta}.pdf`,
+      'Θ (2).pdf',
+      `${dotted}.pdf`,
+      `i${dot} (2).pdf`,
+    ])
+  })
+
+  it('lose characters an unpacker could make a dot, a slash or a colon of', () => {
+    const wide = String.fromCodePoint(0xff0e, 0xff0e, 0xff0f, 0xff0e, 0xff0e, 0xff3c)
+    const yen = String.fromCodePoint(0xa5)
+    const half = String.fromCodePoint(0xbd)
+    const ratio = String.fromCodePoint(0x2236)
+    const enDash = String.fromCodePoint(0x2013)
+
+    expect(
+      uniqueNames([
+        `${wide}x.pdf`,
+        `${yen}a${yen}b`,
+        `1${half}.pdf`,
+        `a${ratio}b`,
+        `Ångström ${enDash} „Test“ € 😀.pdf`,
+      ]),
+    ).toEqual(['______x.pdf', '_a_b', '1_.pdf', 'a_b', `Ångström ${enDash} „Test“ € 😀.pdf`])
   })
 
   it('come back the same when they are cleaned again', () => {
