@@ -73,9 +73,10 @@ const asciiSeparators = new Set([...'/.:"<>|?*', String.fromCodePoint(0x5c)])
  * Characters beyond ASCII that a Windows unpacker which turns names into its
  * code page by best fit makes a dot, a slash, a backslash or a colon of,
  * checked against the character itself: "¥" and "₩" are the backslash of
- * Japanese and Korean code pages, "´" is a slash in the Greek one, the others
- * are slashes and colons of mathematics and phonetics and the full stop and
- * the colon of the Armenian and the Hebrew script. Other characters
+ * Japanese and Korean code pages, "´" is a slash in the Greek one. The
+ * others look like a slash or a colon (of mathematics and phonetics, the full
+ * stop and the colon of the Armenian and the Hebrew script); not every code
+ * page makes one of them, and they are replaced all the same. Other characters
  * Windows refuses after best fit stay, they are part of ordinary names ("„",
  * "∗"), and a name with one fails there as with any character the code page
  * lacks. So do the combining acute and "Š", which only DOS code pages (860,

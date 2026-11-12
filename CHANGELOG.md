@@ -169,7 +169,8 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   - Ein Zeichen, das ein Entpacker unter Windows beim Umwandeln in seine ANSI-Codepage zu einem Punkt, Schrägstrich
     oder Doppelpunkt machen könnte (etwa `／`, `．`, `¥` oder `´`), wird `_`, damit aus `．．／` kein `../` wird. In den
     DOS-Codepages 860, 861 und 865 bleiben ein Akut nach einem Buchstaben und `Š` stehen, sie sind Akzente und
-    Buchstaben vieler Namen; neben einem Punkt werden auch sie `_`, sodass auch dort kein `../` entsteht.
+    Buchstaben vieler Namen; ein Akut, vor dem kein Buchstabe steht (etwa nach einem Punkt), und ein `Š` neben einem
+    Punkt werden `_`, sodass auch dort kein `../` entsteht.
   - Ein halbes Zeichen (ein Surrogat ohne seine andere Hälfte) wird `_`, weil das ZIP es als U+FFFD und `daten.json`
     es als `\ud800` geschrieben hätte. Folgen von mehr als 30 kombinierenden Zeichen werden auf 30 gekürzt, weil ihre
     Ordnung sonst mit dem Quadrat ihrer Länge Zeit braucht.

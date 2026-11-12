@@ -172,9 +172,12 @@ describe('the names in an archive', () => {
       '...',
       ' a. /. b',
       `dateien/x${unbroken}.`,
+      // The form makes two marks of each: 40, of which the second cut leaves 30.
+      `a${String.fromCodePoint(0xf73).repeat(20)}`,
     ]
 
     expect(cleanName(`x${unbroken}. .`)).toBe('x')
+    expect([...cleanName(`a${String.fromCodePoint(0xf73).repeat(20)}`)].length).toBe(31)
 
     for (const name of names) {
       expect(cleanName(cleanName(name))).toBe(cleanName(name))
@@ -215,8 +218,16 @@ describe('the names in an archive', () => {
         'Šimek.pdf',
         `Ива${acute}н.pdf`,
         `${acute}x.pdf`,
+        'xŠ.pdf',
       ]),
-    ).toEqual(['.._.._x.pdf', '.._.._x (2).pdf', 'Šimek.pdf', `Ива${acute}н.pdf`, '_x.pdf'])
+    ).toEqual([
+      '.._.._x.pdf',
+      '.._.._x (2).pdf',
+      'Šimek.pdf',
+      `Ива${acute}н.pdf`,
+      '_x.pdf',
+      'x_.pdf',
+    ])
   })
 
   it('refuse a name longer than its field holds', async () => {
