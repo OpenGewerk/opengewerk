@@ -67,6 +67,19 @@ describe('the names in an archive', () => {
     ])
   })
 
+  it('lose a part that is only dots and spaces once its marks are dropped (opengewerk#922)', () => {
+    const umlaut = String.fromCodePoint(0x308)
+    const grave = String.fromCodePoint(0x300)
+    const rub = String.fromCodePoint(0x6de)
+
+    // An unpacker that drops marks would make ".." of the first.
+    expect(
+      [`..${umlaut}`, `a/. ${grave}/b`, `x/..${rub}`, `..${umlaut}x`].map((name) =>
+        cleanName(name),
+      ),
+    ).toEqual(['Datei', 'a/b', 'x', `..${umlaut}x`])
+  })
+
   it('are no names Windows keeps for a device', () => {
     expect(
       uniqueNames([

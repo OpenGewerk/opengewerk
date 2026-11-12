@@ -353,8 +353,8 @@ function notADevice(part: string): string {
 const markRun = /(\p{M}{30})\p{M}+/gu
 
 /**
- * A name in which "Š" is "S" (opengewerk#922): the DOS code pages 860, 861
- * and 865 make a backslash of it, and a name with it a folder. In one form
+ * A name in which "Š" is "S" (opengewerk#922): the DOS code page 860 makes a
+ * backslash of it, and a name with it a folder. In one form
  * again after each round, as an "S" and a caron behind the old "Š" make a new
  * one; the runs of marks are cut to 30, so there are at most 31 rounds.
  */
@@ -387,6 +387,21 @@ function withoutEnd(part: string): string {
 }
 
 /**
+ * A part, or nothing where only white space, dots and marks are left of it:
+ * an unpacker that drops marks would make ".." of ".." with an umlaut, and
+ * Windows drops the rest (opengewerk#922). Such a part goes as ".." does.
+ */
+function nothingButEnd(part: string): string {
+  for (const character of part.replace(dropped, '')) {
+    if (!endOfPart.test(character)) {
+      return part
+    }
+  }
+
+  return ''
+}
+
+/**
  * A name as the archive may hold it: backslashes become slashes, slashes
  * separate folders, and a part loses the white space at its start and the
  * white space and dots at its end, which Windows drops when it unpacks
@@ -402,9 +417,11 @@ export function cleanName(raw: string): string {
     .split('/')
     .map((part) =>
       notADevice(
-        withoutEnd(
-          [...part].map((character) => (unfit(character) ? '_' : character)).join(''),
-        ).trimStart(),
+        nothingButEnd(
+          withoutEnd(
+            [...part].map((character) => (unfit(character) ? '_' : character)).join(''),
+          ).trimStart(),
+        ),
       ),
     )
     .filter((part) => part !== '')

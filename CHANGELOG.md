@@ -180,10 +180,12 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
     Entpacker eine Datei der Auskunft mit einer anderen überschreiben.
   - Ein Zeichen, das ein Entpacker unter Windows beim Umwandeln in seine ANSI-Codepage zu einem Punkt, Schrägstrich
     oder Doppelpunkt machen könnte (etwa `／`, `．`, `¥` oder `´`), wird `_`, damit aus `．．／` kein `../` wird. Die
-    DOS-Codepages 860, 861 und 865 machen aus `Š` einen Rückstrich und aus einem Akut einen Schrägstrich, auch hinter
-    einem Buchstaben. Deshalb wird `Š` zu `S` (`Šimek.pdf` heißt `Simek.pdf`) und ein Akut, der nach der Unicode-Form
-    noch allein steht (etwa in `q́` oder `Ива́н`), zu `_` (#922). Sonst entstünden dort aus einem Namen Ordner, zwei
-    Namen wie `q́b.pdf` und `qŠb.pdf` würden derselbe Pfad, und ein Teil dahinter könnte ein Gerätename sein.
+    DOS-Codepage 860 macht aus `Š` einen Rückstrich, die DOS-Codepages 860, 861 und 865 machen aus einem Akut einen
+    Schrägstrich, auch hinter einem Buchstaben. Deshalb wird `Š` zu `S` (`Šimek.pdf` heißt `Simek.pdf`) und ein Akut,
+    der nach der Unicode-Form noch allein steht (etwa in `q́` oder `Ива́н`), zu `_` (#922). Sonst entstünden dort aus
+    einem Namen Ordner, zwei Namen wie `q́b.pdf` und `qŠb.pdf` würden derselbe Pfad, und ein Teil dahinter könnte ein
+    Gerätename sein. Ein Teil, der ohne seine Akzente nur aus Punkten und Leerraum besteht, fällt weg wie `..` selbst:
+    Ein Entpacker, der Akzente streicht, machte aus `..` mit Umlaut sonst `..` (#922).
   - Ein halbes Zeichen (ein Surrogat ohne seine andere Hälfte) wird `_`, weil das ZIP es als U+FFFD und `daten.json`
     es als `\ud800` geschrieben hätte. Folgen von mehr als 30 kombinierenden Zeichen werden auf 30 gekürzt, weil ihre
     Ordnung sonst mit dem Quadrat ihrer Länge Zeit braucht.
