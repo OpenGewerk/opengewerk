@@ -30,7 +30,8 @@ export interface ZipEntry {
 export class ZipTooLargeError extends Error {}
 
 const utf8 = new TextEncoder()
-const maxEntries = 0xffff
+/** The most entries an archive holds without ZIP64. */
+export const maxEntries = 0xffff
 const maxBytes = 0xffffffff
 const maxName = 0xffff
 
@@ -387,14 +388,18 @@ function withoutEnd(part: string): string {
 }
 
 /**
- * A part, or nothing where only white space, dots and marks are left of it:
- * an unpacker that drops marks would make ".." of ".." with an umlaut, and
- * Windows drops the rest (opengewerk#922). Such a part goes as ".." does.
+ * A part, or nothing where only white space and dots are left of it as
+ * `plain` reads it: an unpacker that drops marks would make ".." of ".." with
+ * an umlaut, one that makes spaces of other characters " " of an ideographic
+ * space, and Windows drops the rest (opengewerk#922). Such a part goes as ".."
+ * does.
  */
 function nothingButEnd(part: string): string {
-  for (const character of part.replace(dropped, '')) {
-    if (!endOfPart.test(character)) {
-      return part
+  for (const character of part) {
+    for (const each of plain(character)) {
+      if (!endOfPart.test(each)) {
+        return part
+      }
     }
   }
 

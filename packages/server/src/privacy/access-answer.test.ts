@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { type AccessAnswer, accessEntries, filePaths } from './access-answer.js'
+import { type AccessAnswer, accessEntries, filePaths, prepareFilePaths } from './access-answer.js'
 import type { AccessReport, ReportFile } from './access-report.js'
-import { uniqueNames } from './zip.js'
+import { uniqueNames, ZipTooLargeError } from './zip.js'
 
 /** A report with nothing but the given files, as `filePaths` reads it. */
 function reportOf(files: readonly Pick<ReportFile, 'mediaType' | 'name'>[]): AccessReport {
@@ -24,6 +24,47 @@ function reportOf(files: readonly Pick<ReportFile, 'mediaType' | 'name'>[]): Acc
 
 /** A space that does not break, which trim takes and a pattern for spaces does not. */
 const unbroken = String.fromCharCode(0xa0)
+
+describe('the paths of the files of an answer (opengewerk#922)', () => {
+  it('are refused for more files than an archive holds beside the answer, before any work', async () => {
+    const many = reportOf(
+      Array.from({ length: 65_534 }, (_, index) => ({
+        mediaType: 'text/plain',
+        name: `${'ð'.repeat(90)} ${String(index)}`,
+      })),
+    )
+    const started = performance.now()
+
+    expect(() => filePaths(many)).toThrow(ZipTooLargeError)
+    await expect(prepareFilePaths(many)).rejects.toThrow(ZipTooLargeError)
+    expect(performance.now() - started).toBeLessThan(500)
+
+    // One fewer, and the archive holds them with the PDF and `daten.json`.
+    const most = reportOf(
+      Array.from({ length: 65_533 }, () => ({ mediaType: 'text/plain', name: 'a' })),
+    )
+
+    expect(filePaths(most)).toHaveLength(65_533)
+  })
+
+  it('are worked out a batch at a time, giving way to other requests', async () => {
+    const files = Array.from({ length: 1000 }, (_, index) => ({
+      mediaType: 'text/plain',
+      name: `Foto ${String(index % 10)}`,
+    }))
+    const report = reportOf(files)
+    const order: string[] = []
+    const preparing = prepareFilePaths(report).then(() => order.push('paths'))
+
+    setImmediate(() => order.push('other'))
+    await preparing
+
+    expect(order).toEqual(['other', 'paths'])
+    // The same paths as worked out at once for the same files.
+    expect(filePaths(report)).toEqual(filePaths(reportOf(files)))
+    expect(new Set(filePaths(report)).size).toBe(1000)
+  })
+})
 
 describe('the paths of the files of an answer', () => {
   it('are cut and cleaned, and the archive keeps them as they are', () => {

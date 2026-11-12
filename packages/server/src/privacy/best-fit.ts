@@ -570,3 +570,20 @@ export const fits: readonly (readonly [number, number, number, number])[] = [
   [0xff3e, 0xfe3f, 0x400000, 0x400000],
   [0xff40, 0x2018, 0x400000, 0x400000],
 ]
+
+/**
+ * The characters a code page makes a slash, a backslash, a dot or a colon of
+ * (opengewerk#922), left out of `fits`: `cleanName` replaces each of them.
+ */
+export const separatorFits: readonly number[] = [
+  0xa5, 0xb4, 0x160, 0x2ca, 0x301, 0x589, 0x2024, 0x2026, 0x2044, 0x20a9, 0x2215, 0x2216, 0x2236,
+  0xff0e, 0xff0f, 0xff1a, 0xff3c,
+]
+
+/**
+ * The characters other than marks that a code page makes spaces or nothing
+ * of (opengewerk#922): `cleanName` drops a part made only of them.
+ */
+export const blankFits: readonly number[] = [
+  0x6de, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2008, 0x2009, 0x200a, 0x3000,
+]

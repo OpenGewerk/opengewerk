@@ -19,7 +19,7 @@ import { type PrintJob, present, text } from '@opengewerk/platform-server'
 import { momentText } from '../forms/defect-report.js'
 import { type GridParty, sheetHead, sheetJob } from '../forms/grid-documents.js'
 import { type AccessReport, type ReportRow } from './access-report.js'
-import { cleanName, nameMaker, type ZipEntry } from './zip.js'
+import { cleanName, maxEntries, nameMaker, type ZipEntry, ZipTooLargeError } from './zip.js'
 
 /**
  * The answer to a request for access (#318) as the person gets it, one ZIP:
@@ -152,24 +152,63 @@ export function filePaths(report: AccessReport): readonly string[] {
     return known
   }
 
-  const paths = pathsOf(report)
+  const working = pathsOf(report)
+  let step = working.next()
 
-  pathsOfReports.set(report, paths)
+  while (step.done !== true) {
+    step = working.next()
+  }
+  pathsOfReports.set(report, step.value)
 
-  return paths
+  return step.value
+}
+
+/**
+ * Works out the paths of a report's files as `filePaths` does and keeps them
+ * for it, a batch at a time, giving way to other requests between batches
+ * (opengewerk#922): for many files that takes long, and `filePaths` would
+ * hold the server for it at once.
+ */
+export async function prepareFilePaths(report: AccessReport): Promise<void> {
+  if (pathsOfReports.has(report)) {
+    return
+  }
+
+  const working = pathsOf(report)
+  let step = working.next()
+
+  while (step.done !== true) {
+    await new Promise((resolve) => setImmediate(resolve))
+    step = working.next()
+  }
+  pathsOfReports.set(report, step.value)
 }
 
 /** The paths `filePaths` has worked out, by report. */
 const pathsOfReports = new WeakMap<AccessReport, readonly string[]>()
 
-function pathsOf(report: AccessReport): readonly string[] {
+/** How many paths `pathsOf` works out between two pauses. */
+const pathsAtATime = 256
+
+/**
+ * The paths of a report's files, pausing after each batch. A report with
+ * more files than the archive holds beside the two of the answer is refused
+ * before any work (opengewerk#922); `zipPieces` would refuse it only once all
+ * names were made.
+ */
+function* pathsOf(report: AccessReport): Generator<undefined, readonly string[]> {
+  if (report.files.length + answerNames.length > maxEntries) {
+    throw new ZipTooLargeError('Das Archiv hätte mehr als 65 535 Dateien.')
+  }
+
   const unique = nameMaker()
+  const paths: string[] = []
 
   for (const name of answerNames) {
     unique(name)
   }
 
-  return report.files.map((file) => {
+  for (const file of report.files) {
     // Cleaned and cut before it goes into the folder and before its
     // extension (opengewerk#916): a name of only dots or slashes would leave
     // "dateien" itself as the path, beside the folder and not in it, or
@@ -179,8 +218,14 @@ function pathsOf(report: AccessReport): readonly string[] {
     // "a" a file and a folder at once, and the archive could not be unpacked.
     const cleaned = cleanName(file.name).replaceAll('/', '_')
 
-    return unique(`${filesFolder}/${cut(cleaned)}${extensionOf(file.mediaType, cleaned)}`)
-  })
+    paths.push(unique(`${filesFolder}/${cut(cleaned)}${extensionOf(file.mediaType, cleaned)}`))
+
+    if (paths.length % pathsAtATime === 0) {
+      yield
+    }
+  }
+
+  return paths
 }
 
 function extensionOf(mediaType: string, name: string): string {

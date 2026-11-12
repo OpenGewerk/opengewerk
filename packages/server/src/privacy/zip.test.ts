@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { blankFits, separatorFits } from './best-fit.js'
 import { cleanName, dosMoment, uniqueNames, zipBytes, ZipTooLargeError } from './zip.js'
 
 /** A space that does not break, which trim takes and a pattern for spaces does not. */
@@ -65,6 +66,27 @@ describe('the names in an archive', () => {
       'a/b .pdf',
       'dateien',
     ])
+  })
+
+  it('keep no character a code page makes a separator of (opengewerk#922)', () => {
+    // After "q", with which no mark of them makes a character of its own.
+    for (const code of separatorFits) {
+      const character = String.fromCodePoint(code)
+
+      expect(cleanName(`q${character}b.pdf`)).not.toContain(character)
+    }
+  })
+
+  it('keep no part only of what a code page makes spaces or nothing of (opengewerk#922)', () => {
+    for (const code of blankFits) {
+      expect(cleanName(`x/${String.fromCodePoint(code)}/y`)).toBe('x/y')
+    }
+
+    // Nor of what `plain` reads as spaces or nothing, which no code page
+    // makes so yet: "¨", "¯", "¸", "˘", "῭" and the half-width sound marks.
+    for (const code of [0xa8, 0xaf, 0xb8, 0x2d8, 0x1fed, 0xff9e, 0xff9f]) {
+      expect(cleanName(`x/${String.fromCodePoint(code)}/y`)).toBe('x/y')
+    }
   })
 
   it('lose a part that is only dots and spaces once its marks are dropped (opengewerk#922)', () => {

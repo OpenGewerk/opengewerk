@@ -33,6 +33,15 @@ const refused = new Set([...'<>:"|?*/.', String.fromCodePoint(0x5c)])
 /** @type {Map<string, { code: number, made: number, pages: number, dropping: number }>} */
 const rows = new Map()
 
+// What the table leaves out but a test holds against `cleanName`: characters
+// that become a separator or a dot, and those other than marks that become
+// spaces or nothing.
+const separators = new Set(['/', String.fromCodePoint(0x5c), '.', ':'])
+/** @type {Set<number>} */
+const separatorCodes = new Set()
+/** @type {Set<number>} */
+const blankCodes = new Set()
+
 for (const [mode, field] of /** @type {const} */ ([
   ['0', 'pages'],
   ['528', 'dropping'],
@@ -44,6 +53,12 @@ for (const [mode, field] of /** @type {const} */ ([
 
       if (units.length > 1) {
         throw new Error(`U+${Number(code).toString(16)} becomes more than one character in ${page}`)
+      }
+      if (units.some((unit) => separators.has(unit))) {
+        separatorCodes.add(Number(code))
+      }
+      if (units.every((unit) => unit === ' ') && !/^\p{M}$/u.test(character)) {
+        blankCodes.add(Number(code))
       }
       if (units.some((unit) => refused.has(unit) || unit.charCodeAt(0) < 0x20)) {
         continue
@@ -83,6 +98,24 @@ const lines = [
     (row) => `  [${hex(row.code)}, ${hex(row.made)}, ${hex(row.pages)}, ${hex(row.dropping)}],`,
   ),
   ']',
+  '',
+  '/**',
+  ' * The characters a code page makes a slash, a backslash, a dot or a colon of',
+  ' * (opengewerk#922), left out of `fits`: `cleanName` replaces each of them.',
+  ' */',
+  `export const separatorFits: readonly number[] = [${[...separatorCodes]
+    .sort((a, b) => a - b)
+    .map(hex)
+    .join(', ')}]`,
+  '',
+  '/**',
+  ' * The characters other than marks that a code page makes spaces or nothing',
+  ' * of (opengewerk#922): `cleanName` drops a part made only of them.',
+  ' */',
+  `export const blankFits: readonly number[] = [${[...blankCodes]
+    .sort((a, b) => a - b)
+    .map(hex)
+    .join(', ')}]`,
   '',
 ]
 

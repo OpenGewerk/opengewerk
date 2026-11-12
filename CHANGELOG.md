@@ -176,17 +176,21 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
     `Lodz.pdf` (in 1251), `è.pdf` und `c.pdf` (in 775), auch wenn Windows dabei Akzente oder Punkte am Ende streicht.
     Verglichen wird je Codepage, deshalb bleiben `cat.pdf` und `eat.pdf` zwei Namen, obwohl `è` je nach Codepage `c`
     oder `e` wird. Zwei Namen, die nur in zwei verschiedenen Codepages gleich lesen (etwa `¤.pdf` und `Œ.pdf`),
-    bekommen dabei ebenfalls eine Nummer, die kein Entpacker bräuchte; eine Datei geht so nie verloren. Die Abbildungen stehen als Tabelle in `privacy/best-fit.ts`, gewonnen mit WideCharToMultiByte über
-    jedes Zeichen in 32 Codepages (`scripts/best-fit-dump.ps1`, `scripts/best-fit-table.js`). Bisher konnte so ein
-    Entpacker eine Datei der Auskunft mit einer anderen überschreiben.
+    bekommen dabei ebenfalls eine Nummer, die kein Entpacker bräuchte; eine Datei geht so nie verloren. Die
+    Abbildungen stehen als Tabelle in `privacy/best-fit.ts`, gewonnen mit WideCharToMultiByte über jedes Zeichen in 32
+    Codepages (`scripts/best-fit-dump.ps1`, `scripts/best-fit-table.js`). Bisher konnte so ein Entpacker eine Datei
+    der Auskunft mit einer anderen überschreiben. Weil dieser Vergleich je Name mehr kostet, rechnet der Server die
+    Pfade einer Auskunft einmal und in Paketen von 256 Dateien, zwischen denen andere Anfragen drankommen, und lehnt
+    eine Auskunft mit mehr Dateien, als ein ZIP fasst, vorher mit 413 ab statt erst beim Schreiben des ZIP.
   - Ein Zeichen, das ein Entpacker unter Windows beim Umwandeln in seine ANSI-Codepage zu einem Punkt, Schrägstrich
     oder Doppelpunkt machen könnte (etwa `／`, `．`, `¥` oder `´`), wird `_`, damit aus `．．／` kein `../` wird. Die
     DOS-Codepage 860 macht aus `Š` einen Rückstrich, die DOS-Codepages 860, 861 und 865 machen aus einem Akut einen
     Schrägstrich, auch hinter einem Buchstaben. Deshalb wird `Š` zu `S` (`Šimek.pdf` heißt `Simek.pdf`) und ein Akut,
     der nach der Unicode-Form noch allein steht (etwa in `q́` oder `Ива́н`), zu `_` (#922). Sonst entstünden dort aus
     einem Namen Ordner, zwei Namen wie `q́b.pdf` und `qŠb.pdf` würden derselbe Pfad, und ein Teil dahinter könnte ein
-    Gerätename sein. Ein Teil, der ohne seine Akzente nur aus Punkten und Leerraum besteht, fällt weg wie `..` selbst:
-    Ein Entpacker, der Akzente streicht, machte aus `..` mit Umlaut sonst `..` (#922).
+    Gerätename sein. Ein Teil, der ohne seine Akzente nur aus Punkten und Leerraum besteht, auch aus Zeichen, die
+    erst in ihrer Kompatibilitätsform Leerraum sind (`¨` oder das breite Leerzeichen U+3000), fällt weg wie `..`
+    selbst: Ein Entpacker, der Akzente streicht, machte aus `..` mit Umlaut sonst `..` (#922).
   - Ein halbes Zeichen (ein Surrogat ohne seine andere Hälfte) wird `_`, weil das ZIP es als U+FFFD und `daten.json`
     es als `\ud800` geschrieben hätte. Folgen von mehr als 30 kombinierenden Zeichen werden auf 30 gekürzt, weil ihre
     Ordnung sonst mit dem Quadrat ihrer Länge Zeit braucht.
