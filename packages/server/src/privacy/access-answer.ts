@@ -140,9 +140,29 @@ const missingFolder = 'fehlende Dateien'
  * of the answer, so that two files of the same name stand in the PDF and in
  * `daten.json` under the two names they have in the ZIP, "scan.pdf" and
  * "scan (2).pdf", and not twice under the first. The archive gets these
- * names and leaves them as they are.
+ * names and leaves them as they are. Worked out once for a report, whose
+ * files do not change: the PDF, `daten.json` and the entries of the archive
+ * each ask, and making names unique as every code page reads them is the
+ * dearest part of an answer (opengewerk#922).
  */
-export function filePaths(report: AccessReport): string[] {
+export function filePaths(report: AccessReport): readonly string[] {
+  const known = pathsOfReports.get(report)
+
+  if (known !== undefined) {
+    return known
+  }
+
+  const paths = pathsOf(report)
+
+  pathsOfReports.set(report, paths)
+
+  return paths
+}
+
+/** The paths `filePaths` has worked out, by report. */
+const pathsOfReports = new WeakMap<AccessReport, readonly string[]>()
+
+function pathsOf(report: AccessReport): readonly string[] {
   const unique = nameMaker()
 
   for (const name of answerNames) {

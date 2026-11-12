@@ -179,12 +179,11 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
     jedes Zeichen in 32 Codepages (`scripts/best-fit-dump.ps1`, `scripts/best-fit-table.js`). Bisher konnte so ein
     Entpacker eine Datei der Auskunft mit einer anderen überschreiben.
   - Ein Zeichen, das ein Entpacker unter Windows beim Umwandeln in seine ANSI-Codepage zu einem Punkt, Schrägstrich
-    oder Doppelpunkt machen könnte (etwa `／`, `．`, `¥` oder `´`), wird `_`, damit aus `．．／` kein `../` wird. In den
-    DOS-Codepages 860, 861 und 865 bleiben ein Akut nach einem Buchstaben, auch mit weiteren Akzenten dazwischen, und
-    `Š` stehen, sie sind Akzente und
-    Buchstaben vieler Namen; ein Akut, vor dem kein Buchstabe stehen bleibt (etwa nach einem Punkt oder nach einem
-    `Š`, das `_` wird), und ein `Š` neben einem Punkt, auch mit Akzenten dazwischen, werden `_`, sodass auch dort kein
-    `../` entsteht.
+    oder Doppelpunkt machen könnte (etwa `／`, `．`, `¥` oder `´`), wird `_`, damit aus `．．／` kein `../` wird. Die
+    DOS-Codepages 860, 861 und 865 machen aus `Š` einen Rückstrich und aus einem Akut einen Schrägstrich, auch hinter
+    einem Buchstaben. Deshalb wird `Š` zu `S` (`Šimek.pdf` heißt `Simek.pdf`) und ein Akut, der nach der Unicode-Form
+    noch allein steht (etwa in `q́` oder `Ива́н`), zu `_` (#922). Sonst entstünden dort aus einem Namen Ordner, zwei
+    Namen wie `q́b.pdf` und `qŠb.pdf` würden derselbe Pfad, und ein Teil dahinter könnte ein Gerätename sein.
   - Ein halbes Zeichen (ein Surrogat ohne seine andere Hälfte) wird `_`, weil das ZIP es als U+FFFD und `daten.json`
     es als `\ud800` geschrieben hätte. Folgen von mehr als 30 kombinierenden Zeichen werden auf 30 gekürzt, weil ihre
     Ordnung sonst mit dem Quadrat ihrer Länge Zeit braucht.

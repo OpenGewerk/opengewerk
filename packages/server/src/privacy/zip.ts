@@ -81,12 +81,13 @@ const asciiSeparators = new Set([...'/.:"<>|?*', String.fromCodePoint(0x5c)])
  * page makes one of them, and they are replaced all the same. Other characters
  * Windows refuses after best fit stay, they are part of ordinary names ("„",
  * "∗"), and a name with one fails there as with any character the code page
- * lacks. So do the combining acute and "Š", which only DOS code pages (860,
- * 861, 865) make a slash or a backslash of: they are accents and letters of
- * many names.
+ * lacks. The combining acute is one where it stays alone after the name is
+ * brought into one form, on a letter without a form of its own ("q́"): the DOS
+ * code pages 860, 861 and 865 make a slash of it (opengewerk#922).
  */
 const separatorsByFit = new Set(
   String.fromCodePoint(
+    0x301,
     0xa5,
     0x20a9,
     0x2044,
@@ -321,8 +322,7 @@ const mark = /^\p{M}/u
  * "NUL.txt", so it gets a "_" behind the device, "CON_", "NUL_.txt" and
  * "CON_ .pdf". Also when only an unpacker that converts by best fit makes a
  * device of it, "ＣＯＮ", "ĈON" or "ŁPT1" (opengewerk#920). The "_" comes after
- * the marks of the last character, which would otherwise go with the "_", and
- * an acute among them would be lost when the name is cleaned again.
+ * the marks of the last character, which stay with it.
  */
 function notADevice(part: string): string {
   const dot = part.indexOf('.')
@@ -353,25 +353,20 @@ function notADevice(part: string): string {
 const markRun = /(\p{M}{30})\p{M}+/gu
 
 /**
- * Where a DOS code page (860, 861, 865) would make "../" or "..\" of a name
- * by best fit (opengewerk#916): an acute after something that is no letter
- * or its marks,
- * which those code pages make a slash, and "Š" beside a dot, which 860 makes
- * a backslash. Elsewhere both stay, they are accents and letters of many
- * names.
+ * A name in which "Š" is "S" (opengewerk#922): the DOS code pages 860, 861
+ * and 865 make a backslash of it, and a name with it a folder. In one form
+ * again after each round, as an "S" and a caron behind the old "Š" make a new
+ * one; the runs of marks are cut to 30, so there are at most 31 rounds.
  */
-const dosSeparators = new RegExp(
-  [
-    // A letter may bear other marks before the acute ("ɔ̃́"); the runs of
-    // marks are cut to 30 before, so the look back stays short.
-    `(?<!\\p{L}\\p{M}*)${String.fromCodePoint(0x301)}`,
-    // Also with marks between them, which a conversion may drop, and U+06DE,
-    // which it drops as well.
-    `(?<=\\.[\\p{M}${String.fromCodePoint(0x6de)}]*)${String.fromCodePoint(0x160)}`,
-    `${String.fromCodePoint(0x160)}(?=[\\p{M}${String.fromCodePoint(0x6de)}]*\\.)`,
-  ].join('|'),
-  'gu',
-)
+function withoutCaronS(name: string): string {
+  let result = name
+
+  while (result.includes('Š')) {
+    result = result.replaceAll('Š', 'S').normalize('NFC')
+  }
+
+  return result
+}
 
 /** What a part of a name loses at its end: white space and dots. */
 const endOfPart = /^[\s.]$/
@@ -402,22 +397,13 @@ function withoutEnd(part: string): string {
  * the answer gave it.
  */
 export function cleanName(raw: string): string {
-  const name = raw
-    .replace(markRun, '$1')
-    .normalize('NFC')
-    .replace(markRun, '$1')
+  const name = withoutCaronS(raw.replace(markRun, '$1').normalize('NFC').replace(markRun, '$1'))
     .replace(/\\/g, '/')
     .split('/')
     .map((part) =>
       notADevice(
         withoutEnd(
-          [...part]
-            .map((character) => (unfit(character) ? '_' : character))
-            .join('')
-            // Twice: an "Š" after a dot becomes "_", and only then is the
-            // acute behind it one with no letter before it.
-            .replace(dosSeparators, '_')
-            .replace(dosSeparators, '_'),
+          [...part].map((character) => (unfit(character) ? '_' : character)).join(''),
         ).trimStart(),
       ),
     )
@@ -545,9 +531,11 @@ export function nameMaker(): (raw: string) => string {
   const taken = new Set<string>()
   // The numbers of `fitNames` of every name made so far.
   const takenByFit = new Set<number>()
-  // Where the count of each name stopped: a hundredth "Foto.jpg" tries
-  // "Foto (100).jpg" first and not every number from 2 again.
-  const counters = new Map<string, number>()
+  // Where the count of each name stopped, by `folded` and by each number of
+  // `fitNames`: a hundredth "Foto.jpg" tries "Foto (100).jpg" first and not
+  // every number from 2 again, and so does a hundredth name that only an
+  // unpacker makes "Foto.jpg" of, "F̀oto.jpg" after "Fòto.jpg" (opengewerk#922).
+  const counters = new Map<string | number, number>()
 
   return (raw) => {
     const fallback = cleanName(raw)
@@ -555,18 +543,24 @@ export function nameMaker(): (raw: string) => string {
     const slash = fallback.lastIndexOf('/')
     const [stem, extension] =
       dot > slash + 1 ? [fallback.slice(0, dot), fallback.slice(dot)] : [fallback, '']
-    const key = folded(fallback)
     let candidate = fallback
     let byFit = fitNames(candidate)
-    let counter = counters.get(key) ?? 2
+    const keys = [folded(fallback), ...byFit]
+    let counter = Math.max(...keys.map((key) => counters.get(key) ?? 2))
+    let numbered = false
 
     while (taken.has(folded(candidate)) || [...byFit].some((name) => takenByFit.has(name))) {
       candidate = `${stem} (${String(counter)})${extension}`
       byFit = fitNames(candidate)
       counter += 1
+      numbered = true
     }
 
-    counters.set(key, counter)
+    if (numbered) {
+      for (const key of keys) {
+        counters.set(key, counter)
+      }
+    }
     taken.add(folded(candidate))
     for (const name of byFit) {
       takenByFit.add(name)

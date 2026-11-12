@@ -100,7 +100,7 @@ describe('the names in an archive', () => {
   })
 
   it('are no names a code page makes a device of by best fit (opengewerk#920)', () => {
-    const marks = String.fromCodePoint(0x308, 0x301)
+    const marks = String.fromCodePoint(0x308, 0x300)
 
     // Each on its own: some of them are one name to such an unpacker.
     expect(
@@ -197,6 +197,29 @@ describe('the names in an archive', () => {
     ])
   })
 
+  it('count on together when only such an unpacker makes them one name (opengewerk#922)', () => {
+    // Two thousand names that differ in their marks and are all "Foto.jpg"
+    // to an unpacker that drops them, each looked at about once. Without the
+    // marks that are or hold an acute, which becomes "_".
+    const marks = Array.from({ length: 0x70 }, (_, index) => 0x300 + index).filter(
+      (code) => !String.fromCodePoint(code).normalize('NFC').includes(String.fromCodePoint(0x301)),
+    )
+    const raw = marks
+      .flatMap((first) =>
+        marks.map(
+          (second) =>
+            `dateien/F${String.fromCodePoint(first)}ot${String.fromCodePoint(second)}o.jpg`,
+        ),
+      )
+      .slice(0, 2000)
+    const started = performance.now()
+    const names = uniqueNames(raw)
+
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(new Set(names).size).toBe(2000)
+    expect(names.at(-1)).toMatch(/ \(2000\)\.jpg$/)
+  })
+
   it('take a name in either Unicode form for the same, as macOS does', () => {
     const composed = 'für.pdf'
     const decomposed = `fu${String.fromCharCode(0x308)}r.pdf`
@@ -225,13 +248,14 @@ describe('the names in an archive', () => {
       `i${dot} (2).pdf`,
     ])
 
-    // In capitals "ΐ" is three characters, of which one form holds two.
+    // In capitals "ΐ" is three characters, of which one form holds two; the
+    // acute that stays alone becomes "_" (opengewerk#922).
     const small = String.fromCodePoint(0x390)
     const capital = String.fromCodePoint(0x3aa, 0x301)
 
     expect(uniqueNames([`${small}.pdf`, `${capital}.pdf`])).toEqual([
       `${small}.pdf`,
-      `${capital} (2).pdf`,
+      `${String.fromCodePoint(0x3aa)}_.pdf`,
     ])
   })
 
@@ -258,7 +282,7 @@ describe('the names in an archive', () => {
       `1${half} Zimmer.pdf`,
       'a_b',
       '.._.._x.pdf',
-      `Ångström ${enDash} „Test“ € 😀 Šimek.pdf`,
+      `Ångström ${enDash} „Test“ € 😀 Simek.pdf`,
     ])
   })
 
@@ -321,11 +345,10 @@ describe('the names in an archive', () => {
     expect(performance.now() - started).toBeLessThan(500)
   })
 
-  it('make no "../" of an acute or an "Š" that a DOS code page turns into a separator', () => {
+  it('keep no acute or "Š" that a DOS code page turns into a separator (opengewerk#922)', () => {
     const acute = String.fromCodePoint(0x301)
-    // A mark between a dot and an "Š", which a conversion may drop.
     const umlaut = String.fromCodePoint(0x308)
-    // Which a conversion drops as well.
+    const caron = String.fromCodePoint(0x30c)
     const rub = String.fromCodePoint(0x6de)
 
     // Each on its own: some of them are one name to such an unpacker.
@@ -334,27 +357,39 @@ describe('the names in an archive', () => {
         `..${acute}..${acute}x.pdf`,
         '..Š..Šx.pdf',
         'Šimek.pdf',
+        // Made of "S" and a caron, which the form makes "Š".
+        `S${caron}imek.pdf`,
+        // Another caron behind it, which makes a new "Š" of the "S".
+        `Š${caron}x.pdf`,
+        // A dot above behind it, with which the form holds it as "Ṧ".
+        `Š${String.fromCodePoint(0x307)}.pdf`,
+        'šimek.pdf',
         `Ива${acute}н.pdf`,
         `${acute}x.pdf`,
-        'xŠ.pdf',
-        `..${umlaut}Š${umlaut}..${umlaut}Š${umlaut}x.pdf`,
-        `..${rub}Š..${rub}Šx.pdf`,
-        `xŠ${umlaut}.pdf`,
+        `..${umlaut}Š${umlaut}x.pdf`,
+        `..${rub}Šx.pdf`,
+        // "/" and "\" in 860, one folder and the same path there.
+        `q${acute}b.pdf`,
+        'qŠb.pdf',
         `ɔ${String.fromCodePoint(0x303, 0x301)}.pdf`,
         `i${String.fromCodePoint(0x307, 0x301)}.pdf`,
       ].map((name) => cleanName(name)),
     ).toEqual([
       '.._.._x.pdf',
-      '.._.._x.pdf',
-      'Šimek.pdf',
-      `Ива${acute}н.pdf`,
+      '..S..Sx.pdf',
+      'Simek.pdf',
+      'Simek.pdf',
+      'Sx.pdf',
+      'Ṧ.pdf',
+      'šimek.pdf',
+      'Ива_н.pdf',
       '_x.pdf',
-      'x_.pdf',
-      `..${umlaut}_${umlaut}..${umlaut}_${umlaut}x.pdf`,
-      `..${rub}_..${rub}_x.pdf`,
-      `x_${umlaut}.pdf`,
-      `ɔ${String.fromCodePoint(0x303, 0x301)}.pdf`,
-      `i${String.fromCodePoint(0x307, 0x301)}.pdf`,
+      `..${umlaut}S${umlaut}x.pdf`,
+      `..${rub}Sx.pdf`,
+      'q_b.pdf',
+      'qSb.pdf',
+      `ɔ${String.fromCodePoint(0x303)}_.pdf`,
+      `i${String.fromCodePoint(0x307)}_.pdf`,
     ])
   })
 
