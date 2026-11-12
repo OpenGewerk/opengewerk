@@ -320,7 +320,7 @@ jobs:
     # change.
     services:
       renderer:
-        image: ghcr.io/browserless/chromium:v2.59.0@sha256:ab62a8215f87b7252f6198dfc154f1546bc37dbda92d18106a679a6034548b45
+        image: ghcr.io/browserless/chromium:v2.62.0@sha256:0f28bbde20e890463e8d0f253dc2b66860de8ad3aef6cc17bcdbfe8a02ffccf0
         env:
           TOKEN: probe
         ports:
