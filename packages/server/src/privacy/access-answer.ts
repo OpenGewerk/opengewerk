@@ -19,7 +19,15 @@ import { type PrintJob, present, text } from '@opengewerk/platform-server'
 import { momentText } from '../forms/defect-report.js'
 import { type GridParty, sheetHead, sheetJob } from '../forms/grid-documents.js'
 import { type AccessReport, type ReportRow } from './access-report.js'
-import { cleanName, maxEntries, nameMaker, type ZipEntry, ZipTooLargeError } from './zip.js'
+import {
+  cleanName,
+  droppedAtPartEnd,
+  droppedPart,
+  maxEntries,
+  nameMaker,
+  type ZipEntry,
+  ZipTooLargeError,
+} from './zip.js'
 
 /**
  * The answer to a request for access (#318) as the person gets it, one ZIP:
@@ -187,11 +195,77 @@ export async function prepareFilePaths(report: AccessReport): Promise<void> {
 /** The paths `filePaths` has worked out, by report. */
 const pathsOfReports = new WeakMap<AccessReport, readonly string[]>()
 
-/** How many paths `pathsOf` works out between two pauses. */
+/** How many paths `pathsOf` works out at most between two pauses. */
 const pathsAtATime = 256
 
+/** How many milliseconds `pathsOf` works at most between two pauses. */
+const pauseAfter = 16
+
+/** How much of a raw name `pathsOf` cleans, from its start and its end. */
+const rawStart = 1000
+const rawEnd = 32
+
 /**
- * The paths of a report's files, pausing after each batch. A report with
+ * A raw name with no more than its first 1000 and 32 more UTF-16 units from
+ * its end (opengewerk#929). The path keeps 200 bytes of it, the end brings
+ * the extension; cleaning all of a name of 100 000 characters cost the server
+ * tens of milliseconds for each file. The 32 are taken before what cleaning
+ * drops at the end, and only that: slashes, white space and dots as they
+ * stand (`droppedAtPartEnd`), and whole last parts it reads as nothing
+ * (`droppedPart`), so that "Bericht.docx" and 40 spaces, or parts of dots
+ * with marks, keep ".docx", and "Bericht.docx" with a wide dot behind it
+ * keeps none, as when the whole name is cleaned. At most 1000 units are
+ * skipped: a name that ends in more of that loses its extension, not the
+ * server's time. Where something is left out between the start and the end,
+ * a "_" stands for it: the two make no character of two halves, and an end
+ * that cleaning drops whole leaves no extension of the start behind
+ * ("Bericht.docx", 1000 letters and 2000 spaces has none, as it has none
+ * cleaned whole). An end right behind the start goes on without one.
+ */
+function bounded(name: string): string {
+  if (name.length <= rawStart + rawEnd) {
+    return name
+  }
+
+  const backslash = String.fromCharCode(0x5c)
+  // At most 1000 skipped, whatever the length of the name.
+  const floor = name.length - rawStart
+  let end = name.length
+
+  while (end > floor) {
+    const last = name.charAt(end - 1)
+
+    if (last === '/' || last === backslash || droppedAtPartEnd(last)) {
+      end -= 1
+    } else {
+      // The slash before the last part, looked for no further than the floor.
+      let separator = end - 1
+
+      while (
+        separator >= floor &&
+        name.charAt(separator) !== '/' &&
+        name.charAt(separator) !== backslash
+      ) {
+        separator -= 1
+      }
+
+      if (separator < floor || !droppedPart(name.slice(separator + 1, end))) {
+        break
+      }
+      end = separator
+    }
+  }
+
+  // What is left fits whole: no seam. Otherwise something lies between the
+  // start and the end, and "_" stands for it.
+  return end <= rawStart + rawEnd
+    ? name.slice(0, end)
+    : `${name.slice(0, rawStart)}_${name.slice(end - rawEnd, end)}`
+}
+
+/**
+ * The paths of a report's files, pausing after each batch of 256 or after
+ * 16 ms of work, whichever comes first (opengewerk#929). A report with
  * more files than the archive holds beside the two of the answer is refused
  * before any work (opengewerk#922); `zipPieces` would refuse it only once all
  * names were made.
@@ -203,6 +277,7 @@ function* pathsOf(report: AccessReport): Generator<undefined, readonly string[]>
 
   const unique = nameMaker()
   const paths: string[] = []
+  let since = performance.now()
 
   for (const name of answerNames) {
     unique(name)
@@ -216,12 +291,13 @@ function* pathsOf(report: AccessReport): Generator<undefined, readonly string[]>
     // name has an extension of its own is asked before the cut. Its folders
     // become part of the name (opengewerk#919): "a" and "a/b.pdf" would make
     // "a" a file and a folder at once, and the archive could not be unpacked.
-    const cleaned = cleanName(file.name).replaceAll('/', '_')
+    const cleaned = cleanName(bounded(file.name)).replaceAll('/', '_')
 
     paths.push(unique(`${filesFolder}/${cut(cleaned)}${extensionOf(file.mediaType, cleaned)}`))
 
-    if (paths.length % pathsAtATime === 0) {
+    if (paths.length % pathsAtATime === 0 || performance.now() - since > pauseAfter) {
       yield
+      since = performance.now()
     }
   }
 

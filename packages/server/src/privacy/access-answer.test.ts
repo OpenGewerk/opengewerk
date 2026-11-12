@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { type AccessAnswer, accessEntries, filePaths, prepareFilePaths } from './access-answer.js'
 import type { AccessReport, ReportFile } from './access-report.js'
@@ -54,15 +54,155 @@ describe('the paths of the files of an answer (opengewerk#922)', () => {
     }))
     const report = reportOf(files)
     const order: string[] = []
-    const preparing = prepareFilePaths(report).then(() => order.push('paths'))
 
+    // Asked for before the paths: it runs first only if they pause.
     setImmediate(() => order.push('other'))
-    await preparing
+    await prepareFilePaths(report).then(() => order.push('paths'))
 
     expect(order).toEqual(['other', 'paths'])
     // The same paths as worked out at once for the same files.
     expect(filePaths(report)).toEqual(filePaths(reportOf(files)))
     expect(new Set(filePaths(report)).size).toBe(1000)
+  })
+})
+
+describe('the raw names of the files of an answer (opengewerk#929)', () => {
+  it('are cleaned only at their start and their end, however long they are', () => {
+    const rub = String.fromCodePoint(0x6de)
+    // Half end in a long last part that cleaning drops, half in many short
+    // ones; neither is skipped further than the first 1000 units.
+    const droppedParts = `/.${String.fromCodePoint(0x308)}`.repeat(33_000)
+    const report = reportOf(
+      Array.from({ length: 300 }, (_, index) => ({
+        mediaType: 'application/pdf',
+        name:
+          index % 2 === 0
+            ? `C${String(index)}/${rub.repeat(99_990)}`
+            : `C${String(index)}${droppedParts}`,
+      })),
+    )
+    const started = performance.now()
+    const paths = filePaths(report)
+
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(new Set(paths).size).toBe(300)
+
+    // The start and the extension stay.
+    const [long] = filePaths(
+      reportOf([{ mediaType: 'image/jpeg', name: `Bericht ${'a'.repeat(100_000)} Ende.jpeg` }]),
+    )
+
+    expect(long).toMatch(/^dateien\/Bericht a+\.jpeg$/)
+
+    // Also behind what cleaning drops at the end, for a type of no extension
+    // of its own; and no character out of two halves at the seams.
+    const word = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    const umlaut = String.fromCodePoint(0x308)
+    const [spaced, marked, dotted, seams] = filePaths(
+      reportOf([
+        { mediaType: word, name: `${'a'.repeat(2000)}.docx${' '.repeat(40)}` },
+        // Parts of a dot with a mark, which cleaning drops as well.
+        { mediaType: word, name: `${'d'.repeat(2000)}.docx${`/.${umlaut}`.repeat(20)}` },
+        { mediaType: 'application/zip', name: `${'b'.repeat(2000)}.zip${'/.'.repeat(40)}` },
+        {
+          mediaType: 'application/pdf',
+          name: `${'/'.repeat(999)}${String.fromCodePoint(0x1f600)}${'b'.repeat(500)}${String.fromCodePoint(0x1d400)}${'c'.repeat(27)}.pdf`,
+        },
+      ]),
+    )
+
+    expect(spaced).toMatch(/^dateien\/a+\.docx$/)
+    expect(marked).toMatch(/^dateien\/d+\.docx$/)
+
+    // A name only a little longer than what is cleaned keeps its extension
+    // behind a dropped last part as well.
+    // Cleaning drops the spaces at the start, so that nothing of the name
+    // may come twice.
+    const [shortish] = filePaths(
+      reportOf([
+        {
+          mediaType: word,
+          name: `${' '.repeat(990)}abcdefghij.docx/${`.${umlaut}`.repeat(47)}`,
+        },
+      ]),
+    )
+
+    expect(shortish).toBe('dateien/abcdefghij.docx')
+
+    // But not behind what cleaning keeps or makes "_": then the name has no
+    // extension of its own and gets the one of its type, as a short one does.
+    const behind = [
+      String.fromCodePoint(0xff0e),
+      String.fromCharCode(9),
+      // Last parts that cleaning keeps as "_".
+      `/${String.fromCharCode(9)}`,
+      `/${String.fromCodePoint(0xff0e)}`,
+      `/${String.fromCodePoint(0x301)}`,
+      `/${String.fromCodePoint(0x2024)}`,
+      umlaut,
+      `.${umlaut}`,
+      String.fromCodePoint(0x6de),
+    ]
+
+    for (const end of behind) {
+      const [short, longer] = filePaths(
+        reportOf([
+          { mediaType: 'application/pdf', name: `Plan.docx${end}` },
+          { mediaType: 'application/pdf', name: `${'e'.repeat(2000)}.docx${end}` },
+        ]),
+      )
+
+      expect(short).toMatch(/\.pdf$/)
+      expect(longer).toMatch(/^dateien\/e+\.pdf$/)
+    }
+    expect(dotted).toMatch(/^dateien\/b+\.zip$/)
+    expect(seams).toBe(`dateien/___${'c'.repeat(27)}.pdf`)
+
+    // An end that cleaning drops whole leaves no extension of the start
+    // behind: cleaned whole, the name ends in "b".
+    const [uncovered] = filePaths(
+      reportOf([
+        {
+          mediaType: 'application/pdf',
+          name: `${'a'.repeat(995)}.docx${'b'.repeat(1000)}${' '.repeat(2000)}`,
+        },
+      ]),
+    )
+
+    expect(uncovered).toMatch(/^dateien\/a+\.pdf$/)
+
+    // An end right behind the start keeps a character whole across them.
+    const face = String.fromCodePoint(0x1f600)
+    const [whole] = filePaths(
+      reportOf([
+        { mediaType: 'application/pdf', name: `${' '.repeat(999)}${face}${'b'.repeat(27)}.pdf ` },
+      ]),
+    )
+
+    expect(whole).toBe(`dateien/${face}${'b'.repeat(27)}.pdf`)
+  })
+
+  it('give way to other requests after 16 ms of work as well', async () => {
+    // Fewer files than a batch, on a clock that moves 20 ms each time it is
+    // read: the pause can only come by time.
+    let now = 0
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => (now += 20))
+    const report = reportOf(
+      Array.from({ length: 10 }, (_, index) => ({
+        mediaType: 'text/plain',
+        name: `Foto ${String(index)}`,
+      })),
+    )
+    const order: string[] = []
+
+    try {
+      setImmediate(() => order.push('other'))
+      await prepareFilePaths(report).then(() => order.push('paths'))
+    } finally {
+      clock.mockRestore()
+    }
+
+    expect(order).toEqual(['other', 'paths'])
   })
 })
 
