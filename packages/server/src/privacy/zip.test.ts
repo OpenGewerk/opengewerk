@@ -99,6 +99,52 @@ describe('the names in an archive', () => {
     ])
   })
 
+  it('are no names a code page makes a device of by best fit (opengewerk#920)', () => {
+    const marks = String.fromCodePoint(0x308, 0x301)
+
+    expect(
+      uniqueNames([
+        'ＣＯＮ.pdf',
+        'ｎｕｌ',
+        'ĈON.pdf',
+        'ŁPT1.txt',
+        'COM¹',
+        'COM١.pdf',
+        'AµX',
+        'CO№UT$',
+        `CON${marks}`,
+        `CON${marks} .pdf`,
+        // "⃝" is "O" in 850 and nothing to an unpacker that drops marks.
+        `ŁPT1${String.fromCodePoint(0x20dd)}.pdf`,
+        `CON ${String.fromCodePoint(0x308)} .pdf`,
+        // Windows drops U+06DE as a mark.
+        `NU${String.fromCodePoint(0x6de)}L`,
+        'ＣＯＮＥ.pdf',
+        'Łódź.pdf',
+        'COM0',
+        'ŁPT.pdf',
+      ]),
+    ).toEqual([
+      'ＣＯＮ_.pdf',
+      'ｎｕｌ_',
+      'ĈON_.pdf',
+      'ŁPT1_.txt',
+      'COM¹_',
+      'COM١_.pdf',
+      'AµX_',
+      'CO№UT$_',
+      `CON${marks}_`,
+      `CON${marks}_ .pdf`,
+      `ŁPT1${String.fromCodePoint(0x20dd)}_.pdf`,
+      `CON_ ${String.fromCodePoint(0x308)} .pdf`,
+      `NU${String.fromCodePoint(0x6de)}L_`,
+      'ＣＯＮＥ.pdf',
+      'Łódź.pdf',
+      'COM0',
+      'ŁPT.pdf',
+    ])
+  })
+
   it('take a name in either Unicode form for the same, as macOS does', () => {
     const composed = 'für.pdf'
     const decomposed = `fu${String.fromCharCode(0x308)}r.pdf`
@@ -176,6 +222,10 @@ describe('the names in an archive', () => {
       `a${String.fromCodePoint(0xf73).repeat(20)}`,
       // The "Š" goes for the dot before it, then the acute for the "_".
       `..Š${String.fromCodePoint(0x301)}x.pdf`,
+      // The "_" goes behind the marks, so the acute keeps its letter.
+      `CON${String.fromCodePoint(0x308, 0x301)}`,
+      'ＣＯＮ.pdf',
+      'ŁPT1.txt',
     ]
 
     expect(cleanName(`x${unbroken}. .`)).toBe('x')
