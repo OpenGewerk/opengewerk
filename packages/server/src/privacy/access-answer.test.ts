@@ -66,6 +66,50 @@ describe('the paths of the files of an answer (opengewerk#922)', () => {
   })
 })
 
+describe('the raw names of the files of an answer (opengewerk#929)', () => {
+  it('are cleaned only at their start and their end, however long they are', () => {
+    const rub = String.fromCodePoint(0x6de)
+    const report = reportOf(
+      Array.from({ length: 300 }, (_, index) => ({
+        mediaType: 'application/pdf',
+        name: `C${String(index)}${rub.repeat(99_990)}`,
+      })),
+    )
+    const started = performance.now()
+    const paths = filePaths(report)
+
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(new Set(paths).size).toBe(300)
+
+    // The start and the extension stay.
+    const [long] = filePaths(
+      reportOf([{ mediaType: 'image/jpeg', name: `Bericht ${'a'.repeat(100_000)} Ende.jpeg` }]),
+    )
+
+    expect(long).toMatch(/^dateien\/Bericht a+\.jpeg$/)
+  })
+
+  it('give way to other requests after a few slow names as well', async () => {
+    // Fewer than a batch, each slow to clean: the pause comes by time.
+    const busy = [0xf0, 0x141, 0x300, 0xe8, 0x2021, 0x2205]
+      .map((code) => String.fromCodePoint(code))
+      .join('')
+    const report = reportOf(
+      Array.from({ length: 200 }, (_, index) => ({
+        mediaType: 'text/plain',
+        name: `${String(index)} ${busy.repeat(170)}`,
+      })),
+    )
+    const order: string[] = []
+    const preparing = prepareFilePaths(report).then(() => order.push('paths'))
+
+    setImmediate(() => order.push('other'))
+    await preparing
+
+    expect(order).toEqual(['other', 'paths'])
+  })
+})
+
 describe('the paths of the files of an answer', () => {
   it('are cut and cleaned, and the archive keeps them as they are', () => {
     const paths = filePaths(

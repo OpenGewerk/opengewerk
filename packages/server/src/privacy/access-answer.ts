@@ -187,11 +187,32 @@ export async function prepareFilePaths(report: AccessReport): Promise<void> {
 /** The paths `filePaths` has worked out, by report. */
 const pathsOfReports = new WeakMap<AccessReport, readonly string[]>()
 
-/** How many paths `pathsOf` works out between two pauses. */
+/** How many paths `pathsOf` works out at most between two pauses. */
 const pathsAtATime = 256
 
+/** How many milliseconds `pathsOf` works at most between two pauses. */
+const pauseAfter = 16
+
+/** How much of a raw name `pathsOf` cleans, from its start and its end. */
+const rawStart = 1000
+const rawEnd = 32
+
 /**
- * The paths of a report's files, pausing after each batch. A report with
+ * A raw name with no more than its first 1000 and its last 32 UTF-16 units
+ * (opengewerk#929). The path keeps 200 bytes of it, the end brings the
+ * extension; cleaning all of a name of 100 000 characters cost the server
+ * tens of milliseconds for each file. A character cut in half at a seam is a
+ * "_" once cleaned, as any half character is.
+ */
+function bounded(name: string): string {
+  return name.length <= rawStart + rawEnd
+    ? name
+    : `${name.slice(0, rawStart)}${name.slice(-rawEnd)}`
+}
+
+/**
+ * The paths of a report's files, pausing after each batch of 256 or after
+ * 16 ms of work, whichever comes first (opengewerk#929). A report with
  * more files than the archive holds beside the two of the answer is refused
  * before any work (opengewerk#922); `zipPieces` would refuse it only once all
  * names were made.
@@ -203,6 +224,7 @@ function* pathsOf(report: AccessReport): Generator<undefined, readonly string[]>
 
   const unique = nameMaker()
   const paths: string[] = []
+  let since = performance.now()
 
   for (const name of answerNames) {
     unique(name)
@@ -216,12 +238,13 @@ function* pathsOf(report: AccessReport): Generator<undefined, readonly string[]>
     // name has an extension of its own is asked before the cut. Its folders
     // become part of the name (opengewerk#919): "a" and "a/b.pdf" would make
     // "a" a file and a folder at once, and the archive could not be unpacked.
-    const cleaned = cleanName(file.name).replaceAll('/', '_')
+    const cleaned = cleanName(bounded(file.name)).replaceAll('/', '_')
 
     paths.push(unique(`${filesFolder}/${cut(cleaned)}${extensionOf(file.mediaType, cleaned)}`))
 
-    if (paths.length % pathsAtATime === 0) {
+    if (paths.length % pathsAtATime === 0 || performance.now() - since > pauseAfter) {
       yield
+      since = performance.now()
     }
   }
 
