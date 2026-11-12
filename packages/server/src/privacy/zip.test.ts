@@ -181,6 +181,48 @@ describe('the names in an archive', () => {
     ])
   })
 
+  it('are no short name Windows may give another entry (opengewerk#924)', () => {
+    // Windows opens "Fotoalbum Baustelle.jpg" for its short name as well.
+    expect(uniqueNames(['dateien/Fotoalbum Baustelle.jpg', 'dateien/FOTOAL~1.JPG'])).toEqual([
+      'dateien/Fotoalbum Baustelle.jpg',
+      'dateien/FOTOAL_1.JPG',
+    ])
+
+    const marks = String.fromCodePoint(0x308, 0x6de)
+
+    expect(
+      [
+        'FO1A2B~1',
+        'ordner~12/a.pdf',
+        'FOTOAL～１.JPG',
+        'FOTOAL〜1.JPG',
+        'FOTOAL∼¹.JPG',
+        `FOTOAL~${marks}1.JPG`,
+        // A free tilde mark reads as "~", and the "~" before it reads on to the digit.
+        `FOTOA~${String.fromCodePoint(0x303)}1.JPG`,
+        'Bericht~2 alt.pdf',
+        // No digit behind it: no short name Windows makes.
+        '~$Angebot.docx',
+        'Angebot ~ alt.pdf',
+        'FOTOAL~.1',
+        'FOTOAL~_1.JPG',
+      ].map((name) => cleanName(name)),
+    ).toEqual([
+      'FO1A2B_1',
+      'ordner_12/a.pdf',
+      'FOTOAL_１.JPG',
+      'FOTOAL_1.JPG',
+      'FOTOAL_¹.JPG',
+      `FOTOAL_${marks}1.JPG`,
+      'FOTOA__1.JPG',
+      'Bericht_2 alt.pdf',
+      '~$Angebot.docx',
+      'Angebot ~ alt.pdf',
+      'FOTOAL~.1',
+      'FOTOAL~_1.JPG',
+    ])
+  })
+
   it('are no one name to an unpacker that converts them by best fit (opengewerk#922)', () => {
     const grave = String.fromCodePoint(0x300)
 
@@ -337,6 +379,8 @@ describe('the names in an archive', () => {
       `CON${String.fromCodePoint(0x308, 0x301)}`,
       'ＣＯＮ.pdf',
       'ŁPT1.txt',
+      `FOTOA~${String.fromCodePoint(0x303)}1.JPG`,
+      `FOTOAL~${String.fromCodePoint(0x308)}1.JPG`,
     ]
 
     expect(cleanName(`x${unbroken}. .`)).toBe('x')
