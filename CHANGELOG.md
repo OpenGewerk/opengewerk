@@ -169,7 +169,8 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
     tragen nie denselben Namen. In Kleinbuchstaben allein hing das Sigma am Wortende vom Zusammenhang ab.
   - Ein Zeichen, das ein Entpacker unter Windows beim Umwandeln in seine ANSI-Codepage zu einem Punkt, Schrägstrich
     oder Doppelpunkt machen könnte (etwa `／`, `．`, `¥` oder `´`), wird `_`, damit aus `．．／` kein `../` wird. In den
-    DOS-Codepages 860, 861 und 865 bleiben ein Akut nach einem Buchstaben und `Š` stehen, sie sind Akzente und
+    DOS-Codepages 860, 861 und 865 bleiben ein Akut nach einem Buchstaben, auch mit weiteren Akzenten dazwischen, und
+    `Š` stehen, sie sind Akzente und
     Buchstaben vieler Namen; ein Akut, vor dem kein Buchstabe stehen bleibt (etwa nach einem Punkt oder nach einem
     `Š`, das `_` wird), und ein `Š` neben einem Punkt, auch mit Akzenten dazwischen, werden `_`, sodass auch dort kein
     `../` entsteht.

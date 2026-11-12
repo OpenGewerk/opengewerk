@@ -155,14 +155,17 @@ const markRun = /(\p{M}{30})\p{M}+/gu
 
 /**
  * Where a DOS code page (860, 861, 865) would make "../" or "..\" of a name
- * by best fit (opengewerk#916): an acute after something that is no letter,
+ * by best fit (opengewerk#916): an acute after something that is no letter
+ * or its marks,
  * which those code pages make a slash, and "Š" beside a dot, which 860 makes
  * a backslash. Elsewhere both stay, they are accents and letters of many
  * names.
  */
 const dosSeparators = new RegExp(
   [
-    `(?<!\\p{L})${String.fromCodePoint(0x301)}`,
+    // A letter may bear other marks before the acute ("ɔ̃́"); the runs of
+    // marks are cut to 30 before, so the look back stays short.
+    `(?<!\\p{L}\\p{M}*)${String.fromCodePoint(0x301)}`,
     // Also with marks between them, which a conversion may drop, and U+06DE,
     // which it drops as well.
     `(?<=\\.[\\p{M}${String.fromCodePoint(0x6de)}]*)${String.fromCodePoint(0x160)}`,

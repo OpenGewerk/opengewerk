@@ -237,6 +237,8 @@ describe('the names in an archive', () => {
         `..${umlaut}Š${umlaut}..${umlaut}Š${umlaut}x.pdf`,
         `..${rub}Š..${rub}Šx.pdf`,
         `xŠ${umlaut}.pdf`,
+        `ɔ${String.fromCodePoint(0x303, 0x301)}.pdf`,
+        `i${String.fromCodePoint(0x307, 0x301)}.pdf`,
       ]),
     ).toEqual([
       '.._.._x.pdf',
@@ -248,6 +250,8 @@ describe('the names in an archive', () => {
       `..${umlaut}_${umlaut}..${umlaut}_${umlaut}x.pdf`,
       `..${rub}_..${rub}_x.pdf`,
       `x_${umlaut}.pdf`,
+      `ɔ${String.fromCodePoint(0x303, 0x301)}.pdf`,
+      `i${String.fromCodePoint(0x307, 0x301)}.pdf`,
     ])
   })
 
