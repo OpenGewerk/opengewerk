@@ -175,7 +175,8 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
     ebenfalls als gleich, und der zweite bekommt eine Nummer (#922): `Ｆｏｔｏ.jpg` und `Foto.jpg`, `Łódź.pdf` und
     `Lodz.pdf` (in 1251), `è.pdf` und `c.pdf` (in 775), auch wenn Windows dabei Akzente oder Punkte am Ende streicht.
     Verglichen wird je Codepage, deshalb bleiben `cat.pdf` und `eat.pdf` zwei Namen, obwohl `è` je nach Codepage `c`
-    oder `e` wird. Die Abbildungen stehen als Tabelle in `privacy/best-fit.ts`, gewonnen mit WideCharToMultiByte über
+    oder `e` wird. Zwei Namen, die nur in zwei verschiedenen Codepages gleich lesen (etwa `¤.pdf` und `Œ.pdf`),
+    bekommen dabei ebenfalls eine Nummer, die kein Entpacker bräuchte; eine Datei geht so nie verloren. Die Abbildungen stehen als Tabelle in `privacy/best-fit.ts`, gewonnen mit WideCharToMultiByte über
     jedes Zeichen in 32 Codepages (`scripts/best-fit-dump.ps1`, `scripts/best-fit-table.js`). Bisher konnte so ein
     Entpacker eine Datei der Auskunft mit einer anderen überschreiben.
   - Ein Zeichen, das ein Entpacker unter Windows beim Umwandeln in seine ANSI-Codepage zu einem Punkt, Schrägstrich
