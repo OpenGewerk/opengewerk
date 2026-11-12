@@ -119,6 +119,11 @@ describe('the raw names of the files of an answer (opengewerk#929)', () => {
     const behind = [
       String.fromCodePoint(0xff0e),
       String.fromCharCode(9),
+      // Last parts that cleaning keeps as "_".
+      `/${String.fromCharCode(9)}`,
+      `/${String.fromCodePoint(0xff0e)}`,
+      `/${String.fromCodePoint(0x301)}`,
+      `/${String.fromCodePoint(0x2024)}`,
       umlaut,
       `.${umlaut}`,
       String.fromCodePoint(0x6de),

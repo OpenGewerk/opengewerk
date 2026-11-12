@@ -373,12 +373,33 @@ function withoutCaronS(name: string): string {
 const endOfPart = /^[\s.]$/
 
 /**
- * Whether `cleanName` drops a whole part of a name, one it reads as nothing
- * but white space and dots as `plain` reads them (opengewerk#922,
- * opengewerk#929).
+ * Whether `cleanName` drops a whole part of a raw name: it is brought into
+ * the same form and cleaned the same way, and nothing is left of it
+ * (opengewerk#929). A tab stays as "_", so its part stays as well.
  */
 export function droppedPart(part: string): boolean {
-  return nothingButEnd(part) === ''
+  return cleanedPart(formed(part)) === ''
+}
+
+/** A raw name in the one form `cleanName` cleans it in. */
+function formed(raw: string): string {
+  return withoutCaronS(raw.replace(markRun, '$1').normalize('NFC').replace(markRun, '$1'))
+}
+
+/**
+ * A part of a name in that form as the archive may hold it: what no unpacker
+ * should be asked to put into a name becomes "_", white space goes from its
+ * start and white space and dots from its end, a part of nothing else goes,
+ * and a device name gets a "_".
+ */
+function cleanedPart(part: string): string {
+  return notADevice(
+    nothingButEnd(
+      withoutEnd(
+        [...part].map((character) => (unfit(character) ? '_' : character)).join(''),
+      ).trimStart(),
+    ),
+  )
 }
 
 /**
@@ -434,18 +455,10 @@ function nothingButEnd(part: string): string {
  * the answer gave it.
  */
 export function cleanName(raw: string): string {
-  const name = withoutCaronS(raw.replace(markRun, '$1').normalize('NFC').replace(markRun, '$1'))
+  const name = formed(raw)
     .replace(/\\/g, '/')
     .split('/')
-    .map((part) =>
-      notADevice(
-        nothingButEnd(
-          withoutEnd(
-            [...part].map((character) => (unfit(character) ? '_' : character)).join(''),
-          ).trimStart(),
-        ),
-      ),
-    )
+    .map(cleanedPart)
     .filter((part) => part !== '')
     .join('/')
 
