@@ -78,8 +78,8 @@ function unfit(character: string): boolean {
   )
 }
 
-/** A name Windows keeps for a device, with or without an extension: "CON", "nul.txt", "COM1.pdf". */
-const device = /^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\..*)?$/i
+/** A name Windows keeps for a device, with or without an extension: "CON", "nul.txt", "COM1.pdf", "CONIN$". */
+const device = /^(?:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?:\..*)?$/i
 
 /**
  * A part that is not the name of a device: Windows makes no file "CON" or
