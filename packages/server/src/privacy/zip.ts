@@ -78,21 +78,22 @@ function unfit(character: string): boolean {
   )
 }
 
-/** A name Windows keeps for a device, with or without an extension: "CON", "nul.txt", "COM1.pdf", "CONIN$". */
-const device = /^(?:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?:\..*)?$/i
+/**
+ * A name Windows keeps for a device, with or without an extension and with
+ * spaces before it, as Windows reads it: what comes before the first dot,
+ * without its spaces at the end. "CON", "nul.txt", "CON .pdf", "CONIN$".
+ */
+const device = /^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?: *\..*)?$/is
 
 /**
  * A part that is not the name of a device: Windows makes no file "CON" or
- * "NUL.txt", so it gets a "_" behind the device, "CON_" and "NUL_.txt".
+ * "NUL.txt", so it gets a "_" behind the device, "CON_", "NUL_.txt" and
+ * "CON_ .pdf".
  */
 function notADevice(part: string): string {
-  if (!device.test(part)) {
-    return part
-  }
+  const found = device.exec(part)?.[1]
 
-  const dot = part.indexOf('.')
-
-  return dot === -1 ? `${part}_` : `${part.slice(0, dot)}_${part.slice(dot)}`
+  return found === undefined ? part : `${found}_${part.slice(found.length)}`
 }
 
 /** What a part of a name loses at its end: white space and dots. */
@@ -141,7 +142,9 @@ export function cleanName(raw: string): string {
 }
 
 /**
- * A name as the archive compares it: in capitals, close to Windows, which
+ * A name as the archive compares it: in one Unicode form, as macOS does, so
+ * that "für" of one character and of two are one name, and in capitals, close
+ * to Windows, which
  * compares in capitals one character at a time. Where the two differ, this
  * takes more names for the same ("ß" and "SS"), which can give a name a
  * number Windows would not need, more than one where it has several "ß", and
@@ -150,7 +153,7 @@ export function cleanName(raw: string): string {
  * names until ".txt" came after them (opengewerk#916).
  */
 function folded(name: string): string {
-  return name.toUpperCase()
+  return name.normalize('NFC').toUpperCase()
 }
 
 /** Makes each name it is given unique among those it made before. */

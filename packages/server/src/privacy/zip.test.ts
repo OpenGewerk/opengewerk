@@ -79,6 +79,9 @@ describe('the names in an archive', () => {
         'con_',
         'CONIN$',
         'conout$.txt',
+        'CON .pdf',
+        'nul .tar.gz',
+        `PRN.${String.fromCharCode(0x2028)}x`,
       ]),
     ).toEqual([
       'CON_',
@@ -90,6 +93,20 @@ describe('the names in an archive', () => {
       'con_ (2)',
       'CONIN$_',
       'conout$_.txt',
+      'CON_ .pdf',
+      'nul_ .tar.gz',
+      `PRN_.${String.fromCharCode(0x2028)}x`,
+    ])
+  })
+
+  it('take a name in either Unicode form for the same, as macOS does', () => {
+    const composed = 'für.pdf'
+    const decomposed = `fu${String.fromCharCode(0x308)}r.pdf`
+
+    expect(composed).not.toBe(decomposed)
+    expect(uniqueNames([composed, decomposed])).toEqual([
+      composed,
+      `fu${String.fromCharCode(0x308)}r (2).pdf`,
     ])
   })
 
