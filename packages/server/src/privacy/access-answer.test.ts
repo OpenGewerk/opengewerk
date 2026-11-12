@@ -114,6 +114,21 @@ describe('the raw names of the files of an answer (opengewerk#929)', () => {
     expect(spaced).toMatch(/^dateien\/a+\.docx$/)
     expect(marked).toMatch(/^dateien\/d+\.docx$/)
 
+    // A name only a little longer than what is cleaned keeps its extension
+    // behind a dropped last part as well.
+    // Cleaning drops the spaces at the start, so that nothing of the name
+    // may come twice.
+    const [shortish] = filePaths(
+      reportOf([
+        {
+          mediaType: word,
+          name: `${' '.repeat(990)}abcdefghij.docx/${`.${umlaut}`.repeat(47)}`,
+        },
+      ]),
+    )
+
+    expect(shortish).toBe('dateien/abcdefghij.docx')
+
     // But not behind what cleaning keeps or makes "_": then the name has no
     // extension of its own and gets the one of its type, as a short one does.
     const behind = [

@@ -228,7 +228,8 @@ function bounded(name: string): string {
   }
 
   const backslash = String.fromCharCode(0x5c)
-  const floor = Math.max(rawStart + rawEnd, name.length - rawStart)
+  // At most 1000 skipped, whatever the length of the name.
+  const floor = name.length - rawStart
   let end = name.length
 
   while (end > floor) {
@@ -255,9 +256,11 @@ function bounded(name: string): string {
     }
   }
 
-  const seam = end - rawEnd > rawStart ? '_' : ''
-
-  return `${name.slice(0, rawStart)}${seam}${name.slice(end - rawEnd, end)}`
+  // What is left fits whole: no seam. Otherwise something lies between the
+  // start and the end, and "_" stands for it.
+  return end <= rawStart + rawEnd
+    ? name.slice(0, end)
+    : `${name.slice(0, rawStart)}_${name.slice(end - rawEnd, end)}`
 }
 
 /**
