@@ -373,22 +373,20 @@ function withoutCaronS(name: string): string {
 const endOfPart = /^[\s.]$/
 
 /**
- * Whether `cleanName` may drop a character at the end of a name, so that it
- * never brings an extension: a slash or a backslash, or one `plain` reads as
- * white space, dots or nothing (opengewerk#929).
+ * Whether `cleanName` drops a whole part of a name, one it reads as nothing
+ * but white space and dots as `plain` reads them (opengewerk#922,
+ * opengewerk#929).
  */
-export function droppedAtNameEnd(character: string): boolean {
-  if (character === '/' || character === String.fromCharCode(0x5c)) {
-    return true
-  }
+export function droppedPart(part: string): boolean {
+  return nothingButEnd(part) === ''
+}
 
-  for (const each of plain(character)) {
-    if (!endOfPart.test(each)) {
-      return false
-    }
-  }
-
-  return true
+/**
+ * Whether `cleanName` drops a character at the end of a part as it stands:
+ * white space or a dot, but no control character, which it makes "_".
+ */
+export function droppedAtPartEnd(character: string): boolean {
+  return character.charCodeAt(0) >= 0x20 && endOfPart.test(character)
 }
 
 /**

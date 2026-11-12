@@ -69,10 +69,16 @@ describe('the paths of the files of an answer (opengewerk#922)', () => {
 describe('the raw names of the files of an answer (opengewerk#929)', () => {
   it('are cleaned only at their start and their end, however long they are', () => {
     const rub = String.fromCodePoint(0x6de)
+    // Half end in a long last part that cleaning drops, half in many short
+    // ones; neither is skipped further than the first 1000 units.
+    const droppedParts = `/.${String.fromCodePoint(0x308)}`.repeat(33_000)
     const report = reportOf(
       Array.from({ length: 300 }, (_, index) => ({
         mediaType: 'application/pdf',
-        name: `C${String(index)}${rub.repeat(99_990)}`,
+        name:
+          index % 2 === 0
+            ? `C${String(index)}/${rub.repeat(99_990)}`
+            : `C${String(index)}${droppedParts}`,
       })),
     )
     const started = performance.now()
@@ -107,6 +113,28 @@ describe('the raw names of the files of an answer (opengewerk#929)', () => {
 
     expect(spaced).toMatch(/^dateien\/a+\.docx$/)
     expect(marked).toMatch(/^dateien\/d+\.docx$/)
+
+    // But not behind what cleaning keeps or makes "_": then the name has no
+    // extension of its own and gets the one of its type, as a short one does.
+    const behind = [
+      String.fromCodePoint(0xff0e),
+      String.fromCharCode(9),
+      umlaut,
+      `.${umlaut}`,
+      String.fromCodePoint(0x6de),
+    ]
+
+    for (const end of behind) {
+      const [short, longer] = filePaths(
+        reportOf([
+          { mediaType: 'application/pdf', name: `Plan.docx${end}` },
+          { mediaType: 'application/pdf', name: `${'e'.repeat(2000)}.docx${end}` },
+        ]),
+      )
+
+      expect(short).toMatch(/\.pdf$/)
+      expect(longer).toMatch(/^dateien\/e+\.pdf$/)
+    }
     expect(dotted).toMatch(/^dateien\/b+\.zip$/)
     expect(seams).toBe(`dateien/__${'c'.repeat(27)}.pdf`)
   })

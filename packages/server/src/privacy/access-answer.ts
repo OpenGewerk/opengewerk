@@ -21,7 +21,8 @@ import { type GridParty, sheetHead, sheetJob } from '../forms/grid-documents.js'
 import { type AccessReport, type ReportRow } from './access-report.js'
 import {
   cleanName,
-  droppedAtNameEnd,
+  droppedAtPartEnd,
+  droppedPart,
   maxEntries,
   nameMaker,
   type ZipEntry,
@@ -209,9 +210,13 @@ const rawEnd = 32
  * its end (opengewerk#929). The path keeps 200 bytes of it, the end brings
  * the extension; cleaning all of a name of 100 000 characters cost the server
  * tens of milliseconds for each file. The 32 are taken before what cleaning
- * may drop at the end (`droppedAtNameEnd`: white space, dots, slashes and
- * what `plain` reads as those or as nothing), so that "Bericht.docx" and 40
- * spaces, or parts of dots with marks, keep ".docx". A character cut in half at a
+ * drops at the end, and only that: slashes, white space and dots as they
+ * stand (`droppedAtPartEnd`), and whole last parts it reads as nothing
+ * (`droppedPart`), so that "Bericht.docx" and 40 spaces, or parts of dots
+ * with marks, keep ".docx", and "Bericht.docx" with a wide dot behind it
+ * keeps none, as when the whole name is cleaned. At most 1000 units are
+ * skipped: a name that ends in more of that loses its extension, not the
+ * server's time. A character cut in half at a
  * seam becomes "_", as cleaning makes of any half character; the half at the
  * start of the end becomes "_" at once, so that it does not make a character
  * of its own with a half at the end of the start.
@@ -221,17 +226,32 @@ function bounded(name: string): string {
     return name
   }
 
+  const backslash = String.fromCharCode(0x5c)
+  const floor = Math.max(rawStart + rawEnd, name.length - rawStart)
   let end = name.length
 
-  // At most 1000 skipped, each read as `plain` reads it: a name that ends in
-  // more of what cleaning drops loses its extension, but not the server's
-  // time.
-  while (
-    end > rawStart + rawEnd &&
-    name.length - end < rawStart &&
-    droppedAtNameEnd(name.charAt(end - 1))
-  ) {
-    end -= 1
+  while (end > floor) {
+    const last = name.charAt(end - 1)
+
+    if (last === '/' || last === backslash || droppedAtPartEnd(last)) {
+      end -= 1
+    } else {
+      // The slash before the last part, looked for no further than the floor.
+      let separator = end - 1
+
+      while (
+        separator >= floor &&
+        name.charAt(separator) !== '/' &&
+        name.charAt(separator) !== backslash
+      ) {
+        separator -= 1
+      }
+
+      if (separator < floor || !droppedPart(name.slice(separator + 1, end))) {
+        break
+      }
+      end = separator
+    }
   }
 
   const tail = name.slice(end - rawEnd, end)
