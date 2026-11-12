@@ -212,6 +212,8 @@ describe('the names in an archive', () => {
 
   it('make no "../" of an acute or an "Š" that a DOS code page turns into a separator', () => {
     const acute = String.fromCodePoint(0x301)
+    // A mark between a dot and an "Š", which a conversion may drop.
+    const umlaut = String.fromCodePoint(0x308)
 
     expect(
       uniqueNames([
@@ -221,6 +223,7 @@ describe('the names in an archive', () => {
         `Ива${acute}н.pdf`,
         `${acute}x.pdf`,
         'xŠ.pdf',
+        `..${umlaut}Š${umlaut}..${umlaut}Š${umlaut}x.pdf`,
       ]),
     ).toEqual([
       '.._.._x.pdf',
@@ -229,6 +232,7 @@ describe('the names in an archive', () => {
       `Ива${acute}н.pdf`,
       '_x.pdf',
       'x_.pdf',
+      `..${umlaut}_${umlaut}..${umlaut}_${umlaut}x.pdf`,
     ])
   })
 

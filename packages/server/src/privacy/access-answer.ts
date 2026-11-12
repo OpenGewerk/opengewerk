@@ -84,13 +84,14 @@ function bytesOf(character: string): number {
 
 /**
  * A cleaned name cut to `nameBytes` by whole characters, so that no half of
- * one is left, and cleaned again: its extension kept, "Angebot …x.pdf" and
+ * one is left, and cleaned again: its extension of two to five letters or
+ * digits kept, "Angebot …x.pdf" and
  * not "Angebot …x.pd", which would pass for one of its own. Where the name
  * had none, the cut makes none either: "Begehung 12.05.2026" cut after "12.05"
  * would pass for a file of the kind ".05", and the one of its media type
  * would not come behind it; and "a.bc.05" loses both, not only ".05". The
  * stem is cleaned before the extension comes back, so that a cut behind a
- * slash leaves no ".pdf" on its own.
+ * space leaves no " .pdf".
  */
 function cut(name: string): string {
   if (utf8.encode(name).length <= nameBytes) {

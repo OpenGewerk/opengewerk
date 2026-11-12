@@ -161,7 +161,13 @@ const markRun = /(\p{M}{30})\p{M}+/gu
  * names.
  */
 const dosSeparators = new RegExp(
-  `(?<!\\p{L})${String.fromCodePoint(0x301)}|(?<=\\.)${String.fromCodePoint(0x160)}|${String.fromCodePoint(0x160)}(?=\\.)`,
+  [
+    `(?<!\\p{L})${String.fromCodePoint(0x301)}`,
+    // Also with marks between them, which a conversion may drop, and U+06DE,
+    // which it drops as well.
+    `(?<=\\.[\\p{M}${String.fromCodePoint(0x6de)}]*)${String.fromCodePoint(0x160)}`,
+    `${String.fromCodePoint(0x160)}(?=[\\p{M}${String.fromCodePoint(0x6de)}]*\\.)`,
+  ].join('|'),
   'gu',
 )
 

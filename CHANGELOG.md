@@ -157,7 +157,8 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
     Entpacken unter Windows scheiterte.
   - Ein Schrägstrich in einem Dateinamen wird `_`, statt einen Ordner anzulegen (#919): `a` und `a/b.pdf` machten `a`
     zugleich zur Datei und zum Ordner.
-  - Ein Name wird auf 200 Byte gekürzt, seine Endung bleibt, und das Kürzen erzeugt keine neue; so bleibt jeder Teil
+  - Ein Name wird auf 200 Byte gekürzt, eine Endung aus zwei bis fünf Buchstaben oder Ziffern bleibt, und das Kürzen
+    erzeugt keine neue; so bleibt jeder Teil
     eines Pfads unter den 255 Byte, die ext4 und macOS zulassen. Das ZIP lehnt einen Namen über 65 535 Byte ab, statt
     sein Längenfeld überlaufen zu lassen, das hätte die Auskunft unlesbar gemacht.
   - Ein Name, den Windows einem Gerät vorbehält (`CON`, `NUL`, `COM1` und so weiter, auch mit Endung oder mit
@@ -169,8 +170,9 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   - Ein Zeichen, das ein Entpacker unter Windows beim Umwandeln in seine ANSI-Codepage zu einem Punkt, Schrägstrich
     oder Doppelpunkt machen könnte (etwa `／`, `．`, `¥` oder `´`), wird `_`, damit aus `．．／` kein `../` wird. In den
     DOS-Codepages 860, 861 und 865 bleiben ein Akut nach einem Buchstaben und `Š` stehen, sie sind Akzente und
-    Buchstaben vieler Namen; ein Akut, vor dem kein Buchstabe steht (etwa nach einem Punkt), und ein `Š` neben einem
-    Punkt werden `_`, sodass auch dort kein `../` entsteht.
+    Buchstaben vieler Namen; ein Akut, vor dem kein Buchstabe stehen bleibt (etwa nach einem Punkt oder nach einem
+    `Š`, das `_` wird), und ein `Š` neben einem Punkt, auch mit Akzenten dazwischen, werden `_`, sodass auch dort kein
+    `../` entsteht.
   - Ein halbes Zeichen (ein Surrogat ohne seine andere Hälfte) wird `_`, weil das ZIP es als U+FFFD und `daten.json`
     es als `\ud800` geschrieben hätte. Folgen von mehr als 30 kombinierenden Zeichen werden auf 30 gekürzt, weil ihre
     Ordnung sonst mit dem Quadrat ihrer Länge Zeit braucht.
