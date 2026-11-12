@@ -1,5 +1,7 @@
 import { crc32 } from 'node:zlib'
 
+import { fits } from './best-fit.js'
+
 /**
  * A ZIP archive without compression (#318), written entry by entry so that a
  * customer with years of photos does not have to fit into memory at once.
@@ -28,7 +30,8 @@ export interface ZipEntry {
 export class ZipTooLargeError extends Error {}
 
 const utf8 = new TextEncoder()
-const maxEntries = 0xffff
+/** The most entries an archive holds without ZIP64. */
+export const maxEntries = 0xffff
 const maxBytes = 0xffffffff
 const maxName = 0xffff
 
@@ -79,12 +82,13 @@ const asciiSeparators = new Set([...'/.:"<>|?*', String.fromCodePoint(0x5c)])
  * page makes one of them, and they are replaced all the same. Other characters
  * Windows refuses after best fit stay, they are part of ordinary names ("„",
  * "∗"), and a name with one fails there as with any character the code page
- * lacks. So do the combining acute and "Š", which only DOS code pages (860,
- * 861, 865) make a slash or a backslash of: they are accents and letters of
- * many names.
+ * lacks. The combining acute is one where it stays alone after the name is
+ * brought into one form, on a letter without a form of its own ("q́"): the DOS
+ * code pages 860, 861 and 865 make a slash of it (opengewerk#922).
  */
 const separatorsByFit = new Set(
   String.fromCodePoint(
+    0x301,
     0xa5,
     0x20a9,
     0x2044,
@@ -152,58 +156,90 @@ const dropped = new RegExp(`[\\p{M}${String.fromCodePoint(0x6de)}]`, 'gu')
  * takes for a mark.
  */
 function plain(character: string): string {
-  return character.normalize('NFKD').replace(dropped, '').toUpperCase()
+  // Most names are ASCII, which has no other form and no marks.
+  return character.charCodeAt(0) < 0x80
+    ? character.toUpperCase()
+    : character.normalize('NFKD').replace(dropped, '').toUpperCase()
 }
 
 /**
- * Characters that unpacker makes a letter or a digit of a device name of
- * although `plain` does not (opengewerk#920): "Ł" is "L" in 1252, "Ø" is "O"
- * in 437, the Arabic-Indic digits are digits in 1256. Found by turning every
- * character of Unicode into 32 code pages with WideCharToMultiByte; none
- * becomes another letter or digit of a device name there.
+ * The ways an unpacker may turn a name: one for each code page of `fitPages`
+ * without flags, then one for each when it drops marks (WC_COMPOSITECHECK |
+ * WC_DISCARDNS).
  */
-const lettersByFit = new Map(
-  Object.entries({
-    A: [0xc6, 0xe6, 0x3b1],
-    C: [0xa2, 0xa9, 0xe8],
-    I: [0x197],
-    L: [0xa3, 0x141, 0x142, 0x19a, 0x20a4, 0x221f, 0x2514, 0x2558, 0x2559, 0x255a],
-    N: [0x2229],
-    O: [
-      0xa4, 0xb0, 0xd8, 0xf8, 0x152, 0x153, 0x19f, 0x3a9, 0x20dd, 0x2126, 0x2205, 0x263a, 0x263b,
-      0x3007,
-    ],
-    P: [0x3c0, 0x20a7, 0x2118],
-    R: [0xae],
-    T: [
-      0xde, 0xfe, 0x166, 0x167, 0x1ab, 0x1ae, 0x398, 0x3c4, 0x2122, 0x252c, 0x2564, 0x2565, 0x2566,
-    ],
-    U: [0xb5, 0x3bc],
-    X: [0xd7],
-    1: [0xbc, 0xbd, 0x661],
-    2: [0x662],
-    3: [0xb9, 0xbe, 0x663],
-    4: [0x664],
-    5: [0x665],
-    6: [0x666],
-    7: [0x667],
-    8: [0x221e, 0x668],
-    9: [0x2078, 0x669],
-  }).flatMap(([letter, codes]) =>
-    codes.map((code) => [String.fromCodePoint(code), letter] as const),
-  ),
+const ways = 64
+
+/** How a character reads in the ways in which it does not read as `plain`. */
+interface Fit {
+  /** By way, undefined where it reads as `plain`. */
+  readonly readings: readonly (string | undefined)[]
+  /**
+   * The ways in which it does not, each given by the first way that reads
+   * every character of the table alike: of the 64, 47 differ.
+   */
+  readonly ways: readonly number[]
+}
+
+/** What a code page makes of each character of the table, by way. */
+const readingsByWay = new Map<string, (string | undefined)[]>()
+
+for (const [code, made, pages, dropping] of fits) {
+  const character = String.fromCodePoint(code)
+  const reading = made === 0 ? '' : plain(String.fromCodePoint(made))
+  const byWay = readingsByWay.get(character) ?? Array.from({ length: ways }, () => undefined)
+
+  for (let bit = 0; bit < 32; bit += 1) {
+    if (((pages >>> bit) & 1) === 1) {
+      byWay[bit] = reading
+    }
+    if (((dropping >>> bit) & 1) === 1) {
+      byWay[32 + bit] = reading
+    }
+  }
+
+  readingsByWay.set(character, byWay)
+}
+
+/** For each way, the first way that reads every character of the table alike. */
+const firstAlike = Array.from({ length: ways }, (_, way) => way)
+
+for (let way = 1; way < ways; way += 1) {
+  const twin = firstAlike
+    .slice(0, way)
+    .find((other) => [...readingsByWay.values()].every((byWay) => byWay[other] === byWay[way]))
+
+  firstAlike[way] = twin ?? way
+}
+
+/**
+ * The fits of each character that a code page makes something of which
+ * `plain` reads otherwise (opengewerk#920, opengewerk#922): "Ł" is "L" in
+ * 1252, "Ø" is "O" in 437, "ð" is "D" in one code page and "E" in another,
+ * "⃝" is "O" in 850. The table comes from WideCharToMultiByte on Windows over
+ * every character of Unicode in 32 code pages (scripts/best-fit-dump.ps1).
+ */
+const fitsOf = new Map<string, Fit>(
+  [...readingsByWay].map(([character, byWay]) => [
+    character,
+    {
+      readings: byWay,
+      ways: [
+        ...new Set(
+          byWay.flatMap((each, way) => (each === undefined ? [] : [firstAlike[way] ?? way])),
+        ),
+      ],
+    },
+  ]),
 )
 
 /**
- * What a character may be to that unpacker: what `plain` gives, and the
- * letter of `lettersByFit` if it has one. "⃝" is nothing or "O", "¹" is "1"
- * or "3".
+ * What a character may be to that unpacker in any code page: what `plain`
+ * gives, and its readings by fit. "⃝" is nothing or "O", "¹" is "1" or "3".
  */
 function readings(character: string): string[] {
-  const plainly = plain(character)
-  const letter = lettersByFit.get(character)
+  const byFit = fitsOf.get(character)?.readings ?? []
 
-  return letter === undefined || letter === plainly ? [plainly] : [plainly, letter]
+  return [...new Set([plain(character), ...byFit.filter((each) => each !== undefined)])]
 }
 
 /** A reading of spaces or of nothing, which Windows drops before a dot. */
@@ -216,13 +252,36 @@ const blankReading = /^ *$/
  * for each device name, which stops as soon as no reading still spells it.
  */
 function deviceLength(stem: readonly string[]): number | undefined {
-  const read = stem.map(readings)
-  // Whether every character from an index on may be read as spaces or nothing.
-  const blank = Array.from({ length: stem.length + 1 }, () => true)
+  // The readings of each character, read when a pass first gets to it: most
+  // passes stop at the first character.
+  const read: (readonly string[] | undefined)[] = []
+  const readingsAt = (index: number): readonly string[] => {
+    const known = read[index]
 
-  for (let index = stem.length - 1; index >= 0; index -= 1) {
-    blank[index] =
-      (blank[index + 1] ?? true) && (read[index] ?? []).some((text) => blankReading.test(text))
+    if (known !== undefined || index >= stem.length) {
+      return known ?? []
+    }
+
+    const found = readings(stem[index] ?? '')
+
+    read[index] = found
+
+    return found
+  }
+  // Whether every character from an index on may be read as spaces or
+  // nothing, worked out the first time a pass spells a name to its end.
+  let blank: boolean[] | undefined
+  const blankFrom = (index: number): boolean => {
+    if (blank === undefined) {
+      const all = Array.from({ length: stem.length + 1 }, () => true)
+
+      for (let at = stem.length - 1; at >= 0; at -= 1) {
+        all[at] = (all[at + 1] ?? true) && readingsAt(at).some((text) => blankReading.test(text))
+      }
+      blank = all
+    }
+
+    return blank[index] ?? true
   }
 
   let fewest: number | undefined
@@ -232,7 +291,7 @@ function deviceLength(stem: readonly string[]): number | undefined {
     let reached = new Set([0])
 
     for (let index = 0; index <= stem.length && reached.size > 0; index += 1) {
-      if (reached.has(name.length) && blank[index] === true) {
+      if (reached.has(name.length) && blankFrom(index)) {
         fewest = Math.min(fewest ?? index, index)
         break
       }
@@ -242,7 +301,7 @@ function deviceLength(stem: readonly string[]): number | undefined {
       // A reading of nothing stays where it is. No reading of a character
       // has spaces after a letter, so a name ends between two characters.
       for (const at of reached) {
-        for (const text of read[index] ?? []) {
+        for (const text of readingsAt(index)) {
           if (name.startsWith(text, at)) {
             next.add(at + text.length)
           }
@@ -264,8 +323,7 @@ const mark = /^\p{M}/u
  * "NUL.txt", so it gets a "_" behind the device, "CON_", "NUL_.txt" and
  * "CON_ .pdf". Also when only an unpacker that converts by best fit makes a
  * device of it, "ＣＯＮ", "ĈON" or "ŁPT1" (opengewerk#920). The "_" comes after
- * the marks of the last character, which would otherwise go with the "_", and
- * an acute among them would be lost when the name is cleaned again.
+ * the marks of the last character, which stay with it.
  */
 function notADevice(part: string): string {
   const dot = part.indexOf('.')
@@ -296,25 +354,20 @@ function notADevice(part: string): string {
 const markRun = /(\p{M}{30})\p{M}+/gu
 
 /**
- * Where a DOS code page (860, 861, 865) would make "../" or "..\" of a name
- * by best fit (opengewerk#916): an acute after something that is no letter
- * or its marks,
- * which those code pages make a slash, and "Š" beside a dot, which 860 makes
- * a backslash. Elsewhere both stay, they are accents and letters of many
- * names.
+ * A name in which "Š" is "S" (opengewerk#922): the DOS code page 860 makes a
+ * backslash of it, and a name with it a folder. In one form
+ * again after each round, as an "S" and a caron behind the old "Š" make a new
+ * one; the runs of marks are cut to 30, so there are at most 31 rounds.
  */
-const dosSeparators = new RegExp(
-  [
-    // A letter may bear other marks before the acute ("ɔ̃́"); the runs of
-    // marks are cut to 30 before, so the look back stays short.
-    `(?<!\\p{L}\\p{M}*)${String.fromCodePoint(0x301)}`,
-    // Also with marks between them, which a conversion may drop, and U+06DE,
-    // which it drops as well.
-    `(?<=\\.[\\p{M}${String.fromCodePoint(0x6de)}]*)${String.fromCodePoint(0x160)}`,
-    `${String.fromCodePoint(0x160)}(?=[\\p{M}${String.fromCodePoint(0x6de)}]*\\.)`,
-  ].join('|'),
-  'gu',
-)
+function withoutCaronS(name: string): string {
+  let result = name
+
+  while (result.includes('Š')) {
+    result = result.replaceAll('Š', 'S').normalize('NFC')
+  }
+
+  return result
+}
 
 /** What a part of a name loses at its end: white space and dots. */
 const endOfPart = /^[\s.]$/
@@ -335,6 +388,25 @@ function withoutEnd(part: string): string {
 }
 
 /**
+ * A part, or nothing where only white space and dots are left of it as
+ * `plain` reads it: an unpacker that drops marks would make ".." of ".." with
+ * an umlaut, one that makes spaces of other characters " " of an ideographic
+ * space, and Windows drops the rest (opengewerk#922). Such a part goes as ".."
+ * does.
+ */
+function nothingButEnd(part: string): string {
+  for (const character of part) {
+    for (const each of plain(character)) {
+      if (!endOfPart.test(each)) {
+        return part
+      }
+    }
+  }
+
+  return ''
+}
+
+/**
  * A name as the archive may hold it: backslashes become slashes, slashes
  * separate folders, and a part loses the white space at its start and the
  * white space and dots at its end, which Windows drops when it unpacks
@@ -345,23 +417,16 @@ function withoutEnd(part: string): string {
  * the answer gave it.
  */
 export function cleanName(raw: string): string {
-  const name = raw
-    .replace(markRun, '$1')
-    .normalize('NFC')
-    .replace(markRun, '$1')
+  const name = withoutCaronS(raw.replace(markRun, '$1').normalize('NFC').replace(markRun, '$1'))
     .replace(/\\/g, '/')
     .split('/')
     .map((part) =>
       notADevice(
-        withoutEnd(
-          [...part]
-            .map((character) => (unfit(character) ? '_' : character))
-            .join('')
-            // Twice: an "Š" after a dot becomes "_", and only then is the
-            // acute behind it one with no letter before it.
-            .replace(dosSeparators, '_')
-            .replace(dosSeparators, '_'),
-        ).trimStart(),
+        nothingButEnd(
+          withoutEnd(
+            [...part].map((character) => (unfit(character) ? '_' : character)).join(''),
+          ).trimStart(),
+        ),
       ),
     )
     .filter((part) => part !== '')
@@ -386,12 +451,113 @@ function folded(name: string): string {
   return name.normalize('NFC').toLowerCase().toUpperCase().normalize('NFC')
 }
 
-/** Makes each name it is given unique among those it made before. */
+/** Whether a reading is only what Windows drops at the end of a part. */
+function droppedAtEnd(reading: string): boolean {
+  for (let at = 0; at < reading.length; at += 1) {
+    if (reading.charAt(at) !== ' ' && reading.charAt(at) !== '.') {
+      return false
+    }
+  }
+
+  return true
+}
+
+/**
+ * A number for a name as it reads in one way, given as the reading of each
+ * of its characters, each part without the spaces and dots at its end, which
+ * Windows drops: the same for the same name, and worked out without spelling
+ * the name (cyrb53). Rarely two names share one, which costs one of them a
+ * number it would not need. Only a slash reads as a slash: `cleanName` has
+ * replaced every other character that could.
+ */
+function numberOf(readings: readonly string[]): number {
+  let first = 0xdeadbeef
+  let second = 0x41c6ce57
+  // Where what may be the end of a part starts; taken in once something
+  // follows it, left out before a slash and at the end.
+  let pendingFrom = -1
+
+  for (let index = 0; index < readings.length; index += 1) {
+    const reading = readings[index] ?? ''
+
+    if (reading === '/') {
+      pendingFrom = -1
+    } else if (droppedAtEnd(reading)) {
+      pendingFrom = pendingFrom < 0 ? index : pendingFrom
+      continue
+    } else if (pendingFrom >= 0) {
+      for (let before = pendingFrom; before < index; before += 1) {
+        const pending = readings[before] ?? ''
+
+        for (let at = 0; at < pending.length; at += 1) {
+          first = Math.imul(first ^ pending.charCodeAt(at), 2654435761)
+          second = Math.imul(second ^ pending.charCodeAt(at), 1597334677)
+        }
+      }
+      pendingFrom = -1
+    }
+
+    for (let at = 0; at < reading.length; at += 1) {
+      first = Math.imul(first ^ reading.charCodeAt(at), 2654435761)
+      second = Math.imul(second ^ reading.charCodeAt(at), 1597334677)
+    }
+  }
+
+  first =
+    Math.imul(first ^ (first >>> 16), 2246822507) ^ Math.imul(second ^ (second >>> 13), 3266489909)
+  second =
+    Math.imul(second ^ (second >>> 16), 2246822507) ^ Math.imul(first ^ (first >>> 13), 3266489909)
+
+  return 4294967296 * (2097151 & second) + (first >>> 0)
+}
+
+/**
+ * The names an unpacker that turns names into its code page by best fit may
+ * make of a name, as numbers (opengewerk#922): one for each way of turning in
+ * which a fit reads one of its characters otherwise than `plain`, and one as
+ * `plain` reads every character, which holds for the others. Two names that
+ * one code page makes the same share one of these: "Ｆｏｔｏ.jpg" and
+ * "Foto.jpg" in any, "Łódź.pdf" and "Lodz.pdf" in 1251, "è.pdf" and "c.pdf"
+ * in 775. Two that share one only through two different code pages count as
+ * the same as well, which costs a number and never a file. At most 48
+ * numbers, each worked out in one pass, whatever the name.
+ */
+function fitNames(name: string): Set<number> {
+  const characters = [...name]
+  const plainly = characters.map(plain)
+  const names = new Set([numberOf(plainly)])
+  const fitted = characters.flatMap((character, index) => {
+    const fit = fitsOf.get(character)
+
+    return fit === undefined ? [] : [{ index, fit }]
+  })
+  // The readings of one way: as `plain` but where a fit reads otherwise.
+  const read = [...plainly]
+
+  for (const way of new Set(fitted.flatMap(({ fit }) => fit.ways))) {
+    for (const { index, fit } of fitted) {
+      read[index] = fit.readings[way] ?? plainly[index] ?? ''
+    }
+    names.add(numberOf(read))
+  }
+
+  return names
+}
+
+/**
+ * Makes each name it is given unique among those it made before: as macOS
+ * and Windows compare names (`folded`), and as an unpacker that converts them
+ * by best fit may make them (`fitNames`).
+ */
 export function nameMaker(): (raw: string) => string {
   const taken = new Set<string>()
-  // Where the count of each name stopped: a hundredth "Foto.jpg" tries
-  // "Foto (100).jpg" first and not every number from 2 again.
-  const counters = new Map<string, number>()
+  // The numbers of `fitNames` of every name made so far.
+  const takenByFit = new Set<number>()
+  // Where the count of each name stopped, by `folded` and by each number of
+  // `fitNames`: a hundredth "Foto.jpg" tries "Foto (100).jpg" first and not
+  // every number from 2 again, and so does a hundredth name that only an
+  // unpacker makes "Foto.jpg" of, "F̀oto.jpg" after "Fòto.jpg" (opengewerk#922).
+  const counters = new Map<string | number, number>()
 
   return (raw) => {
     const fallback = cleanName(raw)
@@ -399,17 +565,28 @@ export function nameMaker(): (raw: string) => string {
     const slash = fallback.lastIndexOf('/')
     const [stem, extension] =
       dot > slash + 1 ? [fallback.slice(0, dot), fallback.slice(dot)] : [fallback, '']
-    const key = folded(fallback)
     let candidate = fallback
-    let counter = counters.get(key) ?? 2
+    let byFit = fitNames(candidate)
+    const keys = [folded(fallback), ...byFit]
+    let counter = Math.max(...keys.map((key) => counters.get(key) ?? 2))
+    let numbered = false
 
-    while (taken.has(folded(candidate))) {
+    while (taken.has(folded(candidate)) || [...byFit].some((name) => takenByFit.has(name))) {
       candidate = `${stem} (${String(counter)})${extension}`
+      byFit = fitNames(candidate)
       counter += 1
+      numbered = true
     }
 
-    counters.set(key, counter)
+    if (numbered) {
+      for (const key of keys) {
+        counters.set(key, counter)
+      }
+    }
     taken.add(folded(candidate))
+    for (const name of byFit) {
+      takenByFit.add(name)
+    }
 
     return candidate
   }

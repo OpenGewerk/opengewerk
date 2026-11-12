@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { blankFits, separatorFits } from './best-fit.js'
 import { cleanName, dosMoment, uniqueNames, zipBytes, ZipTooLargeError } from './zip.js'
 
 /** A space that does not break, which trim takes and a pattern for spaces does not. */
@@ -67,6 +68,40 @@ describe('the names in an archive', () => {
     ])
   })
 
+  it('keep no character a code page makes a separator of (opengewerk#922)', () => {
+    // After "q", with which no mark of them makes a character of its own.
+    for (const code of separatorFits) {
+      const character = String.fromCodePoint(code)
+
+      expect(cleanName(`q${character}b.pdf`)).not.toContain(character)
+    }
+  })
+
+  it('keep no part only of what a code page makes spaces or nothing of (opengewerk#922)', () => {
+    for (const code of blankFits) {
+      expect(cleanName(`x/${String.fromCodePoint(code)}/y`)).toBe('x/y')
+    }
+
+    // Nor of what `plain` reads as spaces or nothing, which no code page
+    // makes so yet: "¨", "¯", "¸", "˘", "῭" and the half-width sound marks.
+    for (const code of [0xa8, 0xaf, 0xb8, 0x2d8, 0x1fed, 0xff9e, 0xff9f]) {
+      expect(cleanName(`x/${String.fromCodePoint(code)}/y`)).toBe('x/y')
+    }
+  })
+
+  it('lose a part that is only dots and spaces once its marks are dropped (opengewerk#922)', () => {
+    const umlaut = String.fromCodePoint(0x308)
+    const grave = String.fromCodePoint(0x300)
+    const rub = String.fromCodePoint(0x6de)
+
+    // An unpacker that drops marks would make ".." of the first.
+    expect(
+      [`..${umlaut}`, `a/. ${grave}/b`, `x/..${rub}`, `..${umlaut}x`].map((name) =>
+        cleanName(name),
+      ),
+    ).toEqual(['Datei', 'a/b', 'x', `..${umlaut}x`])
+  })
+
   it('are no names Windows keeps for a device', () => {
     expect(
       uniqueNames([
@@ -100,10 +135,11 @@ describe('the names in an archive', () => {
   })
 
   it('are no names a code page makes a device of by best fit (opengewerk#920)', () => {
-    const marks = String.fromCodePoint(0x308, 0x301)
+    const marks = String.fromCodePoint(0x308, 0x300)
 
+    // Each on its own: some of them are one name to such an unpacker.
     expect(
-      uniqueNames([
+      [
         'ＣＯＮ.pdf',
         'ｎｕｌ',
         'ĈON.pdf',
@@ -123,7 +159,7 @@ describe('the names in an archive', () => {
         'Łódź.pdf',
         'COM0',
         'ŁPT.pdf',
-      ]),
+      ].map((name) => cleanName(name)),
     ).toEqual([
       'ＣＯＮ_.pdf',
       'ｎｕｌ_',
@@ -143,6 +179,80 @@ describe('the names in an archive', () => {
       'COM0',
       'ŁPT.pdf',
     ])
+  })
+
+  it('are no one name to an unpacker that converts them by best fit (opengewerk#922)', () => {
+    const grave = String.fromCodePoint(0x300)
+
+    expect(
+      uniqueNames([
+        'dateien/Ｆｏｔｏ.jpg',
+        'dateien/Foto.jpg',
+        // "Ł" is "L" in 1251, which turns "ó" and "ź" into "o" and "z".
+        'Łódź.pdf',
+        'Lodz.pdf',
+        // "è" is "c" in 775.
+        'è.pdf',
+        'c.pdf',
+        // "ð" is "d" in 437 and "e" in 936.
+        'ð.txt',
+        'D.txt',
+        'E.txt',
+        // "è" is "c" in 775 and 852, where the grave is "`" and gone only
+        // when marks are dropped.
+        `è${grave}x.pdf`,
+        'cx.pdf',
+        // With the grave gone, Windows drops the dot at the end.
+        'y',
+        `y.${grave}`,
+        // Letters and digits stay apart.
+        'cat.pdf',
+        'eat.pdf',
+        'a1.pdf',
+        'a3.pdf',
+      ]),
+    ).toEqual([
+      'dateien/Ｆｏｔｏ.jpg',
+      'dateien/Foto (2).jpg',
+      'Łódź.pdf',
+      'Lodz (2).pdf',
+      'è.pdf',
+      'c (2).pdf',
+      'ð.txt',
+      'D (2).txt',
+      'E (2).txt',
+      `è${grave}x.pdf`,
+      'cx (2).pdf',
+      'y',
+      `y (2).${grave}`,
+      'cat.pdf',
+      'eat.pdf',
+      'a1.pdf',
+      'a3.pdf',
+    ])
+  })
+
+  it('count on together when only such an unpacker makes them one name (opengewerk#922)', () => {
+    // Two thousand names that differ in their marks and are all "Foto.jpg"
+    // to an unpacker that drops them, each looked at about once. Without the
+    // marks that are or hold an acute, which becomes "_".
+    const marks = Array.from({ length: 0x70 }, (_, index) => 0x300 + index).filter(
+      (code) => !String.fromCodePoint(code).normalize('NFC').includes(String.fromCodePoint(0x301)),
+    )
+    const raw = marks
+      .flatMap((first) =>
+        marks.map(
+          (second) =>
+            `dateien/F${String.fromCodePoint(first)}ot${String.fromCodePoint(second)}o.jpg`,
+        ),
+      )
+      .slice(0, 2000)
+    const started = performance.now()
+    const names = uniqueNames(raw)
+
+    expect(performance.now() - started).toBeLessThan(1000)
+    expect(new Set(names).size).toBe(2000)
+    expect(names.at(-1)).toMatch(/ \(2000\)\.jpg$/)
   })
 
   it('take a name in either Unicode form for the same, as macOS does', () => {
@@ -173,13 +283,14 @@ describe('the names in an archive', () => {
       `i${dot} (2).pdf`,
     ])
 
-    // In capitals "ΐ" is three characters, of which one form holds two.
+    // In capitals "ΐ" is three characters, of which one form holds two; the
+    // acute that stays alone becomes "_" (opengewerk#922).
     const small = String.fromCodePoint(0x390)
     const capital = String.fromCodePoint(0x3aa, 0x301)
 
     expect(uniqueNames([`${small}.pdf`, `${capital}.pdf`])).toEqual([
       `${small}.pdf`,
-      `${capital} (2).pdf`,
+      `${String.fromCodePoint(0x3aa)}_.pdf`,
     ])
   })
 
@@ -206,7 +317,7 @@ describe('the names in an archive', () => {
       `1${half} Zimmer.pdf`,
       'a_b',
       '.._.._x.pdf',
-      `Ångström ${enDash} „Test“ € 😀 Šimek.pdf`,
+      `Ångström ${enDash} „Test“ € 😀 Simek.pdf`,
     ])
   })
 
@@ -269,39 +380,51 @@ describe('the names in an archive', () => {
     expect(performance.now() - started).toBeLessThan(500)
   })
 
-  it('make no "../" of an acute or an "Š" that a DOS code page turns into a separator', () => {
+  it('keep no acute or "Š" that a DOS code page turns into a separator (opengewerk#922)', () => {
     const acute = String.fromCodePoint(0x301)
-    // A mark between a dot and an "Š", which a conversion may drop.
     const umlaut = String.fromCodePoint(0x308)
-    // Which a conversion drops as well.
+    const caron = String.fromCodePoint(0x30c)
     const rub = String.fromCodePoint(0x6de)
 
+    // Each on its own: some of them are one name to such an unpacker.
     expect(
-      uniqueNames([
+      [
         `..${acute}..${acute}x.pdf`,
         '..Š..Šx.pdf',
         'Šimek.pdf',
+        // Made of "S" and a caron, which the form makes "Š".
+        `S${caron}imek.pdf`,
+        // Another caron behind it, which makes a new "Š" of the "S".
+        `Š${caron}x.pdf`,
+        // A dot above behind it, with which the form holds it as "Ṧ".
+        `Š${String.fromCodePoint(0x307)}.pdf`,
+        'šimek.pdf',
         `Ива${acute}н.pdf`,
         `${acute}x.pdf`,
-        'xŠ.pdf',
-        `..${umlaut}Š${umlaut}..${umlaut}Š${umlaut}x.pdf`,
-        `..${rub}Š..${rub}Šx.pdf`,
-        `xŠ${umlaut}.pdf`,
+        `..${umlaut}Š${umlaut}x.pdf`,
+        `..${rub}Šx.pdf`,
+        // "/" and "\" in 860, one folder and the same path there.
+        `q${acute}b.pdf`,
+        'qŠb.pdf',
         `ɔ${String.fromCodePoint(0x303, 0x301)}.pdf`,
         `i${String.fromCodePoint(0x307, 0x301)}.pdf`,
-      ]),
+      ].map((name) => cleanName(name)),
     ).toEqual([
       '.._.._x.pdf',
-      '.._.._x (2).pdf',
-      'Šimek.pdf',
-      `Ива${acute}н.pdf`,
+      '..S..Sx.pdf',
+      'Simek.pdf',
+      'Simek.pdf',
+      'Sx.pdf',
+      'Ṧ.pdf',
+      'šimek.pdf',
+      'Ива_н.pdf',
       '_x.pdf',
-      'x_.pdf',
-      `..${umlaut}_${umlaut}..${umlaut}_${umlaut}x.pdf`,
-      `..${rub}_..${rub}_x.pdf`,
-      `x_${umlaut}.pdf`,
-      `ɔ${String.fromCodePoint(0x303, 0x301)}.pdf`,
-      `i${String.fromCodePoint(0x307, 0x301)}.pdf`,
+      `..${umlaut}S${umlaut}x.pdf`,
+      `..${rub}Sx.pdf`,
+      'q_b.pdf',
+      'qSb.pdf',
+      `ɔ${String.fromCodePoint(0x303)}_.pdf`,
+      `i${String.fromCodePoint(0x307)}_.pdf`,
     ])
   })
 

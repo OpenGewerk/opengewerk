@@ -9,6 +9,7 @@ import {
   Inject,
   NotFoundException,
   Param,
+  PayloadTooLargeException,
   Post,
   Query,
   Res,
@@ -41,7 +42,12 @@ import { eq, sql } from 'drizzle-orm'
 import type { Response } from 'express'
 
 import { accessRequests, letterheads, people, tenants } from '../database/schema/index.js'
-import { type AccessAnswer, accessEntries, accessPrintJob } from '../privacy/access-answer.js'
+import {
+  type AccessAnswer,
+  accessEntries,
+  accessPrintJob,
+  prepareFilePaths,
+} from '../privacy/access-answer.js'
 import { gatherAccessReport, gridOperatorsOf } from '../privacy/access-report.js'
 import {
   accessRequestOf,
@@ -50,7 +56,7 @@ import {
   subjectOf,
 } from '../privacy/access-requests.js'
 import { recordInputsOf, usedActivitiesOf } from '../privacy/documents.js'
-import { dosMoment, zipPieces } from '../privacy/zip.js'
+import { dosMoment, zipPieces, ZipTooLargeError } from '../privacy/zip.js'
 import { todayInGermany } from '../today.js'
 import { RequiresPermission } from './authorization.js'
 import { DocumentFiles } from './document-files.js'
@@ -279,6 +285,19 @@ export class AccessRequestsController {
       gridOperators: gathered.gridOperators,
       recipients: gathered.recipients,
       account: account === undefined ? null : { name: account.name, email: account.email },
+    }
+
+    // The paths of the files, worked out a batch at a time before the PDF,
+    // `daten.json` and the archive ask for them; an answer with more files
+    // than an archive holds is refused before that work (opengewerk#922).
+    try {
+      await prepareFilePaths(answer.report)
+    } catch (error) {
+      if (error instanceof ZipTooLargeError) {
+        throw new PayloadTooLargeException(error.message)
+      }
+
+      throw error
     }
 
     let pdf: Uint8Array
