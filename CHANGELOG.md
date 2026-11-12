@@ -149,7 +149,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Auskunft las, fand sie dort nicht. Im eigenen Ordner kann keine gespeicherte Datei liegen, und das PDF sagt, wo die
   Hinweise liegen.
 - Die Namen im ZIP der Auskunft lassen sich auf Windows, macOS und Linux unter dem Namen entpacken, den PDF und
-  `daten.json` nennen (#916, #919, #920, #922). Warum: Der Abgleich lässt Dateinamen bis 100 000 Zeichen und mit beliebigen
+  `daten.json` nennen (#916, #919, #920, #922, #924). Warum: Der Abgleich lässt Dateinamen bis 100 000 Zeichen und mit beliebigen
   Zeichen durch, und manche davon legt ein Entpacker anders oder gar nicht an. Im Einzelnen:
   - Jeder Teil eines Namens verliert den Leerraum am Anfang und die Punkte und den Leerraum am Ende, wie Windows sie
     streicht, bevor die Endung seiner Art dazukommt: Ein Nachweis `..` als PDF heißt `Datei.pdf`, eine Datei `...`
@@ -191,6 +191,12 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
     Gerätename sein. Ein Teil, der ohne seine Akzente nur aus Punkten und Leerraum besteht, auch aus Zeichen, die
     erst in ihrer Kompatibilitätsform Leerraum sind (`¨` oder das breite Leerzeichen U+3000), fällt weg wie `..`
     selbst: Ein Entpacker, der Akzente streicht, machte aus `..` mit Umlaut sonst `..` (#922).
+  - Eine Tilde vor einer Ziffer wird `_`, auch eine, die erst ein Entpacker beim Umwandeln zur Tilde macht (`～`,
+    `〜`, `∼`): Aus `FOTOAL~1.JPG` wird `FOTOAL_1.JPG` (#924). Windows gibt einer Datei wie
+    `Fotoalbum Baustelle.jpg` auf manchen Laufwerken zusätzlich den Kurznamen `FOTOAL~1.JPG` und öffnet sie unter
+    beiden Namen; eine zweite Datei mit diesem Namen hätte sie beim Entpacken überschrieben. Jeder Kurzname, den
+    Windows bildet, hat eine Tilde mit Ziffern dahinter. Auf die Länge des Teils kommt es dabei nicht an, so heißt
+    auch `Bericht~2 alt.pdf` im ZIP `Bericht_2 alt.pdf`.
   - Ein halbes Zeichen (ein Surrogat ohne seine andere Hälfte) wird `_`, weil das ZIP es als U+FFFD und `daten.json`
     es als `\ud800` geschrieben hätte. Folgen von mehr als 30 kombinierenden Zeichen werden auf 30 gekürzt, weil ihre
     Ordnung sonst mit dem Quadrat ihrer Länge Zeit braucht.

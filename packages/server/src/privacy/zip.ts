@@ -390,16 +390,55 @@ function formed(raw: string): string {
  * A part of a name in that form as the archive may hold it: what no unpacker
  * should be asked to put into a name becomes "_", white space goes from its
  * start and white space and dots from its end, a part of nothing else goes,
- * and a device name gets a "_".
+ * a "~" before a digit becomes "_", and a device name gets a "_".
  */
 function cleanedPart(part: string): string {
   return notADevice(
-    nothingButEnd(
-      withoutEnd(
-        [...part].map((character) => (unfit(character) ? '_' : character)).join(''),
-      ).trimStart(),
+    noShortName(
+      nothingButEnd(
+        withoutEnd(
+          [...part].map((character) => (unfit(character) ? '_' : character)).join(''),
+        ).trimStart(),
+      ),
     ),
   )
+}
+
+/** A reading that starts with a digit: "1", and so "１", "¹" and "½". */
+const digitReading = /^[0-9]/
+
+/**
+ * A part that cannot be the short name of another entry (opengewerk#924).
+ * Windows gives a file whose name is no 8.3 name a short one as well,
+ * "FOTOAL~1.JPG" for "Fotoalbum Baustelle.jpg", and opens that file for
+ * either name; an unpacker that writes "FOTOAL~1.JPG" after it writes over it.
+ * Every short name Windows makes has a "~" with digits behind it, so every
+ * character that may read as "~" ("～", "〜", "∼") becomes "_" where one that
+ * may read as a digit follows, past characters that may read as nothing. The
+ * length of the part decides nothing: a character may take two bytes of a
+ * code page or none once its marks are dropped, and "Bericht~2 alt.pdf"
+ * becoming "Bericht_2 alt.pdf" costs less than a guess. One pass from the
+ * end, so that a long run of such characters takes time that grows with its
+ * length.
+ */
+function noShortName(part: string): string {
+  const characters = [...part]
+  // Whether a digit follows, past characters that may read as nothing.
+  let digitAhead = false
+  let changed = false
+
+  for (let index = characters.length - 1; index >= 0; index -= 1) {
+    const found = readings(characters[index] ?? '')
+
+    if (digitAhead && found.includes('~')) {
+      characters[index] = '_'
+      changed = true
+    }
+    digitAhead =
+      found.some((reading) => digitReading.test(reading)) || (digitAhead && found.includes(''))
+  }
+
+  return changed ? characters.join('') : part
 }
 
 /**
