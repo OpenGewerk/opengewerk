@@ -78,6 +78,23 @@ function unfit(character: string): boolean {
   )
 }
 
+/** A name Windows keeps for a device, with or without an extension: "CON", "nul.txt", "COM1.pdf". */
+const device = /^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\..*)?$/i
+
+/**
+ * A part that is not the name of a device: Windows makes no file "CON" or
+ * "NUL.txt", so it gets a "_" behind the device, "CON_" and "NUL_.txt".
+ */
+function notADevice(part: string): string {
+  if (!device.test(part)) {
+    return part
+  }
+
+  const dot = part.indexOf('.')
+
+  return dot === -1 ? `${part}_` : `${part.slice(0, dot)}_${part.slice(dot)}`
+}
+
 /** What a part of a name loses at its end: white space and dots. */
 const endOfPart = /^[\s.]$/
 
@@ -111,9 +128,11 @@ export function cleanName(raw: string): string {
     .replace(/\\/g, '/')
     .split('/')
     .map((part) =>
-      withoutEnd(
-        [...part].map((character) => (unfit(character) ? '_' : character)).join(''),
-      ).trimStart(),
+      notADevice(
+        withoutEnd(
+          [...part].map((character) => (unfit(character) ? '_' : character)).join(''),
+        ).trimStart(),
+      ),
     )
     .filter((part) => part !== '')
     .join('/')
@@ -124,8 +143,9 @@ export function cleanName(raw: string): string {
 /**
  * A name as the archive compares it: in capitals, close to Windows, which
  * compares in capitals one character at a time. Where the two differ, this
- * takes more names for the same ("ß" and "SS"), which gives one "(2)" more
- * and never two files one name. Lower case would not do: it writes a sigma at
+ * takes more names for the same ("ß" and "SS"), which can give a name a
+ * number Windows would not need, more than one where it has several "ß", and
+ * never two files one name. Lower case would not do: it writes a sigma at
  * the end of a word otherwise than inside one, and "aΣ" and "aσ" stayed two
  * names until ".txt" came after them (opengewerk#916).
  */

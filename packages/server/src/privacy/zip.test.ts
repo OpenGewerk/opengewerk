@@ -67,6 +67,20 @@ describe('the names in an archive', () => {
     ])
   })
 
+  it('are no names Windows keeps for a device', () => {
+    expect(
+      uniqueNames(['CON', 'nul.txt', 'Com1.pdf', 'LPT9', 'CONSOLE.txt', 'a/aux/b', 'con_']),
+    ).toEqual(['CON_', 'nul_.txt', 'Com1_.pdf', 'LPT9_', 'CONSOLE.txt', 'a/aux_/b', 'con_ (2)'])
+  })
+
+  it('take "ß" and "SS" for the same name, as capitals write them', () => {
+    expect(uniqueNames(['aßß.pdf', 'aSSSS.pdf', 'aßSS.pdf'])).toEqual([
+      'aßß.pdf',
+      'aSSSS (2).pdf',
+      'aßSS (3).pdf',
+    ])
+  })
+
   it('come back the same when they are cleaned again', () => {
     const names = [
       `x${unbroken}. .`,

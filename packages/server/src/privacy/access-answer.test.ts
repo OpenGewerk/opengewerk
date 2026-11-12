@@ -40,6 +40,7 @@ describe('the paths of the files of an answer', () => {
         { mediaType: 'application/pdf', name: `${'C'.repeat(195)} ${'D'.repeat(100)}.pdf` },
         { mediaType: 'text/plain', name: `${'E'.repeat(194)}.bc.056 Ende` },
         { mediaType: 'image/png', name: String.fromCodePoint(0x1f600).repeat(1000) },
+        { mediaType: 'application/pdf', name: 'CON' },
       ]),
     )
 
@@ -59,6 +60,7 @@ describe('the paths of the files of an answer', () => {
       `dateien/${'C'.repeat(195)}.pdf`,
       `dateien/${'E'.repeat(194)}`,
       `dateien/${String.fromCodePoint(0x1f600).repeat(50)}.png`,
+      'dateien/CON_.pdf',
     ])
 
     // ext4 and macOS hold at most 255 bytes for one part of a path.

@@ -157,8 +157,10 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Namen bis 100 000 Zeichen durch, und ein solcher Name hätte das ZIP der Auskunft unlesbar gemacht. Hatte der Name
   keine Endung, erzeugt auch das Kürzen keine, und die Endung seiner Art kommt dahinter. Gleiche Namen erkennt das ZIP
   in Großbuchstaben statt in Kleinbuchstaben: in Kleinbuchstaben hing das Sigma am Wortende vom Zusammenhang ab, und
-  ein Hinweis trug nicht immer den Namen seiner Datei. In Großbuchstaben gelten auch `ß` und `SS` als gleich, das
-  gibt höchstens ein `(2)` mehr. Ein halbes Zeichen (ein Surrogat ohne seine andere Hälfte) wird `_`, weil das ZIP es
+  ein Hinweis trug nicht immer den Namen seiner Datei. In Großbuchstaben gelten auch `ß` und `SS` als gleich; so ein
+  Name bekommt dann eine Nummer wie `(2)`, die Windows nicht bräuchte, zwei Dateien tragen aber nie denselben Namen.
+  Ein Name, den Windows einem Gerät vorbehält (`CON`, `NUL`, `COM1` und so weiter, auch mit Endung), bekommt ein `_`
+  dahinter, etwa `CON_.pdf`, weil Windows ihn sonst nicht anlegt. Ein halbes Zeichen (ein Surrogat ohne seine andere Hälfte) wird `_`, weil das ZIP es
   als U+FFFD und `daten.json` es als `\ud800` geschrieben hätte. Ein Schrägstrich in einem Dateinamen wird `_`, statt
   im ZIP einen Ordner anzulegen (#919): `a` und `a/b.pdf` machten `a` zugleich zur Datei und zum Ordner, und das ZIP
   ließ sich nicht vollständig entpacken.
