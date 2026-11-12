@@ -216,10 +216,11 @@ const rawEnd = 32
  * with marks, keep ".docx", and "Bericht.docx" with a wide dot behind it
  * keeps none, as when the whole name is cleaned. At most 1000 units are
  * skipped: a name that ends in more of that loses its extension, not the
- * server's time. A character cut in half at a
- * seam becomes "_", as cleaning makes of any half character; the half at the
- * start of the end becomes "_" at once, so that it does not make a character
- * of its own with a half at the end of the start.
+ * server's time. Where something is left out between the start and the end,
+ * a "_" stands for it: the two make no character of two halves, and an end
+ * that cleaning drops whole leaves no extension of the start behind
+ * ("Bericht.docx", 1000 letters and 2000 spaces has none, as it has none
+ * cleaned whole). An end right behind the start goes on without one.
  */
 function bounded(name: string): string {
   if (name.length <= rawStart + rawEnd) {
@@ -254,13 +255,9 @@ function bounded(name: string): string {
     }
   }
 
-  const tail = name.slice(end - rawEnd, end)
-  // Only where something lies between them: an end right behind the start
-  // goes on a character whole.
-  const lowHalf =
-    end - rawEnd > rawStart && tail.charCodeAt(0) >= 0xdc00 && tail.charCodeAt(0) <= 0xdfff
+  const seam = end - rawEnd > rawStart ? '_' : ''
 
-  return `${name.slice(0, rawStart)}${lowHalf ? `_${tail.slice(1)}` : tail}`
+  return `${name.slice(0, rawStart)}${seam}${name.slice(end - rawEnd, end)}`
 }
 
 /**

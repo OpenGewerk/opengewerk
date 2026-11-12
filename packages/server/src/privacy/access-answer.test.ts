@@ -141,7 +141,20 @@ describe('the raw names of the files of an answer (opengewerk#929)', () => {
       expect(longer).toMatch(/^dateien\/e+\.pdf$/)
     }
     expect(dotted).toMatch(/^dateien\/b+\.zip$/)
-    expect(seams).toBe(`dateien/__${'c'.repeat(27)}.pdf`)
+    expect(seams).toBe(`dateien/___${'c'.repeat(27)}.pdf`)
+
+    // An end that cleaning drops whole leaves no extension of the start
+    // behind: cleaned whole, the name ends in "b".
+    const [uncovered] = filePaths(
+      reportOf([
+        {
+          mediaType: 'application/pdf',
+          name: `${'a'.repeat(995)}.docx${'b'.repeat(1000)}${' '.repeat(2000)}`,
+        },
+      ]),
+    )
+
+    expect(uncovered).toMatch(/^dateien\/a+\.pdf$/)
 
     // An end right behind the start keeps a character whole across them.
     const face = String.fromCodePoint(0x1f600)
