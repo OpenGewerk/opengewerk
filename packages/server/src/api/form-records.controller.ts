@@ -223,8 +223,9 @@ export class FormRecordsController {
         const [tenant] = await tx.select({ name: tenants.name }).from(tenants)
         const companyName = letterhead?.companyName ?? null
         const values = readFormValues(record.values) ?? {}
-        // The check of the values takes any short text for a photo; only an id
-        // can name a file, and anything else would break the query (#817).
+        // A photo value is the id of a file since #933; a protocol signed
+        // before may still hold another text, which names no file and would
+        // break the query (#817).
         const uses = chosenPhotos(definition, values)
         const chosen = [...uses.keys()].filter(isUuid)
         const signed = record.status === 'signed'

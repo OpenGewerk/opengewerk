@@ -168,6 +168,12 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Ein Fotofeld und das Foto eines Prüfpunkts nehmen nur noch die Kennung einer Datei an, eine UUID; bisher ging jeder
+  Text von 1 bis 64 Zeichen durch (#933). Warum: Über die Oberfläche steht dort immer die Kennung einer Datei, über den
+  Abgleich konnte ein Gerät aber jeden kurzen Text schicken, auch in ein Protokoll, das danach unterschrieben und
+  festgeschrieben wird. Die Regel liegt im Fundament und gilt beim Speichern; ein schon unterschriebenes Protokoll mit
+  einem anderen Wert bleibt, wie es ist, und sein PDF sagt weiter, wo das Foto liegt. Die Haustechnik bekommt die
+  Regel mit dem nächsten Anheben des Submoduls.
 - Mängelbericht und Förderunterlagen lesen ihre Fotos jetzt in derselben Grenze wie das Prüfprotokoll seit #817:
   höchstens 20 Fotos und 6 MB je Seite, weniger, wenn die Seite selbst schon groß ist (#940). Was nicht mehr
   hineinpasst, wird nicht gelesen; der Mängelbericht sagt je Mangel, wie viele weitere Fotos beim Mangel stehen, die
