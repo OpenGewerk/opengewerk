@@ -334,14 +334,12 @@ export async function emptyCustomer(
   )
   await take('prospects', sql`delete from prospects where customer_id = ${k} returning id`)
 
-  // The files of the customer and its jobs go for good (#712); those of its
-  // sites, installations and appliances stay with them. A file added at an
-  // installation or an appliance names the customer as well, to turn up in its
-  // files, and is still one of theirs, which a protocol may show (#817).
+  // The files of the customer and its jobs go for good (#712), also where they
+  // hang on a site, an installation or an appliance as well: a file added
+  // there names the customer too. A file at those alone stays with them, and
+  // a protocol that showed a photo that goes says where it lay (#817).
   const { rows: files } = await tx.execute<{ id: string }>(sql`
-    select id from attachments
-     where (customer_id = ${k} or job_id in ${jobsOf})
-       and installation_id is null and appliance_id is null`)
+    select id from attachments where customer_id = ${k} or job_id in ${jobsOf}`)
   const fileIds = files.map((row) => row.id)
 
   if (fileIds.length > 0) {
