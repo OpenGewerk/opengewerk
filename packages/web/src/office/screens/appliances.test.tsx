@@ -99,8 +99,8 @@ const rows: Readonly<Record<string, RecordState[]>> = {
   ],
 }
 
-async function mount(path: string) {
-  for (const [entity, list] of Object.entries(rows)) {
+async function mount(path: string, held: Readonly<Record<string, RecordState[]>> = rows) {
+  for (const [entity, list] of Object.entries(held)) {
     for (const row of list) {
       server.put(entity, row)
     }
@@ -274,6 +274,31 @@ describe('the register of appliances in the office (#303)', () => {
         client.list('attachments').filter((row) => !['f-1', 'f-2'].includes(String(row['id']))),
       ).toEqual([expect.objectContaining({ applianceId: 'a-2', siteId: 's-1', customerId: 'c-1' })])
     })
+  })
+
+  it('hangs a new file on no customer the device does not hold, as at an installation (#817)', async () => {
+    // The customer of the site is deleted and no longer on the device.
+    const { client } = await mount('/geraete/a-2', { ...rows, customers: [] })
+
+    const files = await screen.findByRole('region', { name: 'Dateien' })
+
+    await userEvent.upload(
+      within(files).getByLabelText('Datei hinzufügen'),
+      new File(['%PDF-1.7'], 'bericht.pdf', { type: 'application/pdf' }),
+    )
+
+    await waitFor(() => {
+      expect(
+        client.list('attachments').filter((row) => !['f-1', 'f-2'].includes(String(row['id']))),
+      ).toHaveLength(1)
+    })
+
+    const made = client
+      .list('attachments')
+      .find((row) => !['f-1', 'f-2'].includes(String(row['id'])))
+
+    expect(made).toMatchObject({ applianceId: 'a-2', siteId: 's-1' })
+    expect(made && 'customerId' in made ? made['customerId'] : undefined).toBeUndefined()
   })
 
   it('says on an appliance with defects what the last test found', async () => {

@@ -536,7 +536,9 @@ export function ApplianceScreen() {
               field="applianceId"
               id={applianceId}
               home={{
-                customerId: site ? String(site['customerId']) : null,
+                // Only a customer this device holds: one that is deleted stays
+                // off the file, as on the page of an installation.
+                customerId: customer ? String(customer['id']) : null,
                 siteId,
                 applianceId,
               }}
