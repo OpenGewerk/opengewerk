@@ -189,6 +189,82 @@ describe('a file made on the device', () => {
     expect(client.status().pending).toBe(0)
   })
 
+  it('lets go what was recorded before, of the record that waits as well (opengewerk#939)', async () => {
+    const client = await start()
+    const second = new TextEncoder().encode('the label once more').buffer as ArrayBuffer
+    const upload = server.upload.bind(server)
+    const push = server.push.bind(server)
+    const arrived: string[] = []
+    let transmission = 0
+    let taken = false
+
+    // Without a network: a photo with its parcel, then a note.
+    server.offline = true
+
+    const first = await client.keepFile(photo, 'image/jpeg')
+    const note = await client.create('notes', { title: 'Etikett' })
+
+    if (note.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    const parcel = await client.create('parcels', {
+      noteId: note.id,
+      sha256: first.sha256,
+      fileName: 'label.jpg',
+      mediaType: 'image/jpeg',
+      sizeBytes: first.sizeBytes,
+    })
+
+    if (parcel.outcome !== 'queued') {
+      throw new Error('The parcel was refused on the device.')
+    }
+
+    await client.create('notes', { title: 'Davor' })
+
+    // Back online, and while the first goes up the parcel names a new photo.
+    server.offline = false
+    server.upload = async (sha256, bytes, mediaType) => {
+      await upload(sha256, bytes, mediaType)
+
+      if (!taken) {
+        taken = true
+
+        const made = await client.keepFile(second, 'image/jpeg')
+
+        await client.update('parcels', parcel.id, {
+          sha256: made.sha256,
+          sizeBytes: made.sizeBytes,
+        })
+      }
+    }
+    server.push = (deviceId, operations) => {
+      transmission += 1
+
+      for (const operation of operations) {
+        for (const patch of operation.patches) {
+          if (patch.field === 'sha256' && typeof patch.to === 'string') {
+            arrived.push(`${String(transmission)}: parcel ${patch.to.slice(0, 8)}`)
+          } else if (patch.field === 'title') {
+            arrived.push(`${String(transmission)}: ${String(patch.to)}`)
+          }
+        }
+      }
+
+      return push(deviceId, operations)
+    }
+
+    await client.synchronise()
+
+    expect(arrived).toEqual([
+      '1: Etikett',
+      `1: parcel ${first.sha256.slice(0, 8)}`,
+      '1: Davor',
+      `2: parcel ${hashOf(second).slice(0, 8)}`,
+    ])
+    expect(client.status().pending).toBe(0)
+  })
+
   it('waits on the device without a network, and goes up once there is one', async () => {
     const client = await start()
 
