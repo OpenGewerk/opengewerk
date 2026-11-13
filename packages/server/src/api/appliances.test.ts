@@ -705,10 +705,12 @@ describe('the files of an appliance (#817)', () => {
     await push(app, technician, [aVersion(photo, second)])
     expect(await printed(id, office)).toContain(base64(second))
 
+    // Signed, and a version laid over the photo after it in the same
+    // transmission, as a device that was offline sends both.
     await push(app, technician, [
       signed(id, before, complete({ photo, tester_signature: signature })),
+      aVersion(photo, third),
     ])
-    await push(app, office, [aVersion(photo, third)])
 
     const sealed = await printed(id, office)
 
@@ -798,6 +800,35 @@ describe('the photo of a signed protocol (#817)', () => {
 
     expect(left).not.toContain(third.toString('base64'))
     expect(left).toContain('bei den Dateien des Geräts')
+  })
+
+  it('shows no photo that lay in the bin before it was signed', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const bytes = photoBytes('vorher entfernt')
+    const before = complete({ photo })
+
+    await upload(bytes, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', photo, { applianceId: appliance, title: 'Zuleitung' }),
+      aVersion(photo, bytes),
+      aPhotoTest(id, appliance, before),
+    ])
+    await admin.query(
+      "update attachments set deleted_at = now() - interval '1 minute' where id = $1",
+      [photo],
+    )
+    await push(app, technician, [
+      signed(id, before, complete({ photo, tester_signature: signature })),
+    ])
+
+    const page = await printed(id, as(north.id, 'office'))
+
+    expect(page).not.toContain(bytes.toString('base64'))
+    expect(page).toContain('bei den Dateien des Geräts')
   })
 })
 

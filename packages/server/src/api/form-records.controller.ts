@@ -29,7 +29,7 @@ import {
   type Renderer,
   RendererUnavailableError,
 } from '@opengewerk/platform-server'
-import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, or } from 'drizzle-orm'
 import type { Response } from 'express'
 
 import {
@@ -63,18 +63,22 @@ interface PhotoVersion {
   readonly title: string
   readonly mediaType: string
   readonly sha256: string
-  readonly createdAt: Date
+  /** When the server wrote the version, in the order of every write of the business. */
+  readonly changeSequence: number
 }
 
 /**
  * The version of each file a protocol shows (#817), from its versions newest
  * first: the newest one; for a signed protocol the newest the server had when
  * it was signed, so that a version laid over it later does not change the
- * page, and the first one where all came after.
+ * page, and the first one where all came after. "When" is the sequence of the
+ * writes, which a version, written once, and a signed protocol, which no write
+ * changes, keep: a moment would be the same for a signature and a version sent
+ * in one transmission.
  */
 export function shownVersions(
   versions: readonly PhotoVersion[],
-  signedAt: Date | null,
+  signedAt: number | null,
 ): Map<string, PhotoVersion> {
   const shown = new Map<string, PhotoVersion>()
   const first = new Map<string, PhotoVersion>()
@@ -82,7 +86,7 @@ export function shownVersions(
   for (const version of versions) {
     first.set(version.id, version)
 
-    if (!shown.has(version.id) && (signedAt === null || version.createdAt <= signedAt)) {
+    if (!shown.has(version.id) && (signedAt === null || version.changeSequence <= signedAt)) {
       shown.set(version.id, version)
     }
   }
@@ -198,11 +202,18 @@ export class FormRecordsController {
               ? eq(attachments.jobId, record.jobId)
               : null
         const signed = record.status === 'signed'
-        // A signed protocol keeps its photo when the file goes to the bin: its
-        // page does not change. Only a purge, which deletes the versions, takes
-        // it (opengewerk#817).
+        // A signed protocol keeps its photo when the file goes to the bin after
+        // it was signed, and shows none that lay there before: its page does
+        // not change. Only a purge, which deletes the versions, takes it
+        // (opengewerk#817). A file in the bin is not changed any more, so its
+        // last write is the one that put it there.
         const kept = signed
-          ? []
+          ? [
+              or(
+                isNull(attachments.deletedAt),
+                gt(attachments.changeSequence, record.changeSequence),
+              ),
+            ]
           : [isNull(attachments.deletedAt), isNull(attachmentVersions.deletedAt)]
         const photoRows =
           chosen.length === 0 || ofSubject === null || !isAllowed(identity, 'attachment.read')
@@ -213,21 +224,17 @@ export class FormRecordsController {
                   title: attachments.title,
                   mediaType: attachmentVersions.mediaType,
                   sha256: attachmentVersions.sha256,
-                  createdAt: attachmentVersions.createdAt,
+                  changeSequence: attachmentVersions.changeSequence,
                 })
                 .from(attachments)
                 .innerJoin(attachmentVersions, eq(attachmentVersions.attachmentId, attachments.id))
                 .where(and(inArray(attachments.id, chosen as never[]), ofSubject, ...kept))
-                // Versions written in one transaction share their moment; the
-                // id, made in order of time, decides between them.
-                .orderBy(
-                  asc(attachments.id),
-                  desc(attachmentVersions.createdAt),
-                  desc(attachmentVersions.id),
-                )
+                // Newest first in the order of the writes, which also tells two
+                // versions of one transmission apart.
+                .orderBy(asc(attachments.id), desc(attachmentVersions.changeSequence))
 
         return {
-          versions: shownVersions(photoRows, signed ? record.updatedAt : null),
+          versions: shownVersions(photoRows, signed ? record.changeSequence : null),
           definition,
           values,
           performedOn: record.performedOn as IsoDate,

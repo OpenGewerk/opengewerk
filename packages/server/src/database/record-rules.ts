@@ -86,7 +86,7 @@ const country: RecordRule = {
  * hash and the size of what it finds, and a version that breaks one of these
  * is a mistake of the client that should say so, not reach the key. These
  * rules and the one over the places of a file are the foundation's
- * (opengewerk-haustechnik#97), asked with the four places and the sentences
+ * (opengewerk-haustechnik#97), asked with the five places and the sentences
  * of this application.
  */
 const rules: RecordRules = {
