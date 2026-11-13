@@ -214,7 +214,7 @@ describe('the values of a filled form', () => {
     voltage: 230_000,
     earthing: 'tn_s',
     documented: true,
-    panel: 'attachment-1',
+    panel: '0193a7f2-4c1e-7b2a-9d3e-5f6a7b8c9d0e',
     circuits: [{ circuitId: 'c-1', circuit: bath, values: { insulation: 550_000, remark: 'Bad' } }],
     signature,
   }

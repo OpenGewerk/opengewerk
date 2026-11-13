@@ -168,6 +168,12 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Ein Fotofeld und das Foto eines Prüfpunkts nehmen nur noch die Kennung einer Datei an, eine UUID; bisher ging jeder
+  Text von 1 bis 64 Zeichen durch (#933). Warum: Über die Oberfläche steht dort immer die Kennung einer Datei, über den
+  Abgleich konnte ein Gerät aber jeden kurzen Text schicken, auch in ein Protokoll, das danach unterschrieben und
+  festgeschrieben wird. Die Regel liegt im Fundament und gilt beim Speichern; ein schon unterschriebenes Protokoll mit
+  einem anderen Wert bleibt, wie es ist, und sein PDF sagt weiter, wo das Foto liegt. Die Haustechnik bekommt die
+  Regel mit dem nächsten Anheben des Submoduls.
 - Kann der Dateispeicher eine Datei der Auskunft nach Art. 15 nicht mehr lesen, liegt der Hinweis darauf im ZIP jetzt
   im eigenen Ordner `fehlende Dateien`, etwa `fehlende Dateien/Bericht.pdf/fehlt.txt`, statt als
   `dateien/Bericht.pdf (fehlt).txt` neben den gespeicherten Dateien (#916). Warum: Hieß eine gespeicherte Datei
