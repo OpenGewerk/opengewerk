@@ -49,13 +49,62 @@ export async function deviceScope(
      order by j.id`)
   const jobIds = rows.map((row) => row.id)
   const openJobIds = rows.filter((row) => row.open).map((row) => row.id)
+  const moved = await movesInto(tx, jobIds)
 
   return {
     userId,
     jobIds,
-    value: `jobs:${fingerprintOf(jobIds)}`,
+    // Nothing added while nothing moved, so that the value stays what
+    // devices hold today.
+    value: `jobs:${fingerprintOf(jobIds)}${moved === 0 ? '' : `:moved:${String(moved)}`}`,
     openJobIds,
   }
+}
+
+/**
+ * How often the installations and appliances the jobs reach have changed
+ * their site (opengewerk#938). One that moves onto the site of a job brings
+ * what hangs on it, its files, protocols and boards, whose changes lie behind
+ * the cursor of a device that held the site before; a different count makes
+ * the device drop what it holds and ask from the start, as a new job does.
+ * One created there counts nothing: what hangs on it is new as well. Counted
+ * in the log of changes, through `audit_entries_record_idx`.
+ */
+async function movesInto(tx: TenantTransaction, jobIds: readonly string[]): Promise<number> {
+  if (jobIds.length === 0) {
+    return 0
+  }
+
+  const { installations, appliances } = placesOf(jobIds)
+  const { rows } = await tx.execute<{ n: string }>(sql`
+    select count(*)::text as n
+      from audit_entries a
+     where a.field = 'site_id'
+       and a.operation = 'update'
+       and ((a.table_name = 'installations' and a.record_id in ${installations})
+         or (a.table_name = 'appliances' and a.record_id in ${appliances}))`)
+
+  return Number(rows[0]?.n ?? '0')
+}
+
+/** The sites, installations and appliances the jobs reach, as `narrowedTo` asks them. */
+function placesOf(jobIds: readonly string[]): {
+  readonly ids: SQL
+  readonly sites: SQL
+  readonly installations: SQL
+  readonly appliances: SQL
+} {
+  const ids = sql`array[${sql.join(
+    jobIds.map((id) => sql`${id}`),
+    sql`, `,
+  )}]::uuid[]`
+  const sites = sql`(select site_id from jobs where id = any(${ids}) and site_id is not null)`
+  const installations = sql`(select i.id from installations i
+    where i.id in (select installation_id from jobs where id = any(${ids}) and installation_id is not null)
+       or i.site_id in ${sites})`
+  const appliances = sql`(select id from appliances where site_id in ${sites})`
+
+  return { ids, sites, installations, appliances }
 }
 
 /**
@@ -199,17 +248,9 @@ export function narrowedTo(scope: DeviceScope, entity: string): SQL | undefined 
     return undefined
   }
 
-  const ids = sql`array[${sql.join(
-    scope.jobIds.map((id) => sql`${id}`),
-    sql`, `,
-  )}]::uuid[]`
+  const { ids, sites, installations, appliances } = placesOf(scope.jobIds)
   const jobs = sql`(select id from jobs where id = any(${ids}))`
   const customers = sql`(select customer_id from jobs where id = any(${ids}))`
-  const sites = sql`(select site_id from jobs where id = any(${ids}) and site_id is not null)`
-  const installations = sql`(select i.id from installations i
-    where i.id in (select installation_id from jobs where id = any(${ids}) and installation_id is not null)
-       or i.site_id in ${sites})`
-  const appliances = sql`(select id from appliances where site_id in ${sites})`
   const boards = sql`(select id from distribution_boards where installation_id in ${installations})`
   const circuits = sql`(select id from circuits where distribution_board_id in ${boards})`
   const inverters = sql`(select id from inverters where installation_id in ${installations})`

@@ -29,9 +29,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Mit der Löschung eines Objekts gehen auch die Dateien seiner Geräte; eine Datei, die zugleich ein anderes Objekt
   nennt, bleibt bei diesem, statt die Löschung abzubrechen, wie es bisher auch eine Datei an einer Anlage tat. Die
   Löschung eines Kunden nimmt wie bei Anlagen jede Datei mit, die ihn nennt. Eine Einschränkung: Der Prüfbericht je
-  Objekt und die anderen Sammel-PDFs nennen an der Stelle des Fotos weiter nur, wo es liegt (#935). Zieht ein Gerät
-  auf ein anderes Objekt um, kommen seine Dateien wie die einer Anlage erst mit ihrer nächsten Änderung auf ein Gerät,
-  das schon abgeglichen hat (#938).
+  Objekt und die anderen Sammel-PDFs nennen an der Stelle des Fotos weiter nur, wo es liegt (#935).
 - Jeder Push auf `main`, jeder Tag und jedes Löschen eines Zweigs wird nach Codeberg gespiegelt
   (codeberg.org/OpenGewerk), über einen Deploy Key nur für dieses Repository. Warum: der Code soll
   auch außerhalb von GitHub liegen; GitHub bleibt die Quelle, auf Codeberg wird nichts gepflegt.
@@ -165,6 +163,12 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Zieht eine Anlage oder ein Gerät auf das Objekt eines Auftrags um, kommen ihre Dateien, Protokolle und was sonst an
+  ihr hängt jetzt auch auf ein Gerät, das schon abgeglichen hat (#938). Warum: Der Bereich eines Geräts änderte seinen
+  Wert nur mit den Aufträgen, und was an der Anlage hing, lag mit seinen Änderungen hinter dem Stand des Geräts. Jetzt
+  zählt der Bereich die Umzüge der Anlagen und Geräte, die er erreicht, im Protokoll der Änderungen; ein anderer Wert
+  lässt das Gerät neu abrufen, wie bei einem neuen Auftrag. Ein neu angelegtes Gerät zählt nicht, an ihm hängt noch
+  nichts, das hinter dem Stand liegt.
 - Der Abgleich eines Geräts schickt seine Änderungen in der Reihenfolge, in der sie entstanden sind, auch wenn eine
   Datei noch hochgeladen wird (#939). Bisher hielt der Ausgang im Fundament nur den Datensatz zurück, der auf die Datei
   wartet; eine spätere Änderung an etwas anderem ging sofort hinaus. Warum: So konnte die Unterschrift unter einem

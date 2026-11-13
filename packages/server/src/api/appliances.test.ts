@@ -654,6 +654,35 @@ describe('the files of an appliance (#817)', () => {
 
     expect(files).toContain(atHere)
     expect(files).not.toContain(atThere)
+
+    // The appliance from elsewhere moves onto the site of the job: its file
+    // lies behind the cursor of the device, which the value makes it drop
+    // and ask again for (opengewerk#938).
+    const narrowed = (body: unknown) =>
+      (body as { narrowed: Record<string, string> }).narrowed['attachments']
+    const before = narrowed(answer.body)
+
+    await push(app, office, [
+      changed('appliances', there, { siteId: { from: elsewhere, to: site } }),
+    ])
+
+    const after = await http().get('/sync?since=0').set('x-test-identity', technician).expect(200)
+    const moved =
+      (after.body as { changes: { entity: string; rows: { id: string }[] }[] }).changes
+        .find((change) => change.entity === 'attachments')
+        ?.rows.map((row) => row.id) ?? []
+
+    expect(narrowed(after.body)).not.toBe(before)
+    expect(moved).toContain(atThere)
+
+    // A new appliance at the site moves nothing, and the value stays.
+    await push(app, office, [
+      anAppliance(newId<'appliance'>(), { inventoryNumber: '013', designation: 'Wasserkocher' }),
+    ])
+
+    const again = await http().get('/sync?since=0').set('x-test-identity', technician).expect(200)
+
+    expect(narrowed(again.body)).toBe(narrowed(after.body))
   })
 
   it('are a home of a file in the database, and a file with none is refused', async () => {
