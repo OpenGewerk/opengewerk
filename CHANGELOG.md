@@ -166,9 +166,9 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 - Zieht eine Anlage oder ein Gerät auf das Objekt eines Auftrags um, kommen ihre Dateien, Protokolle und was sonst an
   ihr hängt jetzt auch auf ein Gerät, das schon abgeglichen hat (#938). Warum: Der Bereich eines Geräts änderte seinen
   Wert nur mit den Aufträgen, und was an der Anlage hing, lag mit seinen Änderungen hinter dem Stand des Geräts. Jetzt
-  zählt der Bereich die Umzüge der Anlagen und Geräte, die er erreicht, im Protokoll der Änderungen; ein anderer Wert
-  lässt das Gerät neu abrufen, wie bei einem neuen Auftrag. Ein neu angelegtes Gerät zählt nicht, an ihm hängt noch
-  nichts, das hinter dem Stand liegt.
+  nimmt der Bereich die Anlagen und Geräte, die er erreicht und die schon einmal umgezogen sind, mit ihrem letzten
+  Umzug aus dem Protokoll der Änderungen in seinen Wert; ein anderer Wert lässt das Gerät neu abrufen, wie bei einem
+  neuen Auftrag. Ein neu angelegtes Gerät ändert ihn nicht, an ihm hängt noch nichts, das hinter dem Stand liegt.
 - Der Abgleich eines Geräts schickt seine Änderungen in der Reihenfolge, in der sie entstanden sind, auch wenn eine
   Datei noch hochgeladen wird (#939). Bisher hielt der Ausgang im Fundament nur den Datensatz zurück, der auf die Datei
   wartet; eine spätere Änderung an etwas anderem ging sofort hinaus. Warum: So konnte die Unterschrift unter einem

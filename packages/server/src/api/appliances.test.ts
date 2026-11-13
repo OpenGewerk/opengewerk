@@ -675,6 +675,30 @@ describe('the files of an appliance (#817)', () => {
     expect(narrowed(after.body)).not.toBe(before)
     expect(moved).toContain(atThere)
 
+    // The one moves away and another moves in instead: as many moves as
+    // before, and still a different value.
+    const third = newId<'appliance'>()
+    const atThird = newId<'attachment'>()
+
+    await push(app, office, [
+      anAppliance(third, {
+        siteId: elsewhere,
+        inventoryNumber: '014',
+        designation: 'Bohrmaschine',
+      }),
+    ])
+    await push(app, office, [
+      created('attachments', atThird, { applianceId: third, title: 'Prüfplakette' }),
+    ])
+    await push(app, office, [
+      changed('appliances', there, { siteId: { from: site, to: elsewhere } }),
+      changed('appliances', third, { siteId: { from: elsewhere, to: site } }),
+    ])
+
+    const swapped = await http().get('/sync?since=0').set('x-test-identity', technician).expect(200)
+
+    expect(narrowed(swapped.body)).not.toBe(narrowed(after.body))
+
     // A new appliance at the site moves nothing, and the value stays.
     await push(app, office, [
       anAppliance(newId<'appliance'>(), { inventoryNumber: '013', designation: 'Wasserkocher' }),
@@ -682,7 +706,7 @@ describe('the files of an appliance (#817)', () => {
 
     const again = await http().get('/sync?since=0').set('x-test-identity', technician).expect(200)
 
-    expect(narrowed(again.body)).toBe(narrowed(after.body))
+    expect(narrowed(again.body)).toBe(narrowed(swapped.body))
   })
 
   it('are a home of a file in the database, and a file with none is refused', async () => {
