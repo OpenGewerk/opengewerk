@@ -37,6 +37,16 @@ export function photoBound(pageBytes: number): PhotoBound {
 }
 
 /**
+ * What the texts printed with a photo, its title and the name of its file,
+ * add to a request at most, as bytes of a photo count against the bound: six
+ * bytes for each of theirs, as `&quot;` stands for `"`. A name has no bound of
+ * its own, and a long one would otherwise fill what the photos leave free.
+ */
+export function printedTextBytes(...texts: readonly string[]): number {
+  return texts.reduce((sum, each) => sum + 6 * Buffer.byteLength(each), 0)
+}
+
+/**
  * The photos a page reads, in the order it prints them, while they stay
  * within `bound`. One printed several times counts each time; one past the
  * bound is passed over, and a smaller one after it may still fit.

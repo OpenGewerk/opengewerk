@@ -65,7 +65,7 @@ import {
 } from '../forms/funding-papers.js'
 import { kilowattHourText, kilowattText } from '../forms/grid-documents.js'
 import { bound } from '../forms/inspection-report.js'
-import { photoBound, withinBound } from '../forms/photo-bound.js'
+import { photoBound, printedTextBytes, withinBound } from '../forms/photo-bound.js'
 import { protocolPrintJob } from '../forms/protocol-print.js'
 import { tradeForms, tradeRules } from '../forms/registry.js'
 import { todayInGermany } from '../today.js'
@@ -375,7 +375,13 @@ async function gather(
   // The page of photos without them, as the renderer gets it, tells what
   // is left (#940): the photos are laid in in order, within the bound.
   const pageBytes = Buffer.byteLength(JSON.stringify(photosJob(unlisted, [], on, 0)))
-  const enclosed = withinBound(photos, (photo) => photo.sizeBytes, photoBound(pageBytes))
+  const enclosed = withinBound(
+    photos,
+    // Its title, twice, and file name go into the page with it.
+    (photo) =>
+      photo.sizeBytes + printedTextBytes(photo.title, photo.title, photo.fileName, photo.mediaType),
+    photoBound(pageBytes),
+  )
   const checklist = fundingChecklist(program.evidence, {
     invoices: invoices.length,
     commissioning: protocols.length,

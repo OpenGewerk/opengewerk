@@ -53,7 +53,7 @@ import {
 } from '../database/schema/index.js'
 import { day } from '../forms/appliance-report.js'
 import { type DefectReportPhoto, defectReportJob, momentText } from '../forms/defect-report.js'
-import { photoBound, withinBound } from '../forms/photo-bound.js'
+import { photoBound, printedTextBytes, withinBound } from '../forms/photo-bound.js'
 import { DocumentFiles } from './document-files.js'
 import { todayInGermany } from '../today.js'
 import { RequiresPermission } from './authorization.js'
@@ -360,7 +360,8 @@ export class DefectReportController {
 
     for (const photo of withinBound(
       gathered.rows.flatMap((row) => shownOf(row.id)),
-      (each) => each.sizeBytes,
+      // Its title and file name go into the page with it.
+      (each) => each.sizeBytes + printedTextBytes(each.title, each.fileName, each.mediaType),
       photoBound(pageBytes),
     )) {
       bytes.set(photo.id, {

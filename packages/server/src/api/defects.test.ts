@@ -542,8 +542,12 @@ describe('the report of the defects of a job (#311)', () => {
     const defect = aDefect({ description: 'Leitung in der Garage beschädigt.' })
     await pushVia(app, technician(), [defect.operation])
 
-    // Two photos of 4 MB each by what the store recorded: together past the 6 MB of a page.
-    for (const title of ['Leitung links', 'Leitung rechts']) {
+    // One of 4 MB by what the store recorded, and a small one whose long title
+    // takes 2.4 MB of the page with it: together past the 6 MB of a page.
+    for (const [title, size] of [
+      ['Leitung links', 4_000_000],
+      ['x'.repeat(400_000), 1_000],
+    ] as const) {
       const attachment = newId<'attachment'>()
 
       await admin.query(
@@ -552,8 +556,8 @@ describe('the report of the defects of a job (#311)', () => {
       )
       await admin.query(
         `insert into attachment_versions (tenant_id, attachment_id, sha256, file_name, media_type, size_bytes)
-         values ($1, $2, $3, $4, 'image/png', 4000000)`,
-        [north.id, attachment, hashOf(photo), `${title}.png`],
+         values ($1, $2, $3, $4, 'image/png', $5)`,
+        [north.id, attachment, hashOf(photo), 'leitung.png', size],
       )
     }
 
