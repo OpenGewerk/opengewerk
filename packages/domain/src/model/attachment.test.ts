@@ -4,7 +4,11 @@ import { describe, expect, it } from 'vitest'
 // (opengewerk-haustechnik#97) and reach this application's code under the
 // names they always had, through the entry of this package.
 import { attachmentTitleOf, isPhoto, isPicture } from '../index.js'
-import { attachmentHomeProblem, attachmentMediaTypeProblem } from './attachment.js'
+import {
+  attachmentHomeProblem,
+  attachmentMediaTypeProblem,
+  shownPhotoVersion,
+} from './attachment.js'
 
 describe('what a version says about its file', () => {
   it('has the type as it is recorded, and nothing else', () => {
@@ -55,5 +59,26 @@ describe('the name of a new file', () => {
   it('keeps a name that only starts with a dot, and has one when the name is empty', () => {
     expect(attachmentTitleOf('.notizen')).toBe('.notizen')
     expect(attachmentTitleOf('  ')).toBe('Datei')
+  })
+})
+
+describe('the version of a photo a protocol shows (#817)', () => {
+  const version = (id: string, sequence: number | null) => ({ id, sequence })
+  const shown = (
+    newestFirst: readonly { id: string; sequence: number | null }[],
+    at: number | null,
+  ) => shownPhotoVersion(newestFirst, (each) => each.sequence, at)?.id
+
+  it('is the newest of a draft, and of a signed protocol the newest written before it', () => {
+    const versions = [version('v3', 30), version('v2', null), version('v1', 5)]
+
+    expect(shown(versions, null)).toBe('v3')
+    expect(shown(versions, 10)).toBe('v1')
+  })
+
+  it('stays the one written first where all came after the signature, whatever arrives later', () => {
+    expect(shown([version('v2', 20)], 10)).toBe('v2')
+    // An older version by id, written later still, does not take its place.
+    expect(shown([version('v2', 20), version('v1', 30)], 10)).toBe('v2')
   })
 })

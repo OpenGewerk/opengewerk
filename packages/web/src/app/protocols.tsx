@@ -1246,7 +1246,13 @@ export function useProtocolDraft(record: RecordState): ProtocolDraft {
   const installationId = text(record, 'installationId')
   const circuits = useBlockCircuits(installationId)
   const applianceId = text(record, 'applianceId') || null
-  const signedAt = isSigned(record) ? sequenceOf(record) : null
+  // A signature still in the outbox carries the stamp of the draft it was
+  // laid over; the server stamps it after the versions sent before it, so
+  // until then the newest version is the one it will show.
+  const signedAt =
+    isSigned(record) && !client.isPending('form_records', String(record['id']))
+      ? sequenceOf(record)
+      : null
   const named = useMemo(
     () => (definition && isSigned(record) ? chosenPhotos(definition, valuesOf(record)) : []),
     [definition, record],

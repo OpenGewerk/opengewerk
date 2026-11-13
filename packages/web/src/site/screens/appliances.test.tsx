@@ -568,3 +568,64 @@ describe('a file without a picture in a signed protocol (#817)', () => {
     expect(screen.queryByRole('img', { name: 'datenblatt.pdf' })).toBeNull()
   })
 })
+
+describe('a test signed on the device and not sent yet (#817)', () => {
+  it('shows the newest version of its photo, the one the server will stamp after it', async () => {
+    const preview = new Uint8Array([0xff, 0xd8, 0xff, 0xd9])
+
+    vi.stubGlobal('fetch', (path: string) =>
+      Promise.resolve(
+        path === '/attachments/versions/v-2/preview'
+          ? new Response(preview, { headers: { 'Content-Type': 'image/jpeg' } })
+          : new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } }),
+      ),
+    )
+
+    const draft = { ...lastYear, photo: 'f-1', tester_signature: undefined }
+    const { client } = await mount('/auftraege/j-1/pruefprotokolle/p-7', {
+      form_records: [
+        ...(rows()['form_records'] ?? []),
+        {
+          id: 'p-7',
+          definitionKey: 'dguv-v3',
+          definitionVersion: 2,
+          installationId: null,
+          applianceId: 'a-2',
+          jobId: 'j-1',
+          performedOn: today(),
+          status: 'draft',
+          changeSequence: 10,
+          values: JSON.stringify(draft),
+        },
+      ],
+      attachments: [{ id: 'f-1', applianceId: 'a-2', title: 'Anschlussleitung' }],
+      attachment_versions: [
+        {
+          id: 'v-2',
+          attachmentId: 'f-1',
+          fileName: 'neu.jpg',
+          mediaType: 'image/jpeg',
+          previewSha256: 'b'.repeat(64),
+          changeSequence: 15,
+        },
+        {
+          id: 'v-1',
+          attachmentId: 'f-1',
+          fileName: 'leitung.jpg',
+          mediaType: 'image/jpeg',
+          previewSha256: 'a'.repeat(64),
+          changeSequence: 5,
+        },
+      ],
+    })
+
+    server.offline = true
+    await client.update('form_records', 'p-7', {
+      status: 'signed',
+      values: JSON.stringify({ ...lastYear, photo: 'f-1' }),
+    })
+
+    expect(client.isPending('form_records', 'p-7')).toBe(true)
+    expect(await screen.findByRole('img', { name: 'neu.jpg' })).toBeTruthy()
+  })
+})
