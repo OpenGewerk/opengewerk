@@ -19,7 +19,10 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Protokoll zeigt die Fassung des Fotos, die der Server bei der Unterschrift hatte, mit ihrem Dateinamen, auch wenn die
   Datei danach umbenannt, umgehängt oder aus den Akten entfernt wird; erst wenn sie endgültig gelöscht ist, nennt das
   PDF nur noch, wo das Foto lag. Mit der Löschung eines Objekts gehen auch die Dateien seiner Geräte; die Löschung
-  eines Kunden nimmt wie bei Anlagen jede Datei mit, die ihn nennt.
+  eines Kunden nimmt wie bei Anlagen jede Datei mit, die ihn nennt. Zwei Einschränkungen: Ein unterschriebenes
+  Protokoll prüft nicht, ob die Datei bei der Unterschrift an seinem Gegenstand hing; über die Oberfläche lässt sich nur
+  eine solche wählen, über den Abgleich auch eine andere (#934). Und der Prüfbericht je Objekt und die anderen
+  Sammel-PDFs nennen an der Stelle des Fotos weiter nur, wo es liegt (#935).
 - Jeder Push auf `main`, jeder Tag und jedes Löschen eines Zweigs wird nach Codeberg gespiegelt
   (codeberg.org/OpenGewerk), über einen Deploy Key nur für dieses Repository. Warum: der Code soll
   auch außerhalb von GitHub liegen; GitHub bleibt die Quelle, auf Codeberg wird nichts gepflegt.

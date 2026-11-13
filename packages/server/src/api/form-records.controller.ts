@@ -130,8 +130,9 @@ export function warrantyNotes(
  *
  * Under the right of the installation it hangs on, like its circuit chart;
  * the test of an appliance of the register under the same (#303). A photo a
- * field names is on the page for whoever may see the files (#817), and only
- * one of the files of what was tested.
+ * field names is on the page for whoever may see the files (#817); in a draft
+ * only one of the files of what was tested, in a signed protocol the file it
+ * names wherever it hangs now (opengewerk#934).
  * Printed on every request out of the record and kept nowhere: a signed
  * protocol does not change, and everything it depends on is in it.
  */

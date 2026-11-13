@@ -71,9 +71,9 @@ export interface PrintedProtocol {
   /** Sentences under the head, the warranty an acceptance starts (#310). */
   readonly notes?: readonly string[]
   /**
-   * The photos the fields name, by the id of their file (#817): only those of
-   * the files of what was tested, and only pictures. A field whose photo is
-   * not among them says where it lies.
+   * The photos the fields name, by the id of their file (#817), only pictures;
+   * of a draft only those of the files of what was tested. A field whose photo
+   * is not among them says where it lies.
    */
   readonly photos?: ReadonlyMap<string, ProtocolPhoto>
 }
