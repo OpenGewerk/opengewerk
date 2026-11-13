@@ -25,6 +25,7 @@ import {
   resetToMigrated,
 } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
+import { photosToRead } from './form-records.controller.js'
 import { binary } from './test-binary.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { changed, created, push } from './test-structure.js'
@@ -901,5 +902,35 @@ describe('the newest version of a photo (#817)', () => {
 
     expect(page).toContain(second.toString('base64'))
     expect(page).not.toContain(first.toString('base64'))
+  })
+})
+
+describe('the photos one page of a protocol reads (#817)', () => {
+  const version = (id: string, sizeBytes: number, mediaType = 'image/jpeg') => ({
+    id,
+    fileName: `${id}.jpg`,
+    mediaType,
+    sha256: id,
+    sizeBytes,
+    changeSequence: 1,
+  })
+  const read = (versions: ReturnType<typeof version>[]) =>
+    photosToRead(new Map(versions.map((each) => [each.id, each])), { count: 2, bytes: 100 }).map(
+      ([id]) => id,
+    )
+
+  it('are pictures alone, and no more than the bound in number', () => {
+    expect(
+      read([
+        version('a', 10),
+        version('b', 10, 'application/pdf'),
+        version('c', 10),
+        version('d', 10),
+      ]),
+    ).toEqual(['a', 'c'])
+  })
+
+  it('stay within the bound in bytes, a large one left to say where it lies', () => {
+    expect(read([version('a', 60), version('b', 60), version('c', 40)])).toEqual(['a', 'c'])
   })
 })

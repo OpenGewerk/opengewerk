@@ -56,12 +56,22 @@ import { RequiresPermission } from './authorization.js'
 import { DocumentFiles } from './document-files.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
 
+/**
+ * How many photos one page of a protocol reads, and how many bytes of them
+ * together (#817): a protocol may name a photo per circuit, and each is read
+ * whole into memory and written into the page again. A photo past either
+ * bound says where it lies, as one the page cannot show. A photo a device
+ * takes is made smaller first and keeps far below.
+ */
+export const printedPhotos = { count: 20, bytes: 40_000_000 } as const
+
 /** A version of a file a photo field names, as the database gives it. */
 interface PhotoVersion {
   readonly id: string
   readonly fileName: string
   readonly mediaType: string
   readonly sha256: string
+  readonly sizeBytes: number
   /** When the server wrote the version, in the order of every write of the business. */
   readonly changeSequence: number
 }
@@ -96,6 +106,31 @@ export function shownVersions(
   }
 
   return shown
+}
+
+/**
+ * The photos a page reads, by the id of their file: the pictures among the
+ * versions it shows, in order, while they stay within `printedPhotos`.
+ */
+export function photosToRead(
+  versions: ReadonlyMap<string, PhotoVersion>,
+  bound: { readonly count: number; readonly bytes: number } = printedPhotos,
+): [string, PhotoVersion][] {
+  const chosen: [string, PhotoVersion][] = []
+  let read = 0
+
+  for (const [id, version] of versions) {
+    if (
+      isProtocolPhoto(version.mediaType) &&
+      chosen.length < bound.count &&
+      read + version.sizeBytes <= bound.bytes
+    ) {
+      read += version.sizeBytes
+      chosen.push([id, version])
+    }
+  }
+
+  return chosen
 }
 
 /** "Gewährleistung bis 05.11.2031: fünf Jahre ab der Abnahme (§ 634a Abs. 1 Nr. 2 BGB)." and the parts, where they end sooner (#310). */
@@ -227,6 +262,7 @@ export class FormRecordsController {
                   // title of the file, which may change after a signature.
                   fileName: attachmentVersions.fileName,
                   mediaType: attachmentVersions.mediaType,
+                  sizeBytes: attachmentVersions.sizeBytes,
                   sha256: attachmentVersions.sha256,
                   changeSequence: attachmentVersions.changeSequence,
                 })
@@ -286,14 +322,12 @@ export class FormRecordsController {
     const { versions, ...printed } = gathered
     const photos = new Map<string, ProtocolPhoto>()
 
-    for (const [id, version] of versions) {
-      if (isProtocolPhoto(version.mediaType)) {
-        photos.set(id, {
-          title: version.fileName,
-          mediaType: version.mediaType,
-          bytes: await this.files.read(version.sha256),
-        })
-      }
+    for (const [id, version] of photosToRead(versions)) {
+      photos.set(id, {
+        title: version.fileName,
+        mediaType: version.mediaType,
+        bytes: await this.files.read(version.sha256),
+      })
     }
 
     const protocol: PrintedProtocol = { ...printed, photos }
