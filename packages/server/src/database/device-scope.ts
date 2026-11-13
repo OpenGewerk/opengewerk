@@ -78,14 +78,24 @@ async function movesInto(tx: TenantTransaction, jobIds: readonly string[]): Prom
   }
 
   const { installations, appliances } = placesOf(jobIds)
+  // Two parts rather than one condition with `or`, which PostgreSQL would
+  // answer by reading the whole log on every pull.
   const { rows } = await tx.execute<{ moved: string }>(sql`
-    select a.record_id::text || '@' || max(a.sequence)::text as moved
-      from audit_entries a
-     where a.field = 'site_id'
-       and a.operation = 'update'
-       and ((a.table_name = 'installations' and a.record_id in ${installations})
-         or (a.table_name = 'appliances' and a.record_id in ${appliances}))
-     group by a.record_id
+    select m.record_id::text || '@' || max(m.sequence)::text as moved
+      from (select a.record_id, a.sequence
+              from audit_entries a
+             where a.table_name = 'installations'
+               and a.field = 'site_id'
+               and a.operation = 'update'
+               and a.record_id in ${installations}
+            union all
+            select a.record_id, a.sequence
+              from audit_entries a
+             where a.table_name = 'appliances'
+               and a.field = 'site_id'
+               and a.operation = 'update'
+               and a.record_id in ${appliances}) m
+     group by m.record_id
      order by 1`)
 
   return rows.map((row) => row.moved)
