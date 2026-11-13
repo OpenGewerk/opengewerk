@@ -537,4 +537,42 @@ describe('the report of the defects of a job (#311)', () => {
       .set('x-test-identity', office(south.id))
       .expect(404)
   })
+
+  it('reads only the photos within the bound of a page, and says how many more there are (#940)', async () => {
+    const defect = aDefect({ description: 'Leitung in der Garage beschädigt.' })
+    await pushVia(app, technician(), [defect.operation])
+
+    // Two photos of 4 MB each by what the store recorded: together past the 6 MB of a page.
+    for (const title of ['Leitung links', 'Leitung rechts']) {
+      const attachment = newId<'attachment'>()
+
+      await admin.query(
+        'insert into attachments (id, tenant_id, title, job_id, defect_id) values ($1, $2, $3, $4, $5)',
+        [attachment, north.id, title, job, defect.id],
+      )
+      await admin.query(
+        `insert into attachment_versions (tenant_id, attachment_id, sha256, file_name, media_type, size_bytes)
+         values ($1, $2, $3, $4, 'image/png', 4000000)`,
+        [north.id, attachment, hashOf(photo), `${title}.png`],
+      )
+    }
+
+    printed.length = 0
+    await http()
+      .get(`/jobs/${job}/defect-report`)
+      .set('x-test-identity', office())
+      .buffer(true)
+      .parse(binary)
+      .expect(200)
+
+    const section =
+      printed
+        .map((each) => each.html)
+        .join('')
+        .split('<section class="defect">')
+        .find((part) => part.includes('Leitung in der Garage beschädigt.')) ?? ''
+
+    expect(section.match(/<figure>/g)).toHaveLength(1)
+    expect(section).toContain('Ein weiteres Foto ist nicht gedruckt, es steht beim Mangel.')
+  })
 })

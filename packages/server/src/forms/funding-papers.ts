@@ -227,11 +227,15 @@ ${sheetTable(
   )
 }
 
-/** The photos among the files of the installation, one to a page, with its title and file. */
+/**
+ * The photos among the files of the installation, one to a page, with its
+ * title and file; `more` past the bound of a page say where they lie (#940).
+ */
 export function photosJob(
   papers: FundingPapers,
   photos: readonly FundingPhoto[],
   on: IsoDate,
+  more: number,
 ): Required<Omit<PrintJob, 'size'>> {
   const body = photos
     .map(
@@ -241,10 +245,18 @@ export function photosJob(
         )}"><figcaption>${text(photo.title)}, ${text(photo.fileName)}, ${day(photo.takenOn)}</figcaption></figure>`,
     )
     .join('\n')
+  const rest =
+    more === 0
+      ? ''
+      : `<p class="note">${text(
+          more === 1
+            ? 'Ein weiteres Foto liegt bei den Dateien der Anlage.'
+            : `${String(more)} weitere Fotos liegen bei den Dateien der Anlage.`,
+        )}</p>\n`
 
   return sheetJob(
     `Fotos, ${papers.installation.designation}`,
-    body,
+    `${rest}${body}`,
     footer(papers, on),
     fundingStyle,
   )
