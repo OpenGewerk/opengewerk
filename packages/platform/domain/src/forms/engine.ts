@@ -344,9 +344,16 @@ function isOption(value: unknown): boolean {
   )
 }
 
-/** The id of a file, as a photo field and a check point hold it. */
+/** A UUID, as every id of a row is one. */
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * The id of a file, as a photo field and a check point hold it (#933): a
+ * UUID, which is what a screen writes there. Asked of every value written;
+ * a form already signed with another is read as it is.
+ */
 function isPhoto(value: unknown): boolean {
-  return typeof value === 'string' && value.length > 0 && value.length <= 64
+  return typeof value === 'string' && uuidPattern.test(value)
 }
 
 /** A day that is on the calendar, `2026-02-28` and not `2026-02-30`, as a date field holds it. */

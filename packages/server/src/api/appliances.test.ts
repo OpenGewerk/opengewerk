@@ -864,12 +864,25 @@ describe('a photo field that names no file (#817)', () => {
     const technician = as(north.id, 'technician')
     const appliance = newId<'appliance'>()
     const id = newId<'form-record'>()
-    const before = complete({ photo: 'foto-1' })
 
-    await push(app, technician, [anAppliance(appliance), aPhotoTest(id, appliance, before)])
-    await push(app, technician, [
-      signed(id, before, complete({ photo: 'foto-1', tester_signature: signature })),
-    ])
+    await push(app, technician, [anAppliance(appliance)])
+
+    // A device can send no such value any more (#933) ...
+    const refused = await push(
+      app,
+      technician,
+      [aPhotoTest(id, appliance, complete({ photo: 'foto-1' }))],
+      400,
+    )
+
+    expect(refused.message).toContain('ein Foto aus den Dateien.')
+
+    // ... but one signed before stays as it was written.
+    await admin.query(
+      `insert into form_records (id, tenant_id, definition_key, definition_version, appliance_id, performed_on, status, "values")
+       values ($1, $2, 'dguv-v3', 2, $3, '2026-11-02', 'signed', $4)`,
+      [id, north.id, appliance, complete({ photo: 'foto-1', tester_signature: signature })],
+    )
 
     expect(await printed(id, as(north.id, 'office'))).toContain('bei den Dateien des Geräts')
   })

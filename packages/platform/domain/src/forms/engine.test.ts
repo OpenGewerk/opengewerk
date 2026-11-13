@@ -686,7 +686,11 @@ const round: FormDefinition<ProbeTerms> = {
 
 const answered: FormValues = {
   escape_route: { result: 'ok' },
-  lighting: { result: 'not_ok', remark: 'Leuchte über der Tür defekt', photo: 'file-7' },
+  lighting: {
+    result: 'not_ok',
+    remark: 'Leuchte über der Tür defekt',
+    photo: '0193a7f2-4c1e-7b2a-9d3e-5f6a7b8c9d0e',
+  },
   water: 1_234_567,
   shelf_checks: [
     {
@@ -853,6 +857,10 @@ describe('the answers of a round', () => {
       'Beleuchtung: eine Bemerkung mit höchstens 4000 Zeichen.',
     )
     expect(lighting({ result: 'not_ok', remark: 'x', photo: '' })).toBe(
+      'Beleuchtung: ein Foto aus den Dateien.',
+    )
+    // Only the id of a file, not any short text a device sends (#933).
+    expect(lighting({ result: 'not_ok', remark: 'x', photo: 'file-7' })).toBe(
       'Beleuchtung: ein Foto aus den Dateien.',
     )
     expect(engine.valuesProblem(round, answeredWith('water', 1234.5))).toBe(
@@ -1088,5 +1096,19 @@ describe('a key every object answers to already', () => {
       'Teile, Block 1: Erbauer fehlt.',
     ])
     expect(engine.templateValues(unchecked, {})).toEqual({})
+  })
+})
+
+describe('a photo field (#933)', () => {
+  const overview = { kind: 'photo', key: 'overview', label: 'Übersicht' } as const
+
+  it('holds the id of a file', () => {
+    expect(engine.valueProblem(overview, '0193a7f2-4c1e-7b2a-9d3e-5f6a7b8c9d0e')).toBeNull()
+  })
+
+  it('refuses any other text a device sends, however short', () => {
+    for (const value of ['Bild-1', 'x', '0193a7f2-4c1e-7b2a-9d3e-5f6a7b8c9d0', '']) {
+      expect(engine.valueProblem(overview, value)).toBe('Übersicht: ein Foto aus den Dateien.')
+    }
   })
 })
