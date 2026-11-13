@@ -28,8 +28,9 @@ import { ApiModule } from './api.module.js'
 import { photoBound, printedPhotos, rendererRequestBytes } from '../forms/photo-bound.js'
 import { photosToRead, shownVersions } from './form-records.controller.js'
 import { binary } from './test-binary.js'
+import { waitingFor } from './test-hold.js'
 import { as, testIdentities as identities } from './test-identity.js'
-import { changed, created, push } from './test-structure.js'
+import { changed, created, deleted, push } from './test-structure.js'
 
 /**
  * The register of appliances and their test after DGUV Vorschrift 3 (#303):
@@ -719,15 +720,11 @@ describe('the files of an appliance (#817)', () => {
     expect(sealed).toContain(base64(second))
     expect(sealed).not.toContain(base64(third))
 
-    // Renamed and hung on another appliance after the signature: the page
-    // stays as it was signed.
-    const other = newId<'appliance'>()
-
-    await push(app, office, [anAppliance(other, { inventoryNumber: '099' })])
+    // Renamed after the signature: the page stays as it was signed. Hung
+    // elsewhere it is not any more (opengewerk#934).
     const { receipts } = await push(app, office, [
       changed('attachments', photo, {
         title: { from: 'Anschlussleitung', to: 'Alles in Ordnung' },
-        applianceId: { from: appliance, to: other },
       }),
     ])
 
@@ -782,6 +779,399 @@ describe('the files of an appliance (#817)', () => {
 
     expect(unseen).not.toContain(cord.toString('base64'))
     expect(unseen).toContain('bei den Dateien des Geräts')
+  })
+})
+
+describe('the photo a protocol is signed with (#934)', () => {
+  it('hangs at what it tests, or the signature is refused for this protocol alone', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const ofInstallation = newId<'attachment'>()
+    const own = newId<'attachment'>()
+    const [elsewhere, missing, right] = [
+      newId<'form-record'>(),
+      newId<'form-record'>(),
+      newId<'form-record'>(),
+    ]
+    const plan = photoBytes('Plan, signiert')
+
+    await upload(plan, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', ofInstallation, { installationId: installation, title: 'Plan' }),
+      aVersion(ofInstallation, plan),
+      created('attachments', own, { applianceId: appliance, title: 'Leitung' }),
+      aVersion(own, plan),
+    ])
+
+    const draftAndSign = async (id: string, photo: string) => {
+      const before = complete({ photo })
+
+      await push(app, technician, [aPhotoTest(id, appliance, before)])
+
+      return push(app, technician, [
+        signed(id, before, complete({ photo, tester_signature: signature })),
+      ])
+    }
+    const statusOf = async (id: string) =>
+      (await admin.query<{ status: string }>('select status from form_records where id = $1', [id]))
+        .rows[0]?.status
+
+    const foreign = await draftAndSign(elsewhere, ofInstallation)
+
+    expect(foreign.receipts.map(({ outcome, reason }) => [outcome, reason])).toEqual([
+      ['conflict', 'changed_elsewhere'],
+    ])
+    expect(await statusOf(elsewhere)).toBe('draft')
+
+    const nowhere = await draftAndSign(missing, newId<'attachment'>())
+
+    expect(nowhere.receipts.map(({ outcome, reason }) => [outcome, reason])).toEqual([
+      ['conflict', 'record_missing'],
+    ])
+    expect(await statusOf(missing)).toBe('draft')
+
+    // A file the office put in the bin meanwhile: the page would leave it out.
+    const binned = newId<'attachment'>()
+    const late = newId<'form-record'>()
+
+    await push(app, technician, [
+      created('attachments', binned, { applianceId: appliance, title: 'Weg' }),
+      aVersion(binned, plan),
+    ])
+    await push(app, as(north.id, 'office'), [deleted('attachments', binned)])
+
+    const gone = await draftAndSign(late, binned)
+
+    expect(gone.receipts.map(({ outcome, reason }) => [outcome, reason])).toEqual([
+      ['conflict', 'record_missing'],
+    ])
+    expect(await statusOf(late)).toBe('draft')
+
+    const fitting = await draftAndSign(right, own)
+
+    expect(fitting.receipts.map(({ outcome }) => outcome)).toEqual(['applied'])
+    expect(await statusOf(right)).toBe('signed')
+  })
+
+  it('stays where it hangs once a signed protocol names it, while a draft lets it go', async () => {
+    const technician = as(north.id, 'technician')
+    const office = as(north.id, 'office')
+    const appliance = newId<'appliance'>()
+    const other = newId<'appliance'>()
+    const sealedPhoto = newId<'attachment'>()
+    const draftPhoto = newId<'attachment'>()
+    const sealed = newId<'form-record'>()
+    const draft = newId<'form-record'>()
+    const cord = photoBytes('Leitung, bleibt')
+    const before = complete({ photo: sealedPhoto })
+
+    await upload(cord, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      anAppliance(other, { inventoryNumber: '098' }),
+      created('attachments', sealedPhoto, { applianceId: appliance, title: 'Leitung' }),
+      aVersion(sealedPhoto, cord),
+      created('attachments', draftPhoto, { applianceId: appliance, title: 'Stecker' }),
+      aVersion(draftPhoto, cord),
+      aPhotoTest(sealed, appliance, before),
+      aPhotoTest(draft, appliance, complete({ photo: draftPhoto })),
+    ])
+    await push(app, technician, [
+      signed(sealed, before, complete({ photo: sealedPhoto, tester_signature: signature })),
+    ])
+
+    const move = (photo: string) =>
+      changed('attachments', photo, { applianceId: { from: appliance, to: other } })
+    const kept = await push(app, office, [move(sealedPhoto)], 409)
+
+    expect(kept.message).toBe(
+      'Diese Datei ist das Foto eines unterschriebenen Protokolls und bleibt, wo sie hängt.',
+    )
+
+    const gone = await push(app, office, [move(draftPhoto)])
+
+    expect(gone.receipts.map(({ outcome }) => outcome)).toEqual(['applied'])
+
+    const { rows } = await admin.query<{ id: string; appliance_id: string }>(
+      'select id, appliance_id from attachments where id = any($1)',
+      [[sealedPhoto, draftPhoto]],
+    )
+
+    expect(Object.fromEntries(rows.map((row) => [row.id, row.appliance_id]))).toEqual({
+      [sealedPhoto]: appliance,
+      [draftPhoto]: other,
+    })
+  })
+
+  it('sees a move of its file that is still open, once it is through', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const other = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const before = complete({ photo })
+
+    await push(app, technician, [
+      anAppliance(appliance),
+      anAppliance(other, { inventoryNumber: '096' }),
+      created('attachments', photo, { applianceId: appliance, title: 'Leitung' }),
+      aPhotoTest(id, appliance, before),
+    ])
+
+    const moving = await admin.connect()
+    let signing: ReturnType<typeof push> = Promise.resolve({ receipts: [] })
+
+    try {
+      // The office moves the file and has not committed yet.
+      await moving.query('begin')
+      await moving.query("select set_config('app.tenant_id', $1, true)", [north.id])
+      await moving.query("select set_config('app.user_id', 'lena', true)")
+      await moving.query('update attachments set appliance_id = $1 where id = $2', [other, photo])
+
+      signing = push(app, technician, [
+        signed(id, before, complete({ photo, tester_signature: signature })),
+      ])
+      await waitingFor(admin, moving, signing)
+      await moving.query('commit')
+
+      const { receipts } = await signing
+
+      expect(receipts.map(({ outcome, reason }) => [outcome, reason])).toEqual([
+        ['conflict', 'changed_elsewhere'],
+      ])
+    } finally {
+      await moving.query('rollback').catch(() => undefined)
+      await signing.catch(() => undefined)
+      moving.release()
+    }
+  })
+
+  it('waits for a writer of the draft that holds its row, and does not wait in a circle', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const before = complete({ photo })
+
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', photo, { applianceId: appliance, title: 'Leitung' }),
+      aPhotoTest(id, appliance, before),
+    ])
+
+    const editing = await admin.connect()
+    let signing: ReturnType<typeof push> = Promise.resolve({ receipts: [] })
+
+    try {
+      // Another writer holds the row of the draft and changes it after.
+      await editing.query('begin')
+      await editing.query("select set_config('app.tenant_id', $1, true)", [north.id])
+      await editing.query("select set_config('app.user_id', 'lena', true)")
+      await editing.query('select id from form_records where id = $1 for no key update', [id])
+
+      signing = push(app, technician, [
+        signed(id, before, complete({ photo, tester_signature: signature })),
+      ])
+      await waitingFor(admin, editing, signing)
+      await editing.query("update form_records set performed_on = '2026-11-03' where id = $1", [id])
+      await editing.query('commit')
+
+      const { receipts } = await signing
+
+      expect(receipts.map(({ outcome }) => outcome)).toEqual(['applied'])
+    } finally {
+      await editing.query('rollback').catch(() => undefined)
+      await signing.catch(() => undefined)
+      editing.release()
+    }
+  })
+
+  it('asks the draft as a writer that held its row left it', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const other = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const before = complete({ photo })
+
+    await push(app, technician, [
+      anAppliance(appliance),
+      anAppliance(other, { inventoryNumber: '095' }),
+      created('attachments', photo, { applianceId: appliance, title: 'Leitung' }),
+      aPhotoTest(id, appliance, before),
+    ])
+
+    const editing = await admin.connect()
+    let signing: ReturnType<typeof push> = Promise.resolve({ receipts: [] })
+
+    try {
+      // Another writer holds the row and hangs the draft on another
+      // appliance, whose files the photo is not among.
+      await editing.query('begin')
+      await editing.query("select set_config('app.tenant_id', $1, true)", [north.id])
+      await editing.query("select set_config('app.user_id', 'lena', true)")
+      await editing.query('select id from form_records where id = $1 for no key update', [id])
+
+      signing = push(app, technician, [
+        signed(id, before, complete({ photo, tester_signature: signature })),
+      ])
+      await waitingFor(admin, editing, signing)
+      await editing.query('update form_records set appliance_id = $1 where id = $2', [other, id])
+      await editing.query('commit')
+
+      const { receipts } = await signing
+
+      expect(receipts.map(({ outcome, reason }) => [outcome, reason])).toEqual([
+        ['conflict', 'changed_elsewhere'],
+      ])
+    } finally {
+      await editing.query('rollback').catch(() => undefined)
+      await signing.catch(() => undefined)
+      editing.release()
+    }
+  })
+
+  it('asks the form as a writer that held its row left it, its version included', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const ofInstallation = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const ready = complete({ tester_signature: signature })
+
+    // A draft of version 1, which has no photo, ready to sign.
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', ofInstallation, { installationId: installation, title: 'Plan' }),
+      created('form_records', id, {
+        definitionKey: 'dguv-v3',
+        definitionVersion: 1,
+        performedOn: '2026-11-02',
+        status: 'draft',
+        values: ready,
+        applianceId: appliance,
+      } as never),
+    ])
+
+    const editing = await admin.connect()
+    let signing: ReturnType<typeof push> = Promise.resolve({ receipts: [] })
+
+    try {
+      // Another writer holds the row and makes it version 2, with a photo
+      // of something else.
+      await editing.query('begin')
+      await editing.query("select set_config('app.tenant_id', $1, true)", [north.id])
+      await editing.query("select set_config('app.user_id', 'lena', true)")
+      await editing.query('select id from form_records where id = $1 for no key update', [id])
+
+      signing = push(app, technician, [
+        changed('form_records', id, { status: { from: 'draft', to: 'signed' } }),
+      ])
+      await waitingFor(admin, editing, signing)
+      await editing.query(
+        'update form_records set definition_version = 2, "values" = $1 where id = $2',
+        [complete({ photo: ofInstallation, tester_signature: signature }), id],
+      )
+      await editing.query('commit')
+
+      const { receipts } = await signing
+
+      expect(receipts.map(({ outcome, reason }) => [outcome, reason])).toEqual([
+        ['conflict', 'changed_elsewhere'],
+      ])
+    } finally {
+      await editing.query('rollback').catch(() => undefined)
+      await signing.catch(() => undefined)
+      editing.release()
+    }
+  })
+
+  it('is named in small letters and spelt out, or the signature is refused', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const cord = photoBytes('Leitung, anders geschrieben')
+
+    await upload(cord, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', photo, { applianceId: appliance, title: 'Leitung' }),
+      aVersion(photo, cord),
+    ])
+
+    // In capitals, and with its first digit as an escape: the same id to the
+    // check, another text to the trigger.
+    for (const spelt of [
+      `"photo":"${photo.toUpperCase()}"`,
+      `"photo":"\\u00${photo.charCodeAt(0).toString(16)}${photo.slice(1)}"`,
+    ]) {
+      const id = newId<'form-record'>()
+      const values = (signer: boolean) =>
+        complete({ photo: 'x', ...(signer ? { tester_signature: signature } : {}) }).replace(
+          '"photo":"x"',
+          spelt,
+        )
+
+      await push(app, technician, [aPhotoTest(id, appliance, values(false))])
+
+      const refused = await push(app, technician, [signed(id, values(false), values(true))], 400)
+
+      expect(refused.message).toBe(
+        'Ein Foto nennt die Kennung seiner Datei in Kleinbuchstaben und ausgeschrieben.',
+      )
+    }
+  })
+
+  it('stays where it hangs where one signed before names it in capitals', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const other = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+
+    await push(app, technician, [
+      anAppliance(appliance),
+      anAppliance(other, { inventoryNumber: '097' }),
+      created('attachments', photo, { applianceId: appliance, title: 'Leitung' }),
+    ])
+    // Written before the sync asked how, as the database holds it.
+    await admin.query(
+      `insert into form_records (tenant_id, definition_key, definition_version, appliance_id, performed_on, status, "values")
+       values ($1, 'dguv-v3', 2, $2, '2026-11-02', 'signed', $3)`,
+      [north.id, appliance, complete({ photo: photo.toUpperCase(), tester_signature: signature })],
+    )
+
+    await push(
+      app,
+      as(north.id, 'office'),
+      [changed('attachments', photo, { applianceId: { from: appliance, to: other } })],
+      409,
+    )
+  })
+
+  it('is left out of the page where one signed before named a file of something else', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const ofInstallation = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const plan = photoBytes('Plan, fremd')
+
+    await upload(plan, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', ofInstallation, { installationId: installation, title: 'Plan' }),
+      aVersion(ofInstallation, plan),
+    ])
+    // Written before the sync asked, as the database holds it.
+    await admin.query(
+      `insert into form_records (id, tenant_id, definition_key, definition_version, appliance_id, performed_on, status, "values")
+       values ($1, $2, 'dguv-v3', 2, $3, '2026-11-02', 'signed', $4)`,
+      [id, north.id, appliance, complete({ photo: ofInstallation, tester_signature: signature })],
+    )
+
+    const page = await printed(id, as(north.id, 'office'))
+
+    expect(page).not.toContain(plan.toString('base64'))
+    expect(page).toContain('bei den Dateien des Geräts')
   })
 })
 
@@ -988,15 +1378,17 @@ describe('a photo with no version at its signature (#817)', () => {
     const before = complete({ photo })
 
     await upload(later, technician)
-    await push(app, technician, [anAppliance(appliance), aPhotoTest(id, appliance, before)])
+    // The file is there to sign with (opengewerk#934), its first version comes
+    // after the signature.
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', photo, { applianceId: appliance, title: 'Später' }),
+      aPhotoTest(id, appliance, before),
+    ])
     await push(app, technician, [
       signed(id, before, complete({ photo, tester_signature: signature })),
     ])
-    // The file and its first version come after the signature.
-    await push(app, technician, [
-      created('attachments', photo, { applianceId: appliance, title: 'Später' }),
-      aVersion(photo, later),
-    ])
+    await push(app, technician, [aVersion(photo, later)])
 
     const page = await printed(id, as(north.id, 'office'))
 

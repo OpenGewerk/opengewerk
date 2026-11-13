@@ -112,7 +112,11 @@ describe('the foundation in this database', () => {
         'attachments.attachments_defect_idx',
         'attachments.attachments_appliance_idx',
       ],
-      triggers: ['attachments.attachments_defect_at_its_place'],
+      triggers: [
+        'attachments.attachments_defect_at_its_place',
+        // A file a signed protocol names stays where it hangs (opengewerk#934).
+        'attachments.attachments_named_by_signed_protocols',
+      ],
     })
 
     expect(deviations).toEqual([])

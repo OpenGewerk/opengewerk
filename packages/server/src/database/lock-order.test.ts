@@ -124,6 +124,51 @@ describe('the locks of a tenant that writes', () => {
     }
   })
 
+  it('let a move of a file wait for a signature that names it, and refuse it after (opengewerk#934)', async () => {
+    const tenant = await tenantOfItsOwn()
+    const [customerId, site, appliance, other, file] = [
+      newId<'customer'>(),
+      newId<'site'>(),
+      newId<'appliance'>(),
+      newId<'appliance'>(),
+      newId<'attachment'>(),
+    ]
+
+    await admin.query(
+      `insert into customers (id, tenant_id, kind, name) values ('${customerId}', '${tenant}', 'business', 'Hausverwaltung Süd GmbH');
+       insert into sites (id, tenant_id, customer_id, designation) values ('${site}', '${tenant}', '${customerId}', 'Rheinstraße 12');
+       insert into appliances (id, tenant_id, site_id, designation, protection_class)
+         values ('${appliance}', '${tenant}', '${site}', 'Kaffeemaschine', 'I'),
+                ('${other}', '${tenant}', '${site}', 'Wasserkocher', 'I');
+       insert into attachments (id, tenant_id, appliance_id, title) values ('${file}', '${tenant}', '${appliance}', 'Leitung');`,
+    )
+
+    const signing = await begin(tenant)
+    const moving = await begin(tenant)
+    let moved: Promise<unknown> = Promise.resolve()
+
+    try {
+      // The check of the signature holds the counter, and the protocol is
+      // written but not yet committed.
+      await signing.query('select public.file_naming_lock($1)', [tenant])
+      await signing.query(
+        `insert into form_records (tenant_id, definition_key, definition_version, appliance_id, performed_on, status, "values")
+         values ($1, 'dguv-v3', 2, $2, '2026-11-02', 'signed', $3)`,
+        [tenant, appliance, JSON.stringify({ photo: file })],
+      )
+
+      moved = moving.query('update attachments set appliance_id = $1 where id = $2', [other, file])
+      await waitingFor(admin, signing, moved)
+      await signing.query('commit')
+
+      await expect(moved).rejects.toThrow(
+        'Diese Datei ist das Foto eines unterschriebenen Protokolls und bleibt, wo sie hängt.',
+      )
+    } finally {
+      await done(signing, moving, moved)
+    }
+  })
+
   it('are taken counter first by a redaction, before it locks its entry', async () => {
     const tenant = await tenantOfItsOwn()
 
