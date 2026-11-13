@@ -540,13 +540,28 @@ describe('the report of the defects of a job (#311)', () => {
 
   it('reads only the photos within the bound of a page, and says how many more there are (#940)', async () => {
     const defect = aDefect({ description: 'Leitung in der Garage beschädigt.' })
+    // The photo past the bound names a file whose bytes are in no store: a
+    // report that read it would fail.
+    const unread = 'e'.repeat(64)
+
     await pushVia(app, technician(), [defect.operation])
+    await http()
+      .put(`/files/${hashOf(photo)}`)
+      .set('x-test-identity', technician())
+      .set('Content-Type', 'application/octet-stream')
+      .set('X-Media-Type', 'image/png')
+      .send(photo)
+      .expect(200)
+    await admin.query(
+      `insert into files (tenant_id, sha256, size_bytes, media_type) values ($1, $2, 1000, 'image/png')`,
+      [north.id, unread],
+    )
 
     // One of 4 MB by what the store recorded, and a small one whose long title
     // takes 2.4 MB of the page with it: together past the 6 MB of a page.
-    for (const [title, size] of [
-      ['Leitung links', 4_000_000],
-      ['x'.repeat(400_000), 1_000],
+    for (const [title, size, sha256] of [
+      ['Leitung links', 4_000_000, hashOf(photo)],
+      ['x'.repeat(400_000), 1_000, unread],
     ] as const) {
       const attachment = newId<'attachment'>()
 
@@ -557,7 +572,7 @@ describe('the report of the defects of a job (#311)', () => {
       await admin.query(
         `insert into attachment_versions (tenant_id, attachment_id, sha256, file_name, media_type, size_bytes)
          values ($1, $2, $3, $4, 'image/png', $5)`,
-        [north.id, attachment, hashOf(photo), 'leitung.png', size],
+        [north.id, attachment, sha256, 'leitung.png', size],
       )
     }
 

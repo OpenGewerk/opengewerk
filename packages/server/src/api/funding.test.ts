@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -448,8 +449,12 @@ describe('the papers of a funding programme at an installation (#307)', () => {
     bytes: Uint8Array,
     mediaType: string,
     sizeBytes = bytes.length,
+    stored = true,
   ): Promise<void> {
-    const blob = await store.put(bytes)
+    // A file not stored has its row and no bytes: whatever reads it fails.
+    const blob = stored
+      ? await store.put(bytes)
+      : { sha256: createHash('sha256').update(bytes).digest('hex') }
     const attachment = newId<'attachment'>()
 
     await admin.query(
@@ -547,7 +552,8 @@ describe('the papers of a funding programme at an installation (#307)', () => {
     // the page prints twice and in its file name, 2.5 MB with them (1.7 MB
     // with the title once), beside the small one of the test before: the two
     // first together past the 6 MB of a page.
-    await filed('Zähler', png, 'image/png', 4_000_000)
+    // The one past the bound has no bytes in the store: papers that read it would fail.
+    await filed('Zähler', new TextEncoder().encode('nie gelesen'), 'image/png', 4_000_000, false)
     await filed('x'.repeat(140_000), png, 'image/png', 1_000)
 
     const { printed } = await papers(`/installations/${wallbox}/funding/${program}`)
