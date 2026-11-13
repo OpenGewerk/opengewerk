@@ -15,7 +15,8 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   lässt sich als Foto des Protokolls wählen; angeboten werden nur Bilder (JPEG, PNG, WebP), die das PDF auch
   zeigt. Ein unterschriebenes Protokoll zeigt das Foto auch in der Anwendung als Bild, in derselben Fassung und mit
   demselben Namen wie sein PDF; eine Datei, die aus den Akten entfernt ist, hat ein Gerät nicht mehr, dann bleibt das
-  Bild dem PDF (#937). Im Büro zeigt die Seite des Geräts seine Dateien. Warum: Eine beschädigte Anschlussleitung ließ sich
+  Bild dem PDF, und kommt nach einer Unterschrift der Push durch, der Abgleich aber nicht, zeigt das Gerät bis zum
+  nächsten Abgleich eine ältere Fassung (#937). Im Büro zeigt die Seite des Geräts seine Dateien. Warum: Eine beschädigte Anschlussleitung ließ sich
   bisher nur in Worten festhalten, weil Dateien an Kunde, Objekt, Anlage oder Auftrag hingen, nicht an einem Gerät. Das PDF eines Prüfprotokolls zeigt jetzt das gewählte Foto selbst statt
   „bei den Dateien der Anlage“, bei Anlagen wie bei Geräten, für alle, die Dateien sehen dürfen; je Seite höchstens 20
   Fotos und zusammen 40 MB, ein Foto darüber nennt wie ein fehlendes nur seinen Ort. Ein unterschriebenes
