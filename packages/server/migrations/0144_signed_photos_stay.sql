@@ -5,9 +5,14 @@
 -- about (`signedPhotos` in `database/sync.ts`), and this keeps it there after.
 -- Which field of a definition is a photo only the application knows; here a
 -- signed protocol of the same installation, appliance or job names the file
--- when its values hold the id of the file as a whole JSON string, which errs
--- only towards keeping a file in place. SECURITY DEFINER is not needed: the
--- protocols of a tenant are visible to the application role as a whole.
+-- when its values hold the id of the file as a whole JSON string, in any case,
+-- which errs only towards keeping a file in place. SECURITY DEFINER is not
+-- needed: the protocols of a tenant are visible to the application role as a
+-- whole. The counter of the tenant is taken before the question, in the order
+-- every logged change takes it (`file_naming_lock`): a signature in flight
+-- holds it since its check, so that the move waits for it and then sees it.
+-- A transaction of another tenant, or none, such as a rollback by hand, asks
+-- without it.
 CREATE FUNCTION "attachment_named_by_signed_protocols"() RETURNS trigger
 	LANGUAGE plpgsql
 	SET search_path = pg_catalog, public
@@ -19,6 +24,10 @@ BEGIN
 		RETURN new;
 	END IF;
 
+	IF old.tenant_id::text = nullif(current_setting('app.tenant_id', true), '') THEN
+		PERFORM public.file_naming_lock(old.tenant_id);
+	END IF;
+
 	IF EXISTS (
 		SELECT 1
 		FROM public.form_records f
@@ -27,7 +36,7 @@ BEGIN
 		  AND (f.installation_id = old.installation_id
 		       OR f.appliance_id = old.appliance_id
 		       OR f.job_id = old.job_id)
-		  AND strpos(f."values", '"' || old.id::text || '"') > 0
+		  AND strpos(lower(f."values"), '"' || old.id::text || '"') > 0
 	) THEN
 		RAISE EXCEPTION 'Diese Datei ist das Foto eines unterschriebenen Protokolls und bleibt, wo sie hängt.'
 			USING ERRCODE = 'OG001';

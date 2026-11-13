@@ -34,7 +34,7 @@ import {
   type TenantTransaction,
 } from '@opengewerk/platform-server'
 
-import { inArray } from 'drizzle-orm'
+import { inArray, sql } from 'drizzle-orm'
 
 import type { FoundIdentity } from '../api/identity.js'
 import { signatureRefusal } from '../documents/signing.js'
@@ -230,11 +230,15 @@ const formRecord: Check = ({ operation, values, current }) => {
  * (opengewerk#934): the installation, the appliance of the register, or the
  * job of an acceptance, as its form offers them. A device that names another
  * file, or one the office hung elsewhere while the device was offline, is
- * told so for this protocol alone. The files are locked for share, so that a
- * move at the same moment waits for the signature, which the trigger of
- * migration 0144 then refuses, or the signature sees where the file went.
+ * told so for this protocol alone; so is one that names a file in the bin,
+ * which the page of the protocol would leave out. The counter of the tenant
+ * is taken first, in the order every logged change takes it: a move of the
+ * file at the same moment takes it in the trigger of migration 0144 before
+ * it asks, so that it either went before and is seen here, or waits for the
+ * signature and is refused. No lock of the row of the file, which a move
+ * would take before the counter.
  */
-const signedPhotos: Check = async ({ tx, operation, values, current }) => {
+const signedPhotos: Check = async ({ tx, tenantId, operation, values, current }) => {
   if (operation.entity !== 'form_records' || operation.kind === 'delete') {
     return null
   }
@@ -262,23 +266,37 @@ const signedPhotos: Check = async ({ tx, operation, values, current }) => {
     return null
   }
 
+  // The trigger of migration 0144 finds a name in the values as they are
+  // written: the id in small letters and spelt out, as every screen writes
+  // it. Another spelling would let the file be moved after the signature.
+  const written = String(at('values') ?? '')
+
+  if (named.some((id) => id !== id.toLowerCase() || !written.includes(`"${id}"`))) {
+    return {
+      kind: 'client',
+      message: 'Ein Foto nennt die Kennung seiner Datei in Kleinbuchstaben und ausgeschrieben.',
+    }
+  }
+
   const column = at('installationId')
     ? 'installationId'
     : at('applianceId')
       ? 'applianceId'
       : 'jobId'
+  await tx.execute(sql`select public.file_naming_lock(${tenantId})`)
+
   const files = await tx
     .select({
       id: schema.attachments.id,
       installationId: schema.attachments.installationId,
       applianceId: schema.attachments.applianceId,
       jobId: schema.attachments.jobId,
+      deletedAt: schema.attachments.deletedAt,
     })
     .from(schema.attachments)
     .where(inArray(schema.attachments.id, named as never[]))
-    .for('share')
 
-  if (files.length < named.length) {
+  if (files.length < named.length || files.some((file) => file.deletedAt !== null)) {
     return { kind: 'conflict', reason: 'record_missing', fields: ['values'] }
   }
 

@@ -29,7 +29,7 @@ import { photoBound, printedPhotos, rendererRequestBytes } from '../forms/photo-
 import { photosToRead, shownVersions } from './form-records.controller.js'
 import { binary } from './test-binary.js'
 import { as, testIdentities as identities } from './test-identity.js'
-import { changed, created, push } from './test-structure.js'
+import { changed, created, deleted, push } from './test-structure.js'
 
 /**
  * The register of appliances and their test after DGUV Vorschrift 3 (#303):
@@ -830,6 +830,23 @@ describe('the photo a protocol is signed with (#934)', () => {
     ])
     expect(await statusOf(missing)).toBe('draft')
 
+    // A file the office put in the bin meanwhile: the page would leave it out.
+    const binned = newId<'attachment'>()
+    const late = newId<'form-record'>()
+
+    await push(app, technician, [
+      created('attachments', binned, { applianceId: appliance, title: 'Weg' }),
+      aVersion(binned, plan),
+    ])
+    await push(app, as(north.id, 'office'), [deleted('attachments', binned)])
+
+    const gone = await draftAndSign(late, binned)
+
+    expect(gone.receipts.map(({ outcome, reason }) => [outcome, reason])).toEqual([
+      ['conflict', 'record_missing'],
+    ])
+    expect(await statusOf(late)).toBe('draft')
+
     const fitting = await draftAndSign(right, own)
 
     expect(fitting.receipts.map(({ outcome }) => outcome)).toEqual(['applied'])
@@ -884,6 +901,68 @@ describe('the photo a protocol is signed with (#934)', () => {
       [sealedPhoto]: appliance,
       [draftPhoto]: other,
     })
+  })
+
+  it('is named in small letters and spelt out, or the signature is refused', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const cord = photoBytes('Leitung, anders geschrieben')
+
+    await upload(cord, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', photo, { applianceId: appliance, title: 'Leitung' }),
+      aVersion(photo, cord),
+    ])
+
+    // In capitals, and with its first digit as an escape: the same id to the
+    // check, another text to the trigger.
+    for (const spelt of [
+      `"photo":"${photo.toUpperCase()}"`,
+      `"photo":"\\u00${photo.charCodeAt(0).toString(16)}${photo.slice(1)}"`,
+    ]) {
+      const id = newId<'form-record'>()
+      const values = (signer: boolean) =>
+        complete({ photo: 'x', ...(signer ? { tester_signature: signature } : {}) }).replace(
+          '"photo":"x"',
+          spelt,
+        )
+
+      await push(app, technician, [aPhotoTest(id, appliance, values(false))])
+
+      const refused = await push(app, technician, [signed(id, values(false), values(true))], 400)
+
+      expect(refused.message).toBe(
+        'Ein Foto nennt die Kennung seiner Datei in Kleinbuchstaben und ausgeschrieben.',
+      )
+    }
+  })
+
+  it('stays where it hangs where one signed before names it in capitals', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const other = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+
+    await push(app, technician, [
+      anAppliance(appliance),
+      anAppliance(other, { inventoryNumber: '097' }),
+      created('attachments', photo, { applianceId: appliance, title: 'Leitung' }),
+    ])
+    // Written before the sync asked how, as the database holds it.
+    await admin.query(
+      `insert into form_records (tenant_id, definition_key, definition_version, appliance_id, performed_on, status, "values")
+       values ($1, 'dguv-v3', 2, $2, '2026-11-02', 'signed', $3)`,
+      [north.id, appliance, complete({ photo: photo.toUpperCase(), tester_signature: signature })],
+    )
+
+    await push(
+      app,
+      as(north.id, 'office'),
+      [changed('attachments', photo, { applianceId: { from: appliance, to: other } })],
+      409,
+    )
   })
 
   it('is left out of the page where one signed before named a file of something else', async () => {

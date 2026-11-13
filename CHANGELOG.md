@@ -169,13 +169,15 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 ### Behoben
 
 - Ein Protokoll wird nur noch mit Fotos aus den Dateien dessen unterschrieben, was es prüft: der Anlage, des Geräts oder
-  bei einer Abnahme des Auftrags (#934). Nennt ein Gerät beim Unterschreiben eine andere Datei oder eine, die das Büro
-  inzwischen umgehängt hat, meldet der Abgleich einen Konflikt für dieses Protokoll, und es bleibt ein Entwurf. Eine
-  Datei, die ein unterschriebenes Protokoll als Foto nennt, lässt sich danach nicht mehr umhängen (Migration 0144),
-  umbenennen weiter. Seite und Anwendung zeigen bei einem unterschriebenen Protokoll nur ein Foto, dessen Datei an
-  seinem Gegenstand hängt; eines, das vorher mit der Datei von etwas anderem unterschrieben wurde, sagt, wo das Foto
-  liegt. Warum: Seit #817 zeigte das PDF eines unterschriebenen Protokolls die genannte Datei, ohne zu prüfen, woran
-  sie hängt, und über den Abgleich konnte ein Gerät jede Kennung schicken.
+  bei einer Abnahme des Auftrags (#934). Nennt ein Gerät beim Unterschreiben eine andere Datei, eine im Papierkorb oder
+  eine, die das Büro inzwischen umgehängt hat, meldet der Abgleich einen Konflikt für dieses Protokoll, und es bleibt
+  ein Entwurf; eine Kennung in Großbuchstaben oder mit Escape lehnt er ab. Eine Datei, die ein unterschriebenes
+  Protokoll als Foto nennt, lässt sich danach nicht mehr umhängen (Migration 0144), umbenennen weiter. Seite und
+  Anwendung zeigen bei einem unterschriebenen Protokoll nur ein Foto, dessen Datei an seinem Gegenstand hängt. Warum:
+  Seit #817 zeigte das PDF eines unterschriebenen Protokolls die genannte Datei, ohne zu prüfen, woran sie hängt, und
+  über den Abgleich konnte ein Gerät jede Kennung schicken. Einschränkung: Ein Protokoll, das vor diesem Stand
+  unterschrieben wurde und dessen Datei danach umgehängt wurde, zeigt sein Foto nicht und sagt wie vor #817 nur, bei
+  welchen Dateien die Fotos seines Gegenstands liegen.
 - Ein Fotofeld und das Foto eines Prüfpunkts nehmen nur noch die Kennung einer Datei an, eine UUID; bisher ging jeder
   Text von 1 bis 64 Zeichen durch (#933). Warum: Über die Oberfläche steht dort immer die Kennung einer Datei, über den
   Abgleich konnte ein Gerät aber jeden kurzen Text schicken, auch in ein Protokoll, das danach unterschrieben und
