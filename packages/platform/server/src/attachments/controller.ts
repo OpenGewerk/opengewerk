@@ -9,7 +9,7 @@ import {
   StreamableFile,
   type Type,
 } from '@nestjs/common'
-import { and, eq, getTableColumns, isNull } from 'drizzle-orm'
+import { and, eq, getTableColumns } from 'drizzle-orm'
 
 import { RequiresPermission } from '../api/authorization.js'
 import { CurrentIdentity, type RequestIdentity } from '../api/identity.js'
@@ -65,6 +65,13 @@ export interface AttachmentRoutes<
    * application calls a file something else than the foundation does.
    */
   readonly gone?: string
+  /**
+   * Whether a file in the bin is still handed out (opengewerk#937), asked
+   * only of one that lies there: the application keeps one a record that does
+   * not change still shows, as that record's page does. Without it, a file in
+   * the bin is answered like one that is not there.
+   */
+  readonly keptInBin?: (reading: AttachmentReading) => Promise<boolean> | boolean
 }
 
 /** The rights the routes of the files ask for, the application's. */
@@ -161,12 +168,7 @@ async function serve(
         attachments,
         and(eq(attachments.tenantId, versions.tenantId), eq(attachments.id, versions.attachmentId)),
       )
-      .where(
-        and(
-          eq(versions.id, versionId as AttachmentVersionRow['id']),
-          isNull(attachments.deletedAt),
-        ),
-      )
+      .where(eq(versions.id, versionId as AttachmentVersionRow['id']))
 
     const hash = which === 'content' ? row?.sha256 : row?.previewSha256
 
@@ -175,6 +177,13 @@ async function serve(
     }
 
     const attachment: AttachmentRow = row.attachment
+
+    if (
+      attachment.deletedAt !== null &&
+      !(routes.keptInBin && (await routes.keptInBin({ tx, identity, attachment })))
+    ) {
+      return null
+    }
 
     if (routes.readable && !(await routes.readable({ tx, identity, attachment }))) {
       return null

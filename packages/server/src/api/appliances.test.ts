@@ -1278,6 +1278,98 @@ describe('the photo a protocol is signed with (#934)', () => {
   })
 })
 
+describe('a file in the bin (#937)', () => {
+  it('is handed out where a signed protocol named it before it went there, and not otherwise', async () => {
+    const technician = as(north.id, 'technician')
+    const office = as(north.id, 'office')
+    const appliance = newId<'appliance'>()
+    const [named, drafted, alone] = [
+      newId<'attachment'>(),
+      newId<'attachment'>(),
+      newId<'attachment'>(),
+    ]
+    const [namedVersion, draftedVersion, aloneVersion] = [
+      newId<'attachment-version'>(),
+      newId<'attachment-version'>(),
+      newId<'attachment-version'>(),
+    ]
+    const cord = photoBytes('Leitung, im Papierkorb')
+    const sealed = newId<'form-record'>()
+    const draft = newId<'form-record'>()
+    const before = complete({ photo: named })
+    const version = (versionId: string, attachment: string) =>
+      created('attachment_versions', versionId, {
+        attachmentId: attachment,
+        sha256: hashOf(cord),
+        fileName: 'leitung.png',
+        mediaType: 'image/png',
+        sizeBytes: cord.byteLength,
+      })
+
+    await upload(cord, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', named, { applianceId: appliance, title: 'Leitung' }),
+      version(namedVersion, named),
+      created('attachments', drafted, { applianceId: appliance, title: 'Stecker' }),
+      version(draftedVersion, drafted),
+      created('attachments', alone, { applianceId: appliance, title: 'Gehäuse' }),
+      version(aloneVersion, alone),
+      aPhotoTest(sealed, appliance, before),
+      aPhotoTest(draft, appliance, complete({ photo: drafted })),
+    ])
+    await push(app, technician, [
+      signed(sealed, before, complete({ photo: named, tester_signature: signature })),
+    ])
+    // All three go to the bin after the signature.
+    await push(app, office, [
+      deleted('attachments', named),
+      deleted('attachments', drafted),
+      deleted('attachments', alone),
+    ])
+
+    const content = (versionId: string) =>
+      http().get(`/attachments/versions/${versionId}/content`).set('x-test-identity', office)
+
+    await content(namedVersion).expect(200)
+    await content(draftedVersion).expect(404)
+    await content(aloneVersion).expect(404)
+  })
+  it('stays away where it lay in the bin before the protocol that names it was signed', async () => {
+    const technician = as(north.id, 'technician')
+    const office = as(north.id, 'office')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const versionId = newId<'attachment-version'>()
+    const cord = photoBytes('Leitung, vorher entfernt')
+
+    await upload(cord, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', photo, { applianceId: appliance, title: 'Leitung' }),
+      created('attachment_versions', versionId, {
+        attachmentId: photo,
+        sha256: hashOf(cord),
+        fileName: 'leitung.png',
+        mediaType: 'image/png',
+        sizeBytes: cord.byteLength,
+      }),
+    ])
+    await push(app, office, [deleted('attachments', photo)])
+    // Signed after, as the database holds one from before the sync asked.
+    await admin.query(
+      `insert into form_records (tenant_id, definition_key, definition_version, appliance_id, performed_on, status, "values")
+       values ($1, 'dguv-v3', 2, $2, '2026-11-02', 'signed', $3)`,
+      [north.id, appliance, complete({ photo, tester_signature: signature })],
+    )
+
+    await http()
+      .get(`/attachments/versions/${versionId}/content`)
+      .set('x-test-identity', office)
+      .expect(404)
+  })
+})
+
 describe('the photo of a signed protocol (#817)', () => {
   it('stays when its file goes to the bin, while a draft leaves it', async () => {
     const technician = as(north.id, 'technician')

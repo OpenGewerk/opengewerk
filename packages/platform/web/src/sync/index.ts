@@ -35,6 +35,7 @@ export type {
 // with the outbox laid over them.
 export {
   SyncProvider,
+  useBinnedRecords,
   useHoldsAll,
   useRecord,
   useRecords,

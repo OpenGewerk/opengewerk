@@ -14,22 +14,20 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Ergebnis der Prüfung ein „Foto zum Mangel“ auf, auch ohne Netz; es liegt bei den Dateien des Geräts und lässt sich
   als Foto des Protokolls wählen; angeboten werden nur Bilder (JPEG, PNG, WebP), die das PDF auch zeigt. Ein
   unterschriebenes Protokoll zeigt das Foto auch in der Anwendung als Bild, in derselben Fassung und mit demselben
-  Namen wie sein PDF; eine Datei, die aus den Akten entfernt ist, hat ein Gerät nicht mehr, dann bleibt das Bild dem
-  PDF, und kommt nach einer Unterschrift der Push durch, der Abgleich aber nicht, zeigt das Gerät bis zum nächsten
-  Abgleich eine ältere Fassung (#937). Im Büro zeigt die Seite des Geräts seine Dateien. Warum: Eine beschädigte
-  Anschlussleitung ließ sich bisher nur in Worten festhalten, weil Dateien an Kunde, Objekt, Anlage oder Auftrag
-  hingen, nicht an einem Gerät. Das PDF eines Prüfprotokolls zeigt jetzt das gewählte Foto selbst statt „bei den
-  Dateien der Anlage“, bei Anlagen wie bei Geräten, für alle, die Dateien sehen dürfen; je Seite höchstens 20 Fotos
-  und zusammen 6 MB, bei einer großen Seite entsprechend weniger, damit die Seite in eine Anfrage an den Renderer
-  passt; ein Foto darüber nennt wie ein fehlendes nur seinen Ort. Ein unterschriebenes Protokoll zeigt die Fassung des
-  Fotos, die der Server bei der Unterschrift hatte, mit ihrem Dateinamen (auf 120 Zeichen gekürzt), auch wenn die
-  Datei danach umbenannt oder aus den Akten entfernt wird; umhängen lässt sie sich dann nicht mehr (#934); erst wenn
-  sie endgültig gelöscht ist, nennt das PDF nur noch, wo das Foto lag. Hatte der Server bei der Unterschrift keine
-  Fassung, nennt es dauerhaft nur den Ort, ebenso bei einer Datei, die im Speicher fehlt, statt den Druck abzubrechen.
-  Mit der Löschung eines Objekts gehen auch die Dateien seiner Geräte; eine Datei, die zugleich ein anderes Objekt
-  nennt, bleibt bei diesem, statt die Löschung abzubrechen, wie es bisher auch eine Datei an einer Anlage tat. Die
-  Löschung eines Kunden nimmt wie bei Anlagen jede Datei mit, die ihn nennt. Prüfbericht je Objekt und die anderen
-  Sammel-PDFs zeigen das Foto ebenso (#935).
+  Namen wie sein PDF, auch wenn die Datei danach aus den Akten entfernt wurde (#937). Im Büro zeigt die Seite des
+  Geräts seine Dateien. Warum: Eine beschädigte Anschlussleitung ließ sich bisher nur in Worten festhalten, weil
+  Dateien an Kunde, Objekt, Anlage oder Auftrag hingen, nicht an einem Gerät. Das PDF eines Prüfprotokolls zeigt jetzt
+  das gewählte Foto selbst statt „bei den Dateien der Anlage“, bei Anlagen wie bei Geräten, für alle, die Dateien
+  sehen dürfen; je Seite höchstens 20 Fotos und zusammen 6 MB, bei einer großen Seite entsprechend weniger, damit die
+  Seite in eine Anfrage an den Renderer passt; ein Foto darüber nennt wie ein fehlendes nur seinen Ort. Ein
+  unterschriebenes Protokoll zeigt die Fassung des Fotos, die der Server bei der Unterschrift hatte, mit ihrem
+  Dateinamen (auf 120 Zeichen gekürzt), auch wenn die Datei danach umbenannt oder aus den Akten entfernt wird;
+  umhängen lässt sie sich dann nicht mehr (#934); erst wenn sie endgültig gelöscht ist, nennt das PDF nur noch, wo das
+  Foto lag. Hatte der Server bei der Unterschrift keine Fassung, nennt es dauerhaft nur den Ort, ebenso bei einer
+  Datei, die im Speicher fehlt, statt den Druck abzubrechen. Mit der Löschung eines Objekts gehen auch die Dateien
+  seiner Geräte; eine Datei, die zugleich ein anderes Objekt nennt, bleibt bei diesem, statt die Löschung abzubrechen,
+  wie es bisher auch eine Datei an einer Anlage tat. Die Löschung eines Kunden nimmt wie bei Anlagen jede Datei mit,
+  die ihn nennt. Prüfbericht je Objekt und die anderen Sammel-PDFs zeigen das Foto ebenso (#935).
 - Jeder Push auf `main`, jeder Tag und jedes Löschen eines Zweigs wird nach Codeberg gespiegelt
   (codeberg.org/OpenGewerk), über einen Deploy Key nur für dieses Repository. Warum: der Code soll
   auch außerhalb von GitHub liegen; GitHub bleibt die Quelle, auf Codeberg wird nichts gepflegt.
@@ -169,6 +167,14 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   nimmt der Bereich die Anlagen und Geräte, die er erreicht und die schon einmal umgezogen sind, mit ihrem letzten
   Umzug aus dem Protokoll der Änderungen in seinen Wert; ein anderer Wert lässt das Gerät neu abrufen, wie bei einem
   neuen Auftrag. Ein neu angelegtes Gerät ändert ihn nicht, an ihm hängt noch nichts, das hinter dem Stand liegt.
+- Ein unterschriebenes Protokoll zeigt in der Anwendung jetzt dasselbe Foto wie sein PDF, auch wenn die Datei nach
+  der Unterschrift aus den Akten entfernt wurde, und keines, das schon vorher dort lag (#937). Dafür gibt der Server
+  die Fassung einer solchen Datei weiter heraus, solange ein unterschriebenes Protokoll ihres Gegenstands sie nennt,
+  und das Gerät liest die entfernten Dateien, die es ohnehin behält. Ebenso zeigt die Anwendung die neueste Fassung,
+  solange der Server eine Unterschrift angenommen hat, der Abgleich danach aber noch nicht durchkam. Warum: Bisher
+  fehlte das Bild in der Anwendung, während das PDF es zeigte, und im zweiten Fall zeigte die Anwendung eine ältere
+  Fassung. Das Fundament bekommt dafür `keptInBin` an den Dateirouten, `binned` und `isSettling` am Client; die
+  Haustechnik bekommt beides mit dem nächsten Anheben des Submoduls.
 - Der Abgleich eines Geräts schickt seine Änderungen in der Reihenfolge, in der sie entstanden sind, auch wenn eine
   Datei noch hochgeladen wird (#939). Bisher hielt der Ausgang im Fundament nur den Datensatz zurück, der auf die Datei
   wartet; eine spätere Änderung an etwas anderem ging sofort hinaus. Warum: So konnte die Unterschrift unter einem

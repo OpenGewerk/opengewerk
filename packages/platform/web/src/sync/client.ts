@@ -385,6 +385,7 @@ export class SyncClient {
   private readonly listeners = new Set<() => void>()
   private readonly lists = new Map<string, readonly RecordState[]>()
   private readonly projected = new Map<string, RecordState | null>()
+  private readonly binnedLists = new Map<string, readonly RecordState[]>()
 
   private cursor = 0
   /** The kinds of record this build knows, as the store keeps them (`entitiesKey`). */
@@ -634,6 +635,39 @@ export class SyncClient {
    * hook that subscribes to this has to get the same object back while nothing
    * has happened, or React sees a new value on every render and never stops.
    */
+  /**
+   * The records of a kind marked deleted, as the store keeps them
+   * (opengewerk#937): no list shows them, but a record that does not change
+   * may still show one it named, as its page does. Cached until the next
+   * change, like the lists.
+   */
+  binned(entity: string): readonly RecordState[] {
+    const cached = this.binnedLists.get(entity)
+
+    if (cached) {
+      return cached
+    }
+
+    const rows: RecordState[] = []
+
+    for (const [id, server] of this.records.get(entity) ?? []) {
+      const laid = project(
+        server,
+        this.laid.get(recordKey(entity, id)) ?? [],
+        id,
+        this.rules.policyFor,
+      )
+
+      if (laid && !sameValue(laid['deletedAt'], null)) {
+        rows.push(laid)
+      }
+    }
+
+    this.binnedLists.set(entity, rows)
+
+    return rows
+  }
+
   get(entity: string, id: string): RecordState | null {
     const key = recordKey(entity, id)
     const cached = this.projected.get(key)
@@ -670,6 +704,17 @@ export class SyncClient {
   /** True while this record has not reached the server yet. */
   isPending(entity: string, id: string): boolean {
     return this.pending.has(recordKey(entity, id))
+  }
+
+  /**
+   * Whether the server has taken a change of this record that no pull has
+   * brought back yet (opengewerk#937): the server has stamped it, the row on
+   * this device still carries the stamps of before.
+   */
+  isSettling(entity: string, id: string): boolean {
+    return this.settling.some(
+      (operation) => operation.entity === entity && operation.recordId === id,
+    )
   }
 
   // Writing
@@ -1752,6 +1797,7 @@ export class SyncClient {
     this.snapshot = { ...this.snapshot, state: this.decideState() }
     this.lists.clear()
     this.projected.clear()
+    this.binnedLists.clear()
     this.generation += 1
 
     for (const listener of this.listeners) {
