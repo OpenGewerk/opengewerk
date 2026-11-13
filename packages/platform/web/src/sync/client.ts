@@ -629,13 +629,6 @@ export class SyncClient {
   }
 
   /**
-   * One record as the screen should show it, or null when it is gone.
-   *
-   * Cached until the next change, like the lists and for the same reason: a
-   * hook that subscribes to this has to get the same object back while nothing
-   * has happened, or React sees a new value on every render and never stops.
-   */
-  /**
    * The records of a kind marked deleted, as the store keeps them
    * (opengewerk#937): no list shows them, but a record that does not change
    * may still show one it named, as its page does. Cached until the next
@@ -668,6 +661,13 @@ export class SyncClient {
     return rows
   }
 
+  /**
+   * One record as the screen should show it, or null when it is gone.
+   *
+   * Cached until the next change, like the lists and for the same reason: a
+   * hook that subscribes to this has to get the same object back while nothing
+   * has happened, or React sees a new value on every render and never stops.
+   */
   get(entity: string, id: string): RecordState | null {
     const key = recordKey(entity, id)
     const cached = this.projected.get(key)
@@ -712,8 +712,16 @@ export class SyncClient {
    * this device still carries the stamps of before.
    */
   isSettling(entity: string, id: string): boolean {
+    const server = this.records.get(entity)?.get(id)
+    const pulled = typeof server?.['version'] === 'number' ? server['version'] : null
+
+    // A pull that brought the row back after the change ends it, even where a
+    // later page of the same pull failed.
     return this.settling.some(
-      (operation) => operation.entity === entity && operation.recordId === id,
+      (operation) =>
+        operation.entity === entity &&
+        operation.recordId === id &&
+        !(operation.baseVersion !== null && pulled !== null && pulled > operation.baseVersion),
     )
   }
 

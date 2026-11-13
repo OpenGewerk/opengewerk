@@ -1335,6 +1335,56 @@ describe('a file in the bin (#937)', () => {
     await content(draftedVersion).expect(404)
     await content(aloneVersion).expect(404)
   })
+  it('stays away where the protocol names it outside a photo field, or for a version laid over it after', async () => {
+    const technician = as(north.id, 'technician')
+    const office = as(north.id, 'office')
+    const appliance = newId<'appliance'>()
+    const [inText, photo] = [newId<'attachment'>(), newId<'attachment'>()]
+    const [inTextVersion, signedVersion, laterVersion] = [
+      newId<'attachment-version'>(),
+      newId<'attachment-version'>(),
+      newId<'attachment-version'>(),
+    ]
+    const [first, later] = [photoBytes('Leitung, zuerst'), photoBytes('Leitung, danach')]
+    const [byText, byPhoto] = [newId<'form-record'>(), newId<'form-record'>()]
+    const version = (versionId: string, attachment: string, bytes: Buffer) =>
+      created('attachment_versions', versionId, {
+        attachmentId: attachment,
+        sha256: hashOf(bytes),
+        fileName: 'leitung.png',
+        mediaType: 'image/png',
+        sizeBytes: bytes.byteLength,
+      })
+    // The id of a file in a field of text, which no page shows as a photo.
+    const textBefore = complete({ tester: inText })
+    const photoBefore = complete({ photo })
+
+    await upload(first, technician)
+    await upload(later, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', inText, { applianceId: appliance, title: 'Typenschild' }),
+      version(inTextVersion, inText, first),
+      created('attachments', photo, { applianceId: appliance, title: 'Leitung' }),
+      version(signedVersion, photo, first),
+      aPhotoTest(byText, appliance, textBefore),
+      aPhotoTest(byPhoto, appliance, photoBefore),
+    ])
+    await push(app, technician, [
+      signed(byText, textBefore, complete({ tester: inText, tester_signature: signature })),
+      signed(byPhoto, photoBefore, complete({ photo, tester_signature: signature })),
+    ])
+    await push(app, technician, [version(laterVersion, photo, later)])
+    await push(app, office, [deleted('attachments', inText), deleted('attachments', photo)])
+
+    const content = (versionId: string) =>
+      http().get(`/attachments/versions/${versionId}/content`).set('x-test-identity', office)
+
+    await content(inTextVersion).expect(404)
+    await content(signedVersion).expect(200)
+    await content(laterVersion).expect(404)
+  })
+
   it('stays away where it lay in the bin before the protocol that names it was signed', async () => {
     const technician = as(north.id, 'technician')
     const office = as(north.id, 'office')

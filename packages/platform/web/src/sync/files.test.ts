@@ -265,6 +265,37 @@ describe('a file made on the device', () => {
     expect(client.status().pending).toBe(0)
   })
 
+  it('ends a change as settling once a pull brought its row back, even where a later page failed (opengewerk#937)', async () => {
+    const client = await start()
+    const made = await client.create('notes', { title: 'Vorher' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    await client.synchronise()
+    await client.update('notes', made.id, { title: 'Nachher' })
+
+    const pull = server.pull.bind(server)
+    let pages = 0
+
+    // The first page brings the row back, the second does not come.
+    server.pull = async () => {
+      pages += 1
+
+      if (pages === 1) {
+        return { ...(await pull()), hasMore: true }
+      }
+
+      throw new TypeError('Failed to fetch')
+    }
+
+    await client.synchronise().catch(() => undefined)
+
+    expect(pages).toBeGreaterThanOrEqual(2)
+    expect(client.isSettling('notes', made.id)).toBe(false)
+  })
+
   it('waits on the device without a network, and goes up once there is one', async () => {
     const client = await start()
 

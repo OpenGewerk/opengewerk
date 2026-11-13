@@ -41,6 +41,8 @@ export interface AttachmentReading {
   readonly identity: RequestIdentity
   /** The file the version belongs to, with the columns of the application. */
   readonly attachment: Readonly<Record<string, unknown>>
+  /** The version asked for, by its id and when the server wrote it. */
+  readonly version: { readonly id: string; readonly changeSequence: number }
 }
 
 /** What the routes of the files are told by the application. */
@@ -88,7 +90,8 @@ type AnyRoutes = AttachmentRoutes
  *
  * Asked by the id of a version and never by hash. The version is found under
  * row level security together with its file, which has to be one nobody
- * removed and one the same policies show to whoever asks, and only then are
+ * removed, or one in the bin the application keeps (`keptInBin`,
+ * opengewerk#937), and one the same policies show to whoever asks, and only then are
  * the bytes looked up, by tenant and hash. A version id of another tenant
  * finds nothing, and neither does its hash, which is not a way in here at
  * all. An older version is handed out like the newest: a new version is laid
@@ -160,6 +163,7 @@ async function serve(
       .select({
         sha256: versions.sha256,
         previewSha256: versions.previewSha256,
+        versionChangeSequence: versions.changeSequence,
         fileName: versions.fileName,
         attachment: getTableColumns(attachments),
       })
@@ -180,12 +184,28 @@ async function serve(
 
     if (
       attachment.deletedAt !== null &&
-      !(routes.keptInBin && (await routes.keptInBin({ tx, identity, attachment })))
+      !(
+        routes.keptInBin &&
+        (await routes.keptInBin({
+          tx,
+          identity,
+          attachment,
+          version: { id: versionId, changeSequence: row.versionChangeSequence },
+        }))
+      )
     ) {
       return null
     }
 
-    if (routes.readable && !(await routes.readable({ tx, identity, attachment }))) {
+    if (
+      routes.readable &&
+      !(await routes.readable({
+        tx,
+        identity,
+        attachment,
+        version: { id: versionId, changeSequence: row.versionChangeSequence },
+      }))
+    ) {
       return null
     }
 
