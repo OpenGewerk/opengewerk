@@ -64,7 +64,7 @@ function lastTests(
       !lastOf.has(id) &&
       !(subject === 'installation' && testsPart(definition, values))
     ) {
-      lastOf.set(id, { definition, values, performedOn: record.performedOn as IsoDate })
+      lastOf.set(id, { definition, values, performedOn: record.performedOn as IsoDate, record })
     }
   }
 

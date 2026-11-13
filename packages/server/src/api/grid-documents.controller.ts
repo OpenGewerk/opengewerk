@@ -1,5 +1,4 @@
 import {
-  BadGatewayException,
   ConflictException,
   Controller,
   Get,
@@ -7,7 +6,6 @@ import {
   NotFoundException,
   Param,
   Res,
-  ServiceUnavailableException,
   StreamableFile,
 } from '@nestjs/common'
 import {
@@ -27,7 +25,6 @@ import {
   present,
   RENDERER,
   type Renderer,
-  RendererUnavailableError,
   type TenantTransaction,
 } from '@opengewerk/platform-server'
 import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
@@ -58,7 +55,16 @@ import { protocolPrintJob } from '../forms/protocol-print.js'
 import { tradeForms, tradeRules } from '../forms/registry.js'
 import { todayInGermany } from '../today.js'
 import { RequiresPermission } from './authorization.js'
+import { DocumentFiles } from './document-files.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
+import {
+  collectionBudget,
+  type Page,
+  photoSourcesOf,
+  printPages,
+  rendererFault,
+  withPhotosOf,
+} from './protocol-photos.js'
 import { pdf, safe } from './pv-documents.controller.js'
 
 /** The grid operator of an installation as its card shows it. */
@@ -388,6 +394,7 @@ async function papersOf(
 export class GridDocumentsController {
   constructor(
     private readonly database: Database,
+    private readonly files: DocumentFiles,
     @Inject(RENDERER) private readonly render: Renderer,
   ) {}
 
@@ -455,28 +462,39 @@ export class GridDocumentsController {
   ): Promise<StreamableFile> {
     const on = todayInGermany()
     const { papers, protocols, keeper } = await this.gathered(identity, installationId, on, true)
-    const jobs: Parameters<Renderer>[0][] = [gridPaperJob(papers, true, on)]
+    const jobs: Page[] = [gridPaperJob(papers, true, on)]
+    const budget = collectionBudget()
+    const sources = await photoSourcesOf(this.database, identity, protocols)
 
-    // Behind the sheet the signed commissioning protocols, as each prints on its own.
-    protocols.forEach((record, index) => {
+    // Behind the sheet the signed commissioning protocols, as each prints on
+    // its own, its photos included (#935).
+    for (const [index, record] of protocols.entries()) {
       const definition = tradeForms.definitionFor(record.definitionKey, record.definitionVersion)
 
       if (definition) {
-        jobs.push(
-          protocolPrintJob({
-            definition,
-            values: readFormValues(record.values) ?? {},
-            performedOn: record.performedOn as IsoDate,
-            status: 'signed',
-            keeper,
-            installation: papers.protocols[index]?.installation ?? papers.installation.designation,
-            appliance: null,
-            site: [papers.site.designation, papers.site.address].filter(present).join(', '),
-            rules: tradeRules,
-          }),
+        jobs.push(async () =>
+          protocolPrintJob(
+            await withPhotosOf(
+              this.files,
+              {
+                definition,
+                values: readFormValues(record.values) ?? {},
+                performedOn: record.performedOn as IsoDate,
+                status: 'signed',
+                keeper,
+                installation:
+                  papers.protocols[index]?.installation ?? papers.installation.designation,
+                appliance: null,
+                site: [papers.site.designation, papers.site.address].filter(present).join(', '),
+                rules: tradeRules,
+              },
+              sources.get(record.id),
+              budget,
+            ),
+          ),
         )
       }
-    })
+    }
 
     const bytes = await this.printed(identity, jobs)
 
@@ -528,24 +546,13 @@ export class GridDocumentsController {
   }
 
   /** The pages one after another, bound into one PDF: the renderer of an instance is a single browser. */
-  private async printed(
-    identity: RequestIdentity,
-    jobs: readonly Parameters<Renderer>[0][],
-  ): Promise<Uint8Array> {
+  private async printed(identity: RequestIdentity, jobs: readonly Page[]): Promise<Uint8Array> {
+    const parts = await printPages(this.render, identity, jobs)
+
     try {
-      const parts: Uint8Array[] = []
-
-      for (const job of jobs) {
-        parts.push(await this.render(job, identity))
-      }
-
       return parts.length === 1 && parts[0] ? parts[0] : await bound(parts, 'Unterlagen')
     } catch (error) {
-      if (error instanceof RendererUnavailableError) {
-        throw new ServiceUnavailableException(error.message)
-      }
-
-      throw new BadGatewayException(error instanceof Error ? error.message : String(error))
+      throw rendererFault(error)
     }
   }
 }

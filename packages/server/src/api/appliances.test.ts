@@ -26,7 +26,7 @@ import {
 } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
 import { photoBound, printedPhotos, rendererRequestBytes } from '../forms/photo-bound.js'
-import { photosToRead, shownVersions } from './form-records.controller.js'
+import { photosToRead, shownVersions } from './protocol-photos.js'
 import { binary } from './test-binary.js'
 import { waitingFor } from './test-hold.js'
 import { as, testIdentities as identities } from './test-identity.js'

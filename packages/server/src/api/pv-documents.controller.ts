@@ -1,5 +1,4 @@
 import {
-  BadGatewayException,
   Controller,
   Get,
   Inject,
@@ -7,7 +6,6 @@ import {
   Param,
   Post,
   Res,
-  ServiceUnavailableException,
   StreamableFile,
 } from '@nestjs/common'
 import {
@@ -24,7 +22,6 @@ import {
   present,
   RENDERER,
   type Renderer,
-  RendererUnavailableError,
   type TenantTransaction,
 } from '@opengewerk/platform-server'
 import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
@@ -52,7 +49,16 @@ import {
 import { tradeForms, tradeRules } from '../forms/registry.js'
 import { todayInGermany } from '../today.js'
 import { RequiresPermission } from './authorization.js'
+import { DocumentFiles } from './document-files.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
+import {
+  collectionBudget,
+  type Page,
+  photoSourcesOf,
+  printPages,
+  rendererFault,
+  withPhotosOf,
+} from './protocol-photos.js'
 import { siteHead } from './site-reports.js'
 
 /** A handover as the office lists it. */
@@ -296,6 +302,7 @@ async function protocolsOf(
 export class PvDocumentsController {
   constructor(
     private readonly database: Database,
+    private readonly files: DocumentFiles,
     @Inject(RENDERER) private readonly render: Renderer,
   ) {}
 
@@ -425,9 +432,12 @@ export class PvDocumentsController {
     })
     const { content } = found
     const on = found.row.handedOverOn as IsoDate
-    const jobs = [pvDocumentsJob(content, on, { protocols: content.protocols })]
+    const jobs: Page[] = [pvDocumentsJob(content, on, { protocols: content.protocols })]
+    const budget = collectionBudget()
+    const sources = await photoSourcesOf(this.database, identity, found.records)
 
-    // In the order the folder names them; a signed protocol never changes.
+    // In the order the folder names them; a signed protocol never changes,
+    // and prints with its photos as on its own (#935).
     for (const protocol of content.protocols) {
       const record = found.records.find((entry) => entry.id === protocol.id)
       const definition = record
@@ -435,18 +445,25 @@ export class PvDocumentsController {
         : null
 
       if (record && definition) {
-        jobs.push(
-          protocolPrintJob({
-            definition,
-            values: readFormValues(record.values) ?? {},
-            performedOn: record.performedOn as IsoDate,
-            status: 'signed',
-            keeper: content.keeper,
-            installation: protocol.installation,
-            appliance: null,
-            site: content.site,
-            rules: tradeRules,
-          }),
+        jobs.push(async () =>
+          protocolPrintJob(
+            await withPhotosOf(
+              this.files,
+              {
+                definition,
+                values: readFormValues(record.values) ?? {},
+                performedOn: record.performedOn as IsoDate,
+                status: 'signed',
+                keeper: content.keeper,
+                installation: protocol.installation,
+                appliance: null,
+                site: content.site,
+                rules: tradeRules,
+              },
+              sources.get(record.id),
+              budget,
+            ),
+          ),
         )
       }
     }
@@ -457,24 +474,13 @@ export class PvDocumentsController {
   }
 
   /** The pages one after another, bound into one PDF: the renderer of an instance is a single browser. */
-  private async printed(
-    identity: RequestIdentity,
-    jobs: readonly Parameters<Renderer>[0][],
-  ): Promise<Uint8Array> {
+  private async printed(identity: RequestIdentity, jobs: readonly Page[]): Promise<Uint8Array> {
+    const parts = await printPages(this.render, identity, jobs)
+
     try {
-      const parts: Uint8Array[] = []
-
-      for (const job of jobs) {
-        parts.push(await this.render(job, identity))
-      }
-
       return parts.length === 1 && parts[0] ? parts[0] : await bound(parts, 'Unterlagen')
     } catch (error) {
-      if (error instanceof RendererUnavailableError) {
-        throw new ServiceUnavailableException(error.message)
-      }
-
-      throw new BadGatewayException(error instanceof Error ? error.message : String(error))
+      throw rendererFault(error)
     }
   }
 }
