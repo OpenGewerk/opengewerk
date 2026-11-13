@@ -26,6 +26,7 @@ import {
 } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
 import {
+  photoBound,
   photosToRead,
   printedPhotos,
   rendererRequestBytes,
@@ -940,6 +941,22 @@ describe('the photos one page of a protocol reads (#817)', () => {
     // Named twice, 60 bytes are 120 and past the bound; and two in number.
     expect(read([version('a', 60), version('b', 10)], new Map([['a', 2]]))).toEqual(['b'])
     expect(read([version('a', 10), version('b', 10)], new Map([['a', 2]]))).toEqual(['a'])
+  })
+
+  it('take only what a large page leaves of one request to the renderer', () => {
+    for (const page of [0, 1_000_000, 5_000_000, 9_000_000, 10_400_000, 20_000_000]) {
+      const { bytes } = photoBound(page)
+
+      expect(bytes).toBeGreaterThanOrEqual(0)
+      expect(bytes).toBeLessThanOrEqual(printedPhotos.bytes)
+      // A page that is too large on its own gets no photo, and no more than it had.
+      if (bytes > 0) {
+        expect(Math.ceil((bytes * 4) / 3) + page).toBeLessThan(rendererRequestBytes)
+      }
+    }
+
+    expect(photoBound(1_000_000).bytes).toBe(printedPhotos.bytes)
+    expect(photoBound(20_000_000).bytes).toBe(0)
   })
 
   it('fit, as base64 and with room for the page, into one request to the renderer', () => {

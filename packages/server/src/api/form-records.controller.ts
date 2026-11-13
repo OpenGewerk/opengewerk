@@ -71,6 +71,24 @@ export const printedPhotos = { count: 20, bytes: 6_000_000 } as const
 /** What the renderer takes in one request, unless it is set otherwise (`MAX_PAYLOAD_SIZE`). */
 export const rendererRequestBytes = 10_485_760
 
+/** Room in a request for the policy around the page and the markup of each photo. */
+const requestReserve = 64_000
+
+/**
+ * The bound for the photos of one page whose request without them takes
+ * `pageBytes` (#817): `printedPhotos`, and no more bytes than the request has
+ * left, at three bytes for every four characters of base64. A large page
+ * leaves less, one at the edge of the renderer none.
+ */
+export function photoBound(pageBytes: number): { readonly count: number; readonly bytes: number } {
+  const left = rendererRequestBytes - pageBytes - requestReserve
+
+  return {
+    count: printedPhotos.count,
+    bytes: Math.max(0, Math.min(printedPhotos.bytes, Math.floor((left * 3) / 4))),
+  }
+}
+
 /** A version of a file a photo field names, as the database gives it. */
 interface PhotoVersion {
   readonly id: string
@@ -350,7 +368,12 @@ export class FormRecordsController {
     const { versions, uses, ...printed } = gathered
     const photos = new Map<string, ProtocolPhoto>()
 
-    for (const [id, version] of photosToRead(versions, uses)) {
+    // The page without its photos, as the renderer gets it, tells what is left.
+    const pageBytes = Buffer.byteLength(
+      JSON.stringify(protocolPrintJob({ ...printed, photos: new Map() })),
+    )
+
+    for (const [id, version] of photosToRead(versions, uses, photoBound(pageBytes))) {
       try {
         photos.set(id, {
           title: version.fileName,

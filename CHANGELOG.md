@@ -19,8 +19,8 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   nächsten Abgleich eine ältere Fassung (#937). Im Büro zeigt die Seite des Geräts seine Dateien. Warum: Eine beschädigte Anschlussleitung ließ sich
   bisher nur in Worten festhalten, weil Dateien an Kunde, Objekt, Anlage oder Auftrag hingen, nicht an einem Gerät. Das PDF eines Prüfprotokolls zeigt jetzt das gewählte Foto selbst statt
   „bei den Dateien der Anlage“, bei Anlagen wie bei Geräten, für alle, die Dateien sehen dürfen; je Seite höchstens 20
-  Fotos und zusammen 6 MB, damit die Seite in eine Anfrage an den Renderer passt, ein Foto darüber nennt wie ein
-  fehlendes nur seinen Ort. Ein unterschriebenes
+  Fotos und zusammen 6 MB, bei einer großen Seite entsprechend weniger, damit die Seite in eine Anfrage an den Renderer
+  passt; ein Foto darüber nennt wie ein fehlendes nur seinen Ort. Ein unterschriebenes
   Protokoll zeigt die Fassung des Fotos, die der Server bei der Unterschrift hatte, mit ihrem Dateinamen, auch wenn die
   Datei danach umbenannt, umgehängt oder aus den Akten entfernt wird; erst wenn sie endgültig gelöscht ist, nennt das
   PDF nur noch, wo das Foto lag. Hatte der Server bei der Unterschrift keine Fassung, nennt es dauerhaft nur den Ort,
@@ -32,7 +32,8 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   eine solche wählen, über den Abgleich auch eine andere (#934). Und der Prüfbericht je Objekt und die anderen
   Sammel-PDFs nennen an der Stelle des Fotos weiter nur, wo es liegt (#935). Zieht ein Gerät auf ein anderes Objekt
   um, kommen seine Dateien wie die einer Anlage erst mit ihrer nächsten Änderung auf ein Gerät, das schon abgeglichen
-  hat (#938).
+  hat (#938). Nimmt ein Gerät ein Foto auf, während ein anderer Upload noch läuft, und unterschreibt gleich, kann die
+  Unterschrift vor der Fassung des Fotos beim Server ankommen; das Protokoll zeigt dieses Foto dann nicht (#939).
 - Jeder Push auf `main`, jeder Tag und jedes Löschen eines Zweigs wird nach Codeberg gespiegelt
   (codeberg.org/OpenGewerk), über einen Deploy Key nur für dieses Repository. Warum: der Code soll
   auch außerhalb von GitHub liegen; GitHub bleibt die Quelle, auf Codeberg wird nichts gepflegt.
