@@ -99,34 +99,6 @@ export interface ProtocolPhoto {
   readonly bytes: Uint8Array
 }
 
-/**
- * The ids of the files the photo fields of a protocol name, in its own fields
- * and in the blocks of its groups, each once (#817).
- */
-export function chosenPhotos(definition: FormDefinition, values: FormValues): string[] {
-  const chosen = new Set<string>()
-
-  for (const field of definition.sections.flatMap((section) => section.fields)) {
-    const value = values[field.key]
-
-    if (field.kind === 'photo' && typeof value === 'string' && value !== '') {
-      chosen.add(value)
-    } else if (field.kind === 'group' && Array.isArray(value)) {
-      for (const block of value as readonly GroupBlock[]) {
-        for (const nested of field.fields) {
-          const entry = block.values[nested.key]
-
-          if (nested.kind === 'photo' && typeof entry === 'string' && entry !== '') {
-            chosen.add(entry)
-          }
-        }
-      }
-    }
-  }
-
-  return [...chosen]
-}
-
 const margin: PageMargin = { top: '12mm', right: '12mm', bottom: '16mm', left: '12mm' }
 
 function day(on: string): string {

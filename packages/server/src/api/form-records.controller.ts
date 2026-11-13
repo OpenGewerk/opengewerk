@@ -12,6 +12,7 @@ import {
 import {
   acceptanceOf,
   applianceSubject,
+  chosenPhotos,
   type FormRecordStatus,
   type IsoDate,
   isAllowed,
@@ -46,7 +47,6 @@ import {
   tenants,
 } from '../database/schema/index.js'
 import {
-  chosenPhotos,
   type PrintedProtocol,
   protocolPrintJob,
   type ProtocolPhoto,

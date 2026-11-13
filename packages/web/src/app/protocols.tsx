@@ -2,6 +2,7 @@ import {
   type ApplianceFacts,
   type BlockCircuit,
   type BlockField,
+  chosenPhotos,
   circuitBlocks,
   coreForms,
   dayHint,
@@ -33,10 +34,10 @@ import {
   partialDueCondition,
   partialTestSentence,
   readFormValues,
-  shownPhotoVersion,
   repeatNouns,
   type RecordState,
   sealProblems,
+  shownPhotoVersion,
   type SignatureValue,
   structureValues,
   templateValues,
@@ -62,6 +63,7 @@ import {
   refusalFor,
   text,
   useRecord,
+  useRecords,
   useRelated,
   useSync,
   useSyncStatus,
@@ -814,7 +816,7 @@ export function shownValue(
 function ChosenPhoto({ photo }: { readonly photo: PhotoOption | undefined }) {
   const href = usePreview(photo?.version)
 
-  return href && photo ? (
+  return href && photo?.version && isProtocolPhoto(text(photo.version, 'mediaType')) ? (
     <img
       src={href}
       alt={photo.label}
@@ -1148,7 +1150,7 @@ function usePhotos(
   installationId: string,
   applianceId: string,
   jobId: string,
-  signedAt: number | null,
+  signed: { readonly at: number | null; readonly named: readonly string[] } | null,
 ): readonly PhotoOption[] {
   // The files of what was tested: the installation, the appliance of the
   // register (#817), or the job of an acceptance, and of them the pictures
@@ -1158,22 +1160,36 @@ function usePhotos(
     installationId ? 'installationId' : applianceId ? 'applianceId' : 'jobId',
     installationId || applianceId || jobId,
   )
+  // A signed protocol names its files for good, wherever they hang now, and
+  // shows them under the name of their version, as its page does.
+  const every = useRecords('attachments')
   const versions = useVersions()
 
   return useMemo(
     () =>
-      attachments.flatMap((attachment) => {
+      (signed
+        ? every.filter((attachment) => signed.named.includes(String(attachment['id'])))
+        : attachments
+      ).flatMap((attachment) => {
         const version = shownPhotoVersion(
           versions.get(String(attachment['id'])) ?? [],
           sequenceOf,
-          signedAt,
+          signed ? signed.at : null,
         )
 
-        return version && isProtocolPhoto(text(version, 'mediaType'))
-          ? [{ value: String(attachment['id']), label: text(attachment, 'title'), version }]
+        // A draft offers pictures alone; a signed protocol names what it
+        // named, and shows a picture where its version is one.
+        return version && (signed || isProtocolPhoto(text(version, 'mediaType')))
+          ? [
+              {
+                value: String(attachment['id']),
+                label: signed ? text(version, 'fileName') : text(attachment, 'title'),
+                version,
+              },
+            ]
           : []
       }),
-    [attachments, versions, signedAt],
+    [attachments, every, versions, signed],
   )
 }
 
@@ -1230,12 +1246,16 @@ export function useProtocolDraft(record: RecordState): ProtocolDraft {
   const installationId = text(record, 'installationId')
   const circuits = useBlockCircuits(installationId)
   const applianceId = text(record, 'applianceId') || null
-  const photos = usePhotos(
-    installationId,
-    applianceId ?? '',
-    text(record, 'jobId'),
-    isSigned(record) ? sequenceOf(record) : null,
+  const signedAt = isSigned(record) ? sequenceOf(record) : null
+  const named = useMemo(
+    () => (definition && isSigned(record) ? chosenPhotos(definition, valuesOf(record)) : []),
+    [definition, record],
   )
+  const signed = useMemo(
+    () => (isSigned(record) ? { at: signedAt, named } : null),
+    [record, signedAt, named],
+  )
+  const photos = usePhotos(installationId, applianceId ?? '', text(record, 'jobId'), signed)
   const appliance = applianceFactsOf(useRecord('appliances', applianceId ?? undefined))
   const editable = !isSigned(record)
   // Read and written again, so that two texts of the same values compare

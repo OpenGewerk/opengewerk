@@ -507,7 +507,8 @@ describe('the photo of a signed test of an appliance (#817)', () => {
           values: JSON.stringify({ ...lastYear, photo: 'f-1' }),
         },
       ],
-      attachments: [{ id: 'f-1', applianceId: 'a-2', title: 'Anschlussleitung' }],
+      // Renamed and hung on another appliance after the signature.
+      attachments: [{ id: 'f-1', applianceId: 'a-1', title: 'Alles in Ordnung' }],
       attachment_versions: [
         {
           id: 'v-2',
@@ -528,6 +529,42 @@ describe('the photo of a signed test of an appliance (#817)', () => {
       ],
     })
 
-    expect(await screen.findByRole('img', { name: 'Anschlussleitung' })).toBeTruthy()
+    expect(await screen.findByRole('img', { name: 'leitung.jpg' })).toBeTruthy()
+    expect(screen.queryByText('Alles in Ordnung')).toBeNull()
+  })
+})
+
+describe('a file without a picture in a signed protocol (#817)', () => {
+  it('is named by its version, as before, and drawn as no picture', async () => {
+    await mount('/auftraege/j-1/pruefprotokolle/p-6', {
+      form_records: [
+        ...(rows()['form_records'] ?? []),
+        {
+          id: 'p-6',
+          definitionKey: 'dguv-v3',
+          definitionVersion: 2,
+          installationId: null,
+          applianceId: 'a-2',
+          jobId: 'j-1',
+          performedOn: '2026-11-02',
+          status: 'signed',
+          changeSequence: 10,
+          values: JSON.stringify({ ...lastYear, photo: 'f-9' }),
+        },
+      ],
+      attachments: [{ id: 'f-9', applianceId: 'a-2', title: 'Datenblatt' }],
+      attachment_versions: [
+        {
+          id: 'v-9',
+          attachmentId: 'f-9',
+          fileName: 'datenblatt.pdf',
+          mediaType: 'application/pdf',
+          changeSequence: 5,
+        },
+      ],
+    })
+
+    expect(await screen.findByText('datenblatt.pdf')).toBeTruthy()
+    expect(screen.queryByRole('img', { name: 'datenblatt.pdf' })).toBeNull()
   })
 })
