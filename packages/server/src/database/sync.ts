@@ -255,9 +255,13 @@ const signedPhotos: Check = async ({ tx, tenantId, operation, values, current })
   let base = current
 
   if (current) {
+    // Every field the check reads: definition, subject and values, all as
+    // they stand now.
     const [row] = await tx
       .select({
         status: schema.formRecords.status,
+        definitionKey: schema.formRecords.definitionKey,
+        definitionVersion: schema.formRecords.definitionVersion,
         installationId: schema.formRecords.installationId,
         applianceId: schema.formRecords.applianceId,
         jobId: schema.formRecords.jobId,

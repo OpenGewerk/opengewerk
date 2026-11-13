@@ -1032,6 +1032,60 @@ describe('the photo a protocol is signed with (#934)', () => {
     }
   })
 
+  it('asks the form as a writer that held its row left it, its version included', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const ofInstallation = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const ready = complete({ tester_signature: signature })
+
+    // A draft of version 1, which has no photo, ready to sign.
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', ofInstallation, { installationId: installation, title: 'Plan' }),
+      created('form_records', id, {
+        definitionKey: 'dguv-v3',
+        definitionVersion: 1,
+        performedOn: '2026-11-02',
+        status: 'draft',
+        values: ready,
+        applianceId: appliance,
+      } as never),
+    ])
+
+    const editing = await admin.connect()
+    let signing: ReturnType<typeof push> = Promise.resolve({ receipts: [] })
+
+    try {
+      // Another writer holds the row and makes it version 2, with a photo
+      // of something else.
+      await editing.query('begin')
+      await editing.query("select set_config('app.tenant_id', $1, true)", [north.id])
+      await editing.query("select set_config('app.user_id', 'lena', true)")
+      await editing.query('select id from form_records where id = $1 for no key update', [id])
+
+      signing = push(app, technician, [
+        changed('form_records', id, { status: { from: 'draft', to: 'signed' } }),
+      ])
+      await waitingFor(admin, editing, signing)
+      await editing.query(
+        'update form_records set definition_version = 2, "values" = $1 where id = $2',
+        [complete({ photo: ofInstallation, tester_signature: signature }), id],
+      )
+      await editing.query('commit')
+
+      const { receipts } = await signing
+
+      expect(receipts.map(({ outcome, reason }) => [outcome, reason])).toEqual([
+        ['conflict', 'changed_elsewhere'],
+      ])
+    } finally {
+      await editing.query('rollback').catch(() => undefined)
+      await signing.catch(() => undefined)
+      editing.release()
+    }
+  })
+
   it('is named in small letters and spelt out, or the signature is refused', async () => {
     const technician = as(north.id, 'technician')
     const appliance = newId<'appliance'>()

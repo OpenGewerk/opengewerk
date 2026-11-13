@@ -584,6 +584,10 @@ describe('the photo of a signed test of an appliance (#817)', () => {
     })
 
     expect(await screen.findByText('Prüfer')).toBeTruthy()
+    // Neither the name of its version nor, once its preview could have
+    // loaded, the picture.
+    expect(document.body.textContent).not.toContain('leitung.jpg')
+    await new Promise((resolve) => setTimeout(resolve, 200))
     expect(screen.queryByRole('img', { name: 'leitung.jpg' })).toBeNull()
   })
 })
