@@ -139,6 +139,7 @@ async function mount(path: string) {
       'pv_modules',
       'form_records',
       'attachments',
+      'attachment_versions',
     ],
     onSignedOut: () => {},
   })
@@ -767,6 +768,13 @@ describe('an acceptance at a job alone in the office (#310)', () => {
     })
     server.put('attachments', { id: 'd-1', jobId: 'j-1', title: 'Abdeckung' })
     server.put('attachments', { id: 'd-2', installationId: 'i-1', title: 'Typenschild' })
+    // A photo is a file with a picture as its newest version (#817).
+    server.put('attachment_versions', {
+      id: 'v-1',
+      attachmentId: 'd-1',
+      fileName: 'abdeckung.jpg',
+      mediaType: 'image/jpeg',
+    })
     server.put('form_records', {
       id: 'a-1',
       definitionKey: 'acceptance',

@@ -117,3 +117,38 @@ export function circuitBlocks(
 export function templateValues(definition: FormDefinition, values: FormValues): FormValues {
   return tradeForms.templateValues(definition, values) as FormValues
 }
+
+/**
+ * The ids of the files the photo fields of a protocol name, in its own fields
+ * and in the blocks of its groups, each with how often it is named (#817): a
+ * page prints a photo once for every field that names it.
+ */
+export function chosenPhotos(
+  definition: FormDefinition,
+  values: FormValues,
+): ReadonlyMap<string, number> {
+  const chosen = new Map<string, number>()
+  const name = (id: string) => {
+    chosen.set(id, (chosen.get(id) ?? 0) + 1)
+  }
+
+  for (const field of definition.sections.flatMap((section) => section.fields)) {
+    const value = values[field.key]
+
+    if (field.kind === 'photo' && typeof value === 'string' && value !== '') {
+      name(value)
+    } else if (field.kind === 'group' && Array.isArray(value)) {
+      for (const block of value as readonly GroupBlock[]) {
+        for (const nested of field.fields) {
+          const entry = block.values[nested.key]
+
+          if (nested.kind === 'photo' && typeof entry === 'string' && entry !== '') {
+            name(entry)
+          }
+        }
+      }
+    }
+  }
+
+  return chosen
+}

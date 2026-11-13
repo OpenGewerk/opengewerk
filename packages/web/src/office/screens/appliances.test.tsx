@@ -56,6 +56,10 @@ function signedTest(id: string, applianceId: string, performedOn: string, verdic
 const rows: Readonly<Record<string, RecordState[]>> = {
   customers: [{ id: 'c-1', kind: 'business', name: 'Hausverwaltung Süd GmbH' }],
   sites: [{ id: 's-1', customerId: 'c-1', designation: 'Rheinstraße 12' }],
+  attachments: [
+    { id: 'f-1', applianceId: 'a-2', siteId: 's-1', title: 'Anschlussleitung' },
+    { id: 'f-2', siteId: 's-1', title: 'Hausansicht' },
+  ],
   appliances: [
     {
       id: 'a-1',
@@ -95,8 +99,8 @@ const rows: Readonly<Record<string, RecordState[]>> = {
   ],
 }
 
-async function mount(path: string) {
-  for (const [entity, list] of Object.entries(rows)) {
+async function mount(path: string, held: Readonly<Record<string, RecordState[]>> = rows) {
+  for (const [entity, list] of Object.entries(held)) {
     for (const row of list) {
       server.put(entity, row)
     }
@@ -107,7 +111,15 @@ async function mount(path: string) {
     transport: server,
     writer: server,
     deviceId: 'office',
-    entities: ['customers', 'sites', 'installations', 'appliances', 'form_records', 'attachments'],
+    entities: [
+      'customers',
+      'sites',
+      'installations',
+      'appliances',
+      'form_records',
+      'attachments',
+      'attachment_versions',
+    ],
     onSignedOut: () => {},
   })
 
@@ -242,6 +254,51 @@ describe('the register of appliances in the office (#303)', () => {
     ).toBeTruthy()
     expect(within(protocols).queryByRole('button', { name: /DIN VDE/ })).toBeNull()
     expect(within(protocols).getByText('Mit dem Protokoll vom 10.01.2020 als Vorlage')).toBeTruthy()
+  })
+
+  it('keeps the files of an appliance, and hangs a new one on it, its site and its customer (#817)', async () => {
+    const { client } = await mount('/geraete/a-2')
+
+    const files = await screen.findByRole('region', { name: 'Dateien' })
+
+    expect(await within(files).findByText('Anschlussleitung')).toBeTruthy()
+    expect(within(files).queryByText('Hausansicht')).toBeNull()
+
+    await userEvent.upload(
+      within(files).getByLabelText('Datei hinzufügen'),
+      new File(['%PDF-1.7'], 'bericht.pdf', { type: 'application/pdf' }),
+    )
+
+    await waitFor(() => {
+      expect(
+        client.list('attachments').filter((row) => !['f-1', 'f-2'].includes(String(row['id']))),
+      ).toEqual([expect.objectContaining({ applianceId: 'a-2', siteId: 's-1', customerId: 'c-1' })])
+    })
+  })
+
+  it('hangs a new file on no customer the device does not hold, as at an installation (#817)', async () => {
+    // The customer of the site is deleted and no longer on the device.
+    const { client } = await mount('/geraete/a-2', { ...rows, customers: [] })
+
+    const files = await screen.findByRole('region', { name: 'Dateien' })
+
+    await userEvent.upload(
+      within(files).getByLabelText('Datei hinzufügen'),
+      new File(['%PDF-1.7'], 'bericht.pdf', { type: 'application/pdf' }),
+    )
+
+    await waitFor(() => {
+      expect(
+        client.list('attachments').filter((row) => !['f-1', 'f-2'].includes(String(row['id']))),
+      ).toHaveLength(1)
+    })
+
+    const made = client
+      .list('attachments')
+      .find((row) => !['f-1', 'f-2'].includes(String(row['id'])))
+
+    expect(made).toMatchObject({ applianceId: 'a-2', siteId: 's-1' })
+    expect(made && 'customerId' in made ? made['customerId'] : undefined).toBeUndefined()
   })
 
   it('says on an appliance with defects what the last test found', async () => {

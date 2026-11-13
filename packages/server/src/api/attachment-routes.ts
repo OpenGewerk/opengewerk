@@ -15,7 +15,7 @@ export const attachmentRights: AttachmentRights<Permission> = {
  *
  * Asked by the id of a version and never by hash, in the business of whoever
  * asks, and only while the file has not been removed from the records. What a
- * file hangs on, a customer, a site, an installation or a job, is said in the
+ * file hangs on, a customer, a site, an installation, an appliance or a job, is said in the
  * schema; whoever may read the records may read every file in them, so
  * nothing is looked at here before one is handed out.
  */

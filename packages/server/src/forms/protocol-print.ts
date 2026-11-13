@@ -39,7 +39,10 @@ import {
  * Printed on every request out of the record and kept nowhere, like the
  * circuit chart: a signed protocol does not change any more, and everything
  * it depends on is in it, down to the circuit each block was measured on, so
- * the same record prints the same page next year. A draft says so across the
+ * the same record prints the same page next year. A photo it names is the one
+ * exception (#817): it lies among the files, and the page shows the version the
+ * server had when the protocol was signed, also once the file is in the bin,
+ * and nothing but where it lay once it is purged. A draft says so across the
  * page.
  *
  * Every measured value stands with its verdict, and the limits are listed
@@ -67,6 +70,33 @@ export interface PrintedProtocol {
   readonly rules: RuleSet
   /** Sentences under the head, the warranty an acceptance starts (#310). */
   readonly notes?: readonly string[]
+  /**
+   * The photos the fields name, by the id of their file (#817), only pictures;
+   * of a draft only those of the files of what was tested. A field whose photo
+   * is not among them says where it lies.
+   */
+  readonly photos?: ReadonlyMap<string, ProtocolPhoto>
+  /**
+   * Where a photo the page cannot show lies: among the files of the
+   * installation, of the appliance, or of the job of an acceptance (#817).
+   * Without it, of the appliance where there is one, else of the installation.
+   */
+  readonly photoHome?: 'installation' | 'appliance' | 'job'
+}
+
+/** The sentence for where a photo lies, by what it hangs on. */
+const photoHomeText = {
+  installation: 'bei den Dateien der Anlage',
+  appliance: 'bei den Dateien des Geräts',
+  job: 'bei den Dateien des Auftrags',
+} as const
+
+/** A photo a field of a protocol names, as the page prints it (#817). */
+export interface ProtocolPhoto {
+  /** The name of its version, which no change after a signature touches. */
+  readonly title: string
+  readonly mediaType: string
+  readonly bytes: Uint8Array
 }
 
 const margin: PageMargin = { top: '12mm', right: '12mm', bottom: '16mm', left: '12mm' }
@@ -76,7 +106,11 @@ function day(on: string): string {
 }
 
 /** A value as it is read on paper, or nothing for a field left empty. */
-function shown(field: BlockField, value: FieldValue | undefined): string {
+function shown(
+  field: BlockField,
+  value: FieldValue | undefined,
+  protocol: PrintedProtocol,
+): string {
   if (value === undefined) {
     return ''
   }
@@ -94,10 +128,43 @@ function shown(field: BlockField, value: FieldValue | undefined): string {
     case 'yes_no':
       return value === true ? 'ja' : value === false ? 'nein' : ''
     case 'photo':
-      return 'bei den Dateien der Anlage'
+      return typeof value === 'string' && value !== '' ? photoOf(value, protocol) : ''
     case 'date':
       return typeof value === 'string' ? day(value) : ''
   }
+}
+
+/**
+ * The photo a field names, or where it lies when the page cannot show it: a
+ * file that is no picture, of something else or removed from the records.
+ */
+function photoOf(id: string, protocol: PrintedProtocol): string {
+  const photo = protocol.photos?.get(id)
+
+  if (!photo) {
+    return photoHomeText[protocol.photoHome ?? (protocol.appliance ? 'appliance' : 'installation')]
+  }
+
+  const caption = text(photoCaption(photo.title))
+
+  return `<figure class="photo"><img src="data:${text(photo.mediaType)};base64,${Buffer.from(photo.bytes).toString('base64')}" alt="${caption}"><figcaption>${caption}</figcaption></figure>`
+}
+
+/** The most characters of a name a photo is printed with, before "…". */
+export const photoCaptionLength = 120
+
+/**
+ * The name a photo is printed with: the name of its version, cut to
+ * `photoCaptionLength` (#817). A version may be named at length through the
+ * sync, and the page prints the name twice; cut, it keeps within the room the
+ * request to the renderer has for each photo.
+ */
+export function photoCaption(name: string): string {
+  const characters = [...name]
+
+  return characters.length <= photoCaptionLength
+    ? name
+    : `${characters.slice(0, photoCaptionLength).join('')}…`
 }
 
 function signatureOf(value: FormValue | undefined): string {
@@ -130,7 +197,7 @@ function fieldRow(
     return ''
   }
 
-  const printed = shown(field, value as FieldValue | undefined)
+  const printed = shown(field, value as FieldValue | undefined, protocol)
   const verdict =
     field.kind === 'measurement' && typeof value === 'number'
       ? limitVerdict(field, value, {
@@ -212,7 +279,7 @@ function groupTable(
             )}${verdict.within === false ? ' !' : ''}</td>`
           }
 
-          return `<td>${shown(nested, entry)}</td>`
+          return `<td>${shown(nested, entry, protocol)}</td>`
         })
         .join('')
 
@@ -358,6 +425,10 @@ const pageStyle = `
   .limits-head { font-weight: 600; }
   .signature-picture { display: block; width: 70mm; height: 28mm; }
   .empty { color: #5b6573; }
+  .photo { margin: 0; break-inside: avoid; }
+  .photo img { display: block; max-width: 80mm; max-height: 60mm; border: 0.2mm solid #c9ced6; }
+  .blocks .photo img { max-width: 30mm; max-height: 22mm; }
+  .photo figcaption { font-size: 7.5pt; color: #5b6573; overflow-wrap: anywhere; }
 `
 
 function footer(protocol: PrintedProtocol): string {

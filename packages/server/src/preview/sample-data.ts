@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { crc32, deflateSync } from 'node:zlib'
 
 import type { IsoDate } from '@opengewerk/domain'
 import {
@@ -58,6 +59,51 @@ async function stored(base: string, bytes: Buffer, mediaType: string): Promise<s
   }
 
   return sha256
+}
+
+/**
+ * A photo for the sample data, built by hand like the PDF below so that they
+ * need no image library (opengewerk#817): a PNG of 320 by 240 pixels, grey
+ * with a copper band across it, where a cord would be.
+ */
+function samplePhoto(): Buffer {
+  const [width, height] = [320, 240]
+  const rows: Buffer[] = []
+
+  for (let y = 0; y < height; y += 1) {
+    const row = Buffer.alloc(1 + width * 3)
+
+    for (let x = 0; x < width; x += 1) {
+      const band = Math.abs(y - height / 2 - (x - width / 2) / 4) < 14
+      const [r, g, b] = band ? [200, 103, 31] : [92 + (x % 40), 100, 110]
+
+      row.set([r, g, b], 1 + x * 3)
+    }
+    rows.push(row)
+  }
+
+  const chunk = (kind: string, data: Buffer) => {
+    const length = Buffer.alloc(4)
+    const check = Buffer.alloc(4)
+    const named = Buffer.concat([Buffer.from(kind, 'ascii'), data])
+
+    length.writeUInt32BE(data.length)
+    check.writeUInt32BE(crc32(named))
+
+    return Buffer.concat([length, named, check])
+  }
+  const header = Buffer.alloc(13)
+
+  header.writeUInt32BE(width, 0)
+  header.writeUInt32BE(height, 4)
+  header.set([8, 2, 0, 0, 0], 8)
+
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', deflateSync(Buffer.concat(rows))),
+    chunk('IEND', Buffer.alloc(0)),
+  ])
 }
 
 /**
@@ -1001,7 +1047,7 @@ export async function plantSampleData(base: string, today: IsoDate): Promise<voi
   }
 
   await plantBoards(post, cabinet, today)
-  await plantAppliances(post, estate, today)
+  await plantAppliances(post, base, estate, today)
   await plantPhotovoltaic(post, berg, house, today)
 
   const catalogue = await plantMaterial(post, (path, body) => send(base, 'PUT', path, body), today)
@@ -2674,6 +2720,7 @@ async function plantBoards(
  */
 async function plantAppliances(
   post: (path: string, body: unknown) => Promise<Answer>,
+  base: string,
   estate: string,
   today: IsoDate,
 ): Promise<void> {
@@ -2713,6 +2760,7 @@ async function plantAppliances(
       verdict: 'passed',
     },
     cord: 'ok' | 'defect' = 'ok',
+    more: Record<string, unknown> = {},
   ) => ({
     definitionKey: 'dguv-v3',
     definitionVersion: 1,
@@ -2733,6 +2781,7 @@ async function plantAppliances(
       function: 'ok',
       safety_devices: 'not_applicable',
       ...found,
+      ...more,
       next_inspection_months: months * 1000,
       tester_signature: {
         name: 'Anna Weber',
@@ -2741,6 +2790,10 @@ async function plantAppliances(
       },
     }),
   })
+  // The photo of the damaged cord of the heater, among its files (opengewerk#817).
+  const cordPhoto = newId<'attachment'>()
+  const cordBytes = samplePhoto()
+  const cordSha = await stored(base, cordBytes, 'image/png')
   const parts: [string, string, Record<string, unknown>][] = [
     [
       'appliances',
@@ -2794,6 +2847,24 @@ async function plantAppliances(
       }),
     ],
     [
+      'attachments',
+      cordPhoto,
+      { applianceId: heater, siteId: estate, title: 'Anschlussleitung am Knickschutz' },
+    ],
+    [
+      'attachment_versions',
+      newId<'attachment-version'>(),
+      {
+        attachmentId: cordPhoto,
+        sha256: cordSha,
+        // The photo is its own preview, as small as one a device makes.
+        previewSha256: cordSha,
+        fileName: 'IMG_5120.png',
+        mediaType: 'image/png',
+        sizeBytes: cordBytes.byteLength,
+      },
+    ],
+    [
       'form_records',
       newId<'form-record'>(),
       {
@@ -2826,7 +2897,10 @@ async function plantAppliances(
             defects: 'Anschlussleitung am Knickschutz beschädigt, Gerät außer Betrieb genommen.',
           },
           'defect',
+          { photo: cordPhoto },
         ),
+        // Version 2 has the photo (opengewerk#817).
+        definitionVersion: 2,
         applianceId: heater,
       },
     ],

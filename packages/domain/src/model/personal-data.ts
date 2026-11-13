@@ -70,7 +70,15 @@ export const personalDataCatalogue: Readonly<Record<string, PersonalData>> = {
   },
   attachments: {
     about: ['customer'],
-    columns: ['customer_id', 'site_id', 'installation_id', 'job_id', 'defect_id', 'title'],
+    columns: [
+      'customer_id',
+      'site_id',
+      'installation_id',
+      'appliance_id',
+      'job_id',
+      'defect_id',
+      'title',
+    ],
   },
   audit_chains: none,
   audit_entries: {

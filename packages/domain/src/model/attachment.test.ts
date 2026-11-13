@@ -4,7 +4,11 @@ import { describe, expect, it } from 'vitest'
 // (opengewerk-haustechnik#97) and reach this application's code under the
 // names they always had, through the entry of this package.
 import { attachmentTitleOf, isPhoto, isPicture } from '../index.js'
-import { attachmentHomeProblem, attachmentMediaTypeProblem } from './attachment.js'
+import {
+  attachmentHomeProblem,
+  attachmentMediaTypeProblem,
+  shownPhotoVersion,
+} from './attachment.js'
 
 describe('what a version says about its file', () => {
   it('has the type as it is recorded, and nothing else', () => {
@@ -33,9 +37,11 @@ describe('a picture and a photo', () => {
 })
 
 describe('where a file hangs', () => {
-  it('is at least one of customer, site, installation and job', () => {
+  it('is at least one of customer, site, installation, appliance and job', () => {
     expect(attachmentHomeProblem({ customerId: 'c-1' })).toBeNull()
     expect(attachmentHomeProblem({ jobId: 'j-1', installationId: 'i-1' })).toBeNull()
+    // The photo of an appliance of the register (#817).
+    expect(attachmentHomeProblem({ applianceId: 'a-1' })).toBeNull()
   })
 
   it('is refused when it is none of them, an empty string counting as none', () => {
@@ -53,5 +59,26 @@ describe('the name of a new file', () => {
   it('keeps a name that only starts with a dot, and has one when the name is empty', () => {
     expect(attachmentTitleOf('.notizen')).toBe('.notizen')
     expect(attachmentTitleOf('  ')).toBe('Datei')
+  })
+})
+
+describe('the version of a photo a protocol shows (#817)', () => {
+  const version = (id: string, sequence: number | null) => ({ id, sequence })
+  const shown = (
+    newestFirst: readonly { id: string; sequence: number | null }[],
+    at: number | null,
+  ) => shownPhotoVersion(newestFirst, (each) => each.sequence, at)?.id
+
+  it('is the newest of a draft, and of a signed protocol the newest written before it', () => {
+    const versions = [version('v3', 30), version('v2', null), version('v1', 5)]
+
+    expect(shown(versions, null)).toBe('v3')
+    expect(shown(versions, 10)).toBe('v1')
+  })
+
+  it('is none where all came after the signature, whatever arrives later', () => {
+    expect(shown([version('v2', 20)], 10)).toBeUndefined()
+    expect(shown([version('v2', 20), version('v1', 30)], 10)).toBeUndefined()
+    expect(shown([version('v1', null)], 10)).toBeUndefined()
   })
 })

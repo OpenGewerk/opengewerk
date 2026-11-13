@@ -441,11 +441,23 @@ describe('restricting a customer (#845)', () => {
 
   it('takes the customer and what hangs on it off every device and out of the list', async () => {
     const { customer, site, invoice, installation } = await vossberg()
+    // A file that hangs on an appliance of its site alone (#817).
+    const appliance = newId<'appliance'>()
+    const cord = newId<'attachment'>()
 
     await admin.query(
       `insert into documents (tenant_id, customer_id, kind, status, number, document_date)
        values ($1, $2, 'final_invoice', 'issued', 'RE-2026-0010', $3)`,
       [north, customer, today],
+    )
+    await admin.query(
+      `insert into appliances (id, tenant_id, site_id, designation, protection_class)
+       values ($1, $2, $3, 'Heizlüfter', 'I')`,
+      [appliance, north, site],
+    )
+    await admin.query(
+      "insert into attachments (id, tenant_id, appliance_id, title) values ($1, $2, $3, 'Anschlussleitung')",
+      [cord, north, appliance],
     )
 
     const before = await http().get('/sync?since=0').set('x-test-identity', owner).expect(200)
@@ -469,6 +481,8 @@ describe('restricting a customer (#845)', () => {
     expect(held(after, 'sites')).not.toContain(site)
     expect(held(after, 'documents')).not.toContain(invoice)
     expect(held(after, 'installations')).not.toContain(installation)
+    expect(held(before, 'attachments')).toContain(cord)
+    expect(held(after, 'attachments')).not.toContain(cord)
     expect(narrowed(after)['customers']).not.toBe(narrowed(before)['customers'])
     expect(narrowed(after)['on_call_shifts']).toBe(narrowed(before)['on_call_shifts'])
 

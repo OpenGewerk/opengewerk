@@ -14,8 +14,9 @@ import {
 } from '@tanstack/react-router'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { aTenantChoice } from '../../session/test-tenants.js'
 import { SyncClient } from '../../sync/client.js'
 import { SiteAppliancesScreen, SiteNewApplianceScreen } from './appliances.js'
 import { SiteJobScreen } from './job.js'
@@ -28,6 +29,15 @@ import { SiteProtocolScreen } from './protocol.js'
  * after it is made, the limits worked out of the appliance, and the way to
  * the next one once a test is signed.
  */
+
+/**
+ * A browser in a test has no canvas that draws, so making a picture smaller
+ * is put in place, as for the files of #77.
+ */
+vi.mock('../../app/pictures.js', () => ({
+  shrinkPicture: (_file: Blob, longEdge: number) =>
+    Promise.resolve(new Uint8Array(longEdge > 1000 ? 1000 : 100).fill(7).buffer),
+}))
 
 let server: TestServer
 let counter = 0
@@ -111,8 +121,8 @@ function rows(): Readonly<Record<string, RecordState[]>> {
   }
 }
 
-async function mount(path: string) {
-  for (const [entity, list] of Object.entries(rows())) {
+async function mount(path: string, more: Readonly<Record<string, RecordState[]>> = {}) {
+  for (const [entity, list] of Object.entries({ ...rows(), ...more })) {
     for (const row of list) {
       server.put(entity, row)
     }
@@ -123,7 +133,16 @@ async function mount(path: string) {
     transport: server,
     writer: server,
     deviceId: 'geraet-in-der-werkstatt',
-    entities: ['customers', 'sites', 'installations', 'jobs', 'appliances', 'form_records'],
+    entities: [
+      'customers',
+      'sites',
+      'installations',
+      'jobs',
+      'appliances',
+      'form_records',
+      'attachments',
+      'attachment_versions',
+    ],
     onSignedOut: () => {},
   })
 
@@ -158,6 +177,34 @@ async function mount(path: string) {
 beforeEach(() => {
   server = new TestServer()
 })
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+/** A technician, who may add files: the session and the role, the rest of the API not there. */
+function asTechnician() {
+  const answers = new Map<string, unknown>([
+    [
+      '/api/auth/get-session',
+      {
+        user: { id: 'u-1', email: 'anna@nord.example.de', name: 'Anna Weber' },
+        session: { activeTenantId: 't-1' },
+      },
+    ],
+    ['/auth/tenants', [aTenantChoice(['technician'])]],
+    ['/tasks/assignees', []],
+  ])
+
+  vi.stubGlobal('fetch', (path: string) =>
+    Promise.resolve(
+      new Response(JSON.stringify(answers.get(path) ?? {}), {
+        status: answers.has(path) ? 200 : 404,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    ),
+  )
+}
 
 describe('the appliances of a site on site (#303)', () => {
   it('are reached from the job, in the order of their numbers, each with how it stands', async () => {
@@ -291,5 +338,294 @@ describe('the appliances of a site on site (#303)', () => {
       await screen.findByText('Die Länge der Anschlussleitung ist eine Zahl in Metern, etwa 1,5.'),
     ).toBeTruthy()
     expect(client.list('appliances')).toHaveLength(2)
+  })
+})
+
+describe('a photo of what is wrong with an appliance (#817)', () => {
+  it('is taken at its test for the files of the appliance, which its result offers', async () => {
+    asTechnician()
+
+    const { client } = await mount('/auftraege/j-1/pruefprotokolle/p-2', {
+      form_records: [
+        ...(rows()['form_records'] ?? []),
+        {
+          id: 'p-2',
+          definitionKey: 'dguv-v3',
+          definitionVersion: 2,
+          installationId: null,
+          applianceId: 'a-2',
+          jobId: 'j-1',
+          performedOn: today(),
+          status: 'draft',
+          values: '{}',
+        },
+      ],
+      attachments: [
+        { id: 'f-1', applianceId: 'a-2', siteId: 's-1', title: 'Typenschild' },
+        { id: 'f-2', siteId: 's-1', title: 'Hausansicht' },
+        { id: 'f-3', applianceId: 'a-2', title: 'Prüfbericht des Herstellers' },
+      ],
+      attachment_versions: [
+        { id: 'v-1', attachmentId: 'f-1', fileName: 'typenschild.jpg', mediaType: 'image/jpeg' },
+        { id: 'v-2', attachmentId: 'f-2', fileName: 'haus.jpg', mediaType: 'image/jpeg' },
+        { id: 'v-3', attachmentId: 'f-3', fileName: 'bericht.pdf', mediaType: 'application/pdf' },
+      ],
+    })
+
+    const photo = await screen.findByLabelText('Foto')
+
+    expect(within(photo).getByRole('option', { name: 'Typenschild' })).toBeTruthy()
+    expect(within(photo).queryByRole('option', { name: 'Hausansicht' })).toBeNull()
+    // A PDF is no photo the page of the protocol could print.
+    expect(within(photo).queryByRole('option', { name: 'Prüfbericht des Herstellers' })).toBeNull()
+    expect(screen.getByText('Ein Foto aus den Dateien des Geräts.')).toBeTruthy()
+
+    await userEvent.upload(
+      await screen.findByLabelText('Foto zum Mangel aufnehmen'),
+      new File([new Uint8Array(5000).fill(1)], 'leitung.jpg', { type: 'image/jpeg' }),
+    )
+
+    await waitFor(() => {
+      expect(
+        client
+          .list('attachments')
+          .filter((row) => !['f-1', 'f-2', 'f-3'].includes(String(row['id']))),
+      ).toEqual([
+        expect.objectContaining({
+          applianceId: 'a-2',
+          jobId: 'j-1',
+          siteId: 's-1',
+          customerId: 'c-1',
+        }),
+      ])
+    })
+
+    const made = client
+      .list('attachments')
+      .find((row) => !['f-1', 'f-2', 'f-3'].includes(String(row['id'])))
+
+    expect(made && 'installationId' in made ? made['installationId'] : undefined).toBeUndefined()
+    expect(
+      await screen.findByText(
+        'Das Foto liegt bei den Dateien des Geräts und lässt sich oben als Foto wählen.',
+      ),
+    ).toBeTruthy()
+  })
+
+  it('is not offered at a test in the version without a photo', async () => {
+    asTechnician()
+
+    const draft = (id: string, version: number) => ({
+      id,
+      definitionKey: 'dguv-v3',
+      definitionVersion: version,
+      installationId: null,
+      applianceId: id === 'p-2' ? 'a-2' : 'a-1',
+      jobId: 'j-1',
+      performedOn: today(),
+      status: 'draft',
+      values: '{}',
+    })
+    const { router } = await mount('/auftraege/j-1/pruefprotokolle/p-3', {
+      form_records: [...(rows()['form_records'] ?? []), draft('p-2', 1), draft('p-3', 2)],
+    })
+
+    // In version 2 the button is there once the rights of the person are known.
+    expect(await screen.findByRole('button', { name: 'Foto zum Mangel' })).toBeTruthy()
+
+    await router.navigate({ to: '/auftraege/j-1/pruefprotokolle/p-2' })
+    await waitFor(() => {
+      expect(screen.queryByLabelText('Foto')).toBeNull()
+    })
+    expect(screen.queryByRole('button', { name: 'Foto zum Mangel' })).toBeNull()
+  })
+
+  it('hangs on the job of the route when the draft was begun in the office without one', async () => {
+    asTechnician()
+
+    const { client } = await mount('/auftraege/j-1/pruefprotokolle/p-4', {
+      form_records: [
+        ...(rows()['form_records'] ?? []),
+        {
+          id: 'p-4',
+          definitionKey: 'dguv-v3',
+          definitionVersion: 2,
+          installationId: null,
+          applianceId: 'a-2',
+          jobId: null,
+          performedOn: today(),
+          status: 'draft',
+          values: '{}',
+        },
+      ],
+    })
+
+    await userEvent.upload(
+      await screen.findByLabelText('Foto zum Mangel aufnehmen'),
+      new File([new Uint8Array(5000).fill(1)], 'stecker.jpg', { type: 'image/jpeg' }),
+    )
+
+    await waitFor(() => {
+      expect(client.list('attachments')).toEqual([
+        expect.objectContaining({
+          applianceId: 'a-2',
+          jobId: 'j-1',
+          siteId: 's-1',
+          customerId: 'c-1',
+        }),
+      ])
+    })
+  })
+})
+
+describe('the photo of a signed test of an appliance (#817)', () => {
+  it('is shown as a picture, in the version the protocol was signed with', async () => {
+    const preview = new Uint8Array([0xff, 0xd8, 0xff, 0xd9])
+
+    vi.stubGlobal('fetch', (path: string) =>
+      Promise.resolve(
+        // Only the version of the signature has its preview on the server here.
+        path === '/attachments/versions/v-1/preview'
+          ? new Response(preview, { headers: { 'Content-Type': 'image/jpeg' } })
+          : new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } }),
+      ),
+    )
+
+    await mount('/auftraege/j-1/pruefprotokolle/p-5', {
+      form_records: [
+        ...(rows()['form_records'] ?? []),
+        {
+          id: 'p-5',
+          definitionKey: 'dguv-v3',
+          definitionVersion: 2,
+          installationId: null,
+          applianceId: 'a-2',
+          jobId: 'j-1',
+          performedOn: '2026-11-02',
+          status: 'signed',
+          changeSequence: 10,
+          values: JSON.stringify({ ...lastYear, photo: 'f-1' }),
+        },
+      ],
+      // Renamed and hung on another appliance after the signature.
+      attachments: [{ id: 'f-1', applianceId: 'a-1', title: 'Alles in Ordnung' }],
+      attachment_versions: [
+        {
+          id: 'v-2',
+          attachmentId: 'f-1',
+          fileName: 'neu.jpg',
+          mediaType: 'image/jpeg',
+          previewSha256: 'b'.repeat(64),
+          changeSequence: 20,
+        },
+        {
+          id: 'v-1',
+          attachmentId: 'f-1',
+          fileName: 'leitung.jpg',
+          mediaType: 'image/jpeg',
+          previewSha256: 'a'.repeat(64),
+          changeSequence: 5,
+        },
+      ],
+    })
+
+    expect(await screen.findByRole('img', { name: 'leitung.jpg' })).toBeTruthy()
+    expect(screen.queryByText('Alles in Ordnung')).toBeNull()
+  })
+})
+
+describe('a file without a picture in a signed protocol (#817)', () => {
+  it('is named by its version, as before, and drawn as no picture', async () => {
+    await mount('/auftraege/j-1/pruefprotokolle/p-6', {
+      form_records: [
+        ...(rows()['form_records'] ?? []),
+        {
+          id: 'p-6',
+          definitionKey: 'dguv-v3',
+          definitionVersion: 2,
+          installationId: null,
+          applianceId: 'a-2',
+          jobId: 'j-1',
+          performedOn: '2026-11-02',
+          status: 'signed',
+          changeSequence: 10,
+          values: JSON.stringify({ ...lastYear, photo: 'f-9' }),
+        },
+      ],
+      attachments: [{ id: 'f-9', applianceId: 'a-2', title: 'Datenblatt' }],
+      attachment_versions: [
+        {
+          id: 'v-9',
+          attachmentId: 'f-9',
+          fileName: 'datenblatt.pdf',
+          mediaType: 'application/pdf',
+          changeSequence: 5,
+        },
+      ],
+    })
+
+    expect(await screen.findByText('datenblatt.pdf')).toBeTruthy()
+    expect(screen.queryByRole('img', { name: 'datenblatt.pdf' })).toBeNull()
+  })
+})
+
+describe('a test signed on the device and not sent yet (#817)', () => {
+  it('shows the newest version of its photo, the one the server will stamp after it', async () => {
+    const preview = new Uint8Array([0xff, 0xd8, 0xff, 0xd9])
+
+    vi.stubGlobal('fetch', (path: string) =>
+      Promise.resolve(
+        path === '/attachments/versions/v-2/preview'
+          ? new Response(preview, { headers: { 'Content-Type': 'image/jpeg' } })
+          : new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } }),
+      ),
+    )
+
+    const draft = { ...lastYear, photo: 'f-1', tester_signature: undefined }
+    const { client } = await mount('/auftraege/j-1/pruefprotokolle/p-7', {
+      form_records: [
+        ...(rows()['form_records'] ?? []),
+        {
+          id: 'p-7',
+          definitionKey: 'dguv-v3',
+          definitionVersion: 2,
+          installationId: null,
+          applianceId: 'a-2',
+          jobId: 'j-1',
+          performedOn: today(),
+          status: 'draft',
+          changeSequence: 10,
+          values: JSON.stringify(draft),
+        },
+      ],
+      attachments: [{ id: 'f-1', applianceId: 'a-2', title: 'Anschlussleitung' }],
+      attachment_versions: [
+        {
+          id: 'v-2',
+          attachmentId: 'f-1',
+          fileName: 'neu.jpg',
+          mediaType: 'image/jpeg',
+          previewSha256: 'b'.repeat(64),
+          changeSequence: 15,
+        },
+        {
+          id: 'v-1',
+          attachmentId: 'f-1',
+          fileName: 'leitung.jpg',
+          mediaType: 'image/jpeg',
+          previewSha256: 'a'.repeat(64),
+          changeSequence: 5,
+        },
+      ],
+    })
+
+    server.offline = true
+    await client.update('form_records', 'p-7', {
+      status: 'signed',
+      values: JSON.stringify({ ...lastYear, photo: 'f-1' }),
+    })
+
+    expect(client.isPending('form_records', 'p-7')).toBe(true)
+    expect(await screen.findByRole('img', { name: 'neu.jpg' })).toBeTruthy()
   })
 })

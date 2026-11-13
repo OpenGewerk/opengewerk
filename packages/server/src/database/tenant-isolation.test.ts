@@ -760,6 +760,11 @@ const crossings: readonly {
     write: (own, other) => repoint('attachments', 'job_id', own.attachment, other.job),
   },
   {
+    // A photo hung on an appliance of the other business (#817).
+    key: 'attachments_appliance_in_tenant',
+    write: (own, other) => repoint('attachments', 'appliance_id', own.attachment, other.appliance),
+  },
+  {
     // Inserts, since a version is written once: the attachment of the other
     // business, a file of the other business named by its hash, and the same
     // for the preview.

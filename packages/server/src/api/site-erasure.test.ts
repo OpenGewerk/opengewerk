@@ -117,9 +117,10 @@ async function hollberg(): Promise<Fixture> {
   const siteFile = uuid()
   const cabinetFile = uuid()
   const defectFile = uuid()
+  const applianceFile = uuid()
   const access = uuid()
   const tag = uuid()
-  const [photo, plan, close] = [hash(), hash(), hash()]
+  const [photo, plan, close, cord] = [hash(), hash(), hash(), hash()]
 
   await admin.query(
     `begin;
@@ -170,16 +171,19 @@ async function hollberg(): Promise<Fixture> {
        values ('${north}', '${defect}', 'accepted', '2015-01-07', 'Erika ${family}', 'M1,1L2,2');
      insert into files (tenant_id, sha256, size_bytes, media_type)
        values ('${north}', '${photo}', 10, 'image/jpeg'), ('${north}', '${plan}', 10, 'application/pdf'),
-              ('${north}', '${close}', 10, 'image/jpeg');
+              ('${north}', '${close}', 10, 'image/jpeg'), ('${north}', '${cord}', 10, 'image/jpeg');
      insert into attachments (id, tenant_id, site_id, title) values ('${siteFile}', '${north}', '${site}', 'Haus ${family}');
      insert into attachments (id, tenant_id, installation_id, title)
        values ('${cabinetFile}', '${north}', '${cabinet}', 'Plan ${family}');
      insert into attachments (id, tenant_id, installation_id, defect_id, title)
        values ('${defectFile}', '${north}', '${cabinet}', '${defect}', 'Kontakt ${family}');
+     insert into attachments (id, tenant_id, appliance_id, title)
+       values ('${applianceFile}', '${north}', '${appliance}', 'Leitung ${family}');
      insert into attachment_versions (tenant_id, attachment_id, sha256, file_name, media_type, size_bytes)
        values ('${north}', '${siteFile}', '${photo}', '${family.toLowerCase()}-haus.jpg', 'image/jpeg', 10),
               ('${north}', '${cabinetFile}', '${plan}', '${family.toLowerCase()}-plan.pdf', 'application/pdf', 10),
-              ('${north}', '${defectFile}', '${close}', '${family.toLowerCase()}-kontakt.jpg', 'image/jpeg', 10);
+              ('${north}', '${defectFile}', '${close}', '${family.toLowerCase()}-kontakt.jpg', 'image/jpeg', 10),
+              ('${north}', '${applianceFile}', '${cord}', '${family.toLowerCase()}-leitung.jpg', 'image/jpeg', 10);
      insert into pv_handovers (tenant_id, installation_id, handed_over_on, content)
        values ('${north}', '${pv}', '2014-03-15', '{"owner": "Erika ${family}"}');
      insert into tags (id, tenant_id, name) values ('${tag}', '${north}', 'Wärmepumpe ${tag.slice(-6)}');
@@ -487,6 +491,79 @@ describe('what is due (#848)', () => {
 })
 
 describe('deleting a site (#848)', () => {
+  it('leaves a file that names another site as well, and still goes through (#817)', async () => {
+    const { customer, site } = await hollberg()
+    const other = await bare(null)
+    const appliance = uuid()
+    const elsewhere = uuid()
+    const [file, mixed] = [uuid(), uuid()]
+    const sha = 'f'.repeat(64)
+
+    // Hung on an appliance of this site, and on the other site; and on an
+    // appliance of this site and an installation of the other, without a site.
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       insert into appliances (id, tenant_id, site_id, designation, protection_class)
+         values ('${appliance}', '${north}', '${site}', 'Kreissäge', 'I');
+       insert into installations (id, tenant_id, site_id, kind, designation)
+         values ('${elsewhere}', '${north}', '${other.site}', 'meter_cabinet', 'Zählerschrank');
+       insert into files (tenant_id, sha256, size_bytes, media_type) values ('${north}', '${sha}', 10, 'image/jpeg');
+       insert into attachments (id, tenant_id, site_id, appliance_id, title)
+         values ('${file}', '${north}', '${other.site}', '${appliance}', 'Sägeblatt');
+       insert into attachments (id, tenant_id, installation_id, appliance_id, title)
+         values ('${mixed}', '${north}', '${elsewhere}', '${appliance}', 'Gemischt');
+       insert into attachment_versions (tenant_id, attachment_id, sha256, file_name, media_type, size_bytes)
+         values ('${north}', '${file}', '${sha}', 'saege.jpg', 'image/jpeg', 10),
+                ('${north}', '${mixed}', '${sha}', 'gemischt.jpg', 'image/jpeg', 10);
+       commit;`,
+    )
+    await deleteCustomer(customer)
+    await pass()
+    await eraseSites([site]).expect(201)
+
+    expect(
+      (
+        await admin.query('select title from attachments where id = any($1) order by title', [
+          [file, mixed],
+        ])
+      ).rows,
+    ).toEqual([{ title: 'Gemischt' }, { title: 'Sägeblatt' }])
+  })
+
+  it('leaves the file of an appliance at another site where it is (#817)', async () => {
+    const { customer, site } = await hollberg()
+    const other = await bare(null)
+    const appliance = uuid()
+    const file = uuid()
+    const sha = 'e'.repeat(64)
+
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       insert into appliances (id, tenant_id, site_id, designation, protection_class)
+         values ('${appliance}', '${north}', '${other.site}', 'Bohrhammer', 'II');
+       insert into files (tenant_id, sha256, size_bytes, media_type) values ('${north}', '${sha}', 10, 'image/jpeg');
+       insert into attachments (id, tenant_id, appliance_id, title) values ('${file}', '${north}', '${appliance}', 'Stecker');
+       insert into attachment_versions (tenant_id, attachment_id, sha256, file_name, media_type, size_bytes)
+         values ('${north}', '${file}', '${sha}', 'stecker.jpg', 'image/jpeg', 10);
+       commit;`,
+    )
+    await deleteCustomer(customer)
+    await pass()
+    await eraseSites([site]).expect(201)
+
+    expect(
+      (
+        await admin.query(
+          `select a.title, f.sha256 from attachments a
+             join attachment_versions v on v.attachment_id = a.id
+             join files f on f.tenant_id = v.tenant_id and f.sha256 = v.sha256
+            where a.id = $1`,
+          [file],
+        )
+      ).rows,
+    ).toEqual([{ title: 'Stecker', sha256: sha }])
+  })
+
   it('empties it and everything that hangs on it, and leaves its name and address nowhere', async () => {
     const { family, customer, site, cabinet, pv } = await hollberg()
 

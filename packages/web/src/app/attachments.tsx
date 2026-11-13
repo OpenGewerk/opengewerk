@@ -35,6 +35,8 @@ export interface AttachmentHome {
   readonly customerId?: string | null
   readonly siteId?: string | null
   readonly installationId?: string | null
+  /** The appliance of the register (#817). */
+  readonly applianceId?: string | null
   readonly jobId?: string | null
   /** The defect a photo shows (#311), beside the places it lies among. */
   readonly defectId?: string | null

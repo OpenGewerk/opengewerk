@@ -1,7 +1,18 @@
+import { createHash } from 'node:crypto'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import { permissionCatalogue, type RoleKey, shippedRoles, type TenantId } from '@opengewerk/domain'
-import { Database, newId, type PrintJob, type Renderer } from '@opengewerk/platform-server'
+import {
+  Database,
+  FileStore,
+  newId,
+  type PrintJob,
+  type Renderer,
+} from '@opengewerk/platform-server'
 import type { Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -14,6 +25,13 @@ import {
   resetToMigrated,
 } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
+import {
+  photoBound,
+  photosToRead,
+  printedPhotos,
+  rendererRequestBytes,
+  shownVersions,
+} from './form-records.controller.js'
 import { binary } from './test-binary.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { changed, created, push } from './test-structure.js'
@@ -36,6 +54,7 @@ let app: INestApplication
 let site = ''
 let customer = ''
 let installation = ''
+let storageRoot = ''
 
 const jobs: PrintJob[] = []
 const standIn: Renderer = (job) => {
@@ -136,9 +155,15 @@ beforeAll(async () => {
   )
 
   database = Database.connect(applicationDatabaseUrl())
+  storageRoot = mkdtempSync(join(tmpdir(), 'opengewerk-appliances-'))
 
   const built = await Test.createTestingModule({
-    imports: [ApiModule.create(database, identities, { renderer: standIn })],
+    imports: [
+      ApiModule.create(database, identities, {
+        renderer: standIn,
+        files: new FileStore(storageRoot),
+      }),
+    ],
   }).compile()
 
   app = built.createNestApplication()
@@ -170,6 +195,7 @@ afterAll(async () => {
   await app.close()
   await database.close()
   await admin.end()
+  rmSync(storageRoot, { recursive: true, force: true })
 })
 
 describe('an appliance of the register', () => {
@@ -523,5 +549,495 @@ describe('the report of a site after DGUV Vorschrift 3', () => {
       .get(`/sites/${newId<'site'>()}/appliance-report`)
       .set('x-test-identity', as(north.id, 'office'))
       .expect(404)
+  })
+})
+
+/** Bytes of a photo; the store keeps whatever it is given under its hash. */
+function photoBytes(label: string): Buffer {
+  return Buffer.from(`PNG ${label}`)
+}
+
+function hashOf(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
+async function upload(bytes: Buffer, who: string): Promise<void> {
+  await http()
+    .put(`/files/${hashOf(bytes)}`)
+    .set('x-test-identity', who)
+    .set('Content-Type', 'application/octet-stream')
+    .set('X-Media-Type', 'image/png')
+    .send(bytes)
+    .expect(200)
+}
+
+/** A new version of a file, as a device sends it. */
+function aVersion(attachment: string, bytes: Buffer) {
+  return created('attachment_versions', newId<'attachment-version'>(), {
+    attachmentId: attachment,
+    sha256: hashOf(bytes),
+    fileName: 'leitung.png',
+    mediaType: 'image/png',
+    sizeBytes: bytes.byteLength,
+  })
+}
+
+/** The page of a protocol as the renderer got it. */
+async function printed(id: string, who: string): Promise<string> {
+  await http()
+    .get(`/form-records/${id}/pdf`)
+    .set('x-test-identity', who)
+    .buffer(true)
+    .parse(binary)
+    .expect(200)
+
+  return jobs.at(-1)?.html ?? ''
+}
+
+/** A test in version 2 of the form, which has a photo (#817). */
+function aPhotoTest(id: string, appliance: string, values: string) {
+  return created('form_records', id, {
+    definitionKey: 'dguv-v3',
+    definitionVersion: 2,
+    performedOn: '2026-11-02',
+    status: 'draft',
+    values,
+    applianceId: appliance,
+  } as never)
+}
+
+describe('the files of an appliance (#817)', () => {
+  it('hang on the appliance alone and reach a device with the site of its job', async () => {
+    const technician = person('max', 'technician')
+    const office = as(north.id, 'office')
+    const elsewhere = await post(
+      '/sites',
+      { customerId: customer, designation: 'Lagerhalle', city: 'Mannheim' },
+      office,
+    )
+    const here = newId<'appliance'>()
+    const there = newId<'appliance'>()
+    const atHere = newId<'attachment'>()
+    const atThere = newId<'attachment'>()
+
+    await push(app, office, [
+      anAppliance(here, { inventoryNumber: '011', designation: 'Heizlüfter' }),
+      anAppliance(there, { siteId: elsewhere, inventoryNumber: '012', designation: 'Kreissäge' }),
+    ])
+
+    const { receipts } = await push(app, office, [
+      created('attachments', atHere, { applianceId: here, title: 'Anschlussleitung' }),
+      created('attachments', atThere, { applianceId: there, title: 'Typenschild' }),
+    ])
+
+    expect(receipts.map((receipt) => receipt.outcome)).toEqual(['applied', 'applied'])
+
+    const job = await post(
+      '/jobs',
+      {
+        customerId: customer,
+        siteId: site,
+        kind: 'service',
+        status: 'active',
+        designation: 'Heizlüfter prüfen',
+      },
+      office,
+    )
+
+    await http()
+      .put(`/jobs/${job}/assignees`)
+      .set('x-test-identity', office)
+      .send({ userIds: ['max'] })
+      .expect(200)
+
+    const answer = await http().get('/sync?since=0').set('x-test-identity', technician).expect(200)
+    const files =
+      (answer.body as { changes: { entity: string; rows: { id: string }[] }[] }).changes
+        .find((change) => change.entity === 'attachments')
+        ?.rows.map((row) => row.id) ?? []
+
+    expect(files).toContain(atHere)
+    expect(files).not.toContain(atThere)
+  })
+
+  it('are a home of a file in the database, and a file with none is refused', async () => {
+    const appliance = newId<'appliance'>()
+
+    await push(app, as(north.id, 'office'), [anAppliance(appliance)])
+    await admin.query(
+      "insert into attachments (tenant_id, appliance_id, title) values ($1, $2, 'Typenschild')",
+      [north.id, appliance],
+    )
+
+    expect(
+      await refusedBy(
+        admin.query("insert into attachments (tenant_id, title) values ($1, 'Nirgends')", [
+          north.id,
+        ]),
+      ),
+    ).toEqual({ code: checkViolation, constraint: 'attachments_have_a_home' })
+  })
+
+  it('give a protocol its photo, the version of the day it was signed', async () => {
+    const technician = as(north.id, 'technician')
+    const office = as(north.id, 'office')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const [first, second, third] = [photoBytes('eins'), photoBytes('zwei'), photoBytes('drei')]
+    const base64 = (bytes: Buffer) => bytes.toString('base64')
+    const before = complete({ photo })
+
+    for (const bytes of [first, second, third]) {
+      await upload(bytes, technician)
+    }
+
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', photo, {
+        applianceId: appliance,
+        siteId: site,
+        title: 'Anschlussleitung',
+      }),
+      aVersion(photo, first),
+      aPhotoTest(id, appliance, before),
+    ])
+
+    const draft = await printed(id, office)
+
+    expect(draft).toContain(`data:image/png;base64,${base64(first)}`)
+    expect(draft).toContain('<figcaption>leitung.png</figcaption>')
+
+    // A draft shows the newest version.
+    await push(app, technician, [aVersion(photo, second)])
+    expect(await printed(id, office)).toContain(base64(second))
+
+    // Signed, and a version laid over the photo after it in the same
+    // transmission, as a device that was offline sends both.
+    await push(app, technician, [
+      signed(id, before, complete({ photo, tester_signature: signature })),
+      aVersion(photo, third),
+    ])
+
+    const sealed = await printed(id, office)
+
+    expect(sealed).toContain(base64(second))
+    expect(sealed).not.toContain(base64(third))
+
+    // Renamed and hung on another appliance after the signature: the page
+    // stays as it was signed.
+    const other = newId<'appliance'>()
+
+    await push(app, office, [anAppliance(other, { inventoryNumber: '099' })])
+    const { receipts } = await push(app, office, [
+      changed('attachments', photo, {
+        title: { from: 'Anschlussleitung', to: 'Alles in Ordnung' },
+        applianceId: { from: appliance, to: other },
+      }),
+    ])
+
+    expect(receipts.map((receipt) => receipt.outcome)).toEqual(['applied'])
+
+    const moved = await printed(id, office)
+
+    expect(moved).toContain(base64(second))
+    expect(moved).toContain('<figcaption>leitung.png</figcaption>')
+    expect(moved).not.toContain('Alles in Ordnung')
+  })
+
+  it('give a protocol no photo of something else, nor to whoever may not see the files', async () => {
+    const technician = as(north.id, 'technician')
+    const office = as(north.id, 'office')
+    const appliance = newId<'appliance'>()
+    const ofInstallation = newId<'attachment'>()
+    const own = newId<'attachment'>()
+    const foreign = newId<'form-record'>()
+    const mine = newId<'form-record'>()
+    const [plan, cord] = [photoBytes('Plan der Anlage'), photoBytes('Leitung')]
+
+    await upload(plan, technician)
+    await upload(cord, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', ofInstallation, { installationId: installation, title: 'Plan' }),
+      aVersion(ofInstallation, plan),
+      created('attachments', own, { applianceId: appliance, title: 'Leitung' }),
+      aVersion(own, cord),
+      aPhotoTest(foreign, appliance, complete({ photo: ofInstallation })),
+      aPhotoTest(mine, appliance, complete({ photo: own })),
+    ])
+
+    const other = await printed(foreign, office)
+
+    expect(other).not.toContain(plan.toString('base64'))
+    expect(other).toContain('bei den Dateien des Geräts')
+
+    const officeRole = shippedRoles.filter((role) => role.key === 'office')
+    const rights = permissionCatalogue.sumOf(officeRole).rights
+    const withoutFiles = JSON.stringify({
+      userId: 'lena',
+      tenantId: north.id,
+      roles: [],
+      rights: rights.filter((right) => right !== 'attachment.read'),
+    })
+
+    expect(await printed(mine, office)).toContain(cord.toString('base64'))
+
+    const unseen = await printed(mine, withoutFiles)
+
+    expect(unseen).not.toContain(cord.toString('base64'))
+    expect(unseen).toContain('bei den Dateien des Geräts')
+  })
+})
+
+describe('the photo of a signed protocol (#817)', () => {
+  it('stays when its file goes to the bin, while a draft leaves it', async () => {
+    const technician = as(north.id, 'technician')
+    const office = as(north.id, 'office')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const sealed = newId<'form-record'>()
+    const draft = newId<'form-record'>()
+    const [first, second, third] = [photoBytes('alt'), photoBytes('mitte'), photoBytes('neu')]
+    const before = complete({ photo })
+
+    for (const bytes of [first, second, third]) {
+      await upload(bytes, technician)
+    }
+
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', photo, { applianceId: appliance, title: 'Stecker' }),
+      aVersion(photo, first),
+      aPhotoTest(sealed, appliance, before),
+      aPhotoTest(draft, appliance, before),
+    ])
+    // Two versions in one transmission share their moment; the later one is the newest.
+    await push(app, technician, [aVersion(photo, second), aVersion(photo, third)])
+    expect(await printed(draft, office)).toContain(third.toString('base64'))
+
+    await push(app, technician, [
+      signed(sealed, before, complete({ photo, tester_signature: signature })),
+    ])
+    await admin.query('update attachments set deleted_at = now() where id = $1', [photo])
+
+    expect(await printed(sealed, office)).toContain(third.toString('base64'))
+
+    const left = await printed(draft, office)
+
+    expect(left).not.toContain(third.toString('base64'))
+    expect(left).toContain('bei den Dateien des Geräts')
+  })
+
+  it('shows no photo that lay in the bin before it was signed', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const bytes = photoBytes('vorher entfernt')
+    const before = complete({ photo })
+
+    await upload(bytes, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', photo, { applianceId: appliance, title: 'Zuleitung' }),
+      aVersion(photo, bytes),
+      aPhotoTest(id, appliance, before),
+    ])
+    await admin.query(
+      "update attachments set deleted_at = now() - interval '1 minute' where id = $1",
+      [photo],
+    )
+    await push(app, technician, [
+      signed(id, before, complete({ photo, tester_signature: signature })),
+    ])
+
+    const page = await printed(id, as(north.id, 'office'))
+
+    expect(page).not.toContain(bytes.toString('base64'))
+    expect(page).toContain('bei den Dateien des Geräts')
+  })
+})
+
+describe('a photo field that names no file (#817)', () => {
+  it('prints where the photo lies instead of refusing the protocol', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const id = newId<'form-record'>()
+    const before = complete({ photo: 'foto-1' })
+
+    await push(app, technician, [anAppliance(appliance), aPhotoTest(id, appliance, before)])
+    await push(app, technician, [
+      signed(id, before, complete({ photo: 'foto-1', tester_signature: signature })),
+    ])
+
+    expect(await printed(id, as(north.id, 'office'))).toContain('bei den Dateien des Geräts')
+  })
+})
+
+describe('the newest version of a photo (#817)', () => {
+  it('is the newest by id, as every list of files shows it, whenever the server wrote it', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    // Made offline at 09:30 and sent at 11:00, after one made at 10:00.
+    const earlier = newId<'attachment-version'>()
+    const later = newId<'attachment-version'>()
+    const [first, second] = [photoBytes('09:30'), photoBytes('10:00')]
+    const version = (versionId: string, bytes: Buffer) =>
+      created('attachment_versions', versionId, {
+        attachmentId: photo,
+        sha256: hashOf(bytes),
+        fileName: 'leitung.png',
+        mediaType: 'image/png',
+        sizeBytes: bytes.byteLength,
+      })
+
+    await upload(first, technician)
+    await upload(second, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', photo, { applianceId: appliance, title: 'Leitung' }),
+      version(later, second),
+      aPhotoTest(id, appliance, complete({ photo })),
+    ])
+    await push(app, technician, [version(earlier, first)])
+
+    const page = await printed(id, as(north.id, 'office'))
+
+    expect(page).toContain(second.toString('base64'))
+    expect(page).not.toContain(first.toString('base64'))
+  })
+})
+
+describe('the photos one page of a protocol reads (#817)', () => {
+  const version = (id: string, sizeBytes: number, mediaType = 'image/jpeg') => ({
+    id,
+    fileName: `${id}.jpg`,
+    mediaType,
+    sha256: id,
+    sizeBytes,
+    changeSequence: 1,
+  })
+  const read = (versions: ReturnType<typeof version>[], uses = new Map<string, number>()) =>
+    photosToRead(new Map(versions.map((each) => [each.id, each])), uses, {
+      count: 2,
+      bytes: 100,
+    }).map(([id]) => id)
+
+  it('are pictures alone, and no more than the bound in number', () => {
+    expect(
+      read([
+        version('a', 10),
+        version('b', 10, 'application/pdf'),
+        version('c', 10),
+        version('d', 10),
+      ]),
+    ).toEqual(['a', 'c'])
+  })
+
+  it('count a photo once for every field that names it, as the page prints it', () => {
+    // Named twice, 60 bytes are 120 and past the bound; and two in number.
+    expect(read([version('a', 60), version('b', 10)], new Map([['a', 2]]))).toEqual(['b'])
+    expect(read([version('a', 10), version('b', 10)], new Map([['a', 2]]))).toEqual(['a'])
+  })
+
+  it('take only what a large page leaves of one request to the renderer', () => {
+    for (const page of [0, 1_000_000, 5_000_000, 9_000_000, 10_400_000, 20_000_000]) {
+      const { bytes } = photoBound(page)
+
+      expect(bytes).toBeGreaterThanOrEqual(0)
+      expect(bytes).toBeLessThanOrEqual(printedPhotos.bytes)
+      // A page that is too large on its own gets no photo, and no more than it had.
+      if (bytes > 0) {
+        expect(Math.ceil((bytes * 4) / 3) + page).toBeLessThan(rendererRequestBytes)
+      }
+    }
+
+    expect(photoBound(1_000_000).bytes).toBe(printedPhotos.bytes)
+    expect(photoBound(20_000_000).bytes).toBe(0)
+  })
+
+  it('fit, as base64 and with room for the page, into one request to the renderer', () => {
+    expect(Math.ceil((printedPhotos.bytes * 4) / 3) + 2_000_000).toBeLessThanOrEqual(
+      rendererRequestBytes,
+    )
+  })
+
+  it('stay within the bound in bytes, a large one left to say where it lies', () => {
+    expect(read([version('a', 60), version('b', 60), version('c', 40)])).toEqual(['a', 'c'])
+  })
+})
+
+describe('a photo with no version at its signature (#817)', () => {
+  it('stays away from the page of a signed protocol, whatever is written later', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const later = photoBytes('nach der Unterschrift')
+    const before = complete({ photo })
+
+    await upload(later, technician)
+    await push(app, technician, [anAppliance(appliance), aPhotoTest(id, appliance, before)])
+    await push(app, technician, [
+      signed(id, before, complete({ photo, tester_signature: signature })),
+    ])
+    // The file and its first version come after the signature.
+    await push(app, technician, [
+      created('attachments', photo, { applianceId: appliance, title: 'Später' }),
+      aVersion(photo, later),
+    ])
+
+    const page = await printed(id, as(north.id, 'office'))
+
+    expect(page).not.toContain(later.toString('base64'))
+    expect(page).toContain('bei den Dateien des Geräts')
+  })
+})
+
+describe('a photo whose stored file is gone (#817)', () => {
+  it('says where the photo lies, and the page is printed all the same', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const sha = 'd'.repeat(64)
+
+    await push(app, technician, [anAppliance(appliance)])
+    // A version whose bytes never reached the store of this installation.
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       insert into files (tenant_id, sha256, size_bytes, media_type) values ($1, $2, 10, 'image/png');
+       insert into attachments (id, tenant_id, appliance_id, title) values ($3, $1, $4, 'Verloren');
+       insert into attachment_versions (tenant_id, attachment_id, sha256, file_name, media_type, size_bytes)
+         values ($1, $3, $2, 'verloren.png', 'image/png', 10);
+       commit;`
+        .replaceAll('$1', `'${north.id}'`)
+        .replaceAll('$2', `'${sha}'`)
+        .replaceAll('$3', `'${photo}'`)
+        .replaceAll('$4', `'${appliance}'`),
+    )
+    await push(app, technician, [aPhotoTest(id, appliance, complete({ photo }))])
+
+    expect(await printed(id, as(north.id, 'office'))).toContain('bei den Dateien des Geräts')
+  })
+})
+
+describe('the versions of a photo (#817)', () => {
+  it('are grouped in time that grows with their number', () => {
+    const rows = Array.from({ length: 50_000 }, (_, index) => ({
+      id: 'f-1',
+      fileName: 'leitung.jpg',
+      mediaType: 'image/jpeg',
+      sha256: String(index),
+      sizeBytes: 10,
+      changeSequence: 50_000 - index,
+    }))
+    const started = performance.now()
+
+    expect(shownVersions(rows, 5)?.get('f-1')?.changeSequence).toBe(5)
+    expect(performance.now() - started).toBeLessThan(1000)
   })
 })

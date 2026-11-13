@@ -2,6 +2,7 @@ import {
   type ApplianceFacts,
   type BlockCircuit,
   type BlockField,
+  chosenPhotos,
   circuitBlocks,
   coreForms,
   dayHint,
@@ -24,6 +25,7 @@ import {
   type InstallationStructure,
   isApplianceFacts,
   isNextInspection,
+  isProtocolPhoto,
   type IsoDate,
   limitVerdict,
   type MeasurementField,
@@ -35,6 +37,7 @@ import {
   repeatNouns,
   type RecordState,
   sealProblems,
+  shownPhotoVersion,
   type SignatureValue,
   structureValues,
   templateValues,
@@ -60,6 +63,7 @@ import {
   refusalFor,
   text,
   useRecord,
+  useRecords,
   useRelated,
   useSync,
   useSyncStatus,
@@ -72,6 +76,7 @@ import { useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 
 import type { SyncClient } from '../sync/client.js'
+import { usePreview, useVersions } from './attachments.js'
 import { useBlockCircuits } from './electrical.js'
 import { useBlockStrings, useInstallationStructure } from './photovoltaic.js'
 
@@ -674,7 +679,7 @@ export function FieldInput({
   readonly performedOn: string
   /** The protocol tests only a part of the installation, whose day counts only where it is the sooner (#814, #822). */
   readonly partOnly?: boolean
-  readonly photos: readonly { readonly value: string; readonly label: string }[]
+  readonly photos: readonly PhotoOption[]
   readonly onChange: (value: FieldValue | undefined) => void
 }) {
   switch (field.kind) {
@@ -749,7 +754,12 @@ export function FieldInput({
       return (
         <SelectField
           label={field.label}
-          hint={field.hint ?? 'Ein Foto aus den Dateien der Anlage.'}
+          hint={
+            field.hint ??
+            (appliance
+              ? 'Ein Foto aus den Dateien des Geräts.'
+              : 'Ein Foto aus den Dateien der Anlage.')
+          }
           value={typeof value === 'string' ? value : ''}
           options={[{ value: '', label: 'keines' }, ...photos]}
           onChange={(chosen) => {
@@ -776,7 +786,7 @@ export function FieldInput({
 export function shownValue(
   field: BlockField,
   value: FieldValue | undefined,
-  photos: readonly { readonly value: string; readonly label: string }[],
+  photos: readonly PhotoOption[],
 ): string {
   if (value === undefined) {
     return 'nicht angegeben'
@@ -793,10 +803,26 @@ export function shownValue(
     case 'yes_no':
       return value === true ? 'ja' : 'nein'
     case 'photo':
-      return photos.find((photo) => photo.value === value)?.label ?? 'ein Foto der Anlage'
+      return photos.find((photo) => photo.value === value)?.label ?? 'ein Foto aus den Dateien'
     case 'date':
       return typeof value === 'string' ? date(value) : ''
   }
+}
+
+/**
+ * The photo a protocol names, as a picture (#817): the version its page
+ * prints, from this device where it has the picture.
+ */
+function ChosenPhoto({ photo }: { readonly photo: PhotoOption | undefined }) {
+  const href = usePreview(photo?.version)
+
+  return href && photo?.version && isProtocolPhoto(text(photo.version, 'mediaType')) ? (
+    <img
+      src={href}
+      alt={photo.label}
+      className="max-h-60 max-w-full self-start rounded-[4px] border border-line object-contain"
+    />
+  ) : null
 }
 
 export function FieldText({
@@ -814,7 +840,7 @@ export function FieldText({
   readonly appliance?: ApplianceFacts | null
   readonly performedOn: string
   readonly partOnly?: boolean
-  readonly photos: readonly { readonly value: string; readonly label: string }[]
+  readonly photos: readonly PhotoOption[]
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -822,6 +848,9 @@ export function FieldText({
       <p className={clsx('text-body whitespace-pre-line', value === undefined && 'text-ink-muted')}>
         {shownValue(field, value, photos)}
       </p>
+      {field.kind === 'photo' ? (
+        <ChosenPhoto photo={photos.find((photo) => photo.value === value)} />
+      ) : null}
       {field.kind === 'measurement' ? (
         <Verdict
           field={field}
@@ -916,7 +945,7 @@ function BlockCard({
   readonly block: GroupBlock
   readonly index: number
   readonly performedOn: string
-  readonly photos: readonly { readonly value: string; readonly label: string }[]
+  readonly photos: readonly PhotoOption[]
   readonly editable: boolean
   readonly onChange: (block: GroupBlock) => void
   readonly onRemove: (() => void) | null
@@ -1003,7 +1032,7 @@ function GroupSection({
   readonly value: FormValue | undefined
   readonly circuits: readonly (BlockCircuit & { readonly id: string })[]
   readonly performedOn: string
-  readonly photos: readonly { readonly value: string; readonly label: string }[]
+  readonly photos: readonly PhotoOption[]
   readonly editable: boolean
   readonly onChange: (blocks: readonly GroupBlock[]) => void
 }) {
@@ -1100,23 +1129,67 @@ function SignatureText({
  * The pictures of an installation, for the field that takes a photo, or of
  * the job for a protocol at the job alone (#310).
  */
+/**
+ * A photo a protocol may name: its file, its title, and the version it shows
+ * (#817), the same one the page of the protocol prints.
+ */
+export interface PhotoOption {
+  readonly value: string
+  readonly label: string
+  readonly version?: RecordState
+}
+
+/** The sequence of a write the server stamped on a row, or null before it did. */
+function sequenceOf(row: RecordState): number | null {
+  const sequence = row['changeSequence']
+
+  return typeof sequence === 'number' && sequence > 0 ? sequence : null
+}
+
 function usePhotos(
   installationId: string,
+  applianceId: string,
   jobId: string,
-): readonly { readonly value: string; readonly label: string }[] {
+  signed: { readonly at: number | null; readonly named: readonly string[] } | null,
+): readonly PhotoOption[] {
+  // The files of what was tested: the installation, the appliance of the
+  // register (#817), or the job of an acceptance, and of them the pictures
+  // the page of the protocol prints (`form-records.controller.ts`).
   const attachments = useRelated(
     'attachments',
-    installationId ? 'installationId' : 'jobId',
-    installationId || jobId,
+    installationId ? 'installationId' : applianceId ? 'applianceId' : 'jobId',
+    installationId || applianceId || jobId,
   )
+  // A signed protocol names its files for good, wherever they hang now, and
+  // shows them under the name of their version, as its page does.
+  const every = useRecords('attachments')
+  const versions = useVersions()
 
   return useMemo(
     () =>
-      attachments.map((attachment) => ({
-        value: String(attachment['id']),
-        label: text(attachment, 'title'),
-      })),
-    [attachments],
+      (signed
+        ? every.filter((attachment) => signed.named.includes(String(attachment['id'])))
+        : attachments
+      ).flatMap((attachment) => {
+        const version = shownPhotoVersion(
+          versions.get(String(attachment['id'])) ?? [],
+          sequenceOf,
+          signed ? signed.at : null,
+        )
+
+        // A draft offers pictures alone; a signed protocol names what it
+        // named, and shows a picture where its version is one.
+        return version && (signed || isProtocolPhoto(text(version, 'mediaType')))
+          ? [
+              {
+                value: String(attachment['id']),
+                label: signed ? text(version, 'fileName') : text(attachment, 'title'),
+                version,
+              },
+            ]
+          : []
+      }),
+    [attachments, every, versions, signed],
   )
 }
 
@@ -1140,7 +1213,7 @@ export interface ProtocolDraft {
   readonly appliance: ApplianceFacts | null
   /** Its record, for a screen that names it. */
   readonly applianceId: string | null
-  readonly photos: readonly { readonly value: string; readonly label: string }[]
+  readonly photos: readonly PhotoOption[]
   readonly editable: boolean
   readonly draft: FormValues
   /** The draft tests only a part of the installation and names no next inspection (#814). */
@@ -1172,8 +1245,24 @@ export function useProtocolDraft(record: RecordState): ProtocolDraft {
   const definition = definitionOf(record)
   const installationId = text(record, 'installationId')
   const circuits = useBlockCircuits(installationId)
-  const photos = usePhotos(installationId, text(record, 'jobId'))
   const applianceId = text(record, 'applianceId') || null
+  // A signature still in the outbox carries the stamp of the draft it was
+  // laid over; the server stamps it after the versions sent before it, so
+  // until then the newest version is the one it will show.
+  const signedAt =
+    isSigned(record) && !client.isPending('form_records', String(record['id']))
+      ? sequenceOf(record)
+      : null
+  const named = useMemo(
+    () =>
+      definition && isSigned(record) ? [...chosenPhotos(definition, valuesOf(record)).keys()] : [],
+    [definition, record],
+  )
+  const signed = useMemo(
+    () => (isSigned(record) ? { at: signedAt, named } : null),
+    [record, signedAt, named],
+  )
+  const photos = usePhotos(installationId, applianceId ?? '', text(record, 'jobId'), signed)
   const appliance = applianceFactsOf(useRecord('appliances', applianceId ?? undefined))
   const editable = !isSigned(record)
   // Read and written again, so that two texts of the same values compare

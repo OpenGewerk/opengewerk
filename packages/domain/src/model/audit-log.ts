@@ -309,6 +309,7 @@ export const auditVocabulary: AuditVocabulary = {
       customer_id: 'Kunde',
       site_id: 'Objekt',
       installation_id: 'Anlage',
+      appliance_id: 'Gerät',
       job_id: 'Auftrag',
       defect_id: 'Mangel',
     },
