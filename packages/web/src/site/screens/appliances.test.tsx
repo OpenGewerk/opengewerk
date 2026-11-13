@@ -363,6 +363,12 @@ describe('a photo of what is wrong with an appliance (#817)', () => {
       attachments: [
         { id: 'f-1', applianceId: 'a-2', siteId: 's-1', title: 'Typenschild' },
         { id: 'f-2', siteId: 's-1', title: 'Hausansicht' },
+        { id: 'f-3', applianceId: 'a-2', title: 'Prüfbericht des Herstellers' },
+      ],
+      attachment_versions: [
+        { id: 'v-1', attachmentId: 'f-1', fileName: 'typenschild.jpg', mediaType: 'image/jpeg' },
+        { id: 'v-2', attachmentId: 'f-2', fileName: 'haus.jpg', mediaType: 'image/jpeg' },
+        { id: 'v-3', attachmentId: 'f-3', fileName: 'bericht.pdf', mediaType: 'application/pdf' },
       ],
     })
 
@@ -370,6 +376,8 @@ describe('a photo of what is wrong with an appliance (#817)', () => {
 
     expect(within(photo).getByRole('option', { name: 'Typenschild' })).toBeTruthy()
     expect(within(photo).queryByRole('option', { name: 'Hausansicht' })).toBeNull()
+    // A PDF is no photo the page of the protocol could print.
+    expect(within(photo).queryByRole('option', { name: 'Prüfbericht des Herstellers' })).toBeNull()
     expect(screen.getByText('Ein Foto aus den Dateien des Geräts.')).toBeTruthy()
 
     await userEvent.upload(
@@ -379,7 +387,9 @@ describe('a photo of what is wrong with an appliance (#817)', () => {
 
     await waitFor(() => {
       expect(
-        client.list('attachments').filter((row) => !['f-1', 'f-2'].includes(String(row['id']))),
+        client
+          .list('attachments')
+          .filter((row) => !['f-1', 'f-2', 'f-3'].includes(String(row['id']))),
       ).toEqual([
         expect.objectContaining({
           applianceId: 'a-2',
@@ -392,7 +402,7 @@ describe('a photo of what is wrong with an appliance (#817)', () => {
 
     const made = client
       .list('attachments')
-      .find((row) => !['f-1', 'f-2'].includes(String(row['id'])))
+      .find((row) => !['f-1', 'f-2', 'f-3'].includes(String(row['id'])))
 
     expect(made && 'installationId' in made ? made['installationId'] : undefined).toBeUndefined()
     expect(

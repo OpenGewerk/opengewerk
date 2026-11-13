@@ -15,6 +15,7 @@ import {
   type FormRecordStatus,
   type IsoDate,
   isAllowed,
+  isProtocolPhoto,
   readFormValues,
   shippedRules,
   warrantyTerms,
@@ -53,9 +54,6 @@ import { tradeForms, tradeRules } from '../forms/registry.js'
 import { RequiresPermission } from './authorization.js'
 import { DocumentFiles } from './document-files.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
-
-/** The photos a page can show. */
-const photoTypes = ['image/jpeg', 'image/png', 'image/webp']
 
 /** A version of a file a photo field names, as the database gives it. */
 interface PhotoVersion {
@@ -284,7 +282,7 @@ export class FormRecordsController {
     const photos = new Map<string, ProtocolPhoto>()
 
     for (const [id, version] of versions) {
-      if (photoTypes.includes(version.mediaType)) {
+      if (isProtocolPhoto(version.mediaType)) {
         photos.set(id, {
           title: version.fileName,
           mediaType: version.mediaType,

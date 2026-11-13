@@ -24,6 +24,7 @@ import {
   type InstallationStructure,
   isApplianceFacts,
   isNextInspection,
+  isProtocolPhoto,
   type IsoDate,
   limitVerdict,
   type MeasurementField,
@@ -72,6 +73,7 @@ import { useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 
 import type { SyncClient } from '../sync/client.js'
+import { useVersions } from './attachments.js'
 import { useBlockCircuits } from './electrical.js'
 import { useBlockStrings, useInstallationStructure } from './photovoltaic.js'
 
@@ -1111,21 +1113,28 @@ function usePhotos(
   jobId: string,
 ): readonly { readonly value: string; readonly label: string }[] {
   // The files of what was tested: the installation, the appliance of the
-  // register (#817), or the job of an acceptance. The page of the protocol
-  // shows one of these and no other (`form-records.controller.ts`).
+  // register (#817), or the job of an acceptance, and of them the pictures
+  // the page of the protocol prints (`form-records.controller.ts`).
   const attachments = useRelated(
     'attachments',
     installationId ? 'installationId' : applianceId ? 'applianceId' : 'jobId',
     installationId || applianceId || jobId,
   )
+  const versions = useVersions()
 
   return useMemo(
     () =>
-      attachments.map((attachment) => ({
-        value: String(attachment['id']),
-        label: text(attachment, 'title'),
-      })),
-    [attachments],
+      attachments
+        .filter((attachment) => {
+          const newest = versions.get(String(attachment['id']))?.[0]
+
+          return newest !== undefined && isProtocolPhoto(text(newest, 'mediaType'))
+        })
+        .map((attachment) => ({
+          value: String(attachment['id']),
+          label: text(attachment, 'title'),
+        })),
+    [attachments, versions],
   )
 }
 

@@ -53,6 +53,15 @@ export const tradeAttachments = attachmentRules({
   },
 })
 
+/**
+ * Whether a file of this type is a photo a protocol prints (#817): a picture
+ * the renderer shows in every PDF viewer. The field of a protocol offers only
+ * these, and its page shows only these.
+ */
+export function isProtocolPhoto(mediaType: string): boolean {
+  return ['image/jpeg', 'image/png', 'image/webp'].includes(mediaType)
+}
+
 /** Why a type is not the one `fileMediaType` records, or null when it is. */
 export function attachmentMediaTypeProblem(mediaType: unknown): string | null {
   return tradeAttachments.mediaTypeProblem(mediaType)
