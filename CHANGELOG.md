@@ -28,10 +28,9 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Fassung, nennt es dauerhaft nur den Ort, ebenso bei einer Datei, die im Speicher fehlt, statt den Druck abzubrechen.
   Mit der Löschung eines Objekts gehen auch die Dateien seiner Geräte; eine Datei, die zugleich ein anderes Objekt
   nennt, bleibt bei diesem, statt die Löschung abzubrechen, wie es bisher auch eine Datei an einer Anlage tat. Die
-  Löschung eines Kunden nimmt wie bei Anlagen jede Datei mit, die ihn nennt. Eine Einschränkung: Der Prüfbericht je
-  Objekt und die anderen Sammel-PDFs nennen an der Stelle des Fotos weiter nur, wo es liegt (#935). Zieht ein Gerät
-  auf ein anderes Objekt um, kommen seine Dateien wie die einer Anlage erst mit ihrer nächsten Änderung auf ein Gerät,
-  das schon abgeglichen hat (#938).
+  Löschung eines Kunden nimmt wie bei Anlagen jede Datei mit, die ihn nennt. Prüfbericht je Objekt und die anderen
+  Sammel-PDFs zeigen das Foto ebenso (#935). Zieht ein Gerät auf ein anderes Objekt um, kommen seine Dateien wie die
+  einer Anlage erst mit ihrer nächsten Änderung auf ein Gerät, das schon abgeglichen hat (#938).
 - Jeder Push auf `main`, jeder Tag und jedes Löschen eines Zweigs wird nach Codeberg gespiegelt
   (codeberg.org/OpenGewerk), über einen Deploy Key nur für dieses Repository. Warum: der Code soll
   auch außerhalb von GitHub liegen; GitHub bleibt die Quelle, auf Codeberg wird nichts gepflegt.
@@ -171,6 +170,15 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Protokoll den Server vor der Fassung des Fotos erreichen, das sie zeigt, und das Protokoll zeigte dieses Foto nie.
   Was vor der wartenden Datei entstand, geht weiter sofort hinaus, alles danach mit der nächsten Runde nach dem Upload.
   Die Haustechnik bekommt das mit dem nächsten Anheben des Submoduls.
+- Der Prüfbericht je Objekt, die PV-Mappe, die Förderunterlagen und die Fertigmeldung an den Netzbetreiber binden ein
+  unterschriebenes Protokoll jetzt mit seinen Fotos ein, so wie es für sich gedruckt wird (#935). Bisher nannten sie
+  an der Stelle des Fotos nur, wo es liegt. Warum: Abschnitt 5.1 der Feature-Gliederung sagt, im Prüfbericht folge das
+  Protokoll jeder Anlage, wie es für sich gedruckt wird, und ein Protokoll soll an keiner Stelle anders aussehen. Das
+  Sammeln der Fotos (welche Fassung, welche Datei, wer sie sehen darf, wie viele auf eine Seite passen) steht dafür an
+  einer Stelle. Jede Seite wird erst gebaut, wenn sie gedruckt wird, und die Protokolle einer Sammlung lesen zusammen
+  höchstens 60 Fotos und 18 MB, dreimal die Grenze einer Seite; ein Protokoll darüber nennt wie bisher, wo sein Foto
+  liegt. Die Seite mit den Fotos der Anlage in den Förderunterlagen behält ihre eigene Grenze (#940). Die heutigen
+  Formulare für den Netzbetreiber haben kein Fotofeld.
 - Ein Protokoll wird nur noch mit Fotos aus den Dateien dessen unterschrieben, was es prüft: der Anlage, des Geräts oder
   bei einer Abnahme des Auftrags (#934). Nennt ein Gerät beim Unterschreiben eine andere Datei, eine im Papierkorb oder
   eine, die das Büro inzwischen umgehängt hat, meldet der Abgleich einen Konflikt für dieses Protokoll, und es bleibt

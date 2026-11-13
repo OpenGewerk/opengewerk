@@ -1,12 +1,10 @@
 import {
-  BadGatewayException,
   Controller,
   Get,
   Inject,
   NotFoundException,
   Param,
   Res,
-  ServiceUnavailableException,
   StreamableFile,
 } from '@nestjs/common'
 import {
@@ -29,7 +27,6 @@ import {
   present,
   RENDERER,
   type Renderer,
-  RendererUnavailableError,
   type TenantTransaction,
 } from '@opengewerk/platform-server'
 import { and, desc, eq, inArray, isNull, or } from 'drizzle-orm'
@@ -71,6 +68,13 @@ import { tradeForms, tradeRules } from '../forms/registry.js'
 import { todayInGermany } from '../today.js'
 import { RequiresPermission } from './authorization.js'
 import { DocumentFiles } from './document-files.js'
+import {
+  collectionBudget,
+  type Page,
+  photoSourcesOf,
+  printPages,
+  withPhotosOf,
+} from './protocol-photos.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
 import { pdf, safe } from './pv-documents.controller.js'
 
@@ -473,7 +477,7 @@ export class FundingPapersController {
     const { papers, evidence } = gathered
     const asks = (source: FundingEvidence['source']) =>
       evidence.some((entry) => entry.source === source)
-    const jobs: Parameters<Renderer>[0][] = [fundingCoverJob(papers, on)]
+    const jobs: Page[] = [fundingCoverJob(papers, on)]
 
     if (asks('declaration') && papers.declaration !== null) {
       jobs.push(declarationJob(papers, papers.declaration, on))
@@ -484,35 +488,50 @@ export class FundingPapersController {
     }
 
     if (asks('commissioning')) {
+      // Each protocol as it prints on its own, its photos included (#935).
+      const budget = collectionBudget()
+      const sources = await photoSourcesOf(this.database, identity, gathered.protocols)
+
       for (const record of gathered.protocols) {
         const definition = tradeForms.definitionFor(record.definitionKey, record.definitionVersion)
 
         if (definition) {
-          jobs.push(
-            protocolPrintJob({
-              definition,
-              values: readFormValues(record.values) ?? {},
-              performedOn: record.performedOn as IsoDate,
-              status: 'signed',
-              keeper: { name: papers.keeper.name, phone: papers.keeper.phone },
-              installation: papers.installation.designation,
-              appliance: null,
-              site: [papers.site.designation, papers.site.address].filter(present).join(', '),
-              rules: tradeRules,
-            }),
+          jobs.push(async () =>
+            protocolPrintJob(
+              await withPhotosOf(
+                this.files,
+                {
+                  definition,
+                  values: readFormValues(record.values) ?? {},
+                  performedOn: record.performedOn as IsoDate,
+                  status: 'signed',
+                  keeper: { name: papers.keeper.name, phone: papers.keeper.phone },
+                  installation: papers.installation.designation,
+                  appliance: null,
+                  site: [papers.site.designation, papers.site.address].filter(present).join(', '),
+                  rules: tradeRules,
+                },
+                sources.get(record.id),
+                budget,
+              ),
+            ),
           )
         }
       }
     }
 
+    // The page of photos keeps its own bound, chosen with the cover that
+    // names them (#940), and reads them only when it is printed (#935).
     if (asks('photos') && gathered.photos.length > 0) {
-      const photos: FundingPhoto[] = []
+      jobs.push(async () => {
+        const photos: FundingPhoto[] = []
 
-      for (const photo of gathered.photos) {
-        photos.push({ ...photo, bytes: await this.files.read(photo.sha256) })
-      }
+        for (const photo of gathered.photos) {
+          photos.push({ ...photo, bytes: await this.files.read(photo.sha256) })
+        }
 
-      jobs.push(photosJob(papers, photos, on, gathered.morePhotos))
+        return photosJob(papers, photos, on, gathered.morePhotos)
+      })
     }
 
     const parts = await this.printed(identity, jobs)
@@ -532,24 +551,7 @@ export class FundingPapersController {
   }
 
   /** The pages one after another: the renderer of an instance is a single browser. */
-  private async printed(
-    identity: RequestIdentity,
-    jobs: readonly Parameters<Renderer>[0][],
-  ): Promise<Uint8Array[]> {
-    try {
-      const parts: Uint8Array[] = []
-
-      for (const job of jobs) {
-        parts.push(await this.render(job, identity))
-      }
-
-      return parts
-    } catch (error) {
-      if (error instanceof RendererUnavailableError) {
-        throw new ServiceUnavailableException(error.message)
-      }
-
-      throw new BadGatewayException(error instanceof Error ? error.message : String(error))
-    }
+  private printed(identity: RequestIdentity, jobs: readonly Page[]): Promise<Uint8Array[]> {
+    return printPages(this.render, identity, jobs)
   }
 }

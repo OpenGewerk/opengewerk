@@ -21,6 +21,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
 import { binary } from './test-binary.js'
+import { aStoredPhoto } from './test-photo.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { issuableDraft, invoiceable, readyToInvoice } from './test-invoice.js'
 import { created, push as pushVia } from './test-structure.js'
@@ -620,5 +621,42 @@ describe('the papers of a funding programme at an installation (#307)', () => {
         .set('x-test-identity', office())
         .expect(200)
     }
+  })
+
+  it('bind the commissioning protocol in with its photos, as it prints on its own (#935)', async () => {
+    const photo = await aStoredPhoto(admin, store, north.id, wallbox, 'Typenschild Wallbox')
+
+    await admin.query(
+      `insert into form_records (id, tenant_id, definition_key, definition_version, installation_id, performed_on, status, values)
+       values ($1, $2, 'vde-0100-722', 1, $3, '2026-11-25', 'signed', $4)`,
+      [newId<'form-record'>(), north.id, wallbox, JSON.stringify({ photo: photo.id })],
+    )
+
+    const { printed } = await papers(`/installations/${wallbox}/funding/${program}`)
+
+    expect(
+      printed.find((job) => job.html.includes('Inbetriebnahmeprotokoll Ladeeinrichtung'))?.html,
+    ).toContain(`data:image/png;base64,${photo.base64}`)
+  })
+
+  it('read every photo only when its page is printed (#935)', async () => {
+    const get = store.get.bind(store)
+    // How many pages had been printed when each photo was read.
+    const readAfter: number[] = []
+
+    store.get = async (sha256) => {
+      readAfter.push(jobs.length)
+
+      return get(sha256)
+    }
+
+    try {
+      await papers(`/installations/${wallbox}/funding/${program}`)
+    } finally {
+      store.get = get
+    }
+
+    expect(readAfter.length).toBeGreaterThan(0)
+    expect(readAfter.every((printed) => printed > 0)).toBe(true)
   })
 })
