@@ -16,9 +16,11 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   beschädigte Anschlussleitung ließ sich bisher nur in Worten festhalten, weil Dateien an Kunde, Objekt, Anlage oder
   Auftrag hingen, nicht an einem Gerät. Das PDF eines Prüfprotokolls zeigt jetzt das gewählte Foto selbst statt
   „bei den Dateien der Anlage“, bei Anlagen wie bei Geräten, für alle, die Dateien sehen dürfen. Ein unterschriebenes
-  Protokoll zeigt die Fassung des Fotos, die der Server bei der Unterschrift hatte, auch wenn die Datei danach aus den
-  Akten entfernt wird; erst wenn sie endgültig gelöscht ist, nennt das PDF nur noch, wo das Foto lag. Mit der Löschung
-  eines Objekts gehen auch die Dateien seiner Geräte.
+  Protokoll zeigt die Fassung des Fotos, die der Server bei der Unterschrift hatte, mit ihrem Dateinamen, auch wenn die
+  Datei danach umbenannt, umgehängt oder aus den Akten entfernt wird; erst wenn sie endgültig gelöscht ist, nennt das
+  PDF nur noch, wo das Foto lag. Mit der Löschung eines Objekts gehen auch die Dateien seiner Geräte. Die Löschung
+  eines Kunden lässt eine Datei an einer Anlage oder einem Gerät beim Objekt, auch wenn sie den Kunden nennt; bisher
+  nahm sie eine Datei mit, die im Büro an der Anlage hinzugefügt war, obwohl die Dateien der Anlagen bleiben sollten.
 - Jeder Push auf `main`, jeder Tag und jedes Löschen eines Zweigs wird nach Codeberg gespiegelt
   (codeberg.org/OpenGewerk), über einen Deploy Key nur für dieses Repository. Warum: der Code soll
   auch außerhalb von GitHub liegen; GitHub bleibt die Quelle, auf Codeberg wird nichts gepflegt.

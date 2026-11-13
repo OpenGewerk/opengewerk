@@ -60,7 +60,7 @@ const photoTypes = ['image/jpeg', 'image/png', 'image/webp']
 /** A version of a file a photo field names, as the database gives it. */
 interface PhotoVersion {
   readonly id: string
-  readonly title: string
+  readonly fileName: string
   readonly mediaType: string
   readonly sha256: string
   /** When the server wrote the version, in the order of every write of the business. */
@@ -192,8 +192,12 @@ export class FormRecordsController {
         // The check of the values takes any short text for a photo; only an id
         // can name a file, and anything else would break the query (#817).
         const chosen = chosenPhotos(definition, values).filter(isUuid)
-        // The files a field may name are those the screen offered: of the
-        // installation, of the appliance, or of the job of an acceptance.
+        const signed = record.status === 'signed'
+        // The files a draft may name are those the screen offered: of the
+        // installation, of the appliance, or of the job of an acceptance. A
+        // signed protocol names its file for good, wherever it is hung later,
+        // so that its page does not change (opengewerk#817); whoever may read
+        // files may read every one of the business anyway.
         const ofSubject = record.installationId
           ? eq(attachments.installationId, record.installationId)
           : record.applianceId
@@ -201,7 +205,6 @@ export class FormRecordsController {
             : record.jobId
               ? eq(attachments.jobId, record.jobId)
               : null
-        const signed = record.status === 'signed'
         // A signed protocol keeps its photo when the file goes to the bin after
         // it was signed, and shows none that lay there before: its page does
         // not change. Only a purge, which deletes the versions, takes it
@@ -221,14 +224,22 @@ export class FormRecordsController {
             : await tx
                 .select({
                   id: attachments.id,
-                  title: attachments.title,
+                  // The name of the version, which is written once, and not the
+                  // title of the file, which may change after a signature.
+                  fileName: attachmentVersions.fileName,
                   mediaType: attachmentVersions.mediaType,
                   sha256: attachmentVersions.sha256,
                   changeSequence: attachmentVersions.changeSequence,
                 })
                 .from(attachments)
                 .innerJoin(attachmentVersions, eq(attachmentVersions.attachmentId, attachments.id))
-                .where(and(inArray(attachments.id, chosen as never[]), ofSubject, ...kept))
+                .where(
+                  and(
+                    inArray(attachments.id, chosen as never[]),
+                    ...(signed ? [] : [ofSubject]),
+                    ...kept,
+                  ),
+                )
                 // Newest first in the order of the writes, which also tells two
                 // versions of one transmission apart.
                 .orderBy(asc(attachments.id), desc(attachmentVersions.changeSequence))
@@ -274,7 +285,7 @@ export class FormRecordsController {
     for (const [id, version] of versions) {
       if (photoTypes.includes(version.mediaType)) {
         photos.set(id, {
-          title: version.title,
+          title: version.fileName,
           mediaType: version.mediaType,
           bytes: await this.files.read(version.sha256),
         })

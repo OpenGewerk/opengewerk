@@ -800,6 +800,40 @@ describe('deleting a customer (#845)', () => {
     ).toEqual([{ sha256: hex('a') }, { sha256: hex('b') }])
   })
 
+  it('leaves the files of its installations and appliances, which name it as well, with the site (#817)', async () => {
+    const { customer, site, installation } = await vossberg()
+    const appliance = newId<'appliance'>()
+    const [atInstallation, atAppliance] = [newId<'attachment'>(), newId<'attachment'>()]
+
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       insert into appliances (id, tenant_id, site_id, designation, protection_class)
+         values ('${appliance}', '${north}', '${site}', 'Kaffeemaschine', 'I');
+       insert into files (tenant_id, sha256, size_bytes, media_type)
+         values ('${north}', '${hex('c')}', 10, 'image/jpeg'), ('${north}', '${hex('d')}', 10, 'image/jpeg');
+       insert into attachments (id, tenant_id, customer_id, site_id, installation_id, title)
+         values ('${atInstallation}', '${north}', '${customer}', '${site}', '${installation}', 'Typenschild');
+       insert into attachments (id, tenant_id, customer_id, site_id, appliance_id, title)
+         values ('${atAppliance}', '${north}', '${customer}', '${site}', '${appliance}', 'Anschlussleitung');
+       insert into attachment_versions (tenant_id, attachment_id, sha256, file_name, media_type, size_bytes)
+         values ('${north}', '${atInstallation}', '${hex('c')}', 'typenschild.jpg', 'image/jpeg', 10),
+                ('${north}', '${atAppliance}', '${hex('d')}', 'leitung.jpg', 'image/jpeg', 10);
+       commit;`,
+    )
+    await record(customer).expect(201)
+    await erase(customer).expect(201)
+
+    expect(
+      (
+        await admin.query(
+          `select a.title from attachments a join attachment_versions v on v.attachment_id = a.id
+            where a.id = any($1) order by a.title`,
+          [[atInstallation, atAppliance]],
+        )
+      ).rows,
+    ).toEqual([{ title: 'Anschlussleitung' }, { title: 'Typenschild' }])
+  })
+
   it('is for whoever leads the business, at the route and in the database', async () => {
     const { customer } = await vossberg()
 

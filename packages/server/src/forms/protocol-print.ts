@@ -80,6 +80,7 @@ export interface PrintedProtocol {
 
 /** A photo a field of a protocol names, as the page prints it (#817). */
 export interface ProtocolPhoto {
+  /** The name of its version, which no change after a signature touches. */
   readonly title: string
   readonly mediaType: string
   readonly bytes: Uint8Array

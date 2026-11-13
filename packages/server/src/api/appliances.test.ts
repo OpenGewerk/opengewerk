@@ -699,7 +699,7 @@ describe('the files of an appliance (#817)', () => {
     const draft = await printed(id, office)
 
     expect(draft).toContain(`data:image/png;base64,${base64(first)}`)
-    expect(draft).toContain('<figcaption>Anschlussleitung</figcaption>')
+    expect(draft).toContain('<figcaption>leitung.png</figcaption>')
 
     // A draft shows the newest version.
     await push(app, technician, [aVersion(photo, second)])
@@ -716,6 +716,26 @@ describe('the files of an appliance (#817)', () => {
 
     expect(sealed).toContain(base64(second))
     expect(sealed).not.toContain(base64(third))
+
+    // Renamed and hung on another appliance after the signature: the page
+    // stays as it was signed.
+    const other = newId<'appliance'>()
+
+    await push(app, office, [anAppliance(other, { inventoryNumber: '099' })])
+    const { receipts } = await push(app, office, [
+      changed('attachments', photo, {
+        title: { from: 'Anschlussleitung', to: 'Alles in Ordnung' },
+        applianceId: { from: appliance, to: other },
+      }),
+    ])
+
+    expect(receipts.map((receipt) => receipt.outcome)).toEqual(['applied'])
+
+    const moved = await printed(id, office)
+
+    expect(moved).toContain(base64(second))
+    expect(moved).toContain('<figcaption>leitung.png</figcaption>')
+    expect(moved).not.toContain('Alles in Ordnung')
   })
 
   it('give a protocol no photo of something else, nor to whoever may not see the files', async () => {
