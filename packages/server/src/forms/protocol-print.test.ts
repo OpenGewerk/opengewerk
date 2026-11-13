@@ -250,3 +250,38 @@ describe('the commissioning protocol after VDE-AR-N 4105 on paper (#304)', () =>
     expect(html).toContain('<tr><th>Unterschrift des Elektrofachbetriebs</th>')
   })
 })
+
+describe('a photo on a printed protocol (#817)', () => {
+  const withPhoto: FormDefinition = {
+    key: 'probe-photo',
+    version: 1,
+    title: 'Probe mit Foto',
+    attachesTo: 'installation',
+    sections: [
+      {
+        key: 'result',
+        title: 'Ergebnis',
+        fields: [{ kind: 'photo', key: 'photo', label: 'Foto' }],
+      },
+    ],
+  }
+  const photo = '01a1d37b-f41b-7bc2-9541-d376ec96153d'
+  const printed = (more: Partial<PrintedProtocol>) =>
+    protocolPrintJob({ ...protocol, definition: withPhoto, values: { photo }, ...more }).html
+
+  it('is shown where the page has its picture', () => {
+    const html = printed({
+      photos: new Map([
+        [photo, { title: 'leitung.png', mediaType: 'image/png', bytes: new Uint8Array([1, 2]) }],
+      ]),
+    })
+
+    expect(html).toContain('<img src="data:image/png;base64,AQI=" alt="leitung.png">')
+  })
+
+  it('says where it lies otherwise: at the installation, the appliance or the job', () => {
+    expect(printed({ photoHome: 'installation' })).toContain('bei den Dateien der Anlage')
+    expect(printed({ photoHome: 'appliance' })).toContain('bei den Dateien des Geräts')
+    expect(printed({ photoHome: 'job' })).toContain('bei den Dateien des Auftrags')
+  })
+})

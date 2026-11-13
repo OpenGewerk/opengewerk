@@ -274,6 +274,11 @@ export class FormRecordsController {
             definition.purpose === 'acceptance'
               ? warrantyNotes(readFormValues(record.values) ?? {}, record.performedOn as IsoDate)
               : [],
+          photoHome: record.installationId
+            ? 'installation'
+            : record.applianceId
+              ? 'appliance'
+              : 'job',
         }
       },
     )

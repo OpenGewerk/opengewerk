@@ -76,7 +76,20 @@ export interface PrintedProtocol {
    * is not among them says where it lies.
    */
   readonly photos?: ReadonlyMap<string, ProtocolPhoto>
+  /**
+   * Where a photo the page cannot show lies: among the files of the
+   * installation, of the appliance, or of the job of an acceptance (#817).
+   * Without it, of the appliance where there is one, else of the installation.
+   */
+  readonly photoHome?: 'installation' | 'appliance' | 'job'
 }
+
+/** The sentence for where a photo lies, by what it hangs on. */
+const photoHomeText = {
+  installation: 'bei den Dateien der Anlage',
+  appliance: 'bei den Dateien des Geräts',
+  job: 'bei den Dateien des Auftrags',
+} as const
 
 /** A photo a field of a protocol names, as the page prints it (#817). */
 export interface ProtocolPhoto {
@@ -157,7 +170,7 @@ function photoOf(id: string, protocol: PrintedProtocol): string {
   const photo = protocol.photos?.get(id)
 
   if (!photo) {
-    return protocol.appliance ? 'bei den Dateien des Geräts' : 'bei den Dateien der Anlage'
+    return photoHomeText[protocol.photoHome ?? (protocol.appliance ? 'appliance' : 'installation')]
   }
 
   return `<figure class="photo"><img src="data:${text(photo.mediaType)};base64,${Buffer.from(photo.bytes).toString('base64')}" alt="${text(photo.title)}"><figcaption>${text(photo.title)}</figcaption></figure>`
