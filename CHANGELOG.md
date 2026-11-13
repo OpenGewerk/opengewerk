@@ -31,9 +31,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Löschung eines Kunden nimmt wie bei Anlagen jede Datei mit, die ihn nennt. Eine Einschränkung: Der Prüfbericht je
   Objekt und die anderen Sammel-PDFs nennen an der Stelle des Fotos weiter nur, wo es liegt (#935). Zieht ein Gerät
   auf ein anderes Objekt um, kommen seine Dateien wie die einer Anlage erst mit ihrer nächsten Änderung auf ein Gerät,
-  das schon abgeglichen hat (#938). Nimmt ein Gerät ein Foto auf, während ein anderer Upload noch läuft, und
-  unterschreibt gleich, kann die Unterschrift vor der Fassung des Fotos beim Server ankommen; das Protokoll zeigt
-  dieses Foto dann nicht (#939).
+  das schon abgeglichen hat (#938).
 - Jeder Push auf `main`, jeder Tag und jedes Löschen eines Zweigs wird nach Codeberg gespiegelt
   (codeberg.org/OpenGewerk), über einen Deploy Key nur für dieses Repository. Warum: der Code soll
   auch außerhalb von GitHub liegen; GitHub bleibt die Quelle, auf Codeberg wird nichts gepflegt.
@@ -167,6 +165,12 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Der Abgleich eines Geräts schickt seine Änderungen in der Reihenfolge, in der sie entstanden sind, auch wenn eine
+  Datei noch hochgeladen wird (#939). Bisher hielt der Ausgang im Fundament nur den Datensatz zurück, der auf die Datei
+  wartet; eine spätere Änderung an etwas anderem ging sofort hinaus. Warum: So konnte die Unterschrift unter einem
+  Protokoll den Server vor der Fassung des Fotos erreichen, das sie zeigt, und das Protokoll zeigte dieses Foto nie.
+  Was vor der wartenden Datei entstand, geht weiter sofort hinaus, alles danach mit der nächsten Runde nach dem Upload.
+  Die Haustechnik bekommt das mit dem nächsten Anheben des Submoduls.
 - Ein Protokoll wird nur noch mit Fotos aus den Dateien dessen unterschrieben, was es prüft: der Anlage, des Geräts oder
   bei einer Abnahme des Auftrags (#934). Nennt ein Gerät beim Unterschreiben eine andere Datei, eine im Papierkorb oder
   eine, die das Büro inzwischen umgehängt hat, meldet der Abgleich einen Konflikt für dieses Protokoll, und es bleibt

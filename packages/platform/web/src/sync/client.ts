@@ -1116,13 +1116,17 @@ export class SyncClient {
   }
 
   /**
-   * What may go up now: everything but a record that names a file still
-   * waiting for its upload, and what comes after it for the same record
+   * What may go up now: the outbox in its order up to the first operation
+   * that names a file still waiting for its upload
    * (opengewerk-haustechnik#451). A photo kept while the upload of the one
    * before it ran is on the list of uploads after that list was read; its
    * version would reach the server ahead of its file and come back as
-   * `record_missing` on the hash. What waits goes with the next round, which
-   * this one asks for, after the file.
+   * `record_missing` on the hash. Everything after it waits as well, of any
+   * record (opengewerk#939): an operation that relies on the version, such as
+   * a signature of a protocol that shows the photo, would otherwise reach the
+   * server ahead of it. What came before it names no waiting file and goes.
+   * What waits goes with the next round, which this one asks for, after the
+   * file.
    */
   private async ready(): Promise<readonly Operation[]> {
     const waiting = await this.store.waitingHashes()
@@ -1131,24 +1135,19 @@ export class SyncClient {
       return this.outbox
     }
 
-    const held = new Set(
-      this.outbox
-        .filter((operation) =>
-          operation.patches.some((patch) => typeof patch.to === 'string' && waiting.has(patch.to)),
-        )
-        .map((operation) => recordKey(operation.entity, operation.recordId)),
+    const ordered = inOutboxOrder(this.outbox)
+    const first = ordered.findIndex((operation) =>
+      operation.patches.some((patch) => typeof patch.to === 'string' && waiting.has(patch.to)),
     )
 
-    if (held.size === 0) {
+    if (first === -1) {
       return this.outbox
     }
 
     this.filesWaiting = Math.max(this.filesWaiting, waiting.size)
     this.wanted = true
 
-    return this.outbox.filter(
-      (operation) => !held.has(recordKey(operation.entity, operation.recordId)),
-    )
+    return ordered.slice(0, first)
   }
 
   /**
