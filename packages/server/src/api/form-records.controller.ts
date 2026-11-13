@@ -229,11 +229,12 @@ export class FormRecordsController {
         const uses = chosenPhotos(definition, values)
         const chosen = [...uses.keys()].filter(isUuid)
         const signed = record.status === 'signed'
-        // The files a draft may name are those the screen offered: of the
+        // The files a protocol may name are those the screen offered: of the
         // installation, of the appliance, or of the job of an acceptance. A
-        // signed protocol names its file for good, wherever it is hung later,
-        // so that its page does not change (opengewerk#817); whoever may read
-        // files may read every one of the business anyway.
+        // signed one was signed with such a file (opengewerk#934), and a file
+        // a signed protocol names stays where it hangs (migration 0144), so
+        // that its page does not change; one signed before with a file of
+        // something else says where the photo lies.
         const ofSubject = record.installationId
           ? eq(attachments.installationId, record.installationId)
           : record.applianceId
@@ -270,13 +271,7 @@ export class FormRecordsController {
                 })
                 .from(attachments)
                 .innerJoin(attachmentVersions, eq(attachmentVersions.attachmentId, attachments.id))
-                .where(
-                  and(
-                    inArray(attachments.id, chosen as never[]),
-                    ...(signed ? [] : [ofSubject]),
-                    ...kept,
-                  ),
-                )
+                .where(and(inArray(attachments.id, chosen as never[]), ofSubject, ...kept))
                 // Newest first by id, as every list of files on a device shows
                 // them; the sequence of the writes only bounds a signed one.
                 .orderBy(asc(attachments.id), desc(attachmentVersions.id))

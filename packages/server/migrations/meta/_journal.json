@@ -1009,6 +1009,13 @@
       "when": 1794547972123,
       "tag": "0143_appliance_files",
       "breakpoints": true
+    },
+    {
+      "idx": 144,
+      "version": "7",
+      "when": 1794590279375,
+      "tag": "0144_signed_photos_stay",
+      "breakpoints": true
     }
   ]
 }

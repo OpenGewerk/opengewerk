@@ -63,7 +63,6 @@ import {
   refusalFor,
   text,
   useRecord,
-  useRecords,
   useRelated,
   useSync,
   useSyncStatus,
@@ -1160,15 +1159,15 @@ function usePhotos(
     installationId ? 'installationId' : applianceId ? 'applianceId' : 'jobId',
     installationId || applianceId || jobId,
   )
-  // A signed protocol names its files for good, wherever they hang now, and
-  // shows them under the name of their version, as its page does.
-  const every = useRecords('attachments')
+  // A signed protocol shows the files it names under the name of their
+  // version, as its page does; they hang where they hung when it was signed
+  // (opengewerk#934).
   const versions = useVersions()
 
   return useMemo(
     () =>
       (signed
-        ? every.filter((attachment) => signed.named.includes(String(attachment['id'])))
+        ? attachments.filter((attachment) => signed.named.includes(String(attachment['id'])))
         : attachments
       ).flatMap((attachment) => {
         const version = shownPhotoVersion(
@@ -1189,7 +1188,7 @@ function usePhotos(
             ]
           : []
       }),
-    [attachments, every, versions, signed],
+    [attachments, versions, signed],
   )
 }
 

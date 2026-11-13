@@ -23,18 +23,15 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   und zusammen 6 MB, bei einer großen Seite entsprechend weniger, damit die Seite in eine Anfrage an den Renderer
   passt; ein Foto darüber nennt wie ein fehlendes nur seinen Ort. Ein unterschriebenes Protokoll zeigt die Fassung des
   Fotos, die der Server bei der Unterschrift hatte, mit ihrem Dateinamen (auf 120 Zeichen gekürzt), auch wenn die
-  Datei danach umbenannt, umgehängt oder aus den Akten entfernt wird; erst wenn sie endgültig gelöscht ist, nennt das
-  PDF nur noch, wo das Foto lag. Hatte der Server bei der Unterschrift keine Fassung, nennt es dauerhaft nur den Ort,
-  ebenso bei einer Datei, die im Speicher fehlt, statt den Druck abzubrechen. Mit der Löschung eines Objekts gehen
-  auch die Dateien seiner Geräte; eine Datei, die zugleich ein anderes Objekt nennt, bleibt bei diesem, statt die
-  Löschung abzubrechen, wie es bisher auch eine Datei an einer Anlage tat. Die Löschung eines Kunden nimmt wie bei
-  Anlagen jede Datei mit, die ihn nennt. Zwei Einschränkungen: Ein unterschriebenes Protokoll prüft nicht, ob die
-  Datei bei der Unterschrift an seinem Gegenstand hing; über die Oberfläche lässt sich nur eine solche wählen, über
-  den Abgleich auch eine andere (#934). Und der Prüfbericht je Objekt und die anderen Sammel-PDFs nennen an der Stelle
-  des Fotos weiter nur, wo es liegt (#935). Zieht ein Gerät auf ein anderes Objekt um, kommen seine Dateien wie die
-  einer Anlage erst mit ihrer nächsten Änderung auf ein Gerät, das schon abgeglichen hat (#938). Nimmt ein Gerät ein
-  Foto auf, während ein anderer Upload noch läuft, und unterschreibt gleich, kann die Unterschrift vor der Fassung des
-  Fotos beim Server ankommen; das Protokoll zeigt dieses Foto dann nicht (#939).
+  Datei danach umbenannt oder aus den Akten entfernt wird; umhängen lässt sie sich dann nicht mehr (#934); erst wenn
+  sie endgültig gelöscht ist, nennt das PDF nur noch, wo das Foto lag. Hatte der Server bei der Unterschrift keine
+  Fassung, nennt es dauerhaft nur den Ort, ebenso bei einer Datei, die im Speicher fehlt, statt den Druck abzubrechen.
+  Mit der Löschung eines Objekts gehen auch die Dateien seiner Geräte; eine Datei, die zugleich ein anderes Objekt
+  nennt, bleibt bei diesem, statt die Löschung abzubrechen, wie es bisher auch eine Datei an einer Anlage tat. Die
+  Löschung eines Kunden nimmt wie bei Anlagen jede Datei mit, die ihn nennt. Eine Einschränkung: Der Prüfbericht je
+  Objekt und die anderen Sammel-PDFs nennen an der Stelle des Fotos weiter nur, wo es liegt (#935). Zieht ein Gerät
+  auf ein anderes Objekt um, kommen seine Dateien wie die einer Anlage erst mit ihrer nächsten Änderung auf ein Gerät,
+  das schon abgeglichen hat (#938).
 - Jeder Push auf `main`, jeder Tag und jedes Löschen eines Zweigs wird nach Codeberg gespiegelt
   (codeberg.org/OpenGewerk), über einen Deploy Key nur für dieses Repository. Warum: der Code soll
   auch außerhalb von GitHub liegen; GitHub bleibt die Quelle, auf Codeberg wird nichts gepflegt.
@@ -174,6 +171,16 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Protokoll den Server vor der Fassung des Fotos erreichen, das sie zeigt, und das Protokoll zeigte dieses Foto nie.
   Was vor der wartenden Datei entstand, geht weiter sofort hinaus, alles danach mit der nächsten Runde nach dem Upload.
   Die Haustechnik bekommt das mit dem nächsten Anheben des Submoduls.
+- Ein Protokoll wird nur noch mit Fotos aus den Dateien dessen unterschrieben, was es prüft: der Anlage, des Geräts oder
+  bei einer Abnahme des Auftrags (#934). Nennt ein Gerät beim Unterschreiben eine andere Datei, eine im Papierkorb oder
+  eine, die das Büro inzwischen umgehängt hat, meldet der Abgleich einen Konflikt für dieses Protokoll, und es bleibt
+  ein Entwurf; eine Kennung in Großbuchstaben oder mit Escape lehnt er ab. Eine Datei, die ein unterschriebenes
+  Protokoll als Foto nennt, lässt sich danach nicht mehr umhängen (Migration 0144), umbenennen weiter. Seite und
+  Anwendung zeigen bei einem unterschriebenen Protokoll nur ein Foto, dessen Datei an seinem Gegenstand hängt. Warum:
+  Seit #817 zeigte das PDF eines unterschriebenen Protokolls die genannte Datei, ohne zu prüfen, woran sie hängt, und
+  über den Abgleich konnte ein Gerät jede Kennung schicken. Einschränkung: Ein Protokoll, das vor diesem Stand
+  unterschrieben wurde und dessen Datei danach umgehängt wurde, zeigt sein Foto nicht und sagt wie vor #817 nur, bei
+  welchen Dateien die Fotos seines Gegenstands liegen.
 - Ein Fotofeld und das Foto eines Prüfpunkts nehmen nur noch die Kennung einer Datei an, eine UUID; bisher ging jeder
   Text von 1 bis 64 Zeichen durch (#933). Warum: Über die Oberfläche steht dort immer die Kennung einer Datei, über den
   Abgleich konnte ein Gerät aber jeden kurzen Text schicken, auch in ein Protokoll, das danach unterschrieben und

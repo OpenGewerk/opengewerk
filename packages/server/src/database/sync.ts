@@ -1,4 +1,5 @@
 import {
+  chosenPhotos,
   type CustomerId,
   type DocumentStatus,
   type EarlyStartWording,
@@ -14,6 +15,7 @@ import {
   offlineRules,
   type Operation,
   paymentTermProblem,
+  readFormValues,
   type RecordState,
   signaturePathIsValid,
   type TenantId,
@@ -23,6 +25,7 @@ import {
   attachmentVersionFiles,
   attachmentVersionPlace,
   contactWithoutParent,
+  isUuid,
   serverSync,
   type SyncCheck,
   sectionRefusal,
@@ -30,6 +33,8 @@ import {
   syncTables,
   type TenantTransaction,
 } from '@opengewerk/platform-server'
+
+import { eq, inArray, sql } from 'drizzle-orm'
 
 import type { FoundIdentity } from '../api/identity.js'
 import { signatureRefusal } from '../documents/signing.js'
@@ -218,6 +223,116 @@ const formRecord: Check = ({ operation, values, current }) => {
     })
 
   return problem === null ? null : { kind: 'client', message: problem }
+}
+
+/**
+ * A protocol is signed with photos out of the files of what it is about
+ * (opengewerk#934): the installation, the appliance of the register, or the
+ * job of an acceptance, as its form offers them. A device that names another
+ * file, or one the office hung elsewhere while the device was offline, is
+ * told so for this protocol alone; so is one that names a file in the bin,
+ * which the page of the protocol would leave out. The counter of the tenant
+ * is taken first, in the order every logged change takes it: a move of the
+ * file at the same moment takes it in the trigger of migration 0144 before
+ * it asks, so that it either went before and is seen here, or waits for the
+ * signature and is refused. No lock of the row of the file, which a move
+ * would take before the counter.
+ */
+const signedPhotos: Check = async ({ tx, tenantId, operation, values, current }) => {
+  if (operation.entity !== 'form_records' || operation.kind === 'delete') {
+    return null
+  }
+
+  if (standing(values, current)('status') !== 'signed' || current?.['status'] === 'signed') {
+    return null
+  }
+
+  // The row of the protocol before the counter, as every change of a row
+  // takes them: a second writer of the draft that holds the row would wait
+  // for the counter while the signature waited for the row. Read again under
+  // the lock, so that the check asks what is written after it, and not what
+  // the draft was before a writer that held the row changed it.
+  let base = current
+
+  if (current) {
+    // Every field the check reads: definition, subject and values, all as
+    // they stand now.
+    const [row] = await tx
+      .select({
+        status: schema.formRecords.status,
+        definitionKey: schema.formRecords.definitionKey,
+        definitionVersion: schema.formRecords.definitionVersion,
+        installationId: schema.formRecords.installationId,
+        applianceId: schema.formRecords.applianceId,
+        jobId: schema.formRecords.jobId,
+        values: schema.formRecords.values,
+      })
+      .from(schema.formRecords)
+      .where(eq(schema.formRecords.id, operation.recordId as never))
+      .for('no key update')
+
+    if (!row || row.status === 'signed') {
+      return null
+    }
+
+    base = { ...current, ...row }
+  }
+
+  const at = standing(values, base)
+  const definition = tradeForms.definitionFor(
+    String(at('definitionKey')),
+    Number(at('definitionVersion')),
+  )
+  const read = readFormValues(at('values') ?? '{}')
+
+  // What the form check above refuses on its own.
+  if (!definition || read === null) {
+    return null
+  }
+
+  const named = [...chosenPhotos(definition, read).keys()].filter(isUuid)
+
+  if (named.length === 0) {
+    return null
+  }
+
+  // The trigger of migration 0144 finds a name in the values as they are
+  // written: the id in small letters and spelt out, as every screen writes
+  // it. Another spelling would let the file be moved after the signature.
+  const written = String(at('values') ?? '')
+
+  if (named.some((id) => id !== id.toLowerCase() || !written.includes(`"${id}"`))) {
+    return {
+      kind: 'client',
+      message: 'Ein Foto nennt die Kennung seiner Datei in Kleinbuchstaben und ausgeschrieben.',
+    }
+  }
+
+  const column = at('installationId')
+    ? 'installationId'
+    : at('applianceId')
+      ? 'applianceId'
+      : 'jobId'
+  await tx.execute(sql`select public.file_naming_lock(${tenantId})`)
+
+  const files = await tx
+    .select({
+      id: schema.attachments.id,
+      installationId: schema.attachments.installationId,
+      applianceId: schema.attachments.applianceId,
+      jobId: schema.attachments.jobId,
+      deletedAt: schema.attachments.deletedAt,
+    })
+    .from(schema.attachments)
+    .where(inArray(schema.attachments.id, named as never[]))
+
+  if (files.length < named.length || files.some((file) => file.deletedAt !== null)) {
+    return { kind: 'conflict', reason: 'record_missing', fields: ['values'] }
+  }
+
+  return files.every((file) => file[column] !== null && file[column] === at(column))
+    ? null
+    : { kind: 'conflict', reason: 'changed_elsewhere', fields: ['values'] }
 }
 
 /**
@@ -543,6 +658,7 @@ export const sync = serverSync<FoundIdentity>({
     assignee,
     reveal,
     formRecord,
+    signedPhotos,
     reportFields,
     structure,
     recordRules,

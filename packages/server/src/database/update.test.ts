@@ -2089,8 +2089,10 @@ describe('the rollback of the register of appliances', () => {
       `begin; set local session_replication_role = replica;
        delete from form_records; delete from appliances; commit;`,
     )
-    // The files of an appliance (0143, #817) hang on the table, and a rollback
-    // takes back the later migrations first.
+    // The files of an appliance (0143, #817) hang on the table, and the
+    // trigger of 0144 on their column; a rollback takes back the later
+    // migrations first.
+    await revertMigration(admin, '0144_signed_photos_stay')
     await revertMigration(admin, '0143_appliance_files')
     await revertMigration(admin, '0114_appliances')
 
@@ -2126,6 +2128,8 @@ describe('the rollback of the register of appliances', () => {
       [file, tenant.id, appliance],
     )
 
+    // The trigger of 0144 hangs on the column; a rollback takes it back first.
+    await revertMigration(admin, '0144_signed_photos_stay')
     await expect(revertMigration(admin, '0143_appliance_files')).rejects.toThrow(
       'Die Rücknahme von 0143 löscht keine Dateien',
     )
