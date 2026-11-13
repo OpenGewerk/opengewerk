@@ -987,6 +987,51 @@ describe('the photo a protocol is signed with (#934)', () => {
     }
   })
 
+  it('asks the draft as a writer that held its row left it', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const other = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const before = complete({ photo })
+
+    await push(app, technician, [
+      anAppliance(appliance),
+      anAppliance(other, { inventoryNumber: '095' }),
+      created('attachments', photo, { applianceId: appliance, title: 'Leitung' }),
+      aPhotoTest(id, appliance, before),
+    ])
+
+    const editing = await admin.connect()
+    let signing: ReturnType<typeof push> = Promise.resolve({ receipts: [] })
+
+    try {
+      // Another writer holds the row and hangs the draft on another
+      // appliance, whose files the photo is not among.
+      await editing.query('begin')
+      await editing.query("select set_config('app.tenant_id', $1, true)", [north.id])
+      await editing.query("select set_config('app.user_id', 'lena', true)")
+      await editing.query('select id from form_records where id = $1 for no key update', [id])
+
+      signing = push(app, technician, [
+        signed(id, before, complete({ photo, tester_signature: signature })),
+      ])
+      await waitingFor(admin, editing, signing)
+      await editing.query('update form_records set appliance_id = $1 where id = $2', [other, id])
+      await editing.query('commit')
+
+      const { receipts } = await signing
+
+      expect(receipts.map(({ outcome, reason }) => [outcome, reason])).toEqual([
+        ['conflict', 'changed_elsewhere'],
+      ])
+    } finally {
+      await editing.query('rollback').catch(() => undefined)
+      await signing.catch(() => undefined)
+      editing.release()
+    }
+  })
+
   it('is named in small letters and spelt out, or the signature is refused', async () => {
     const technician = as(north.id, 'technician')
     const appliance = newId<'appliance'>()

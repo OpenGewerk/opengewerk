@@ -243,12 +243,38 @@ const signedPhotos: Check = async ({ tx, tenantId, operation, values, current })
     return null
   }
 
-  const at = standing(values, current)
-
-  if (at('status') !== 'signed' || current?.['status'] === 'signed') {
+  if (standing(values, current)('status') !== 'signed' || current?.['status'] === 'signed') {
     return null
   }
 
+  // The row of the protocol before the counter, as every change of a row
+  // takes them: a second writer of the draft that holds the row would wait
+  // for the counter while the signature waited for the row. Read again under
+  // the lock, so that the check asks what is written after it, and not what
+  // the draft was before a writer that held the row changed it.
+  let base = current
+
+  if (current) {
+    const [row] = await tx
+      .select({
+        status: schema.formRecords.status,
+        installationId: schema.formRecords.installationId,
+        applianceId: schema.formRecords.applianceId,
+        jobId: schema.formRecords.jobId,
+        values: schema.formRecords.values,
+      })
+      .from(schema.formRecords)
+      .where(eq(schema.formRecords.id, operation.recordId as never))
+      .for('no key update')
+
+    if (!row || row.status === 'signed') {
+      return null
+    }
+
+    base = { ...current, ...row }
+  }
+
+  const at = standing(values, base)
   const definition = tradeForms.definitionFor(
     String(at('definitionKey')),
     Number(at('definitionVersion')),
@@ -283,17 +309,6 @@ const signedPhotos: Check = async ({ tx, tenantId, operation, values, current })
     : at('applianceId')
       ? 'applianceId'
       : 'jobId'
-  // The row of the protocol before the counter, as every change of a row
-  // takes them: a second writer of the draft that holds the row would wait
-  // for the counter while the signature waited for the row.
-  if (current) {
-    await tx
-      .select({ id: schema.formRecords.id })
-      .from(schema.formRecords)
-      .where(eq(schema.formRecords.id, operation.recordId as never))
-      .for('no key update')
-  }
-
   await tx.execute(sql`select public.file_naming_lock(${tenantId})`)
 
   const files = await tx
