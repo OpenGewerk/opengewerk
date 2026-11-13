@@ -174,6 +174,13 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   festgeschrieben wird. Die Regel liegt im Fundament und gilt beim Speichern; ein schon unterschriebenes Protokoll mit
   einem anderen Wert bleibt, wie es ist, und sein PDF sagt weiter, wo das Foto liegt. Die Haustechnik bekommt die
   Regel mit dem nächsten Anheben des Submoduls.
+- Mängelbericht und Förderunterlagen lesen ihre Fotos jetzt in derselben Grenze wie das Prüfprotokoll seit #817:
+  höchstens 20 Fotos und 6 MB je Seite, weniger, wenn die Seite selbst schon groß ist (#940). Was nicht mehr
+  hineinpasst, wird nicht gelesen; der Mängelbericht sagt je Mangel, wie viele weitere Fotos beim Mangel stehen, die
+  Förderunterlagen nennen auf dem Deckblatt und auf der Seite der Fotos, wie viele bei den Dateien der Anlage
+  bleiben. Warum: Beide lasen bisher jedes Foto ganz in den Speicher und schrieben es in die Seite, ohne Grenze; ein
+  Auftrag mit vielen großen Fotos füllte so mit einer Anfrage den Speicher des Servers, und der Renderer nimmt je
+  Anfrage höchstens 10 MiB an. Die Grenze steht jetzt an einer Stelle für alle drei Seiten.
 - Kann der Dateispeicher eine Datei der Auskunft nach Art. 15 nicht mehr lesen, liegt der Hinweis darauf im ZIP jetzt
   im eigenen Ordner `fehlende Dateien`, etwa `fehlende Dateien/Bericht.pdf/fehlt.txt`, statt als
   `dateien/Bericht.pdf (fehlt).txt` neben den gespeicherten Dateien (#916). Warum: Hieß eine gespeicherte Datei

@@ -65,6 +65,7 @@ import {
 } from '../forms/funding-papers.js'
 import { kilowattHourText, kilowattText } from '../forms/grid-documents.js'
 import { bound } from '../forms/inspection-report.js'
+import { photoBound, printedTextBytes, withinBound } from '../forms/photo-bound.js'
 import { protocolPrintJob } from '../forms/protocol-print.js'
 import { tradeForms, tradeRules } from '../forms/registry.js'
 import { todayInGermany } from '../today.js'
@@ -85,12 +86,20 @@ function maker(part: { readonly manufacturer: string | null; readonly model: str
   return said === '' ? null : said
 }
 
+/** "1 Foto", "3 Fotos". */
+function photosText(count: number): string {
+  return `${String(count)} ${count === 1 ? 'Foto' : 'Fotos'}`
+}
+
 /** What the papers print and what they bind behind the pages. */
 interface Gathered {
   readonly papers: FundingPapers
   readonly evidence: readonly FundingEvidence[]
   readonly protocols: readonly (typeof formRecords.$inferSelect)[]
+  /** The photos the papers lay in, within the bound of a page (#940). */
   readonly photos: readonly (Omit<FundingPhoto, 'bytes'> & { readonly sha256: string })[]
+  /** How many photos among the files of the installation they do not lay in. */
+  readonly morePhotos: number
   readonly invoices: readonly DocumentId[]
 }
 
@@ -185,6 +194,7 @@ async function gather(
       fileName: attachmentVersions.fileName,
       mediaType: attachmentVersions.mediaType,
       sha256: attachmentVersions.sha256,
+      sizeBytes: attachmentVersions.sizeBytes,
       createdAt: attachmentVersions.createdAt,
     })
     .from(attachments)
@@ -212,6 +222,7 @@ async function gather(
       fileName: file.fileName,
       mediaType: file.mediaType,
       sha256: file.sha256,
+      sizeBytes: file.sizeBytes,
       takenOn: file.createdAt.toISOString().slice(0, 10) as IsoDate,
     }))
 
@@ -320,48 +331,6 @@ async function gather(
     }
   }
 
-  const checklist = fundingChecklist(program.evidence, {
-    invoices: invoices.length,
-    commissioning: protocols.length,
-    photos: photos.length,
-    serialNumbers: serials.length,
-    declaration: present(program.declaration),
-  })
-  const lines: FundingLine[] = checklist.map((entry) => {
-    if (entry.state === 'operator') {
-      return { ...entry, said: null }
-    }
-
-    const said = enclosedSaid[entry.source as Exclude<typeof entry.source, 'operator'>]
-
-    if (entry.state === 'missing') {
-      return { ...entry, said: said.missing }
-    }
-
-    switch (entry.source) {
-      case 'invoice':
-        return {
-          ...entry,
-          said: invoices
-            .map((invoice) => `${invoice.number ?? ''} vom ${day(invoice.documentDate as IsoDate)}`)
-            .join(', '),
-        }
-      case 'commissioning':
-        return {
-          ...entry,
-          said: protocols
-            .map((record) => `unterschrieben am ${day(record.performedOn as IsoDate)}`)
-            .join(', '),
-        }
-      case 'photos':
-        return {
-          ...entry,
-          said: `${String(photos.length)} ${photos.length === 1 ? 'Foto' : 'Fotos'} unter den Dateien der Anlage`,
-        }
-      default:
-        return { ...entry, said: said.enclosed }
-    }
-  })
   const site_ = [site.designation, addressLines(site, 'DE').join(', ')].filter(present).join(', ')
   const declaration =
     program.evidence.some((entry) => entry.source === 'declaration') && present(program.declaration)
@@ -382,32 +351,96 @@ async function gather(
         })
       : null
 
+  const unlisted: FundingPapers = {
+    program: { name: program.name, sponsor: program.sponsor, url: program.url },
+    keeper,
+    customer: {
+      name: customer?.name ?? '',
+      address: customer ? addressLines(customer, 'DE').join(', ') : '',
+    },
+    site: { designation: site.designation, address: addressLines(site, 'DE').join(', ') },
+    installation: {
+      kind: installation.kind,
+      designation: installation.designation,
+      maker: maker(installation),
+      serialNumber: installation.serialNumber,
+      ratingW: installation.ratedPowerW,
+      capacityWh: installation.usableCapacityWh,
+      commissionedOn,
+    },
+    lines: [],
+    declaration,
+    serials,
+  }
+  // The page of photos without them, as the renderer gets it, tells what
+  // is left (#940): the photos are laid in in order, within the bound.
+  const pageBytes = Buffer.byteLength(JSON.stringify(photosJob(unlisted, [], on, 0)))
+  const enclosed = withinBound(
+    photos,
+    // Its title, twice, and file name go into the page with it.
+    (photo) =>
+      photo.sizeBytes + printedTextBytes(photo.title, photo.title, photo.fileName, photo.mediaType),
+    photoBound(pageBytes),
+  )
+  const checklist = fundingChecklist(program.evidence, {
+    invoices: invoices.length,
+    commissioning: protocols.length,
+    photos: enclosed.length,
+    serialNumbers: serials.length,
+    declaration: present(program.declaration),
+  })
+  const lines: FundingLine[] = checklist.map((entry) => {
+    if (entry.state === 'operator') {
+      return { ...entry, said: null }
+    }
+
+    const said = enclosedSaid[entry.source as Exclude<typeof entry.source, 'operator'>]
+
+    if (entry.state === 'missing') {
+      // Photos there are, but none fits into the papers.
+      return {
+        ...entry,
+        said:
+          entry.source === 'photos' && photos.length > 0
+            ? `${photosText(photos.length)} unter den Dateien der Anlage, zu groß zum Beilegen`
+            : said.missing,
+      }
+    }
+
+    switch (entry.source) {
+      case 'invoice':
+        return {
+          ...entry,
+          said: invoices
+            .map((invoice) => `${invoice.number ?? ''} vom ${day(invoice.documentDate as IsoDate)}`)
+            .join(', '),
+        }
+      case 'commissioning':
+        return {
+          ...entry,
+          said: protocols
+            .map((record) => `unterschrieben am ${day(record.performedOn as IsoDate)}`)
+            .join(', '),
+        }
+      case 'photos':
+        return {
+          ...entry,
+          said:
+            enclosed.length === photos.length
+              ? `${photosText(photos.length)} unter den Dateien der Anlage`
+              : `${String(enclosed.length)} von ${photosText(photos.length)} unter den Dateien der Anlage, die übrigen liegen dort`,
+        }
+      default:
+        return { ...entry, said: said.enclosed }
+    }
+  })
   return {
     evidence: program.evidence,
     protocols,
-    photos,
+    photos: enclosed,
+    morePhotos: photos.length - enclosed.length,
     invoices: invoices.map((invoice) => invoice.id),
-    papers: {
-      program: { name: program.name, sponsor: program.sponsor, url: program.url },
-      keeper,
-      customer: {
-        name: customer?.name ?? '',
-        address: customer ? addressLines(customer, 'DE').join(', ') : '',
-      },
-      site: { designation: site.designation, address: addressLines(site, 'DE').join(', ') },
-      installation: {
-        kind: installation.kind,
-        designation: installation.designation,
-        maker: maker(installation),
-        serialNumber: installation.serialNumber,
-        ratingW: installation.ratedPowerW,
-        capacityWh: installation.usableCapacityWh,
-        commissionedOn,
-      },
-      lines,
-      declaration,
-      serials,
-    },
+    papers: { ...unlisted, lines },
   }
 }
 
@@ -479,7 +512,7 @@ export class FundingPapersController {
         photos.push({ ...photo, bytes: await this.files.read(photo.sha256) })
       }
 
-      jobs.push(photosJob(papers, photos, on))
+      jobs.push(photosJob(papers, photos, on, gathered.morePhotos))
     }
 
     const parts = await this.printed(identity, jobs)

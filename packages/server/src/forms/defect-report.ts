@@ -33,6 +33,8 @@ export interface DefectReportEntry {
   /** The customer's signature of the acceptance, where it is accepted. */
   readonly signature: { readonly signer: string; readonly at: string; readonly path: string } | null
   readonly photos: readonly DefectReportPhoto[]
+  /** How many of its photos the page does not print, past the bound of a page (#940). */
+  readonly morePhotos: number
 }
 
 /** What the report of the defects of a job prints (#311). */
@@ -82,6 +84,7 @@ const reportStyle = `
 .photos figure { margin: 0; width: 40mm; }
 .photos img { display: block; width: 40mm; height: 28mm; object-fit: cover; border: 0.2mm solid #c9ced6; }
 .photos figcaption { font-size: 7.5pt; color: #5b6573; overflow-wrap: anywhere; }
+.more-photos { margin: 1.5mm 0 0; font-size: 8pt; color: #5b6573; }
 `
 
 function entry(defect: DefectReportEntry, number: number): string {
@@ -108,8 +111,22 @@ function entry(defect: DefectReportEntry, number: number): string {
   <div class="defect-head"><span>${String(number)}.</span><span class="what">${text(defect.description)}</span><span>${text(defectStatusLabel[defect.status])}</span></div>
   ${facts.length === 0 ? '' : `<table class="facts"><tbody>${facts.map(([key, value]) => `<tr><th>${text(key)}</th><td>${text(value)}</td></tr>`).join('')}</tbody></table>`}
   <ul class="steps">${defect.steps.map((step) => `<li>${text(`${step.label}: ${step.who}, ${step.at}`)}</li>`).join('')}</ul>
-  ${signature}${photos}
+  ${signature}${photos}${morePhotosText(defect.morePhotos)}
 </section>`
+}
+
+/** "2 weitere Fotos sind nicht gedruckt, sie stehen beim Mangel." for the photos past the bound of the page (#940). */
+function morePhotosText(count: number): string {
+  if (count === 0) {
+    return ''
+  }
+
+  const said =
+    count === 1
+      ? 'Ein weiteres Foto ist nicht gedruckt, es steht beim Mangel.'
+      : `${String(count)} weitere Fotos sind nicht gedruckt, sie stehen beim Mangel.`
+
+  return `<p class="more-photos">${text(said)}</p>`
 }
 
 /** The report of the defects of a job on portrait A4: each with its facts, steps, signature and photos. */

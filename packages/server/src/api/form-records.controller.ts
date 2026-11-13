@@ -52,42 +52,11 @@ import {
   protocolPrintJob,
   type ProtocolPhoto,
 } from '../forms/protocol-print.js'
+import { type PhotoBound, photoBound, printedPhotos, withinBound } from '../forms/photo-bound.js'
 import { tradeForms, tradeRules } from '../forms/registry.js'
 import { RequiresPermission } from './authorization.js'
 import { DocumentFiles } from './document-files.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
-
-/**
- * How many photos one page of a protocol reads, and how many bytes of them
- * together (#817): a protocol may name a photo per circuit, and each is read
- * whole into memory and written into the page again. A photo past either
- * bound says where it lies, as one the page cannot show. A photo a device
- * takes is made smaller first and keeps far below. The bytes leave room in
- * what the renderer takes in one request (browserless, 10 MiB unless set
- * otherwise): a photo grows by a third as base64, and the page has its own.
- */
-export const printedPhotos = { count: 20, bytes: 6_000_000 } as const
-
-/** What the renderer takes in one request, unless it is set otherwise (`MAX_PAYLOAD_SIZE`). */
-export const rendererRequestBytes = 10_485_760
-
-/** Room in a request for the policy around the page and the markup of each photo. */
-const requestReserve = 64_000
-
-/**
- * The bound for the photos of one page whose request without them takes
- * `pageBytes` (#817): `printedPhotos`, and no more bytes than the request has
- * left, at three bytes for every four characters of base64. A large page
- * leaves less, one at the edge of the renderer none.
- */
-export function photoBound(pageBytes: number): { readonly count: number; readonly bytes: number } {
-  const left = rendererRequestBytes - pageBytes - requestReserve
-
-  return {
-    count: printedPhotos.count,
-    bytes: Math.max(0, Math.min(printedPhotos.bytes, Math.floor((left * 3) / 4))),
-  }
-}
 
 /** A version of a file a photo field names, as the database gives it. */
 interface PhotoVersion {
@@ -146,28 +115,15 @@ export function shownVersions(
 export function photosToRead(
   versions: ReadonlyMap<string, PhotoVersion>,
   uses: ReadonlyMap<string, number>,
-  bound: { readonly count: number; readonly bytes: number } = printedPhotos,
+  bound: PhotoBound = printedPhotos,
 ): [string, PhotoVersion][] {
-  const chosen: [string, PhotoVersion][] = []
-  let printed = 0
-  let read = 0
-
   // A photo several fields name is printed once for each: counted so.
-  for (const [id, version] of versions) {
-    const times = Math.max(1, uses.get(id) ?? 1)
-
-    if (
-      isProtocolPhoto(version.mediaType) &&
-      printed + times <= bound.count &&
-      read + version.sizeBytes * times <= bound.bytes
-    ) {
-      printed += times
-      read += version.sizeBytes * times
-      chosen.push([id, version])
-    }
-  }
-
-  return chosen
+  return withinBound(
+    [...versions].filter(([, version]) => isProtocolPhoto(version.mediaType)),
+    ([, version]) => version.sizeBytes,
+    bound,
+    ([id]) => uses.get(id) ?? 1,
+  )
 }
 
 /** "Gewährleistung bis 05.11.2031: fünf Jahre ab der Abnahme (§ 634a Abs. 1 Nr. 2 BGB)." and the parts, where they end sooner (#310). */

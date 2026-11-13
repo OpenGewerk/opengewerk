@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -443,8 +444,17 @@ describe('the papers of a funding programme at an installation (#307)', () => {
   })
 
   /** A file among those of the wallbox, in the store and in the tables. */
-  async function filed(title: string, bytes: Uint8Array, mediaType: string): Promise<void> {
-    const blob = await store.put(bytes)
+  async function filed(
+    title: string,
+    bytes: Uint8Array,
+    mediaType: string,
+    sizeBytes = bytes.length,
+    stored = true,
+  ): Promise<void> {
+    // A file not stored has its row and no bytes: whatever reads it fails.
+    const blob = stored
+      ? await store.put(bytes)
+      : { sha256: createHash('sha256').update(bytes).digest('hex') }
     const attachment = newId<'attachment'>()
 
     await admin.query(
@@ -459,7 +469,7 @@ describe('the papers of a funding programme at an installation (#307)', () => {
     await admin.query(
       `insert into attachment_versions (tenant_id, attachment_id, sha256, file_name, media_type, size_bytes)
        values ($1, $2, $3, $4, $5, $6)`,
-      [north.id, attachment, blob.sha256, `${title}.bin`, mediaType, bytes.length],
+      [north.id, attachment, blob.sha256, `${title}.bin`, mediaType, sizeBytes],
     )
   }
 
@@ -528,6 +538,32 @@ describe('the papers of a funding programme at an installation (#307)', () => {
     )
     // Five pages printed for the papers, and the invoice as it went to the customer behind them.
     expect(pages).toBe(6)
+  })
+
+  it('lay in only the photos within the bound of a page, and say how many more there are (#940)', async () => {
+    const png = Uint8Array.from(
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    )
+
+    // One of 4 MB by what the store recorded, and a small one whose long title
+    // the page prints twice and in its file name, 2.5 MB with them (1.7 MB
+    // with the title once), beside the small one of the test before: the two
+    // first together past the 6 MB of a page.
+    // The one past the bound has no bytes in the store: papers that read it would fail.
+    await filed('Zähler', new TextEncoder().encode('nie gelesen'), 'image/png', 4_000_000, false)
+    await filed('x'.repeat(140_000), png, 'image/png', 1_000)
+
+    const { printed } = await papers(`/installations/${wallbox}/funding/${program}`)
+    const photos = printed.find((job) => job.html.includes('<title>Fotos,'))?.html ?? ''
+
+    expect(printed[0]?.html).toContain(
+      'Foto der Wallbox mit Typenschild</td><td class="state enclosed">liegt bei</td><td class="said">2 von 3 Fotos unter den Dateien der Anlage, die übrigen liegen dort',
+    )
+    expect(photos.match(/<figure class="photo">/g)).toHaveLength(2)
+    expect(photos).toContain('Ein weiteres Foto liegt bei den Dateien der Anlage.')
   })
 
   it('lay in only what the programme asks for', async () => {

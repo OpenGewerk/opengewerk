@@ -53,6 +53,7 @@ import {
 } from '../database/schema/index.js'
 import { day } from '../forms/appliance-report.js'
 import { type DefectReportPhoto, defectReportJob, momentText } from '../forms/defect-report.js'
+import { photoBound, printedTextBytes, withinBound } from '../forms/photo-bound.js'
 import { DocumentFiles } from './document-files.js'
 import { todayInGermany } from '../today.js'
 import { RequiresPermission } from './authorization.js'
@@ -232,6 +233,7 @@ export class DefectReportController {
                 fileName: attachmentVersions.fileName,
                 mediaType: attachmentVersions.mediaType,
                 sha256: attachmentVersions.sha256,
+                sizeBytes: attachmentVersions.sizeBytes,
               })
               .from(attachments)
               .innerJoin(attachmentVersions, eq(attachmentVersions.attachmentId, attachments.id))
@@ -282,9 +284,86 @@ export class DefectReportController {
       }
     }
 
+    const shownOf = (defectId: string) =>
+      [...newest.values()].filter((photo) => photo.defectId === defectId)
+    const entriesWith = (bytes: ReadonlyMap<string, DefectReportPhoto>) =>
+      gathered.rows.map((row) => {
+        const acceptedOn = gathered.acceptances.find(
+          (record) => record.id === row.acceptanceRecordId,
+        )?.performedOn
+        const reportedOn = berlinClock(row.reportedAt).day
+        const own = gathered.steps.filter((step) => step.defectId === row.id)
+        const signed = own.find((step) => step.step === 'accepted')
+
+        return {
+          description: row.description,
+          status: row.status as DefectStatus,
+          installation:
+            gathered.named.find((installation) => installation.id === row.installationId)
+              ?.designation ?? null,
+          origin: acceptedOn ? `Vorbehalt der Abnahme vom ${day(acceptedOn)}` : null,
+          remedyDueOn: row.remedyDueOn as IsoDate | null,
+          warranty: defectWarrantyText(
+            defectWarranty(
+              reportedOn,
+              row.acceptanceRecordId !== null,
+              gathered.windows.get(`${String(row.installationId)}`) ?? null,
+            ),
+          ),
+          steps: [
+            acceptedOn
+              ? { label: defectStatusLabel.reported, who: 'aus der Abnahme', at: day(acceptedOn) }
+              : {
+                  label: defectStatusLabel.reported,
+                  who: nameOf(row.createdBy),
+                  at: momentText(row.reportedAt),
+                },
+            ...own.map((step) => ({
+              label: defectStatusLabel[step.step],
+              who:
+                step.step === 'accepted' && step.signerName
+                  ? step.signerName
+                  : nameOf(step.createdBy),
+              at: momentText(step.takenAt),
+            })),
+          ],
+          signature:
+            signed?.signerName && signed.signaturePath
+              ? {
+                  signer: signed.signerName,
+                  at: momentText(signed.takenAt),
+                  path: signed.signaturePath,
+                }
+              : null,
+          photos: shownOf(row.id)
+            .map((photo) => bytes.get(photo.id))
+            .filter((photo) => photo !== undefined),
+          morePhotos: shownOf(row.id).filter((photo) => !bytes.has(photo.id)).length,
+        }
+      })
+    const reportWith = (bytes: ReadonlyMap<string, DefectReportPhoto>) =>
+      defectReportJob(
+        {
+          keeper: gathered.keeper,
+          customer: gathered.customer,
+          job: gathered.job,
+          site: gathered.site,
+          defects: entriesWith(bytes),
+        },
+        on,
+      )
+
+    // The page without its photos, as the renderer gets it, tells what is
+    // left (#940); the photos are read defect by defect, as it prints them.
+    const pageBytes = Buffer.byteLength(JSON.stringify(reportWith(new Map())))
     const bytes = new Map<string, DefectReportPhoto>()
 
-    for (const photo of newest.values()) {
+    for (const photo of withinBound(
+      gathered.rows.flatMap((row) => shownOf(row.id)),
+      // Its title and file name go into the page with it.
+      (each) => each.sizeBytes + printedTextBytes(each.title, each.fileName, each.mediaType),
+      photoBound(pageBytes),
+    )) {
       bytes.set(photo.id, {
         title: photo.title,
         fileName: photo.fileName,
@@ -293,77 +372,10 @@ export class DefectReportController {
       })
     }
 
-    const entries = gathered.rows.map((row) => {
-      const acceptedOn = gathered.acceptances.find(
-        (record) => record.id === row.acceptanceRecordId,
-      )?.performedOn
-      const reportedOn = berlinClock(row.reportedAt).day
-      const own = gathered.steps.filter((step) => step.defectId === row.id)
-      const signed = own.find((step) => step.step === 'accepted')
-
-      return {
-        description: row.description,
-        status: row.status as DefectStatus,
-        installation:
-          gathered.named.find((installation) => installation.id === row.installationId)
-            ?.designation ?? null,
-        origin: acceptedOn ? `Vorbehalt der Abnahme vom ${day(acceptedOn)}` : null,
-        remedyDueOn: row.remedyDueOn as IsoDate | null,
-        warranty: defectWarrantyText(
-          defectWarranty(
-            reportedOn,
-            row.acceptanceRecordId !== null,
-            gathered.windows.get(`${String(row.installationId)}`) ?? null,
-          ),
-        ),
-        steps: [
-          acceptedOn
-            ? { label: defectStatusLabel.reported, who: 'aus der Abnahme', at: day(acceptedOn) }
-            : {
-                label: defectStatusLabel.reported,
-                who: nameOf(row.createdBy),
-                at: momentText(row.reportedAt),
-              },
-          ...own.map((step) => ({
-            label: defectStatusLabel[step.step],
-            who:
-              step.step === 'accepted' && step.signerName
-                ? step.signerName
-                : nameOf(step.createdBy),
-            at: momentText(step.takenAt),
-          })),
-        ],
-        signature:
-          signed?.signerName && signed.signaturePath
-            ? {
-                signer: signed.signerName,
-                at: momentText(signed.takenAt),
-                path: signed.signaturePath,
-              }
-            : null,
-        photos: gathered.photos
-          .filter((photo) => photo.defectId === row.id && newest.get(photo.id) === photo)
-          .map((photo) => bytes.get(photo.id))
-          .filter((photo) => photo !== undefined),
-      }
-    })
-
     let rendered: Uint8Array
 
     try {
-      rendered = await this.render(
-        defectReportJob(
-          {
-            keeper: gathered.keeper,
-            customer: gathered.customer,
-            job: gathered.job,
-            site: gathered.site,
-            defects: entries,
-          },
-          on,
-        ),
-        identity,
-      )
+      rendered = await this.render(reportWith(bytes), identity)
     } catch (error) {
       if (error instanceof RendererUnavailableError) {
         throw new ServiceUnavailableException(error.message)

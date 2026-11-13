@@ -537,4 +537,61 @@ describe('the report of the defects of a job (#311)', () => {
       .set('x-test-identity', office(south.id))
       .expect(404)
   })
+
+  it('reads only the photos within the bound of a page, and says how many more there are (#940)', async () => {
+    const defect = aDefect({ description: 'Leitung in der Garage beschädigt.' })
+    // The photo past the bound names a file whose bytes are in no store: a
+    // report that read it would fail.
+    const unread = 'e'.repeat(64)
+
+    await pushVia(app, technician(), [defect.operation])
+    await http()
+      .put(`/files/${hashOf(photo)}`)
+      .set('x-test-identity', technician())
+      .set('Content-Type', 'application/octet-stream')
+      .set('X-Media-Type', 'image/png')
+      .send(photo)
+      .expect(200)
+    await admin.query(
+      `insert into files (tenant_id, sha256, size_bytes, media_type) values ($1, $2, 1000, 'image/png')`,
+      [north.id, unread],
+    )
+
+    // One of 4 MB by what the store recorded, and a small one whose long title
+    // takes 2.4 MB of the page with it: together past the 6 MB of a page.
+    for (const [title, size, sha256] of [
+      ['Leitung links', 4_000_000, hashOf(photo)],
+      ['x'.repeat(400_000), 1_000, unread],
+    ] as const) {
+      const attachment = newId<'attachment'>()
+
+      await admin.query(
+        'insert into attachments (id, tenant_id, title, job_id, defect_id) values ($1, $2, $3, $4, $5)',
+        [attachment, north.id, title, job, defect.id],
+      )
+      await admin.query(
+        `insert into attachment_versions (tenant_id, attachment_id, sha256, file_name, media_type, size_bytes)
+         values ($1, $2, $3, $4, 'image/png', $5)`,
+        [north.id, attachment, sha256, 'leitung.png', size],
+      )
+    }
+
+    printed.length = 0
+    await http()
+      .get(`/jobs/${job}/defect-report`)
+      .set('x-test-identity', office())
+      .buffer(true)
+      .parse(binary)
+      .expect(200)
+
+    const section =
+      printed
+        .map((each) => each.html)
+        .join('')
+        .split('<section class="defect">')
+        .find((part) => part.includes('Leitung in der Garage beschädigt.')) ?? ''
+
+    expect(section.match(/<figure>/g)).toHaveLength(1)
+    expect(section).toContain('Ein weiteres Foto ist nicht gedruckt, es steht beim Mangel.')
+  })
 })
