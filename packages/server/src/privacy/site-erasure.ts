@@ -218,16 +218,16 @@ export async function emptySite(tx: TenantTransaction, siteId: string): Promise<
   await tx.execute(sql`delete from secrets where record_id in ${accessesOf}`)
 
   // The files at the site, its installations, its appliances (#817) and their
-  // defects go for good. A file that names another site as well is that
-  // site's too and stays: the database lets a file go only with the site it
-  // names, and the deletion would stop at it.
+  // defects go for good. A file whose site, as the database reads it
+  // (`site_of_row`: its site, else the site of its installation, then of its
+  // appliance), is another one stays with that site: the database lets a file
+  // go only with that site, and the deletion would stop at it.
   const fileIds = await ids(
     tx,
     sql`select id from attachments
-     where site_id = ${k}
-        or ((installation_id in ${installationsOf} or appliance_id in ${appliancesOf}
-             or defect_id in ${defectsOf})
-            and (site_id is null or site_id = ${k}))`,
+     where (site_id = ${k} or installation_id in ${installationsOf}
+            or appliance_id in ${appliancesOf} or defect_id in ${defectsOf})
+       and public.site_of_row(to_jsonb(attachments)) = ${k}`,
   )
 
   if (fileIds.length > 0) {

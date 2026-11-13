@@ -495,28 +495,39 @@ describe('deleting a site (#848)', () => {
     const { customer, site } = await hollberg()
     const other = await bare(null)
     const appliance = uuid()
-    const file = uuid()
+    const elsewhere = uuid()
+    const [file, mixed] = [uuid(), uuid()]
     const sha = 'f'.repeat(64)
 
-    // Hung on an appliance of this site, and on the other site.
+    // Hung on an appliance of this site, and on the other site; and on an
+    // appliance of this site and an installation of the other, without a site.
     await admin.query(
       `begin; set local session_replication_role = replica;
        insert into appliances (id, tenant_id, site_id, designation, protection_class)
          values ('${appliance}', '${north}', '${site}', 'Kreissäge', 'I');
+       insert into installations (id, tenant_id, site_id, kind, designation)
+         values ('${elsewhere}', '${north}', '${other.site}', 'meter_cabinet', 'Zählerschrank');
        insert into files (tenant_id, sha256, size_bytes, media_type) values ('${north}', '${sha}', 10, 'image/jpeg');
        insert into attachments (id, tenant_id, site_id, appliance_id, title)
          values ('${file}', '${north}', '${other.site}', '${appliance}', 'Sägeblatt');
+       insert into attachments (id, tenant_id, installation_id, appliance_id, title)
+         values ('${mixed}', '${north}', '${elsewhere}', '${appliance}', 'Gemischt');
        insert into attachment_versions (tenant_id, attachment_id, sha256, file_name, media_type, size_bytes)
-         values ('${north}', '${file}', '${sha}', 'saege.jpg', 'image/jpeg', 10);
+         values ('${north}', '${file}', '${sha}', 'saege.jpg', 'image/jpeg', 10),
+                ('${north}', '${mixed}', '${sha}', 'gemischt.jpg', 'image/jpeg', 10);
        commit;`,
     )
     await deleteCustomer(customer)
     await pass()
     await eraseSites([site]).expect(201)
 
-    expect((await admin.query('select title from attachments where id = $1', [file])).rows).toEqual(
-      [{ title: 'Sägeblatt' }],
-    )
+    expect(
+      (
+        await admin.query('select title from attachments where id = any($1) order by title', [
+          [file, mixed],
+        ])
+      ).rows,
+    ).toEqual([{ title: 'Gemischt' }, { title: 'Sägeblatt' }])
   })
 
   it('leaves the file of an appliance at another site where it is (#817)', async () => {
