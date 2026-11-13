@@ -2857,6 +2857,8 @@ async function plantAppliances(
       {
         attachmentId: cordPhoto,
         sha256: cordSha,
+        // The photo is its own preview, as small as one a device makes.
+        previewSha256: cordSha,
         fileName: 'IMG_5120.png',
         mediaType: 'image/png',
         sizeBytes: cordBytes.byteLength,

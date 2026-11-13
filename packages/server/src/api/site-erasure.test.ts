@@ -491,6 +491,34 @@ describe('what is due (#848)', () => {
 })
 
 describe('deleting a site (#848)', () => {
+  it('leaves a file that names another site as well, and still goes through (#817)', async () => {
+    const { customer, site } = await hollberg()
+    const other = await bare(null)
+    const appliance = uuid()
+    const file = uuid()
+    const sha = 'f'.repeat(64)
+
+    // Hung on an appliance of this site, and on the other site.
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       insert into appliances (id, tenant_id, site_id, designation, protection_class)
+         values ('${appliance}', '${north}', '${site}', 'Kreissäge', 'I');
+       insert into files (tenant_id, sha256, size_bytes, media_type) values ('${north}', '${sha}', 10, 'image/jpeg');
+       insert into attachments (id, tenant_id, site_id, appliance_id, title)
+         values ('${file}', '${north}', '${other.site}', '${appliance}', 'Sägeblatt');
+       insert into attachment_versions (tenant_id, attachment_id, sha256, file_name, media_type, size_bytes)
+         values ('${north}', '${file}', '${sha}', 'saege.jpg', 'image/jpeg', 10);
+       commit;`,
+    )
+    await deleteCustomer(customer)
+    await pass()
+    await eraseSites([site]).expect(201)
+
+    expect((await admin.query('select title from attachments where id = $1', [file])).rows).toEqual(
+      [{ title: 'Sägeblatt' }],
+    )
+  })
+
   it('leaves the file of an appliance at another site where it is (#817)', async () => {
     const { customer, site } = await hollberg()
     const other = await bare(null)

@@ -21,8 +21,10 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Fotos und zusammen 40 MB, ein Foto darüber nennt wie ein fehlendes nur seinen Ort. Ein unterschriebenes
   Protokoll zeigt die Fassung des Fotos, die der Server bei der Unterschrift hatte, mit ihrem Dateinamen, auch wenn die
   Datei danach umbenannt, umgehängt oder aus den Akten entfernt wird; erst wenn sie endgültig gelöscht ist, nennt das
-  PDF nur noch, wo das Foto lag. Mit der Löschung eines Objekts gehen auch die Dateien seiner Geräte; die Löschung
-  eines Kunden nimmt wie bei Anlagen jede Datei mit, die ihn nennt. Zwei Einschränkungen: Ein unterschriebenes
+  PDF nur noch, wo das Foto lag. Mit der Löschung eines Objekts gehen auch die Dateien seiner Geräte; eine Datei, die
+  zugleich ein anderes Objekt nennt, bleibt bei diesem, statt die Löschung abzubrechen, wie es bisher auch eine Datei
+  an einer Anlage tat. Die Löschung eines Kunden nimmt wie bei Anlagen jede Datei mit, die ihn nennt. Zwei
+  Einschränkungen: Ein unterschriebenes
   Protokoll prüft nicht, ob die Datei bei der Unterschrift an seinem Gegenstand hing; über die Oberfläche lässt sich nur
   eine solche wählen, über den Abgleich auch eine andere (#934). Und der Prüfbericht je Objekt und die anderen
   Sammel-PDFs nennen an der Stelle des Fotos weiter nur, wo es liegt (#935).
