@@ -28,6 +28,7 @@ import { ApiModule } from './api.module.js'
 import { photoBound, printedPhotos, rendererRequestBytes } from '../forms/photo-bound.js'
 import { photosToRead, shownVersions } from './form-records.controller.js'
 import { binary } from './test-binary.js'
+import { waitingFor } from './test-hold.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { changed, created, deleted, push } from './test-structure.js'
 
@@ -901,6 +902,89 @@ describe('the photo a protocol is signed with (#934)', () => {
       [sealedPhoto]: appliance,
       [draftPhoto]: other,
     })
+  })
+
+  it('sees a move of its file that is still open, once it is through', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const other = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const before = complete({ photo })
+
+    await push(app, technician, [
+      anAppliance(appliance),
+      anAppliance(other, { inventoryNumber: '096' }),
+      created('attachments', photo, { applianceId: appliance, title: 'Leitung' }),
+      aPhotoTest(id, appliance, before),
+    ])
+
+    const moving = await admin.connect()
+    let signing: ReturnType<typeof push> = Promise.resolve({ receipts: [] })
+
+    try {
+      // The office moves the file and has not committed yet.
+      await moving.query('begin')
+      await moving.query("select set_config('app.tenant_id', $1, true)", [north.id])
+      await moving.query("select set_config('app.user_id', 'lena', true)")
+      await moving.query('update attachments set appliance_id = $1 where id = $2', [other, photo])
+
+      signing = push(app, technician, [
+        signed(id, before, complete({ photo, tester_signature: signature })),
+      ])
+      await waitingFor(admin, moving, signing)
+      await moving.query('commit')
+
+      const { receipts } = await signing
+
+      expect(receipts.map(({ outcome, reason }) => [outcome, reason])).toEqual([
+        ['conflict', 'changed_elsewhere'],
+      ])
+    } finally {
+      await moving.query('rollback').catch(() => undefined)
+      await signing.catch(() => undefined)
+      moving.release()
+    }
+  })
+
+  it('waits for a writer of the draft that holds its row, and does not wait in a circle', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const before = complete({ photo })
+
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', photo, { applianceId: appliance, title: 'Leitung' }),
+      aPhotoTest(id, appliance, before),
+    ])
+
+    const editing = await admin.connect()
+    let signing: ReturnType<typeof push> = Promise.resolve({ receipts: [] })
+
+    try {
+      // Another writer holds the row of the draft and changes it after.
+      await editing.query('begin')
+      await editing.query("select set_config('app.tenant_id', $1, true)", [north.id])
+      await editing.query("select set_config('app.user_id', 'lena', true)")
+      await editing.query('select id from form_records where id = $1 for no key update', [id])
+
+      signing = push(app, technician, [
+        signed(id, before, complete({ photo, tester_signature: signature })),
+      ])
+      await waitingFor(admin, editing, signing)
+      await editing.query("update form_records set performed_on = '2026-11-03' where id = $1", [id])
+      await editing.query('commit')
+
+      const { receipts } = await signing
+
+      expect(receipts.map(({ outcome }) => outcome)).toEqual(['applied'])
+    } finally {
+      await editing.query('rollback').catch(() => undefined)
+      await signing.catch(() => undefined)
+      editing.release()
+    }
   })
 
   it('is named in small letters and spelt out, or the signature is refused', async () => {

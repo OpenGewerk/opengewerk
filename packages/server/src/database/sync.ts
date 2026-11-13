@@ -34,7 +34,7 @@ import {
   type TenantTransaction,
 } from '@opengewerk/platform-server'
 
-import { inArray, sql } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 
 import type { FoundIdentity } from '../api/identity.js'
 import { signatureRefusal } from '../documents/signing.js'
@@ -283,6 +283,17 @@ const signedPhotos: Check = async ({ tx, tenantId, operation, values, current })
     : at('applianceId')
       ? 'applianceId'
       : 'jobId'
+  // The row of the protocol before the counter, as every change of a row
+  // takes them: a second writer of the draft that holds the row would wait
+  // for the counter while the signature waited for the row.
+  if (current) {
+    await tx
+      .select({ id: schema.formRecords.id })
+      .from(schema.formRecords)
+      .where(eq(schema.formRecords.id, operation.recordId as never))
+      .for('no key update')
+  }
+
   await tx.execute(sql`select public.file_naming_lock(${tenantId})`)
 
   const files = await tx
