@@ -39,7 +39,7 @@ export function FilesPanel({
   home,
   empty,
 }: {
-  readonly field: 'customerId' | 'siteId' | 'installationId' | 'jobId'
+  readonly field: 'customerId' | 'siteId' | 'installationId' | 'applianceId' | 'jobId'
   readonly id: string
   readonly home: AttachmentHome
   readonly empty: string

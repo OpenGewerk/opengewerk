@@ -33,9 +33,11 @@ describe('a picture and a photo', () => {
 })
 
 describe('where a file hangs', () => {
-  it('is at least one of customer, site, installation and job', () => {
+  it('is at least one of customer, site, installation, appliance and job', () => {
     expect(attachmentHomeProblem({ customerId: 'c-1' })).toBeNull()
     expect(attachmentHomeProblem({ jobId: 'j-1', installationId: 'i-1' })).toBeNull()
+    // The photo of an appliance of the register (#817).
+    expect(attachmentHomeProblem({ applianceId: 'a-1' })).toBeNull()
   })
 
   it('is refused when it is none of them, an empty string counting as none', () => {

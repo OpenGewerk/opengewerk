@@ -2,6 +2,7 @@ import { attachmentsSchema, reference } from '@opengewerk/platform-server'
 import { sql } from 'drizzle-orm'
 import { check, foreignKey, index } from 'drizzle-orm/pg-core'
 
+import { appliances } from './appliances.js'
 import { customers } from './customers.js'
 import { defects } from './defects.js'
 import { installations } from './installations.js'
@@ -10,13 +11,15 @@ import { sites } from './sites.js'
 
 /**
  * What a file of this application hangs on: a customer, a site, an
- * installation and a job; and the defect it shows (#311), which is not a place
- * of its own but one of the places' defects.
+ * installation, an appliance of the register (#817) and a job; and the defect
+ * it shows (#311), which is not a place of its own but one of the places'
+ * defects.
  */
 const attachmentHomes = {
   customerId: reference<'customer'>('customer_id'),
   siteId: reference<'site'>('site_id'),
   installationId: reference<'installation'>('installation_id'),
+  applianceId: reference<'appliance'>('appliance_id'),
   jobId: reference<'job'>('job_id'),
   defectId: reference<'defect'>('defect_id'),
 }
@@ -26,14 +29,14 @@ export type AttachmentHomeColumns = typeof attachmentHomes
 
 /**
  * A file in the business's records and where it hangs (#77): a customer, a
- * site, an installation and a job, any of them and at least one, which the
- * check says. Every place runs over the tenant, like every other reference
+ * site, an installation, an appliance (#817) and a job, any of them and at
+ * least one, which the check says. Every place runs over the tenant, like every other reference
  * between two records of a business.
  *
  * The two tables are the foundation's (`attachmentsSchema`,
  * opengewerk-haustechnik#97): what a file is called, its versions with the
  * keys onto the stored bytes, the sync columns and the separation of the
- * businesses. Kept here are the four places with their keys over the
+ * businesses. Kept here are the five places with their keys over the
  * business, the check and the indexes.
  *
  * One version of an attachment is written once and never changed. It names
@@ -64,13 +67,21 @@ export const { attachments, attachmentVersions } = attachmentsSchema({
       foreignColumns: [jobs.tenantId, jobs.id],
       name: 'attachments_job_in_tenant',
     }).onDelete('restrict'),
+    // A photo of an appliance (#817), taken at its test like the photo of a
+    // defect at a circuit is taken at the protocol of its installation.
+    foreignKey({
+      columns: [table.tenantId, table.applianceId],
+      foreignColumns: [appliances.tenantId, appliances.id],
+      name: 'attachments_appliance_in_tenant',
+    }).onDelete('restrict'),
     check(
       'attachments_have_a_home',
-      sql`num_nonnulls(${table.customerId}, ${table.siteId}, ${table.installationId}, ${table.jobId}) >= 1`,
+      sql`num_nonnulls(${table.customerId}, ${table.siteId}, ${table.installationId}, ${table.applianceId}, ${table.jobId}) >= 1`,
     ),
     index('attachments_customer_idx').on(table.tenantId, table.customerId),
     index('attachments_site_idx').on(table.tenantId, table.siteId),
     index('attachments_installation_idx').on(table.tenantId, table.installationId),
+    index('attachments_appliance_idx').on(table.tenantId, table.applianceId),
     index('attachments_job_idx').on(table.tenantId, table.jobId),
     // A photo of a defect lies among the files of its job or installation; a
     // trigger (migration 0119) holds that it is one of the defect's.

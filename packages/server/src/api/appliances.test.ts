@@ -1,7 +1,18 @@
+import { createHash } from 'node:crypto'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import { permissionCatalogue, type RoleKey, shippedRoles, type TenantId } from '@opengewerk/domain'
-import { Database, newId, type PrintJob, type Renderer } from '@opengewerk/platform-server'
+import {
+  Database,
+  FileStore,
+  newId,
+  type PrintJob,
+  type Renderer,
+} from '@opengewerk/platform-server'
 import type { Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -36,6 +47,7 @@ let app: INestApplication
 let site = ''
 let customer = ''
 let installation = ''
+let storageRoot = ''
 
 const jobs: PrintJob[] = []
 const standIn: Renderer = (job) => {
@@ -136,9 +148,15 @@ beforeAll(async () => {
   )
 
   database = Database.connect(applicationDatabaseUrl())
+  storageRoot = mkdtempSync(join(tmpdir(), 'opengewerk-appliances-'))
 
   const built = await Test.createTestingModule({
-    imports: [ApiModule.create(database, identities, { renderer: standIn })],
+    imports: [
+      ApiModule.create(database, identities, {
+        renderer: standIn,
+        files: new FileStore(storageRoot),
+      }),
+    ],
   }).compile()
 
   app = built.createNestApplication()
@@ -170,6 +188,7 @@ afterAll(async () => {
   await app.close()
   await database.close()
   await admin.end()
+  rmSync(storageRoot, { recursive: true, force: true })
 })
 
 describe('an appliance of the register', () => {
@@ -523,5 +542,221 @@ describe('the report of a site after DGUV Vorschrift 3', () => {
       .get(`/sites/${newId<'site'>()}/appliance-report`)
       .set('x-test-identity', as(north.id, 'office'))
       .expect(404)
+  })
+})
+
+/** Bytes of a photo; the store keeps whatever it is given under its hash. */
+function photoBytes(label: string): Buffer {
+  return Buffer.from(`PNG ${label}`)
+}
+
+function hashOf(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
+async function upload(bytes: Buffer, who: string): Promise<void> {
+  await http()
+    .put(`/files/${hashOf(bytes)}`)
+    .set('x-test-identity', who)
+    .set('Content-Type', 'application/octet-stream')
+    .set('X-Media-Type', 'image/png')
+    .send(bytes)
+    .expect(200)
+}
+
+/** A new version of a file, as a device sends it. */
+function aVersion(attachment: string, bytes: Buffer) {
+  return created('attachment_versions', newId<'attachment-version'>(), {
+    attachmentId: attachment,
+    sha256: hashOf(bytes),
+    fileName: 'leitung.png',
+    mediaType: 'image/png',
+    sizeBytes: bytes.byteLength,
+  })
+}
+
+/** The page of a protocol as the renderer got it. */
+async function printed(id: string, who: string): Promise<string> {
+  await http()
+    .get(`/form-records/${id}/pdf`)
+    .set('x-test-identity', who)
+    .buffer(true)
+    .parse(binary)
+    .expect(200)
+
+  return jobs.at(-1)?.html ?? ''
+}
+
+/** A test in version 2 of the form, which has a photo (#817). */
+function aPhotoTest(id: string, appliance: string, values: string) {
+  return created('form_records', id, {
+    definitionKey: 'dguv-v3',
+    definitionVersion: 2,
+    performedOn: '2026-11-02',
+    status: 'draft',
+    values,
+    applianceId: appliance,
+  } as never)
+}
+
+describe('the files of an appliance (#817)', () => {
+  it('hang on the appliance alone and reach a device with the site of its job', async () => {
+    const technician = person('max', 'technician')
+    const office = as(north.id, 'office')
+    const elsewhere = await post(
+      '/sites',
+      { customerId: customer, designation: 'Lagerhalle', city: 'Mannheim' },
+      office,
+    )
+    const here = newId<'appliance'>()
+    const there = newId<'appliance'>()
+    const atHere = newId<'attachment'>()
+    const atThere = newId<'attachment'>()
+
+    await push(app, office, [
+      anAppliance(here, { inventoryNumber: '011', designation: 'Heizlüfter' }),
+      anAppliance(there, { siteId: elsewhere, inventoryNumber: '012', designation: 'Kreissäge' }),
+    ])
+
+    const { receipts } = await push(app, office, [
+      created('attachments', atHere, { applianceId: here, title: 'Anschlussleitung' }),
+      created('attachments', atThere, { applianceId: there, title: 'Typenschild' }),
+    ])
+
+    expect(receipts.map((receipt) => receipt.outcome)).toEqual(['applied', 'applied'])
+
+    const job = await post(
+      '/jobs',
+      {
+        customerId: customer,
+        siteId: site,
+        kind: 'service',
+        status: 'active',
+        designation: 'Heizlüfter prüfen',
+      },
+      office,
+    )
+
+    await http()
+      .put(`/jobs/${job}/assignees`)
+      .set('x-test-identity', office)
+      .send({ userIds: ['max'] })
+      .expect(200)
+
+    const answer = await http().get('/sync?since=0').set('x-test-identity', technician).expect(200)
+    const files =
+      (answer.body as { changes: { entity: string; rows: { id: string }[] }[] }).changes
+        .find((change) => change.entity === 'attachments')
+        ?.rows.map((row) => row.id) ?? []
+
+    expect(files).toContain(atHere)
+    expect(files).not.toContain(atThere)
+  })
+
+  it('are a home of a file in the database, and a file with none is refused', async () => {
+    const appliance = newId<'appliance'>()
+
+    await push(app, as(north.id, 'office'), [anAppliance(appliance)])
+    await admin.query(
+      "insert into attachments (tenant_id, appliance_id, title) values ($1, $2, 'Typenschild')",
+      [north.id, appliance],
+    )
+
+    expect(
+      await refusedBy(
+        admin.query("insert into attachments (tenant_id, title) values ($1, 'Nirgends')", [
+          north.id,
+        ]),
+      ),
+    ).toEqual({ code: checkViolation, constraint: 'attachments_have_a_home' })
+  })
+
+  it('give a protocol its photo, the version of the day it was signed', async () => {
+    const technician = as(north.id, 'technician')
+    const office = as(north.id, 'office')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const [first, second, third] = [photoBytes('eins'), photoBytes('zwei'), photoBytes('drei')]
+    const base64 = (bytes: Buffer) => bytes.toString('base64')
+    const before = complete({ photo })
+
+    for (const bytes of [first, second, third]) {
+      await upload(bytes, technician)
+    }
+
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', photo, {
+        applianceId: appliance,
+        siteId: site,
+        title: 'Anschlussleitung',
+      }),
+      aVersion(photo, first),
+      aPhotoTest(id, appliance, before),
+    ])
+
+    const draft = await printed(id, office)
+
+    expect(draft).toContain(`data:image/png;base64,${base64(first)}`)
+    expect(draft).toContain('<figcaption>Anschlussleitung</figcaption>')
+
+    // A draft shows the newest version.
+    await push(app, technician, [aVersion(photo, second)])
+    expect(await printed(id, office)).toContain(base64(second))
+
+    await push(app, technician, [
+      signed(id, before, complete({ photo, tester_signature: signature })),
+    ])
+    await push(app, office, [aVersion(photo, third)])
+
+    const sealed = await printed(id, office)
+
+    expect(sealed).toContain(base64(second))
+    expect(sealed).not.toContain(base64(third))
+  })
+
+  it('give a protocol no photo of something else, nor to whoever may not see the files', async () => {
+    const technician = as(north.id, 'technician')
+    const office = as(north.id, 'office')
+    const appliance = newId<'appliance'>()
+    const ofInstallation = newId<'attachment'>()
+    const own = newId<'attachment'>()
+    const foreign = newId<'form-record'>()
+    const mine = newId<'form-record'>()
+    const [plan, cord] = [photoBytes('Plan der Anlage'), photoBytes('Leitung')]
+
+    await upload(plan, technician)
+    await upload(cord, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', ofInstallation, { installationId: installation, title: 'Plan' }),
+      aVersion(ofInstallation, plan),
+      created('attachments', own, { applianceId: appliance, title: 'Leitung' }),
+      aVersion(own, cord),
+      aPhotoTest(foreign, appliance, complete({ photo: ofInstallation })),
+      aPhotoTest(mine, appliance, complete({ photo: own })),
+    ])
+
+    const other = await printed(foreign, office)
+
+    expect(other).not.toContain(plan.toString('base64'))
+    expect(other).toContain('bei den Dateien des Geräts')
+
+    const officeRole = shippedRoles.filter((role) => role.key === 'office')
+    const rights = permissionCatalogue.sumOf(officeRole).rights
+    const withoutFiles = JSON.stringify({
+      userId: 'lena',
+      tenantId: north.id,
+      roles: [],
+      rights: rights.filter((right) => right !== 'attachment.read'),
+    })
+
+    expect(await printed(mine, office)).toContain(cord.toString('base64'))
+
+    const unseen = await printed(mine, withoutFiles)
+
+    expect(unseen).not.toContain(cord.toString('base64'))
+    expect(unseen).toContain('bei den Dateien des Geräts')
   })
 })

@@ -48,6 +48,7 @@ describe('the package Elektro und PV', () => {
       'formulare/vde-0100-600.v3.json',
       'formulare/vde-0105-100.v1.json',
       'formulare/dguv-v3.v1.json',
+      'formulare/dguv-v3.v2.json',
       'formulare/vde-ar-n-4105.v1.json',
       'formulare/iec-62446-1.v1.json',
       'formulare/vde-0100-722.v1.json',
@@ -126,7 +127,7 @@ describe('the package Elektro und PV', () => {
     ).toEqual([
       ['vde-0100-600', 3],
       ['vde-0105-100', 1],
-      ['dguv-v3', 1],
+      ['dguv-v3', 2],
       ['vde-ar-n-4105', 1],
       ['iec-62446-1', 1],
       ['vde-0100-722', 1],
@@ -152,6 +153,35 @@ describe('the package Elektro und PV', () => {
       ) as FormDefinition),
       version: 2,
     })
+  })
+
+  it('adds in version 2 of the test of an appliance a photo and changes nothing else (#817)', () => {
+    const first = elektroRegistry.definitionFor('dguv-v3', 1) as FormDefinition
+    const second = elektroRegistry.definitionFor('dguv-v3', 2) as FormDefinition
+    const result = (definition: FormDefinition) =>
+      definition.sections.find((section) => section.key === 'result')?.fields ?? []
+
+    expect(result(second).map((field) => field.key)).toEqual([
+      'verdict',
+      'defects',
+      'next_inspection_months',
+      'photo',
+      'tester_signature',
+    ])
+    expect(result(second).find((field) => field.key === 'photo')).toEqual({
+      kind: 'photo',
+      key: 'photo',
+      label: 'Foto',
+    })
+    expect({
+      ...second,
+      version: 1,
+      sections: second.sections.map((section) =>
+        section.key === 'result'
+          ? { ...section, fields: section.fields.filter((field) => field.key !== 'photo') }
+          : section,
+      ),
+    }).toEqual(first)
   })
 
   it('adds in version 3 the interval to the first recurring inspection and changes nothing else (#814)', () => {

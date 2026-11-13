@@ -628,6 +628,10 @@ function Overview({
                     }}
                   />
                 ))}
+                {protocol.applianceId &&
+                plainFields(resultSection).some((field) => field.kind === 'photo') ? (
+                  <DefectPhoto record={record} jobId={text(record, 'jobId')} />
+                ) : null}
               </div>
             </Panel>
           </div>
@@ -1131,7 +1135,8 @@ function MeasureCard({
 
 /**
  * "Foto zum Mangel": a photo of what is wrong, for the files of the
- * installation, where the result offers it as its photo.
+ * installation, where the result offers it as its photo; at the test of an
+ * appliance for the files of the appliance (#817), which its result offers.
  */
 function DefectPhoto({ record, jobId }: { readonly record: RecordState; readonly jobId: string }) {
   const client = useSync()
@@ -1144,10 +1149,12 @@ function DefectPhoto({ record, jobId }: { readonly record: RecordState; readonly
     return null
   }
 
+  const applianceId = maybeText(record, 'applianceId')
   const home = {
     customerId: job ? String(job['customerId']) : null,
     siteId: job ? maybeText(job, 'siteId') : null,
-    installationId: text(record, 'installationId'),
+    installationId: applianceId ? null : text(record, 'installationId'),
+    applianceId,
     jobId,
   }
 
@@ -1180,7 +1187,9 @@ function DefectPhoto({ record, jobId }: { readonly record: RecordState; readonly
             void addAttachment(client, home, file, false).then((problem) => {
               setSaid(
                 problem ??
-                  'Das Foto liegt bei den Dateien der Anlage. Im Ergebnis lässt es sich als Foto wählen.',
+                  (applianceId
+                    ? 'Das Foto liegt bei den Dateien des Geräts und lässt sich oben als Foto wählen.'
+                    : 'Das Foto liegt bei den Dateien der Anlage. Im Ergebnis lässt es sich als Foto wählen.'),
               )
             })
           }

@@ -61,6 +61,7 @@ describe('the foundation in this database', () => {
         'attachments.customer_id',
         'attachments.site_id',
         'attachments.installation_id',
+        'attachments.appliance_id',
         'attachments.job_id',
         'attachments.defect_id',
       ],
@@ -88,6 +89,7 @@ describe('the foundation in this database', () => {
         'attachments.attachments_job_in_tenant',
         'attachments.attachments_have_a_home',
         'attachments.attachments_defect_in_tenant',
+        'attachments.attachments_appliance_in_tenant',
       ],
       indexes: [
         'mail_outbox.mail_outbox_task_idx',
@@ -108,6 +110,7 @@ describe('the foundation in this database', () => {
         'attachments.attachments_installation_idx',
         'attachments.attachments_job_idx',
         'attachments.attachments_defect_idx',
+        'attachments.attachments_appliance_idx',
       ],
       triggers: ['attachments.attachments_defect_at_its_place'],
     })

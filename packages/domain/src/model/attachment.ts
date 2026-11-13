@@ -1,10 +1,18 @@
 import { type AttachmentRecord, attachmentRules } from '@opengewerk/platform-domain'
-import type { CustomerId, DefectId, InstallationId, JobId, SiteId } from './identifier.js'
+import type {
+  ApplianceId,
+  CustomerId,
+  DefectId,
+  InstallationId,
+  JobId,
+  SiteId,
+} from './identifier.js'
 
 /**
  * A file in the business's records, hung on what it is about (#77, 4.10).
  *
- * A customer, a site, an installation and a job, any of them and at least one.
+ * A customer, a site, an installation, an appliance (#817) and a job, any of
+ * them and at least one.
  * The links are independent, like a task's: a wiring diagram taken at a job
  * carries the job and, with it, the installation, the site and the customer,
  * so it turns up wherever somebody looks for it later. One hung on a customer
@@ -25,19 +33,22 @@ export interface Attachment extends AttachmentRecord {
   readonly siteId: SiteId | null
   readonly installationId: InstallationId | null
   readonly jobId: JobId | null
+  /** The appliance of the register a photo shows (#817), tested by DGUV Vorschrift 3. */
+  readonly applianceId: ApplianceId | null
   readonly defectId: DefectId | null
 }
 
 /**
  * The rules of the files of this application, as the foundation makes them
- * from its four places and its two sentences: one object for the screens and
+ * from its five places and its two sentences: one object for the screens and
  * the sync, so that both read the rule the check `attachments_have_a_home`
  * holds in the database the same way.
  */
 export const tradeAttachments = attachmentRules({
-  homes: ['customerId', 'siteId', 'installationId', 'jobId'],
+  homes: ['customerId', 'siteId', 'installationId', 'applianceId', 'jobId'],
   text: {
-    noHome: 'Eine Datei hängt an einem Kunden, einem Objekt, einer Anlage oder einem Auftrag.',
+    noHome:
+      'Eine Datei hängt an einem Kunden, einem Objekt, einer Anlage, einem Gerät oder einem Auftrag.',
     mediaType: 'Der Typ der Datei ist nicht so angegeben, wie OpenGewerk ihn festhält.',
   },
 })
@@ -47,7 +58,7 @@ export function attachmentMediaTypeProblem(mediaType: unknown): string | null {
   return tradeAttachments.mediaTypeProblem(mediaType)
 }
 
-/** The four places a file can hang on. */
+/** The five places a file can hang on. */
 export const attachmentHomes = tradeAttachments.homes
 
 /**
@@ -59,6 +70,7 @@ export function attachmentHomeProblem(attachment: {
   readonly customerId?: unknown
   readonly siteId?: unknown
   readonly installationId?: unknown
+  readonly applianceId?: unknown
   readonly jobId?: unknown
 }): string | null {
   return tradeAttachments.homeProblem(attachment)

@@ -335,7 +335,7 @@ export async function emptyCustomer(
   await take('prospects', sql`delete from prospects where customer_id = ${k} returning id`)
 
   // The files of the customer and its jobs go for good (#712); those of its
-  // sites and installations stay with them.
+  // sites, installations and appliances stay with them.
   const { rows: files } = await tx.execute<{ id: string }>(sql`
     select id from attachments where customer_id = ${k} or job_id in ${jobsOf}`)
   const fileIds = files.map((row) => row.id)

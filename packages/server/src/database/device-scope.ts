@@ -217,7 +217,8 @@ export function narrowedTo(scope: DeviceScope, entity: string): SQL | undefined 
   const documents = sql`(select id from documents where job_id = any(${ids}))`
   const attachments = sql`(select id from attachments
     where job_id = any(${ids}) or customer_id in ${customers}
-       or site_id in ${sites} or installation_id in ${installations})`
+       or site_id in ${sites} or installation_id in ${installations}
+       or appliance_id in ${appliances})`
 
   const table = sql.identifier(entity)
   const column = (name: string) => sql`${table}.${sql.identifier(name)}`
@@ -419,7 +420,8 @@ export function restrictedOut(restricted: RestrictedOnDevices, entity: string): 
     where job_id in ${jobs} or installation_id in ${installations})`
   const attachments = sql`(select id from attachments
     where customer_id = any(${ids}) or job_id in ${jobs}
-       or site_id in ${sites} or installation_id in ${installations})`
+       or site_id in ${sites} or installation_id in ${installations}
+       or appliance_id in ${appliances})`
 
   const table = sql.identifier(entity)
   const column = (name: string) => sql`${table}.${sql.identifier(name)}`

@@ -749,7 +749,12 @@ export function FieldInput({
       return (
         <SelectField
           label={field.label}
-          hint={field.hint ?? 'Ein Foto aus den Dateien der Anlage.'}
+          hint={
+            field.hint ??
+            (appliance
+              ? 'Ein Foto aus den Dateien des Geräts.'
+              : 'Ein Foto aus den Dateien der Anlage.')
+          }
           value={typeof value === 'string' ? value : ''}
           options={[{ value: '', label: 'keines' }, ...photos]}
           onChange={(chosen) => {
@@ -793,7 +798,7 @@ export function shownValue(
     case 'yes_no':
       return value === true ? 'ja' : 'nein'
     case 'photo':
-      return photos.find((photo) => photo.value === value)?.label ?? 'ein Foto der Anlage'
+      return photos.find((photo) => photo.value === value)?.label ?? 'ein Foto aus den Dateien'
     case 'date':
       return typeof value === 'string' ? date(value) : ''
   }
@@ -1102,12 +1107,16 @@ function SignatureText({
  */
 function usePhotos(
   installationId: string,
+  applianceId: string,
   jobId: string,
 ): readonly { readonly value: string; readonly label: string }[] {
+  // The files of what was tested: the installation, the appliance of the
+  // register (#817), or the job of an acceptance. The page of the protocol
+  // shows one of these and no other (`form-records.controller.ts`).
   const attachments = useRelated(
     'attachments',
-    installationId ? 'installationId' : 'jobId',
-    installationId || jobId,
+    installationId ? 'installationId' : applianceId ? 'applianceId' : 'jobId',
+    installationId || applianceId || jobId,
   )
 
   return useMemo(
@@ -1172,8 +1181,8 @@ export function useProtocolDraft(record: RecordState): ProtocolDraft {
   const definition = definitionOf(record)
   const installationId = text(record, 'installationId')
   const circuits = useBlockCircuits(installationId)
-  const photos = usePhotos(installationId, text(record, 'jobId'))
   const applianceId = text(record, 'applianceId') || null
+  const photos = usePhotos(installationId, applianceId ?? '', text(record, 'jobId'))
   const appliance = applianceFactsOf(useRecord('appliances', applianceId ?? undefined))
   const editable = !isSigned(record)
   // Read and written again, so that two texts of the same values compare

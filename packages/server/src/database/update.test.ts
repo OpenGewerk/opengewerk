@@ -2089,11 +2089,61 @@ describe('the rollback of the register of appliances', () => {
       `begin; set local session_replication_role = replica;
        delete from form_records; delete from appliances; commit;`,
     )
+    // The files of an appliance (0143, #817) hang on the table, and a rollback
+    // takes back the later migrations first.
+    await revertMigration(admin, '0143_appliance_files')
     await revertMigration(admin, '0114_appliances')
 
     expect(await tableNames(admin)).not.toContain('appliances')
     expect(await columnNames(admin, 'form_records')).not.toContain('appliance_id')
     expect(await forced('form_records')).toBe(true)
+  })
+
+  it('of 0143 deletes no file of an appliance, and stops while there is one (#817)', async () => {
+    const customer = newId<'customer'>()
+    const site = newId<'site'>()
+    const appliance = newId<'appliance'>()
+    const file = newId<'attachment'>()
+
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+    await admin.query('insert into tenants (id, name) values ($1, $2)', [tenant.id, tenant.name])
+    await admin.query(
+      "insert into customers (id, tenant_id, kind, name) values ($1, $2, 'business', 'Hausverwaltung Süd GmbH')",
+      [customer, tenant.id],
+    )
+    await admin.query(
+      "insert into sites (id, tenant_id, customer_id, designation) values ($1, $2, $3, 'Rheinstraße 12')",
+      [site, tenant.id, customer],
+    )
+    await admin.query(
+      `insert into appliances (id, tenant_id, site_id, designation, protection_class)
+       values ($1, $2, $3, 'Kaffeemaschine', 'I')`,
+      [appliance, tenant.id, site],
+    )
+    await admin.query(
+      "insert into attachments (id, tenant_id, appliance_id, title) values ($1, $2, $3, 'Anschlussleitung')",
+      [file, tenant.id, appliance],
+    )
+
+    await expect(revertMigration(admin, '0143_appliance_files')).rejects.toThrow(
+      'Die Rücknahme von 0143 löscht keine Dateien',
+    )
+    expect((await admin.query('select appliance_id from attachments')).rows).toEqual([
+      { appliance_id: appliance },
+    ])
+    expect(await forced('attachments')).toBe(true)
+
+    // Hung on the site by hand, as the sentence says, the rollback goes through.
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       update attachments set appliance_id = null, site_id = '${site}'; commit;`,
+    )
+    await revertMigration(admin, '0143_appliance_files')
+
+    expect(await columnNames(admin, 'attachments')).not.toContain('appliance_id')
+    expect((await admin.query('select id from attachments')).rows).toEqual([{ id: file }])
+    expect(await forced('attachments')).toBe(true)
   })
 })
 

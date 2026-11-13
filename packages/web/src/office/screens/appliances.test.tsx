@@ -56,6 +56,10 @@ function signedTest(id: string, applianceId: string, performedOn: string, verdic
 const rows: Readonly<Record<string, RecordState[]>> = {
   customers: [{ id: 'c-1', kind: 'business', name: 'Hausverwaltung Süd GmbH' }],
   sites: [{ id: 's-1', customerId: 'c-1', designation: 'Rheinstraße 12' }],
+  attachments: [
+    { id: 'f-1', applianceId: 'a-2', siteId: 's-1', title: 'Anschlussleitung' },
+    { id: 'f-2', siteId: 's-1', title: 'Hausansicht' },
+  ],
   appliances: [
     {
       id: 'a-1',
@@ -107,7 +111,15 @@ async function mount(path: string) {
     transport: server,
     writer: server,
     deviceId: 'office',
-    entities: ['customers', 'sites', 'installations', 'appliances', 'form_records', 'attachments'],
+    entities: [
+      'customers',
+      'sites',
+      'installations',
+      'appliances',
+      'form_records',
+      'attachments',
+      'attachment_versions',
+    ],
     onSignedOut: () => {},
   })
 
@@ -242,6 +254,26 @@ describe('the register of appliances in the office (#303)', () => {
     ).toBeTruthy()
     expect(within(protocols).queryByRole('button', { name: /DIN VDE/ })).toBeNull()
     expect(within(protocols).getByText('Mit dem Protokoll vom 10.01.2020 als Vorlage')).toBeTruthy()
+  })
+
+  it('keeps the files of an appliance, and hangs a new one on it, its site and its customer (#817)', async () => {
+    const { client } = await mount('/geraete/a-2')
+
+    const files = await screen.findByRole('region', { name: 'Dateien' })
+
+    expect(await within(files).findByText('Anschlussleitung')).toBeTruthy()
+    expect(within(files).queryByText('Hausansicht')).toBeNull()
+
+    await userEvent.upload(
+      within(files).getByLabelText('Datei hinzufügen'),
+      new File(['%PDF-1.7'], 'bericht.pdf', { type: 'application/pdf' }),
+    )
+
+    await waitFor(() => {
+      expect(
+        client.list('attachments').filter((row) => !['f-1', 'f-2'].includes(String(row['id']))),
+      ).toEqual([expect.objectContaining({ applianceId: 'a-2', siteId: 's-1', customerId: 'c-1' })])
+    })
   })
 
   it('says on an appliance with defects what the last test found', async () => {

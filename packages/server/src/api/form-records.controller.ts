@@ -14,6 +14,7 @@ import {
   applianceSubject,
   type FormRecordStatus,
   type IsoDate,
+  isAllowed,
   readFormValues,
   shippedRules,
   warrantyTerms,
@@ -28,11 +29,13 @@ import {
   type Renderer,
   RendererUnavailableError,
 } from '@opengewerk/platform-server'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm'
 import type { Response } from 'express'
 
 import {
   appliances,
+  attachments,
+  attachmentVersions,
   formRecords,
   installations,
   jobs,
@@ -40,10 +43,58 @@ import {
   sites,
   tenants,
 } from '../database/schema/index.js'
-import { protocolPrintJob, type PrintedProtocol } from '../forms/protocol-print.js'
+import {
+  chosenPhotos,
+  type PrintedProtocol,
+  protocolPrintJob,
+  type ProtocolPhoto,
+} from '../forms/protocol-print.js'
 import { tradeForms, tradeRules } from '../forms/registry.js'
 import { RequiresPermission } from './authorization.js'
+import { DocumentFiles } from './document-files.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
+
+/** The photos a page can show. */
+const photoTypes = ['image/jpeg', 'image/png', 'image/webp']
+
+/** A version of a file a photo field names, as the database gives it. */
+interface PhotoVersion {
+  readonly id: string
+  readonly title: string
+  readonly mediaType: string
+  readonly sha256: string
+  readonly createdAt: Date
+}
+
+/**
+ * The version of each file a protocol shows (#817), from its versions newest
+ * first: the newest one; for a signed protocol the newest the server had when
+ * it was signed, so that a version laid over it later does not change the
+ * page, and the first one where all came after.
+ */
+export function shownVersions(
+  versions: readonly PhotoVersion[],
+  signedAt: Date | null,
+): Map<string, PhotoVersion> {
+  const shown = new Map<string, PhotoVersion>()
+  const first = new Map<string, PhotoVersion>()
+
+  for (const version of versions) {
+    first.set(version.id, version)
+
+    if (!shown.has(version.id) && (signedAt === null || version.createdAt <= signedAt)) {
+      shown.set(version.id, version)
+    }
+  }
+
+  for (const [id, version] of first) {
+    if (!shown.has(id)) {
+      shown.set(id, version)
+    }
+  }
+
+  return shown
+}
 
 /** "Gewährleistung bis 05.11.2031: fünf Jahre ab der Abnahme (§ 634a Abs. 1 Nr. 2 BGB)." and the parts, where they end sooner (#310). */
 export function warrantyNotes(
@@ -74,7 +125,9 @@ export function warrantyNotes(
  * The PDF of a filled form (#78), the test protocol of #79 first.
  *
  * Under the right of the installation it hangs on, like its circuit chart;
- * the test of an appliance of the register under the same (#303).
+ * the test of an appliance of the register under the same (#303). A photo a
+ * field names is on the page for whoever may see the files (#817), and only
+ * one of the files of what was tested.
  * Printed on every request out of the record and kept nowhere: a signed
  * protocol does not change, and everything it depends on is in it.
  */
@@ -82,6 +135,7 @@ export function warrantyNotes(
 export class FormRecordsController {
   constructor(
     private readonly database: Database,
+    private readonly files: DocumentFiles,
     @Inject(RENDERER) private readonly render: Renderer,
   ) {}
 
@@ -96,9 +150,9 @@ export class FormRecordsController {
       throw new NotFoundException()
     }
 
-    const protocol = await this.database.forTenant(
+    const gathered = await this.database.forTenant(
       identity,
-      async (tx): Promise<PrintedProtocol> => {
+      async (tx): Promise<PrintedProtocol & { readonly versions: Map<string, PhotoVersion> }> => {
         const [record] = await tx
           .select()
           .from(formRecords)
@@ -130,10 +184,44 @@ export class FormRecordsController {
           .where(eq(letterheads.tenantId, identity.tenantId))
         const [tenant] = await tx.select({ name: tenants.name }).from(tenants)
         const companyName = letterhead?.companyName ?? null
+        const values = readFormValues(record.values) ?? {}
+        const chosen = chosenPhotos(definition, values)
+        // The files a field may name are those the screen offered: of the
+        // installation, of the appliance, or of the job of an acceptance.
+        const ofSubject = record.installationId
+          ? eq(attachments.installationId, record.installationId)
+          : record.applianceId
+            ? eq(attachments.applianceId, record.applianceId)
+            : record.jobId
+              ? eq(attachments.jobId, record.jobId)
+              : null
+        const photoRows =
+          chosen.length === 0 || ofSubject === null || !isAllowed(identity, 'attachment.read')
+            ? []
+            : await tx
+                .select({
+                  id: attachments.id,
+                  title: attachments.title,
+                  mediaType: attachmentVersions.mediaType,
+                  sha256: attachmentVersions.sha256,
+                  createdAt: attachmentVersions.createdAt,
+                })
+                .from(attachments)
+                .innerJoin(attachmentVersions, eq(attachmentVersions.attachmentId, attachments.id))
+                .where(
+                  and(
+                    inArray(attachments.id, chosen as never[]),
+                    ofSubject,
+                    isNull(attachments.deletedAt),
+                    isNull(attachmentVersions.deletedAt),
+                  ),
+                )
+                .orderBy(asc(attachments.id), desc(attachmentVersions.createdAt))
 
         return {
+          versions: shownVersions(photoRows, record.status === 'signed' ? record.updatedAt : null),
           definition,
-          values: readFormValues(record.values) ?? {},
+          values,
           performedOn: record.performedOn as IsoDate,
           status: record.status as FormRecordStatus,
           keeper: {
@@ -165,6 +253,20 @@ export class FormRecordsController {
       },
     )
 
+    const { versions, ...printed } = gathered
+    const photos = new Map<string, ProtocolPhoto>()
+
+    for (const [id, version] of versions) {
+      if (photoTypes.includes(version.mediaType)) {
+        photos.set(id, {
+          title: version.title,
+          mediaType: version.mediaType,
+          bytes: await this.files.read(version.sha256),
+        })
+      }
+    }
+
+    const protocol: PrintedProtocol = { ...printed, photos }
     let bytes: Uint8Array
 
     try {

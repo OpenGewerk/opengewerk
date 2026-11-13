@@ -217,11 +217,13 @@ export async function emptySite(tx: TenantTransaction, siteId: string): Promise<
   )
   await tx.execute(sql`delete from secrets where record_id in ${accessesOf}`)
 
-  // The files at the site, its installations and their defects go for good.
+  // The files at the site, its installations, its appliances (#817) and their
+  // defects go for good.
   const fileIds = await ids(
     tx,
     sql`select id from attachments
-     where site_id = ${k} or installation_id in ${installationsOf} or defect_id in ${defectsOf}`,
+     where site_id = ${k} or installation_id in ${installationsOf}
+        or appliance_id in ${appliancesOf} or defect_id in ${defectsOf}`,
   )
 
   if (fileIds.length > 0) {

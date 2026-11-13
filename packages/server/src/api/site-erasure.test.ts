@@ -117,9 +117,10 @@ async function hollberg(): Promise<Fixture> {
   const siteFile = uuid()
   const cabinetFile = uuid()
   const defectFile = uuid()
+  const applianceFile = uuid()
   const access = uuid()
   const tag = uuid()
-  const [photo, plan, close] = [hash(), hash(), hash()]
+  const [photo, plan, close, cord] = [hash(), hash(), hash(), hash()]
 
   await admin.query(
     `begin;
@@ -170,16 +171,19 @@ async function hollberg(): Promise<Fixture> {
        values ('${north}', '${defect}', 'accepted', '2015-01-07', 'Erika ${family}', 'M1,1L2,2');
      insert into files (tenant_id, sha256, size_bytes, media_type)
        values ('${north}', '${photo}', 10, 'image/jpeg'), ('${north}', '${plan}', 10, 'application/pdf'),
-              ('${north}', '${close}', 10, 'image/jpeg');
+              ('${north}', '${close}', 10, 'image/jpeg'), ('${north}', '${cord}', 10, 'image/jpeg');
      insert into attachments (id, tenant_id, site_id, title) values ('${siteFile}', '${north}', '${site}', 'Haus ${family}');
      insert into attachments (id, tenant_id, installation_id, title)
        values ('${cabinetFile}', '${north}', '${cabinet}', 'Plan ${family}');
      insert into attachments (id, tenant_id, installation_id, defect_id, title)
        values ('${defectFile}', '${north}', '${cabinet}', '${defect}', 'Kontakt ${family}');
+     insert into attachments (id, tenant_id, appliance_id, title)
+       values ('${applianceFile}', '${north}', '${appliance}', 'Leitung ${family}');
      insert into attachment_versions (tenant_id, attachment_id, sha256, file_name, media_type, size_bytes)
        values ('${north}', '${siteFile}', '${photo}', '${family.toLowerCase()}-haus.jpg', 'image/jpeg', 10),
               ('${north}', '${cabinetFile}', '${plan}', '${family.toLowerCase()}-plan.pdf', 'application/pdf', 10),
-              ('${north}', '${defectFile}', '${close}', '${family.toLowerCase()}-kontakt.jpg', 'image/jpeg', 10);
+              ('${north}', '${defectFile}', '${close}', '${family.toLowerCase()}-kontakt.jpg', 'image/jpeg', 10),
+              ('${north}', '${applianceFile}', '${cord}', '${family.toLowerCase()}-leitung.jpg', 'image/jpeg', 10);
      insert into pv_handovers (tenant_id, installation_id, handed_over_on, content)
        values ('${north}', '${pv}', '2014-03-15', '{"owner": "Erika ${family}"}');
      insert into tags (id, tenant_id, name) values ('${tag}', '${north}', 'Wärmepumpe ${tag.slice(-6)}');

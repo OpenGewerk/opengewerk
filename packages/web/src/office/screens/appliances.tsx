@@ -40,6 +40,7 @@ import {
 import { addressLine } from '../../app/format.js'
 import { definitionOf, isSigned, ProtocolsList } from '../../app/protocols.js'
 import { useMay } from '../../app/queries.js'
+import { FilesPanel } from './attachments.js'
 
 /**
  * The register of appliances of a site in the office (#303): the card on the
@@ -531,6 +532,16 @@ export function ApplianceScreen() {
                 }}
               />
             </Panel>
+            <FilesPanel
+              field="applianceId"
+              id={applianceId}
+              home={{
+                customerId: site ? String(site['customerId']) : null,
+                siteId,
+                applianceId,
+              }}
+              empty="Noch keine Datei am Gerät, etwa das Foto einer beschädigten Anschlussleitung oder des Typenschilds."
+            />
           </>
         }
         side={
