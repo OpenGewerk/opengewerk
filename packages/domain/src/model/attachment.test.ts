@@ -76,9 +76,9 @@ describe('the version of a photo a protocol shows (#817)', () => {
     expect(shown(versions, 10)).toBe('v1')
   })
 
-  it('stays the one written first where all came after the signature, whatever arrives later', () => {
-    expect(shown([version('v2', 20)], 10)).toBe('v2')
-    // An older version by id, written later still, does not take its place.
-    expect(shown([version('v2', 20), version('v1', 30)], 10)).toBe('v2')
+  it('is none where all came after the signature, whatever arrives later', () => {
+    expect(shown([version('v2', 20)], 10)).toBeUndefined()
+    expect(shown([version('v2', 20), version('v1', 30)], 10)).toBeUndefined()
+    expect(shown([version('v1', null)], 10)).toBeUndefined()
   })
 })

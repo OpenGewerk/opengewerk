@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Inject,
+  InternalServerErrorException,
   NotFoundException,
   Param,
   Res,
@@ -91,8 +92,15 @@ export function shownVersions(
 ): Map<string, PhotoVersion> {
   const byFile = new Map<string, PhotoVersion[]>()
 
+  // Grouped in one pass: a file may have many versions.
   for (const version of versions) {
-    byFile.set(version.id, [...(byFile.get(version.id) ?? []), version])
+    const list = byFile.get(version.id)
+
+    if (list) {
+      list.push(version)
+    } else {
+      byFile.set(version.id, [version])
+    }
   }
 
   const shown = new Map<string, PhotoVersion>()
@@ -323,11 +331,20 @@ export class FormRecordsController {
     const photos = new Map<string, ProtocolPhoto>()
 
     for (const [id, version] of photosToRead(versions)) {
-      photos.set(id, {
-        title: version.fileName,
-        mediaType: version.mediaType,
-        bytes: await this.files.read(version.sha256),
-      })
+      try {
+        photos.set(id, {
+          title: version.fileName,
+          mediaType: version.mediaType,
+          bytes: await this.files.read(version.sha256),
+        })
+      } catch (error) {
+        // A stored file that is gone or damaged is a fault of the
+        // installation, and the page says where the photo lies rather than
+        // failing as a whole.
+        if (!(error instanceof InternalServerErrorException)) {
+          throw error
+        }
+      }
     }
 
     const protocol: PrintedProtocol = { ...printed, photos }

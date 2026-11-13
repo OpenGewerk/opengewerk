@@ -25,7 +25,7 @@ import {
   resetToMigrated,
 } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
-import { photosToRead } from './form-records.controller.js'
+import { photosToRead, shownVersions } from './form-records.controller.js'
 import { binary } from './test-binary.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { changed, created, push } from './test-structure.js'
@@ -932,5 +932,77 @@ describe('the photos one page of a protocol reads (#817)', () => {
 
   it('stay within the bound in bytes, a large one left to say where it lies', () => {
     expect(read([version('a', 60), version('b', 60), version('c', 40)])).toEqual(['a', 'c'])
+  })
+})
+
+describe('a photo with no version at its signature (#817)', () => {
+  it('stays away from the page of a signed protocol, whatever is written later', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const later = photoBytes('nach der Unterschrift')
+    const before = complete({ photo })
+
+    await upload(later, technician)
+    await push(app, technician, [anAppliance(appliance), aPhotoTest(id, appliance, before)])
+    await push(app, technician, [
+      signed(id, before, complete({ photo, tester_signature: signature })),
+    ])
+    // The file and its first version come after the signature.
+    await push(app, technician, [
+      created('attachments', photo, { applianceId: appliance, title: 'Später' }),
+      aVersion(photo, later),
+    ])
+
+    const page = await printed(id, as(north.id, 'office'))
+
+    expect(page).not.toContain(later.toString('base64'))
+    expect(page).toContain('bei den Dateien des Geräts')
+  })
+})
+
+describe('a photo whose stored file is gone (#817)', () => {
+  it('says where the photo lies, and the page is printed all the same', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const sha = 'd'.repeat(64)
+
+    await push(app, technician, [anAppliance(appliance)])
+    // A version whose bytes never reached the store of this installation.
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       insert into files (tenant_id, sha256, size_bytes, media_type) values ($1, $2, 10, 'image/png');
+       insert into attachments (id, tenant_id, appliance_id, title) values ($3, $1, $4, 'Verloren');
+       insert into attachment_versions (tenant_id, attachment_id, sha256, file_name, media_type, size_bytes)
+         values ($1, $3, $2, 'verloren.png', 'image/png', 10);
+       commit;`
+        .replaceAll('$1', `'${north.id}'`)
+        .replaceAll('$2', `'${sha}'`)
+        .replaceAll('$3', `'${photo}'`)
+        .replaceAll('$4', `'${appliance}'`),
+    )
+    await push(app, technician, [aPhotoTest(id, appliance, complete({ photo }))])
+
+    expect(await printed(id, as(north.id, 'office'))).toContain('bei den Dateien des Geräts')
+  })
+})
+
+describe('the versions of a photo (#817)', () => {
+  it('are grouped in time that grows with their number', () => {
+    const rows = Array.from({ length: 50_000 }, (_, index) => ({
+      id: 'f-1',
+      fileName: 'leitung.jpg',
+      mediaType: 'image/jpeg',
+      sha256: String(index),
+      sizeBytes: 10,
+      changeSequence: 50_000 - index,
+    }))
+    const started = performance.now()
+
+    expect(shownVersions(rows, 5)?.get('f-1')?.changeSequence).toBe(5)
+    expect(performance.now() - started).toBeLessThan(1000)
   })
 })

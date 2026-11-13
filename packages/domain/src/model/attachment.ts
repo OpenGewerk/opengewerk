@@ -67,37 +67,21 @@ export function isProtocolPhoto(mediaType: string): boolean {
  * file newest first, as every list of files orders them (by id): the newest;
  * for a signed protocol the newest the server had written when it was signed,
  * by the sequence of its writes, which a version, written once, and a signed
- * protocol, which no write changes, keep; and where all came after, the one
- * the server wrote first, which no later write can change. A version the
- * server has not written yet counts as after any signature.
+ * protocol, which no write changes, keep. Where the server had none, there is
+ * none, now and later: a version written after the signature never takes its
+ * place. A version the server has not written yet counts as after any
+ * signature.
  */
 export function shownPhotoVersion<V>(
   newestFirst: readonly V[],
   sequenceOf: (version: V) => number | null,
   signedAt: number | null,
 ): V | undefined {
-  const shown = newestFirst.find((version) => {
+  return newestFirst.find((version) => {
     const sequence = sequenceOf(version)
 
     return signedAt === null || (sequence !== null && sequence <= signedAt)
   })
-
-  if (shown !== undefined) {
-    return shown
-  }
-
-  let first: V | undefined
-
-  for (const version of newestFirst) {
-    const sequence = sequenceOf(version)
-    const known = first === undefined ? null : sequenceOf(first)
-
-    if (sequence !== null && (known === null || sequence < known)) {
-      first = version
-    }
-  }
-
-  return first ?? newestFirst.at(-1)
 }
 
 /** Why a type is not the one `fileMediaType` records, or null when it is. */
