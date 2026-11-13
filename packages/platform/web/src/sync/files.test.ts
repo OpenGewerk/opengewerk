@@ -134,6 +134,61 @@ describe('a file made on the device', () => {
     expect(client.status().pending).toBe(0)
   })
 
+  it('lets nothing recorded after it go up ahead of it, of any record (opengewerk#939)', async () => {
+    const client = await start()
+    const first = await client.keepFile(photo, 'image/jpeg')
+    const second = new TextEncoder().encode('a photo taken during the upload').buffer as ArrayBuffer
+    const upload = server.upload.bind(server)
+    const push = server.push.bind(server)
+    const arrived: string[] = []
+    let taken = false
+    let transmission = 0
+
+    // While the first goes up, a note is written, a second photo is taken and
+    // named, and then a record of its own that relies on it, as a signature.
+    server.upload = async (sha256, bytes, mediaType) => {
+      await upload(sha256, bytes, mediaType)
+
+      if (!taken) {
+        taken = true
+
+        await client.create('notes', { title: 'Vorher' })
+
+        const made = await client.keepFile(second, 'image/jpeg')
+
+        await attach(client, made.sha256, made.sizeBytes)
+        await client.create('notes', { title: 'Unterschrift' })
+      }
+    }
+    server.push = (deviceId, operations) => {
+      transmission += 1
+
+      for (const operation of operations) {
+        for (const patch of operation.patches) {
+          if (patch.field === 'sha256' && typeof patch.to === 'string') {
+            arrived.push(`${String(transmission)}: parcel ${patch.to.slice(0, 8)}`)
+          } else if (patch.field === 'title' && patch.to !== 'Label') {
+            arrived.push(`${String(transmission)}: ${String(patch.to)}`)
+          }
+        }
+      }
+
+      return push(deviceId, operations)
+    }
+
+    await attach(client, first.sha256, first.sizeBytes)
+    await client.synchronise()
+
+    // What was recorded before the waiting photo goes up at once.
+    expect(arrived).toEqual([
+      `1: parcel ${first.sha256.slice(0, 8)}`,
+      '1: Vorher',
+      `2: parcel ${hashOf(second).slice(0, 8)}`,
+      '2: Unterschrift',
+    ])
+    expect(client.status().pending).toBe(0)
+  })
+
   it('waits on the device without a network, and goes up once there is one', async () => {
     const client = await start()
 

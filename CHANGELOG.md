@@ -168,6 +168,12 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Der Abgleich eines Geräts schickt seine Änderungen in der Reihenfolge, in der sie entstanden sind, auch wenn eine
+  Datei noch hochgeladen wird (#939). Bisher hielt der Ausgang im Fundament nur den Datensatz zurück, der auf die Datei
+  wartet; eine spätere Änderung an etwas anderem ging sofort hinaus. Warum: So konnte die Unterschrift unter einem
+  Protokoll den Server vor der Fassung des Fotos erreichen, das sie zeigt, und das Protokoll zeigte dieses Foto nie.
+  Was vor der wartenden Datei entstand, geht weiter sofort hinaus, alles danach mit der nächsten Runde nach dem Upload.
+  Die Haustechnik bekommt das mit dem nächsten Anheben des Submoduls.
 - Ein Fotofeld und das Foto eines Prüfpunkts nehmen nur noch die Kennung einer Datei an, eine UUID; bisher ging jeder
   Text von 1 bis 64 Zeichen durch (#933). Warum: Über die Oberfläche steht dort immer die Kennung einer Datei, über den
   Abgleich konnte ein Gerät aber jeden kurzen Text schicken, auch in ein Protokoll, das danach unterschrieben und
