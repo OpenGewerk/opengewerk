@@ -25,7 +25,12 @@ import {
   resetToMigrated,
 } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
-import { photosToRead, shownVersions } from './form-records.controller.js'
+import {
+  photosToRead,
+  printedPhotos,
+  rendererRequestBytes,
+  shownVersions,
+} from './form-records.controller.js'
 import { binary } from './test-binary.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { changed, created, push } from './test-structure.js'
@@ -928,6 +933,12 @@ describe('the photos one page of a protocol reads (#817)', () => {
         version('d', 10),
       ]),
     ).toEqual(['a', 'c'])
+  })
+
+  it('fit, as base64 and with room for the page, into one request to the renderer', () => {
+    expect(Math.ceil((printedPhotos.bytes * 4) / 3) + 2_000_000).toBeLessThanOrEqual(
+      rendererRequestBytes,
+    )
   })
 
   it('stay within the bound in bytes, a large one left to say where it lies', () => {

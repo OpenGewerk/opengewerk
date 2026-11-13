@@ -62,9 +62,14 @@ import { CurrentIdentity, type RequestIdentity } from './identity.js'
  * together (#817): a protocol may name a photo per circuit, and each is read
  * whole into memory and written into the page again. A photo past either
  * bound says where it lies, as one the page cannot show. A photo a device
- * takes is made smaller first and keeps far below.
+ * takes is made smaller first and keeps far below. The bytes leave room in
+ * what the renderer takes in one request (browserless, 10 MiB unless set
+ * otherwise): a photo grows by a third as base64, and the page has its own.
  */
-export const printedPhotos = { count: 20, bytes: 40_000_000 } as const
+export const printedPhotos = { count: 20, bytes: 6_000_000 } as const
+
+/** What the renderer takes in one request, unless it is set otherwise (`MAX_PAYLOAD_SIZE`). */
+export const rendererRequestBytes = 10_485_760
 
 /** A version of a file a photo field names, as the database gives it. */
 interface PhotoVersion {
