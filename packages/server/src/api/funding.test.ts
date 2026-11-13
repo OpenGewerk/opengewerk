@@ -543,9 +543,12 @@ describe('the papers of a funding programme at an installation (#307)', () => {
       ),
     )
 
-    // Two of 4 MB each by what the store recorded, beside the small one of the test before.
+    // One of 4 MB by what the store recorded, and a small one whose long title
+    // the page prints twice and in its file name, 2.5 MB with them (1.7 MB
+    // with the title once), beside the small one of the test before: the two
+    // first together past the 6 MB of a page.
     await filed('Zähler', png, 'image/png', 4_000_000)
-    await filed('Leitungsweg', png, 'image/png', 4_000_000)
+    await filed('x'.repeat(140_000), png, 'image/png', 1_000)
 
     const { printed } = await papers(`/installations/${wallbox}/funding/${program}`)
     const photos = printed.find((job) => job.html.includes('<title>Fotos,'))?.html ?? ''
