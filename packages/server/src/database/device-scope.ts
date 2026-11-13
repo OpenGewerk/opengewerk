@@ -49,13 +49,76 @@ export async function deviceScope(
      order by j.id`)
   const jobIds = rows.map((row) => row.id)
   const openJobIds = rows.filter((row) => row.open).map((row) => row.id)
+  const moved = await movesInto(tx, jobIds)
 
   return {
     userId,
     jobIds,
-    value: `jobs:${fingerprintOf(jobIds)}`,
+    // Nothing added while nothing moved, so that the value stays what
+    // devices hold today.
+    value: `jobs:${fingerprintOf(jobIds)}${moved.length === 0 ? '' : `:moved:${fingerprintOf(moved)}`}`,
     openJobIds,
   }
+}
+
+/**
+ * The installations and appliances the jobs reach that have changed their
+ * site, each with its last move (opengewerk#938). One that moves onto the site
+ * of a job brings what hangs on it, its files, protocols and boards, whose
+ * changes lie behind the cursor of a device that held the site before; a
+ * different list makes the device drop what it holds and ask from the start,
+ * as a new job does. Each one by itself, so that one moving away while another
+ * moves in changes the list too. One created there is not on it: what hangs
+ * on it is new as well. Read in the log of changes, through
+ * `audit_entries_record_idx`.
+ */
+async function movesInto(tx: TenantTransaction, jobIds: readonly string[]): Promise<string[]> {
+  if (jobIds.length === 0) {
+    return []
+  }
+
+  const { installations, appliances } = placesOf(jobIds)
+  // Two parts rather than one condition with `or`, which PostgreSQL would
+  // answer by reading the whole log on every pull.
+  const { rows } = await tx.execute<{ moved: string }>(sql`
+    select m.record_id::text || '@' || max(m.sequence)::text as moved
+      from (select a.record_id, a.sequence
+              from audit_entries a
+             where a.table_name = 'installations'
+               and a.field = 'site_id'
+               and a.operation = 'update'
+               and a.record_id in ${installations}
+            union all
+            select a.record_id, a.sequence
+              from audit_entries a
+             where a.table_name = 'appliances'
+               and a.field = 'site_id'
+               and a.operation = 'update'
+               and a.record_id in ${appliances}) m
+     group by m.record_id
+     order by 1`)
+
+  return rows.map((row) => row.moved)
+}
+
+/** The sites, installations and appliances the jobs reach, as `narrowedTo` asks them. */
+function placesOf(jobIds: readonly string[]): {
+  readonly ids: SQL
+  readonly sites: SQL
+  readonly installations: SQL
+  readonly appliances: SQL
+} {
+  const ids = sql`array[${sql.join(
+    jobIds.map((id) => sql`${id}`),
+    sql`, `,
+  )}]::uuid[]`
+  const sites = sql`(select site_id from jobs where id = any(${ids}) and site_id is not null)`
+  const installations = sql`(select i.id from installations i
+    where i.id in (select installation_id from jobs where id = any(${ids}) and installation_id is not null)
+       or i.site_id in ${sites})`
+  const appliances = sql`(select id from appliances where site_id in ${sites})`
+
+  return { ids, sites, installations, appliances }
 }
 
 /**
@@ -199,17 +262,9 @@ export function narrowedTo(scope: DeviceScope, entity: string): SQL | undefined 
     return undefined
   }
 
-  const ids = sql`array[${sql.join(
-    scope.jobIds.map((id) => sql`${id}`),
-    sql`, `,
-  )}]::uuid[]`
+  const { ids, sites, installations, appliances } = placesOf(scope.jobIds)
   const jobs = sql`(select id from jobs where id = any(${ids}))`
   const customers = sql`(select customer_id from jobs where id = any(${ids}))`
-  const sites = sql`(select site_id from jobs where id = any(${ids}) and site_id is not null)`
-  const installations = sql`(select i.id from installations i
-    where i.id in (select installation_id from jobs where id = any(${ids}) and installation_id is not null)
-       or i.site_id in ${sites})`
-  const appliances = sql`(select id from appliances where site_id in ${sites})`
   const boards = sql`(select id from distribution_boards where installation_id in ${installations})`
   const circuits = sql`(select id from circuits where distribution_board_id in ${boards})`
   const inverters = sql`(select id from inverters where installation_id in ${installations})`

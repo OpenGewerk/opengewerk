@@ -654,6 +654,109 @@ describe('the files of an appliance (#817)', () => {
 
     expect(files).toContain(atHere)
     expect(files).not.toContain(atThere)
+
+    // The appliance from elsewhere moves onto the site of the job: its file
+    // lies behind the cursor of the device, which the value makes it drop
+    // and ask again for (opengewerk#938).
+    const narrowed = (body: unknown) =>
+      (body as { narrowed: Record<string, string> }).narrowed['attachments']
+    const before = narrowed(answer.body)
+
+    await push(app, office, [
+      changed('appliances', there, { siteId: { from: elsewhere, to: site } }),
+    ])
+
+    const after = await http().get('/sync?since=0').set('x-test-identity', technician).expect(200)
+    const moved =
+      (after.body as { changes: { entity: string; rows: { id: string }[] }[] }).changes
+        .find((change) => change.entity === 'attachments')
+        ?.rows.map((row) => row.id) ?? []
+
+    expect(narrowed(after.body)).not.toBe(before)
+    expect(moved).toContain(atThere)
+
+    // The one moves away and another moves in instead: as many moves as
+    // before, and still a different value.
+    const third = newId<'appliance'>()
+    const atThird = newId<'attachment'>()
+
+    await push(app, office, [
+      anAppliance(third, {
+        siteId: elsewhere,
+        inventoryNumber: '014',
+        designation: 'Bohrmaschine',
+      }),
+    ])
+    await push(app, office, [
+      created('attachments', atThird, { applianceId: third, title: 'Prüfplakette' }),
+    ])
+    await push(app, office, [
+      changed('appliances', there, { siteId: { from: site, to: elsewhere } }),
+      changed('appliances', third, { siteId: { from: elsewhere, to: site } }),
+    ])
+
+    const swapped = await http().get('/sync?since=0').set('x-test-identity', technician).expect(200)
+
+    expect(narrowed(swapped.body)).not.toBe(narrowed(after.body))
+
+    // A new appliance at the site moves nothing, and the value stays.
+    await push(app, office, [
+      anAppliance(newId<'appliance'>(), { inventoryNumber: '013', designation: 'Wasserkocher' }),
+    ])
+
+    const again = await http().get('/sync?since=0').set('x-test-identity', technician).expect(200)
+
+    expect(narrowed(again.body)).toBe(narrowed(swapped.body))
+  })
+
+  it('reach a device with an installation that moves onto the site of its job (opengewerk#938)', async () => {
+    const technician = person('max', 'technician')
+    const office = as(north.id, 'office')
+    const elsewhere = await post(
+      '/sites',
+      { customerId: customer, designation: 'Werkhalle', city: 'Mannheim' },
+      office,
+    )
+    const board = await post(
+      '/installations',
+      { siteId: elsewhere, kind: 'meter_cabinet', designation: 'Unterverteiler Halle' },
+      office,
+    )
+    const plan = newId<'attachment'>()
+
+    await push(app, office, [
+      created('attachments', plan, { installationId: board, title: 'Stromlaufplan' }),
+    ])
+
+    const job = await post(
+      '/jobs',
+      {
+        customerId: customer,
+        siteId: site,
+        kind: 'service',
+        status: 'active',
+        designation: 'Unterverteiler prüfen',
+      },
+      office,
+    )
+
+    await http()
+      .put(`/jobs/${job}/assignees`)
+      .set('x-test-identity', office)
+      .send({ userIds: ['max'] })
+      .expect(200)
+
+    const narrowed = (body: unknown) =>
+      (body as { narrowed: Record<string, string> }).narrowed['attachments']
+    const before = await http().get('/sync?since=0').set('x-test-identity', technician).expect(200)
+
+    await push(app, office, [
+      changed('installations', board, { siteId: { from: elsewhere, to: site } }),
+    ])
+
+    const after = await http().get('/sync?since=0').set('x-test-identity', technician).expect(200)
+
+    expect(narrowed(after.body)).not.toBe(narrowed(before.body))
   })
 
   it('are a home of a file in the database, and a file with none is refused', async () => {
