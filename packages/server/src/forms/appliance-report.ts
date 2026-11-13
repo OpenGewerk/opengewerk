@@ -15,6 +15,8 @@ import {
   typeface,
 } from '@opengewerk/platform-server'
 
+import type { formRecords } from '../database/schema/index.js'
+
 /**
  * The report of a site after DGUV Vorschrift 3 (#303): every appliance of the
  * register with the result of its last signed test and the day of the next,
@@ -30,6 +32,8 @@ export interface LastTest {
   readonly definition: FormDefinition
   readonly values: FormValues
   readonly performedOn: IsoDate
+  /** The protocol itself, where the page binds it in with its photos (#935). */
+  readonly record?: typeof formRecords.$inferSelect
 }
 
 export interface ReportedAppliance {

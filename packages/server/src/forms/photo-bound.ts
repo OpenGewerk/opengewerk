@@ -9,6 +9,19 @@
  */
 export const printedPhotos = { count: 20, bytes: 6_000_000 } as const
 
+/**
+ * How many photos the protocols of one collection read, and how many bytes of
+ * them together (#935): the inspection report of a site, the folder of a PV
+ * system, the papers of a funding programme, whose page of the photos of the
+ * installation keeps its own bound beside it (#940). Each page keeps its own
+ * bound; the pages
+ * are rendered one after another and bound into one PDF, which holds them all.
+ * Three pages' worth, so that a site with many protocols full of photos does
+ * not make one request hold all of them; a protocol past it says where its
+ * photo lies.
+ */
+export const printedCollection = { count: 60, bytes: 18_000_000 } as const
+
 /** What the renderer takes in one request, unless it is set otherwise (`MAX_PAYLOAD_SIZE`). */
 export const rendererRequestBytes = 10_485_760
 

@@ -1,8 +1,18 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { PDFDocument } from '@cantoo/pdf-lib'
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import type { TenantId } from '@opengewerk/domain'
-import { Database, newId, type PrintJob, type Renderer } from '@opengewerk/platform-server'
+import {
+  Database,
+  FileStore,
+  newId,
+  type PrintJob,
+  type Renderer,
+} from '@opengewerk/platform-server'
 import type { Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -12,6 +22,7 @@ import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/te
 import { todayInGermany } from '../today.js'
 import { ApiModule } from './api.module.js'
 import { binary } from './test-binary.js'
+import { aStoredPhoto } from './test-photo.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { changed, created, push as pushVia } from './test-structure.js'
 
@@ -28,6 +39,8 @@ const south = { id: newId<'tenant'>() as TenantId, name: 'Solar Süd GmbH' }
 let admin: Pool
 let database: Database
 let app: INestApplication
+let storageRoot = ''
+let store: FileStore
 
 const jobs: PrintJob[] = []
 // A real PDF of one page per job, so that the parts can be bound into one.
@@ -109,9 +122,11 @@ beforeAll(async () => {
   ])
 
   database = Database.connect(applicationDatabaseUrl())
+  storageRoot = mkdtempSync(join(tmpdir(), 'opengewerk-photos-'))
+  store = new FileStore(storageRoot)
 
   const built = await Test.createTestingModule({
-    imports: [ApiModule.create(database, identities, { renderer: standIn })],
+    imports: [ApiModule.create(database, identities, { renderer: standIn, files: store })],
   }).compile()
 
   app = built.createNestApplication()
@@ -221,6 +236,7 @@ afterAll(async () => {
   await app.close()
   await database.close()
   await admin.end()
+  rmSync(storageRoot, { recursive: true, force: true })
 })
 
 describe('stringplan and component list of a PV system (#305)', () => {
@@ -386,5 +402,106 @@ describe('the forecast of the yield (#305)', () => {
     expect(answer.message).toBe(
       'Die Ertragsprognose ist eine ganze Zahl von Kilowattstunden im Jahr.',
     )
+  })
+})
+
+describe('the protocols in the folder (#935)', () => {
+  it('print with their photos, as each prints on its own', async () => {
+    const photo = await aStoredPhoto(admin, store, north.id, system, 'Generatoranschluss')
+
+    await aProtocol({
+      installation: system,
+      key: 'iec-62446-1',
+      on: '2026-11-20',
+      values: { photo: photo.id },
+    })
+
+    const handed = await http()
+      .post(`/installations/${system}/handovers`)
+      .set('x-test-identity', office())
+      .expect(201)
+    const pages = await printed(
+      `/installations/${system}/handovers/${(handed.body as { id: string }).id}/pdf`,
+    )
+
+    expect(pages.map((page) => page.html).join('')).toContain(
+      `data:image/png;base64,${photo.base64}`,
+    )
+  })
+
+  it('read the photos of each protocol only for its own page, one after another', async () => {
+    const [site] = (
+      await admin.query<{ site_id: string }>('select site_id from installations where id = $1', [
+        system,
+      ])
+    ).rows
+    const companion = newId<'installation'>()
+
+    await admin.query(
+      `insert into installations (id, tenant_id, site_id, kind, designation, pv_system_id)
+       values ($1, $2, $3, 'battery', 'Zweiter Speicher', $4)`,
+      [companion, north.id, site?.site_id, system],
+    )
+
+    for (const [installation, label] of [
+      [system, 'Wechselrichter'],
+      [companion, 'Speicherschrank'],
+    ] as const) {
+      const photo = await aStoredPhoto(admin, store, north.id, installation, label)
+
+      await aProtocol({
+        installation,
+        key: 'iec-62446-1',
+        on: '2026-11-21',
+        values: { photo: photo.id },
+      })
+    }
+
+    const handed = await http()
+      .post(`/installations/${system}/handovers`)
+      .set('x-test-identity', office())
+      .expect(201)
+    const get = store.get.bind(store)
+    // How many pages had been printed when each photo was read.
+    const readAfter: number[] = []
+
+    store.get = async (sha256) => {
+      readAfter.push(jobs.length)
+
+      return get(sha256)
+    }
+
+    try {
+      await printed(`/installations/${system}/handovers/${(handed.body as { id: string }).id}/pdf`)
+    } finally {
+      store.get = get
+    }
+
+    expect(readAfter).toHaveLength(2)
+    expect(readAfter[1]).toBeGreaterThan(readAfter[0] ?? 0)
+  })
+
+  it('answer a fault of the store as one of the server, without what the store said', async () => {
+    const [handover] = (
+      await http()
+        .get(`/installations/${system}/handovers`)
+        .set('x-test-identity', office())
+        .expect(200)
+    ).body as { id: string }[]
+    const get = store.get.bind(store)
+
+    store.get = () =>
+      Promise.reject(new Error("EACCES: permission denied, open '/var/lib/opengewerk/files/ab/cd'"))
+
+    try {
+      const answer = await http()
+        .get(`/installations/${system}/handovers/${handover?.id ?? ''}/pdf`)
+        .set('x-test-identity', office())
+        .expect(500)
+
+      expect(JSON.stringify(answer.body)).not.toContain('EACCES')
+    } finally {
+      store.get = get
+    }
   })
 })

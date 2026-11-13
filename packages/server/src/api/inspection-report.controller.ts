@@ -1,28 +1,29 @@
 import {
-  BadGatewayException,
   Controller,
   Get,
   Inject,
   NotFoundException,
   Param,
   Res,
-  ServiceUnavailableException,
   StreamableFile,
 } from '@nestjs/common'
-import {
-  Database,
-  isUuid,
-  RENDERER,
-  type Renderer,
-  RendererUnavailableError,
-} from '@opengewerk/platform-server'
+import { Database, isUuid, RENDERER, type Renderer } from '@opengewerk/platform-server'
 import type { Response } from 'express'
 
 import { bound, type InspectionReport, inspectionReportJob } from '../forms/inspection-report.js'
 import { protocolPrintJob } from '../forms/protocol-print.js'
 import { tradeRules } from '../forms/registry.js'
 import { RequiresPermission } from './authorization.js'
+import { DocumentFiles } from './document-files.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
+import {
+  collectionBudget,
+  type Page,
+  photoSourcesOf,
+  printPages,
+  rendererFault,
+  withPhotosOf,
+} from './protocol-photos.js'
 import { reportedAppliances, reportedInstallations, siteHead } from './site-reports.js'
 
 /**
@@ -36,6 +37,7 @@ import { reportedAppliances, reportedInstallations, siteHead } from './site-repo
 export class InspectionReportController {
   constructor(
     private readonly database: Database,
+    private readonly files: DocumentFiles,
     @Inject(RENDERER) private readonly render: Renderer,
   ) {}
 
@@ -71,38 +73,51 @@ export class InspectionReportController {
       '-',
     )
 
+    // Each protocol as it prints on its own, its photos included (#935).
+    const sources = await photoSourcesOf(
+      this.database,
+      identity,
+      report.installations.flatMap((entry) => (entry.last?.record ? [entry.last.record] : [])),
+    )
+    const budget = collectionBudget()
+    // Each protocol's page is built when it is printed (#935).
+    const pages: Page[] = [
+      inspectionReportJob(report),
+      ...report.installations.flatMap((entry) => {
+        if (!entry.last) {
+          return []
+        }
+
+        const { record, ...last } = entry.last
+
+        return [
+          async () =>
+            protocolPrintJob(
+              await withPhotosOf(
+                this.files,
+                {
+                  ...last,
+                  status: 'signed',
+                  keeper: report.keeper,
+                  installation: entry.designation,
+                  appliance: null,
+                  site: report.site,
+                  rules: tradeRules,
+                },
+                record ? sources.get(record.id) : undefined,
+                budget,
+              ),
+            ),
+        ]
+      }),
+    ]
+    const parts = await printPages(this.render, identity, pages)
     let bytes: Uint8Array
 
     try {
-      const parts = [await this.render(inspectionReportJob(report), identity)]
-
-      // One after another: the renderer of an instance is a single browser.
-      for (const entry of report.installations) {
-        if (entry.last) {
-          parts.push(
-            await this.render(
-              protocolPrintJob({
-                ...entry.last,
-                status: 'signed',
-                keeper: report.keeper,
-                installation: entry.designation,
-                appliance: null,
-                site: report.site,
-                rules: tradeRules,
-              }),
-              identity,
-            ),
-          )
-        }
-      }
-
       bytes = await bound(parts, name)
     } catch (error) {
-      if (error instanceof RendererUnavailableError) {
-        throw new ServiceUnavailableException(error.message)
-      }
-
-      throw new BadGatewayException(error instanceof Error ? error.message : String(error))
+      throw rendererFault(error)
     }
 
     response.setHeader('Cache-Control', 'no-store')

@@ -1,8 +1,18 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { PDFDocument } from '@cantoo/pdf-lib'
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import type { TenantId } from '@opengewerk/domain'
-import { Database, newId, type PrintJob, type Renderer } from '@opengewerk/platform-server'
+import {
+  Database,
+  FileStore,
+  newId,
+  type PrintJob,
+  type Renderer,
+} from '@opengewerk/platform-server'
 import type { Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -10,6 +20,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
 import { binary } from './test-binary.js'
+import { aStoredPhoto } from './test-photo.js'
 import { as, testIdentities as identities } from './test-identity.js'
 
 /**
@@ -25,6 +36,8 @@ const south = { id: newId<'tenant'>() as TenantId, name: 'Elektro Süd GmbH' }
 let admin: Pool
 let database: Database
 let app: INestApplication
+let storageRoot = ''
+let store: FileStore
 let customer = ''
 
 const jobs: PrintJob[] = []
@@ -139,9 +152,11 @@ beforeAll(async () => {
   )
 
   database = Database.connect(applicationDatabaseUrl())
+  storageRoot = mkdtempSync(join(tmpdir(), 'opengewerk-photos-'))
+  store = new FileStore(storageRoot)
 
   const built = await Test.createTestingModule({
-    imports: [ApiModule.create(database, identities, { renderer: standIn })],
+    imports: [ApiModule.create(database, identities, { renderer: standIn, files: store })],
   }).compile()
 
   app = built.createNestApplication()
@@ -156,6 +171,7 @@ afterAll(async () => {
   await app.close()
   await database.close()
   await admin.end()
+  rmSync(storageRoot, { recursive: true, force: true })
 })
 
 describe('the test of the electrical installation of a site', () => {
@@ -355,5 +371,63 @@ describe('the test of the electrical installation of a site', () => {
         .set('x-test-identity', as(north.id, 'office'))
         .expect(404)
     }
+  })
+})
+
+describe('the protocols behind the report (#935)', () => {
+  it('print with their photos, as each prints on its own', async () => {
+    const site = await aSite('Schillerstraße 4')
+    const cabinet = await anInstallation(site, 'meter_cabinet', 'Zählerschrank, Flur')
+    const photo = await aStoredPhoto(admin, store, north.id, cabinet, 'Verteiler')
+
+    await aProtocol({
+      installation: cabinet,
+      key: 'vde-0105-100',
+      version: 1,
+      on: '2026-11-05',
+      values: { photo: photo.id },
+    })
+
+    const { protocols } = await printed(site)
+
+    expect(protocols.map((job) => job.html).join('')).toContain(
+      `data:image/png;base64,${photo.base64}`,
+    )
+  })
+
+  it('read no more photos together than the bound of the whole report', async () => {
+    const site = await aSite('Goethestraße 9')
+    let read = 0
+
+    // Four of nearly 6 MB each by what the store recorded: each fits its own
+    // page, the four together not the report.
+    for (const floor of ['Keller', 'Erdgeschoss', 'Obergeschoss', 'Dach']) {
+      const cabinet = await anInstallation(site, 'meter_cabinet', `Verteiler ${floor}`)
+      const photo = await aStoredPhoto(admin, store, north.id, cabinet, floor, 5_900_000)
+
+      await aProtocol({
+        installation: cabinet,
+        key: 'vde-0105-100',
+        version: 1,
+        on: '2026-11-06',
+        values: { photo: photo.id },
+      })
+    }
+
+    const get = store.get.bind(store)
+
+    store.get = async (sha256) => {
+      read += 1
+
+      return get(sha256)
+    }
+
+    try {
+      await printed(site)
+    } finally {
+      store.get = get
+    }
+
+    expect(read).toBe(3)
   })
 })
