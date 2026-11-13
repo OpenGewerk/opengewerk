@@ -17,6 +17,7 @@ import {
   isAllowed,
   isProtocolPhoto,
   readFormValues,
+  shownPhotoVersion,
   shippedRules,
   warrantyTerms,
   yearsText,
@@ -78,19 +79,18 @@ export function shownVersions(
   versions: readonly PhotoVersion[],
   signedAt: number | null,
 ): Map<string, PhotoVersion> {
-  const shown = new Map<string, PhotoVersion>()
-  const first = new Map<string, PhotoVersion>()
+  const byFile = new Map<string, PhotoVersion[]>()
 
   for (const version of versions) {
-    first.set(version.id, version)
-
-    if (!shown.has(version.id) && (signedAt === null || version.changeSequence <= signedAt)) {
-      shown.set(version.id, version)
-    }
+    byFile.set(version.id, [...(byFile.get(version.id) ?? []), version])
   }
 
-  for (const [id, version] of first) {
-    if (!shown.has(id)) {
+  const shown = new Map<string, PhotoVersion>()
+
+  for (const [id, newestFirst] of byFile) {
+    const version = shownPhotoVersion(newestFirst, (each) => each.changeSequence, signedAt)
+
+    if (version) {
       shown.set(id, version)
     }
   }
@@ -239,9 +239,9 @@ export class FormRecordsController {
                     ...kept,
                   ),
                 )
-                // Newest first in the order of the writes, which also tells two
-                // versions of one transmission apart.
-                .orderBy(asc(attachments.id), desc(attachmentVersions.changeSequence))
+                // Newest first by id, as every list of files on a device shows
+                // them; the sequence of the writes only bounds a signed one.
+                .orderBy(asc(attachments.id), desc(attachmentVersions.id))
 
         return {
           versions: shownVersions(photoRows, signed ? record.changeSequence : null),

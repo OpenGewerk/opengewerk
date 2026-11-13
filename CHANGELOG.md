@@ -13,7 +13,8 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Fassung 2 ihres Formulars ein Foto (#817, Migration 0143, Paket Elektro 0.11.0). Auf der Baustelle nimmt der
   Monteur im Ergebnis der Prüfung ein „Foto zum Mangel“ auf, auch ohne Netz; es liegt bei den Dateien des Geräts und
   lässt sich als Foto des Protokolls wählen; angeboten werden nur Bilder (JPEG, PNG, WebP), die das PDF auch
-  zeigt. Im Büro zeigt die Seite des Geräts seine Dateien. Warum: Eine beschädigte Anschlussleitung ließ sich bisher nur in Worten festhalten, weil Dateien an Kunde, Objekt, Anlage oder
+  zeigt. Ein unterschriebenes Protokoll zeigt das Foto auch in der Anwendung als Bild. Im Büro zeigt die Seite des
+  Geräts seine Dateien. Warum: Eine beschädigte Anschlussleitung ließ sich bisher nur in Worten festhalten, weil Dateien an Kunde, Objekt, Anlage oder
   Auftrag hingen, nicht an einem Gerät. Das PDF eines Prüfprotokolls zeigt jetzt das gewählte Foto selbst statt
   „bei den Dateien der Anlage“, bei Anlagen wie bei Geräten, für alle, die Dateien sehen dürfen. Ein unterschriebenes
   Protokoll zeigt die Fassung des Fotos, die der Server bei der Unterschrift hatte, mit ihrem Dateinamen, auch wenn die

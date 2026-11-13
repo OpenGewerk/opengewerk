@@ -33,6 +33,7 @@ import {
   partialDueCondition,
   partialTestSentence,
   readFormValues,
+  shownPhotoVersion,
   repeatNouns,
   type RecordState,
   sealProblems,
@@ -73,7 +74,7 @@ import { useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 
 import type { SyncClient } from '../sync/client.js'
-import { useVersions } from './attachments.js'
+import { usePreview, useVersions } from './attachments.js'
 import { useBlockCircuits } from './electrical.js'
 import { useBlockStrings, useInstallationStructure } from './photovoltaic.js'
 
@@ -676,7 +677,7 @@ export function FieldInput({
   readonly performedOn: string
   /** The protocol tests only a part of the installation, whose day counts only where it is the sooner (#814, #822). */
   readonly partOnly?: boolean
-  readonly photos: readonly { readonly value: string; readonly label: string }[]
+  readonly photos: readonly PhotoOption[]
   readonly onChange: (value: FieldValue | undefined) => void
 }) {
   switch (field.kind) {
@@ -783,7 +784,7 @@ export function FieldInput({
 export function shownValue(
   field: BlockField,
   value: FieldValue | undefined,
-  photos: readonly { readonly value: string; readonly label: string }[],
+  photos: readonly PhotoOption[],
 ): string {
   if (value === undefined) {
     return 'nicht angegeben'
@@ -806,6 +807,22 @@ export function shownValue(
   }
 }
 
+/**
+ * The photo a protocol names, as a picture (#817): the version its page
+ * prints, from this device where it has the picture.
+ */
+function ChosenPhoto({ photo }: { readonly photo: PhotoOption | undefined }) {
+  const href = usePreview(photo?.version)
+
+  return href && photo ? (
+    <img
+      src={href}
+      alt={photo.label}
+      className="max-h-60 max-w-full self-start rounded-[4px] border border-line object-contain"
+    />
+  ) : null
+}
+
 export function FieldText({
   field,
   value,
@@ -821,7 +838,7 @@ export function FieldText({
   readonly appliance?: ApplianceFacts | null
   readonly performedOn: string
   readonly partOnly?: boolean
-  readonly photos: readonly { readonly value: string; readonly label: string }[]
+  readonly photos: readonly PhotoOption[]
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -829,6 +846,9 @@ export function FieldText({
       <p className={clsx('text-body whitespace-pre-line', value === undefined && 'text-ink-muted')}>
         {shownValue(field, value, photos)}
       </p>
+      {field.kind === 'photo' ? (
+        <ChosenPhoto photo={photos.find((photo) => photo.value === value)} />
+      ) : null}
       {field.kind === 'measurement' ? (
         <Verdict
           field={field}
@@ -923,7 +943,7 @@ function BlockCard({
   readonly block: GroupBlock
   readonly index: number
   readonly performedOn: string
-  readonly photos: readonly { readonly value: string; readonly label: string }[]
+  readonly photos: readonly PhotoOption[]
   readonly editable: boolean
   readonly onChange: (block: GroupBlock) => void
   readonly onRemove: (() => void) | null
@@ -1010,7 +1030,7 @@ function GroupSection({
   readonly value: FormValue | undefined
   readonly circuits: readonly (BlockCircuit & { readonly id: string })[]
   readonly performedOn: string
-  readonly photos: readonly { readonly value: string; readonly label: string }[]
+  readonly photos: readonly PhotoOption[]
   readonly editable: boolean
   readonly onChange: (blocks: readonly GroupBlock[]) => void
 }) {
@@ -1107,11 +1127,29 @@ function SignatureText({
  * The pictures of an installation, for the field that takes a photo, or of
  * the job for a protocol at the job alone (#310).
  */
+/**
+ * A photo a protocol may name: its file, its title, and the version it shows
+ * (#817), the same one the page of the protocol prints.
+ */
+export interface PhotoOption {
+  readonly value: string
+  readonly label: string
+  readonly version?: RecordState
+}
+
+/** The sequence of a write the server stamped on a row, or null before it did. */
+function sequenceOf(row: RecordState): number | null {
+  const sequence = row['changeSequence']
+
+  return typeof sequence === 'number' && sequence > 0 ? sequence : null
+}
+
 function usePhotos(
   installationId: string,
   applianceId: string,
   jobId: string,
-): readonly { readonly value: string; readonly label: string }[] {
+  signedAt: number | null,
+): readonly PhotoOption[] {
   // The files of what was tested: the installation, the appliance of the
   // register (#817), or the job of an acceptance, and of them the pictures
   // the page of the protocol prints (`form-records.controller.ts`).
@@ -1124,17 +1162,18 @@ function usePhotos(
 
   return useMemo(
     () =>
-      attachments
-        .filter((attachment) => {
-          const newest = versions.get(String(attachment['id']))?.[0]
+      attachments.flatMap((attachment) => {
+        const version = shownPhotoVersion(
+          versions.get(String(attachment['id'])) ?? [],
+          sequenceOf,
+          signedAt,
+        )
 
-          return newest !== undefined && isProtocolPhoto(text(newest, 'mediaType'))
-        })
-        .map((attachment) => ({
-          value: String(attachment['id']),
-          label: text(attachment, 'title'),
-        })),
-    [attachments, versions],
+        return version && isProtocolPhoto(text(version, 'mediaType'))
+          ? [{ value: String(attachment['id']), label: text(attachment, 'title'), version }]
+          : []
+      }),
+    [attachments, versions, signedAt],
   )
 }
 
@@ -1158,7 +1197,7 @@ export interface ProtocolDraft {
   readonly appliance: ApplianceFacts | null
   /** Its record, for a screen that names it. */
   readonly applianceId: string | null
-  readonly photos: readonly { readonly value: string; readonly label: string }[]
+  readonly photos: readonly PhotoOption[]
   readonly editable: boolean
   readonly draft: FormValues
   /** The draft tests only a part of the installation and names no next inspection (#814). */
@@ -1191,7 +1230,12 @@ export function useProtocolDraft(record: RecordState): ProtocolDraft {
   const installationId = text(record, 'installationId')
   const circuits = useBlockCircuits(installationId)
   const applianceId = text(record, 'applianceId') || null
-  const photos = usePhotos(installationId, applianceId ?? '', text(record, 'jobId'))
+  const photos = usePhotos(
+    installationId,
+    applianceId ?? '',
+    text(record, 'jobId'),
+    isSigned(record) ? sequenceOf(record) : null,
+  )
   const appliance = applianceFactsOf(useRecord('appliances', applianceId ?? undefined))
   const editable = !isSigned(record)
   // Read and written again, so that two texts of the same values compare

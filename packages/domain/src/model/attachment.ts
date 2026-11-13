@@ -62,6 +62,28 @@ export function isProtocolPhoto(mediaType: string): boolean {
   return ['image/jpeg', 'image/png', 'image/webp'].includes(mediaType)
 }
 
+/**
+ * The version of a photo a protocol shows (#817), from the versions of its
+ * file newest first, as every list of files orders them (by id): the newest;
+ * for a signed protocol the newest the server had written when it was signed,
+ * by the sequence of its writes, which a version, written once, and a signed
+ * protocol, which no write changes, keep; and the first where all came after.
+ * A version the server has not written yet counts as after any signature.
+ */
+export function shownPhotoVersion<V>(
+  newestFirst: readonly V[],
+  sequenceOf: (version: V) => number | null,
+  signedAt: number | null,
+): V | undefined {
+  return (
+    newestFirst.find((version) => {
+      const sequence = sequenceOf(version)
+
+      return signedAt === null || (sequence !== null && sequence <= signedAt)
+    }) ?? newestFirst.at(-1)
+  )
+}
+
 /** Why a type is not the one `fileMediaType` records, or null when it is. */
 export function attachmentMediaTypeProblem(mediaType: unknown): string | null {
   return tradeAttachments.mediaTypeProblem(mediaType)

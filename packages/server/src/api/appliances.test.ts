@@ -867,3 +867,39 @@ describe('a photo field that names no file (#817)', () => {
     expect(await printed(id, as(north.id, 'office'))).toContain('bei den Dateien des Geräts')
   })
 })
+
+describe('the newest version of a photo (#817)', () => {
+  it('is the newest by id, as every list of files shows it, whenever the server wrote it', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    // Made offline at 09:30 and sent at 11:00, after one made at 10:00.
+    const earlier = newId<'attachment-version'>()
+    const later = newId<'attachment-version'>()
+    const [first, second] = [photoBytes('09:30'), photoBytes('10:00')]
+    const version = (versionId: string, bytes: Buffer) =>
+      created('attachment_versions', versionId, {
+        attachmentId: photo,
+        sha256: hashOf(bytes),
+        fileName: 'leitung.png',
+        mediaType: 'image/png',
+        sizeBytes: bytes.byteLength,
+      })
+
+    await upload(first, technician)
+    await upload(second, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', photo, { applianceId: appliance, title: 'Leitung' }),
+      version(later, second),
+      aPhotoTest(id, appliance, complete({ photo })),
+    ])
+    await push(app, technician, [version(earlier, first)])
+
+    const page = await printed(id, as(north.id, 'office'))
+
+    expect(page).toContain(second.toString('base64'))
+    expect(page).not.toContain(first.toString('base64'))
+  })
+})

@@ -491,6 +491,40 @@ describe('what is due (#848)', () => {
 })
 
 describe('deleting a site (#848)', () => {
+  it('leaves the file of an appliance at another site where it is (#817)', async () => {
+    const { customer, site } = await hollberg()
+    const other = await bare(null)
+    const appliance = uuid()
+    const file = uuid()
+    const sha = 'e'.repeat(64)
+
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       insert into appliances (id, tenant_id, site_id, designation, protection_class)
+         values ('${appliance}', '${north}', '${other.site}', 'Bohrhammer', 'II');
+       insert into files (tenant_id, sha256, size_bytes, media_type) values ('${north}', '${sha}', 10, 'image/jpeg');
+       insert into attachments (id, tenant_id, appliance_id, title) values ('${file}', '${north}', '${appliance}', 'Stecker');
+       insert into attachment_versions (tenant_id, attachment_id, sha256, file_name, media_type, size_bytes)
+         values ('${north}', '${file}', '${sha}', 'stecker.jpg', 'image/jpeg', 10);
+       commit;`,
+    )
+    await deleteCustomer(customer)
+    await pass()
+    await eraseSites([site]).expect(201)
+
+    expect(
+      (
+        await admin.query(
+          `select a.title, f.sha256 from attachments a
+             join attachment_versions v on v.attachment_id = a.id
+             join files f on f.tenant_id = v.tenant_id and f.sha256 = v.sha256
+            where a.id = $1`,
+          [file],
+        )
+      ).rows,
+    ).toEqual([{ title: 'Stecker', sha256: sha }])
+  })
+
   it('empties it and everything that hangs on it, and leaves its name and address nowhere', async () => {
     const { family, customer, site, cabinet, pv } = await hollberg()
 

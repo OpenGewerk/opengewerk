@@ -477,3 +477,57 @@ describe('a photo of what is wrong with an appliance (#817)', () => {
     })
   })
 })
+
+describe('the photo of a signed test of an appliance (#817)', () => {
+  it('is shown as a picture, in the version the protocol was signed with', async () => {
+    const preview = new Uint8Array([0xff, 0xd8, 0xff, 0xd9])
+
+    vi.stubGlobal('fetch', (path: string) =>
+      Promise.resolve(
+        // Only the version of the signature has its preview on the server here.
+        path === '/attachments/versions/v-1/preview'
+          ? new Response(preview, { headers: { 'Content-Type': 'image/jpeg' } })
+          : new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } }),
+      ),
+    )
+
+    await mount('/auftraege/j-1/pruefprotokolle/p-5', {
+      form_records: [
+        ...(rows()['form_records'] ?? []),
+        {
+          id: 'p-5',
+          definitionKey: 'dguv-v3',
+          definitionVersion: 2,
+          installationId: null,
+          applianceId: 'a-2',
+          jobId: 'j-1',
+          performedOn: '2026-11-02',
+          status: 'signed',
+          changeSequence: 10,
+          values: JSON.stringify({ ...lastYear, photo: 'f-1' }),
+        },
+      ],
+      attachments: [{ id: 'f-1', applianceId: 'a-2', title: 'Anschlussleitung' }],
+      attachment_versions: [
+        {
+          id: 'v-2',
+          attachmentId: 'f-1',
+          fileName: 'neu.jpg',
+          mediaType: 'image/jpeg',
+          previewSha256: 'b'.repeat(64),
+          changeSequence: 20,
+        },
+        {
+          id: 'v-1',
+          attachmentId: 'f-1',
+          fileName: 'leitung.jpg',
+          mediaType: 'image/jpeg',
+          previewSha256: 'a'.repeat(64),
+          changeSequence: 5,
+        },
+      ],
+    })
+
+    expect(await screen.findByRole('img', { name: 'Anschlussleitung' })).toBeTruthy()
+  })
+})
