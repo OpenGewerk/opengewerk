@@ -145,7 +145,26 @@ function photoOf(id: string, protocol: PrintedProtocol): string {
     return photoHomeText[protocol.photoHome ?? (protocol.appliance ? 'appliance' : 'installation')]
   }
 
-  return `<figure class="photo"><img src="data:${text(photo.mediaType)};base64,${Buffer.from(photo.bytes).toString('base64')}" alt="${text(photo.title)}"><figcaption>${text(photo.title)}</figcaption></figure>`
+  const caption = text(photoCaption(photo.title))
+
+  return `<figure class="photo"><img src="data:${text(photo.mediaType)};base64,${Buffer.from(photo.bytes).toString('base64')}" alt="${caption}"><figcaption>${caption}</figcaption></figure>`
+}
+
+/** The most characters of a name a photo is printed with, before "…". */
+export const photoCaptionLength = 120
+
+/**
+ * The name a photo is printed with: the name of its version, cut to
+ * `photoCaptionLength` (#817). A version may be named at length through the
+ * sync, and the page prints the name twice; cut, it keeps within the room the
+ * request to the renderer has for each photo.
+ */
+export function photoCaption(name: string): string {
+  const characters = [...name]
+
+  return characters.length <= photoCaptionLength
+    ? name
+    : `${characters.slice(0, photoCaptionLength).join('')}…`
 }
 
 function signatureOf(value: FormValue | undefined): string {

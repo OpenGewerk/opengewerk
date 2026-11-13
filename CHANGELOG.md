@@ -21,7 +21,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   „bei den Dateien der Anlage“, bei Anlagen wie bei Geräten, für alle, die Dateien sehen dürfen; je Seite höchstens 20
   Fotos und zusammen 6 MB, bei einer großen Seite entsprechend weniger, damit die Seite in eine Anfrage an den Renderer
   passt; ein Foto darüber nennt wie ein fehlendes nur seinen Ort. Ein unterschriebenes
-  Protokoll zeigt die Fassung des Fotos, die der Server bei der Unterschrift hatte, mit ihrem Dateinamen, auch wenn die
+  Protokoll zeigt die Fassung des Fotos, die der Server bei der Unterschrift hatte, mit ihrem Dateinamen (auf 120 Zeichen gekürzt), auch wenn die
   Datei danach umbenannt, umgehängt oder aus den Akten entfernt wird; erst wenn sie endgültig gelöscht ist, nennt das
   PDF nur noch, wo das Foto lag. Hatte der Server bei der Unterschrift keine Fassung, nennt es dauerhaft nur den Ort,
   ebenso bei einer Datei, die im Speicher fehlt, statt den Druck abzubrechen. Mit der Löschung eines Objekts gehen auch die Dateien seiner Geräte; eine Datei, die

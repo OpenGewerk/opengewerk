@@ -2,7 +2,12 @@ import { type FormDefinition, ruleSet } from '@opengewerk/domain'
 import { elektroRegistry, elektroRules } from '@opengewerk/gewerk-elektro'
 import { describe, expect, it } from 'vitest'
 
-import { protocolPrintJob, type PrintedProtocol } from './protocol-print.js'
+import {
+  photoCaption,
+  photoCaptionLength,
+  protocolPrintJob,
+  type PrintedProtocol,
+} from './protocol-print.js'
 
 // One rule, measured against in two ways: a value may reach it, or it has to
 // stay under it (opengewerk-haustechnik#93).
@@ -283,5 +288,35 @@ describe('a photo on a printed protocol (#817)', () => {
     expect(printed({ photoHome: 'installation' })).toContain('bei den Dateien der Anlage')
     expect(printed({ photoHome: 'appliance' })).toContain('bei den Dateien des Geräts')
     expect(printed({ photoHome: 'job' })).toContain('bei den Dateien des Auftrags')
+  })
+})
+
+describe('the name a photo is printed with (#817)', () => {
+  it('is cut, so that a long name keeps within the room of the request', () => {
+    expect(photoCaption('leitung.jpg')).toBe('leitung.jpg')
+    expect([...photoCaption('&'.repeat(100_000))]).toHaveLength(photoCaptionLength + 1)
+
+    const html = protocolPrintJob({
+      ...protocol,
+      definition: {
+        key: 'probe-photo',
+        version: 1,
+        title: 'Probe mit Foto',
+        attachesTo: 'installation',
+        sections: [
+          {
+            key: 'result',
+            title: 'Ergebnis',
+            fields: [{ kind: 'photo', key: 'photo', label: 'Foto' }],
+          },
+        ],
+      },
+      values: { photo: 'p-1' },
+      photos: new Map([
+        ['p-1', { title: '&'.repeat(100_000), mediaType: 'image/png', bytes: new Uint8Array([1]) }],
+      ]),
+    }).html
+
+    expect(html.length).toBeLessThan(200_000)
   })
 })
