@@ -127,18 +127,24 @@ export function shownVersions(
  */
 export function photosToRead(
   versions: ReadonlyMap<string, PhotoVersion>,
+  uses: ReadonlyMap<string, number>,
   bound: { readonly count: number; readonly bytes: number } = printedPhotos,
 ): [string, PhotoVersion][] {
   const chosen: [string, PhotoVersion][] = []
+  let printed = 0
   let read = 0
 
+  // A photo several fields name is printed once for each: counted so.
   for (const [id, version] of versions) {
+    const times = Math.max(1, uses.get(id) ?? 1)
+
     if (
       isProtocolPhoto(version.mediaType) &&
-      chosen.length < bound.count &&
-      read + version.sizeBytes <= bound.bytes
+      printed + times <= bound.count &&
+      read + version.sizeBytes * times <= bound.bytes
     ) {
-      read += version.sizeBytes
+      printed += times
+      read += version.sizeBytes * times
       chosen.push([id, version])
     }
   }
@@ -203,7 +209,14 @@ export class FormRecordsController {
 
     const gathered = await this.database.forTenant(
       identity,
-      async (tx): Promise<PrintedProtocol & { readonly versions: Map<string, PhotoVersion> }> => {
+      async (
+        tx,
+      ): Promise<
+        PrintedProtocol & {
+          readonly versions: Map<string, PhotoVersion>
+          readonly uses: ReadonlyMap<string, number>
+        }
+      > => {
         const [record] = await tx
           .select()
           .from(formRecords)
@@ -238,7 +251,8 @@ export class FormRecordsController {
         const values = readFormValues(record.values) ?? {}
         // The check of the values takes any short text for a photo; only an id
         // can name a file, and anything else would break the query (#817).
-        const chosen = chosenPhotos(definition, values).filter(isUuid)
+        const uses = chosenPhotos(definition, values)
+        const chosen = [...uses.keys()].filter(isUuid)
         const signed = record.status === 'signed'
         // The files a draft may name are those the screen offered: of the
         // installation, of the appliance, or of the job of an acceptance. A
@@ -294,6 +308,7 @@ export class FormRecordsController {
 
         return {
           versions: shownVersions(photoRows, signed ? record.changeSequence : null),
+          uses,
           definition,
           values,
           performedOn: record.performedOn as IsoDate,
@@ -332,10 +347,10 @@ export class FormRecordsController {
       },
     )
 
-    const { versions, ...printed } = gathered
+    const { versions, uses, ...printed } = gathered
     const photos = new Map<string, ProtocolPhoto>()
 
-    for (const [id, version] of photosToRead(versions)) {
+    for (const [id, version] of photosToRead(versions, uses)) {
       try {
         photos.set(id, {
           title: version.fileName,

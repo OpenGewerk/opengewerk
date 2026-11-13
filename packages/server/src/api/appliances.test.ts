@@ -919,10 +919,11 @@ describe('the photos one page of a protocol reads (#817)', () => {
     sizeBytes,
     changeSequence: 1,
   })
-  const read = (versions: ReturnType<typeof version>[]) =>
-    photosToRead(new Map(versions.map((each) => [each.id, each])), { count: 2, bytes: 100 }).map(
-      ([id]) => id,
-    )
+  const read = (versions: ReturnType<typeof version>[], uses = new Map<string, number>()) =>
+    photosToRead(new Map(versions.map((each) => [each.id, each])), uses, {
+      count: 2,
+      bytes: 100,
+    }).map(([id]) => id)
 
   it('are pictures alone, and no more than the bound in number', () => {
     expect(
@@ -933,6 +934,12 @@ describe('the photos one page of a protocol reads (#817)', () => {
         version('d', 10),
       ]),
     ).toEqual(['a', 'c'])
+  })
+
+  it('count a photo once for every field that names it, as the page prints it', () => {
+    // Named twice, 60 bytes are 120 and past the bound; and two in number.
+    expect(read([version('a', 60), version('b', 10)], new Map([['a', 2]]))).toEqual(['b'])
+    expect(read([version('a', 10), version('b', 10)], new Map([['a', 2]]))).toEqual(['a'])
   })
 
   it('fit, as base64 and with room for the page, into one request to the renderer', () => {

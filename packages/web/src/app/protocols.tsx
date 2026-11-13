@@ -1254,7 +1254,8 @@ export function useProtocolDraft(record: RecordState): ProtocolDraft {
       ? sequenceOf(record)
       : null
   const named = useMemo(
-    () => (definition && isSigned(record) ? chosenPhotos(definition, valuesOf(record)) : []),
+    () =>
+      definition && isSigned(record) ? [...chosenPhotos(definition, valuesOf(record)).keys()] : [],
     [definition, record],
   )
   const signed = useMemo(
