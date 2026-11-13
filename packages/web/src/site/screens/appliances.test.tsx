@@ -507,8 +507,8 @@ describe('the photo of a signed test of an appliance (#817)', () => {
           values: JSON.stringify({ ...lastYear, photo: 'f-1' }),
         },
       ],
-      // Renamed and hung on another appliance after the signature.
-      attachments: [{ id: 'f-1', applianceId: 'a-1', title: 'Alles in Ordnung' }],
+      // Renamed after the signature; it hangs where it hung (opengewerk#934).
+      attachments: [{ id: 'f-1', applianceId: 'a-2', title: 'Alles in Ordnung' }],
       attachment_versions: [
         {
           id: 'v-2',
@@ -531,6 +531,60 @@ describe('the photo of a signed test of an appliance (#817)', () => {
 
     expect(await screen.findByRole('img', { name: 'leitung.jpg' })).toBeTruthy()
     expect(screen.queryByText('Alles in Ordnung')).toBeNull()
+  })
+
+  it('is not shown where its file hangs at something else, as its page leaves it out (#934)', async () => {
+    const preview = new Uint8Array([0xff, 0xd8, 0xff, 0xd9])
+
+    vi.stubGlobal('fetch', (path: string) =>
+      Promise.resolve(
+        // Only the version of the signature has its preview on the server here.
+        path === '/attachments/versions/v-1/preview'
+          ? new Response(preview, { headers: { 'Content-Type': 'image/jpeg' } })
+          : new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } }),
+      ),
+    )
+
+    await mount('/auftraege/j-1/pruefprotokolle/p-5', {
+      form_records: [
+        ...(rows()['form_records'] ?? []),
+        {
+          id: 'p-5',
+          definitionKey: 'dguv-v3',
+          definitionVersion: 2,
+          installationId: null,
+          applianceId: 'a-2',
+          jobId: 'j-1',
+          performedOn: '2026-11-02',
+          status: 'signed',
+          changeSequence: 10,
+          values: JSON.stringify({ ...lastYear, photo: 'f-1' }),
+        },
+      ],
+      // Signed before the sync asked where the file hangs.
+      attachments: [{ id: 'f-1', applianceId: 'a-1', title: 'Alles in Ordnung' }],
+      attachment_versions: [
+        {
+          id: 'v-2',
+          attachmentId: 'f-1',
+          fileName: 'neu.jpg',
+          mediaType: 'image/jpeg',
+          previewSha256: 'b'.repeat(64),
+          changeSequence: 20,
+        },
+        {
+          id: 'v-1',
+          attachmentId: 'f-1',
+          fileName: 'leitung.jpg',
+          mediaType: 'image/jpeg',
+          previewSha256: 'a'.repeat(64),
+          changeSequence: 5,
+        },
+      ],
+    })
+
+    expect(await screen.findByText('Prüfer')).toBeTruthy()
+    expect(screen.queryByRole('img', { name: 'leitung.jpg' })).toBeNull()
   })
 })
 

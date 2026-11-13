@@ -1,4 +1,5 @@
 import {
+  chosenPhotos,
   type CustomerId,
   type DocumentStatus,
   type EarlyStartWording,
@@ -14,6 +15,7 @@ import {
   offlineRules,
   type Operation,
   paymentTermProblem,
+  readFormValues,
   type RecordState,
   signaturePathIsValid,
   type TenantId,
@@ -23,6 +25,7 @@ import {
   attachmentVersionFiles,
   attachmentVersionPlace,
   contactWithoutParent,
+  isUuid,
   serverSync,
   type SyncCheck,
   sectionRefusal,
@@ -30,6 +33,8 @@ import {
   syncTables,
   type TenantTransaction,
 } from '@opengewerk/platform-server'
+
+import { inArray } from 'drizzle-orm'
 
 import type { FoundIdentity } from '../api/identity.js'
 import { signatureRefusal } from '../documents/signing.js'
@@ -218,6 +223,68 @@ const formRecord: Check = ({ operation, values, current }) => {
     })
 
   return problem === null ? null : { kind: 'client', message: problem }
+}
+
+/**
+ * A protocol is signed with photos out of the files of what it is about
+ * (opengewerk#934): the installation, the appliance of the register, or the
+ * job of an acceptance, as its form offers them. A device that names another
+ * file, or one the office hung elsewhere while the device was offline, is
+ * told so for this protocol alone. The files are locked for share, so that a
+ * move at the same moment waits for the signature, which the trigger of
+ * migration 0144 then refuses, or the signature sees where the file went.
+ */
+const signedPhotos: Check = async ({ tx, operation, values, current }) => {
+  if (operation.entity !== 'form_records' || operation.kind === 'delete') {
+    return null
+  }
+
+  const at = standing(values, current)
+
+  if (at('status') !== 'signed' || current?.['status'] === 'signed') {
+    return null
+  }
+
+  const definition = tradeForms.definitionFor(
+    String(at('definitionKey')),
+    Number(at('definitionVersion')),
+  )
+  const read = readFormValues(at('values') ?? '{}')
+
+  // What the form check above refuses on its own.
+  if (!definition || read === null) {
+    return null
+  }
+
+  const named = [...chosenPhotos(definition, read).keys()].filter(isUuid)
+
+  if (named.length === 0) {
+    return null
+  }
+
+  const column = at('installationId')
+    ? 'installationId'
+    : at('applianceId')
+      ? 'applianceId'
+      : 'jobId'
+  const files = await tx
+    .select({
+      id: schema.attachments.id,
+      installationId: schema.attachments.installationId,
+      applianceId: schema.attachments.applianceId,
+      jobId: schema.attachments.jobId,
+    })
+    .from(schema.attachments)
+    .where(inArray(schema.attachments.id, named as never[]))
+    .for('share')
+
+  if (files.length < named.length) {
+    return { kind: 'conflict', reason: 'record_missing', fields: ['values'] }
+  }
+
+  return files.every((file) => file[column] !== null && file[column] === at(column))
+    ? null
+    : { kind: 'conflict', reason: 'changed_elsewhere', fields: ['values'] }
 }
 
 /**
@@ -543,6 +610,7 @@ export const sync = serverSync<FoundIdentity>({
     assignee,
     reveal,
     formRecord,
+    signedPhotos,
     reportFields,
     structure,
     recordRules,

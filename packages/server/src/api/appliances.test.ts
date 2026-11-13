@@ -719,15 +719,11 @@ describe('the files of an appliance (#817)', () => {
     expect(sealed).toContain(base64(second))
     expect(sealed).not.toContain(base64(third))
 
-    // Renamed and hung on another appliance after the signature: the page
-    // stays as it was signed.
-    const other = newId<'appliance'>()
-
-    await push(app, office, [anAppliance(other, { inventoryNumber: '099' })])
+    // Renamed after the signature: the page stays as it was signed. Hung
+    // elsewhere it is not any more (opengewerk#934).
     const { receipts } = await push(app, office, [
       changed('attachments', photo, {
         title: { from: 'Anschlussleitung', to: 'Alles in Ordnung' },
-        applianceId: { from: appliance, to: other },
       }),
     ])
 
@@ -782,6 +778,138 @@ describe('the files of an appliance (#817)', () => {
 
     expect(unseen).not.toContain(cord.toString('base64'))
     expect(unseen).toContain('bei den Dateien des Geräts')
+  })
+})
+
+describe('the photo a protocol is signed with (#934)', () => {
+  it('hangs at what it tests, or the signature is refused for this protocol alone', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const ofInstallation = newId<'attachment'>()
+    const own = newId<'attachment'>()
+    const [elsewhere, missing, right] = [
+      newId<'form-record'>(),
+      newId<'form-record'>(),
+      newId<'form-record'>(),
+    ]
+    const plan = photoBytes('Plan, signiert')
+
+    await upload(plan, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', ofInstallation, { installationId: installation, title: 'Plan' }),
+      aVersion(ofInstallation, plan),
+      created('attachments', own, { applianceId: appliance, title: 'Leitung' }),
+      aVersion(own, plan),
+    ])
+
+    const draftAndSign = async (id: string, photo: string) => {
+      const before = complete({ photo })
+
+      await push(app, technician, [aPhotoTest(id, appliance, before)])
+
+      return push(app, technician, [
+        signed(id, before, complete({ photo, tester_signature: signature })),
+      ])
+    }
+    const statusOf = async (id: string) =>
+      (await admin.query<{ status: string }>('select status from form_records where id = $1', [id]))
+        .rows[0]?.status
+
+    const foreign = await draftAndSign(elsewhere, ofInstallation)
+
+    expect(foreign.receipts.map(({ outcome, reason }) => [outcome, reason])).toEqual([
+      ['conflict', 'changed_elsewhere'],
+    ])
+    expect(await statusOf(elsewhere)).toBe('draft')
+
+    const nowhere = await draftAndSign(missing, newId<'attachment'>())
+
+    expect(nowhere.receipts.map(({ outcome, reason }) => [outcome, reason])).toEqual([
+      ['conflict', 'record_missing'],
+    ])
+    expect(await statusOf(missing)).toBe('draft')
+
+    const fitting = await draftAndSign(right, own)
+
+    expect(fitting.receipts.map(({ outcome }) => outcome)).toEqual(['applied'])
+    expect(await statusOf(right)).toBe('signed')
+  })
+
+  it('stays where it hangs once a signed protocol names it, while a draft lets it go', async () => {
+    const technician = as(north.id, 'technician')
+    const office = as(north.id, 'office')
+    const appliance = newId<'appliance'>()
+    const other = newId<'appliance'>()
+    const sealedPhoto = newId<'attachment'>()
+    const draftPhoto = newId<'attachment'>()
+    const sealed = newId<'form-record'>()
+    const draft = newId<'form-record'>()
+    const cord = photoBytes('Leitung, bleibt')
+    const before = complete({ photo: sealedPhoto })
+
+    await upload(cord, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      anAppliance(other, { inventoryNumber: '098' }),
+      created('attachments', sealedPhoto, { applianceId: appliance, title: 'Leitung' }),
+      aVersion(sealedPhoto, cord),
+      created('attachments', draftPhoto, { applianceId: appliance, title: 'Stecker' }),
+      aVersion(draftPhoto, cord),
+      aPhotoTest(sealed, appliance, before),
+      aPhotoTest(draft, appliance, complete({ photo: draftPhoto })),
+    ])
+    await push(app, technician, [
+      signed(sealed, before, complete({ photo: sealedPhoto, tester_signature: signature })),
+    ])
+
+    const move = (photo: string) =>
+      changed('attachments', photo, { applianceId: { from: appliance, to: other } })
+    const kept = await push(app, office, [move(sealedPhoto)], 409)
+
+    expect(kept.message).toBe(
+      'Diese Datei ist das Foto eines unterschriebenen Protokolls und bleibt, wo sie hängt.',
+    )
+
+    const gone = await push(app, office, [move(draftPhoto)])
+
+    expect(gone.receipts.map(({ outcome }) => outcome)).toEqual(['applied'])
+
+    const { rows } = await admin.query<{ id: string; appliance_id: string }>(
+      'select id, appliance_id from attachments where id = any($1)',
+      [[sealedPhoto, draftPhoto]],
+    )
+
+    expect(Object.fromEntries(rows.map((row) => [row.id, row.appliance_id]))).toEqual({
+      [sealedPhoto]: appliance,
+      [draftPhoto]: other,
+    })
+  })
+
+  it('is left out of the page where one signed before named a file of something else', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const ofInstallation = newId<'attachment'>()
+    const id = newId<'form-record'>()
+    const plan = photoBytes('Plan, fremd')
+
+    await upload(plan, technician)
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', ofInstallation, { installationId: installation, title: 'Plan' }),
+      aVersion(ofInstallation, plan),
+    ])
+    // Written before the sync asked, as the database holds it.
+    await admin.query(
+      `insert into form_records (id, tenant_id, definition_key, definition_version, appliance_id, performed_on, status, "values")
+       values ($1, $2, 'dguv-v3', 2, $3, '2026-11-02', 'signed', $4)`,
+      [id, north.id, appliance, complete({ photo: ofInstallation, tester_signature: signature })],
+    )
+
+    const page = await printed(id, as(north.id, 'office'))
+
+    expect(page).not.toContain(plan.toString('base64'))
+    expect(page).toContain('bei den Dateien des Geräts')
   })
 })
 
@@ -988,15 +1116,17 @@ describe('a photo with no version at its signature (#817)', () => {
     const before = complete({ photo })
 
     await upload(later, technician)
-    await push(app, technician, [anAppliance(appliance), aPhotoTest(id, appliance, before)])
+    // The file is there to sign with (opengewerk#934), its first version comes
+    // after the signature.
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', photo, { applianceId: appliance, title: 'Später' }),
+      aPhotoTest(id, appliance, before),
+    ])
     await push(app, technician, [
       signed(id, before, complete({ photo, tester_signature: signature })),
     ])
-    // The file and its first version come after the signature.
-    await push(app, technician, [
-      created('attachments', photo, { applianceId: appliance, title: 'Später' }),
-      aVersion(photo, later),
-    ])
+    await push(app, technician, [aVersion(photo, later)])
 
     const page = await printed(id, as(north.id, 'office'))
 
