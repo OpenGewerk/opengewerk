@@ -760,3 +760,59 @@ describe('the files of an appliance (#817)', () => {
     expect(unseen).toContain('bei den Dateien des Geräts')
   })
 })
+
+describe('the photo of a signed protocol (#817)', () => {
+  it('stays when its file goes to the bin, while a draft leaves it', async () => {
+    const technician = as(north.id, 'technician')
+    const office = as(north.id, 'office')
+    const appliance = newId<'appliance'>()
+    const photo = newId<'attachment'>()
+    const sealed = newId<'form-record'>()
+    const draft = newId<'form-record'>()
+    const [first, second, third] = [photoBytes('alt'), photoBytes('mitte'), photoBytes('neu')]
+    const before = complete({ photo })
+
+    for (const bytes of [first, second, third]) {
+      await upload(bytes, technician)
+    }
+
+    await push(app, technician, [
+      anAppliance(appliance),
+      created('attachments', photo, { applianceId: appliance, title: 'Stecker' }),
+      aVersion(photo, first),
+      aPhotoTest(sealed, appliance, before),
+      aPhotoTest(draft, appliance, before),
+    ])
+    // Two versions in one transmission share their moment; the later one is the newest.
+    await push(app, technician, [aVersion(photo, second), aVersion(photo, third)])
+    expect(await printed(draft, office)).toContain(third.toString('base64'))
+
+    await push(app, technician, [
+      signed(sealed, before, complete({ photo, tester_signature: signature })),
+    ])
+    await admin.query('update attachments set deleted_at = now() where id = $1', [photo])
+
+    expect(await printed(sealed, office)).toContain(third.toString('base64'))
+
+    const left = await printed(draft, office)
+
+    expect(left).not.toContain(third.toString('base64'))
+    expect(left).toContain('bei den Dateien des Geräts')
+  })
+})
+
+describe('a photo field that names no file (#817)', () => {
+  it('prints where the photo lies instead of refusing the protocol', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const id = newId<'form-record'>()
+    const before = complete({ photo: 'foto-1' })
+
+    await push(app, technician, [anAppliance(appliance), aPhotoTest(id, appliance, before)])
+    await push(app, technician, [
+      signed(id, before, complete({ photo: 'foto-1', tester_signature: signature })),
+    ])
+
+    expect(await printed(id, as(north.id, 'office'))).toContain('bei den Dateien des Geräts')
+  })
+})

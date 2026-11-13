@@ -429,4 +429,41 @@ describe('a photo of what is wrong with an appliance (#817)', () => {
     })
     expect(screen.queryByRole('button', { name: 'Foto zum Mangel' })).toBeNull()
   })
+
+  it('hangs on the job of the route when the draft was begun in the office without one', async () => {
+    asTechnician()
+
+    const { client } = await mount('/auftraege/j-1/pruefprotokolle/p-4', {
+      form_records: [
+        ...(rows()['form_records'] ?? []),
+        {
+          id: 'p-4',
+          definitionKey: 'dguv-v3',
+          definitionVersion: 2,
+          installationId: null,
+          applianceId: 'a-2',
+          jobId: null,
+          performedOn: today(),
+          status: 'draft',
+          values: '{}',
+        },
+      ],
+    })
+
+    await userEvent.upload(
+      await screen.findByLabelText('Foto zum Mangel aufnehmen'),
+      new File([new Uint8Array(5000).fill(1)], 'stecker.jpg', { type: 'image/jpeg' }),
+    )
+
+    await waitFor(() => {
+      expect(client.list('attachments')).toEqual([
+        expect.objectContaining({
+          applianceId: 'a-2',
+          jobId: 'j-1',
+          siteId: 's-1',
+          customerId: 'c-1',
+        }),
+      ])
+    })
+  })
 })

@@ -419,6 +419,7 @@ function DraftProtocol({
     return (
       <Overview
         record={record}
+        jobId={jobId}
         protocol={protocol}
         onOpen={(next) => void go(next)}
         onSign={() => {
@@ -513,11 +514,14 @@ function stepName(protocol: ProtocolDraft, step: Step): string {
  */
 function Overview({
   record,
+  jobId,
   protocol,
   onOpen,
   onSign,
 }: {
   readonly record: RecordState
+  /** The job of the route, for a draft begun in the office without one. */
+  readonly jobId: string
   readonly protocol: ProtocolDraft
   readonly onOpen: (step: Step) => void
   readonly onSign: () => void
@@ -630,7 +634,7 @@ function Overview({
                 ))}
                 {protocol.applianceId &&
                 plainFields(resultSection).some((field) => field.kind === 'photo') ? (
-                  <DefectPhoto record={record} jobId={text(record, 'jobId')} />
+                  <DefectPhoto record={record} jobId={text(record, 'jobId') || jobId} />
                 ) : null}
               </div>
             </Panel>

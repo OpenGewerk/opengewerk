@@ -185,7 +185,9 @@ export class FormRecordsController {
         const [tenant] = await tx.select({ name: tenants.name }).from(tenants)
         const companyName = letterhead?.companyName ?? null
         const values = readFormValues(record.values) ?? {}
-        const chosen = chosenPhotos(definition, values)
+        // The check of the values takes any short text for a photo; only an id
+        // can name a file, and anything else would break the query (#817).
+        const chosen = chosenPhotos(definition, values).filter(isUuid)
         // The files a field may name are those the screen offered: of the
         // installation, of the appliance, or of the job of an acceptance.
         const ofSubject = record.installationId
@@ -195,6 +197,13 @@ export class FormRecordsController {
             : record.jobId
               ? eq(attachments.jobId, record.jobId)
               : null
+        const signed = record.status === 'signed'
+        // A signed protocol keeps its photo when the file goes to the bin: its
+        // page does not change. Only a purge, which deletes the versions, takes
+        // it (opengewerk#817).
+        const kept = signed
+          ? []
+          : [isNull(attachments.deletedAt), isNull(attachmentVersions.deletedAt)]
         const photoRows =
           chosen.length === 0 || ofSubject === null || !isAllowed(identity, 'attachment.read')
             ? []
@@ -208,18 +217,17 @@ export class FormRecordsController {
                 })
                 .from(attachments)
                 .innerJoin(attachmentVersions, eq(attachmentVersions.attachmentId, attachments.id))
-                .where(
-                  and(
-                    inArray(attachments.id, chosen as never[]),
-                    ofSubject,
-                    isNull(attachments.deletedAt),
-                    isNull(attachmentVersions.deletedAt),
-                  ),
+                .where(and(inArray(attachments.id, chosen as never[]), ofSubject, ...kept))
+                // Versions written in one transaction share their moment; the
+                // id, made in order of time, decides between them.
+                .orderBy(
+                  asc(attachments.id),
+                  desc(attachmentVersions.createdAt),
+                  desc(attachmentVersions.id),
                 )
-                .orderBy(asc(attachments.id), desc(attachmentVersions.createdAt))
 
         return {
-          versions: shownVersions(photoRows, record.status === 'signed' ? record.updatedAt : null),
+          versions: shownVersions(photoRows, signed ? record.updatedAt : null),
           definition,
           values,
           performedOn: record.performedOn as IsoDate,

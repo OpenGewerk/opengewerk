@@ -41,8 +41,9 @@ import {
  * it depends on is in it, down to the circuit each block was measured on, so
  * the same record prints the same page next year. A photo it names is the one
  * exception (#817): it lies among the files, and the page shows the version the
- * server had when the protocol was signed, or nothing but where it lies once
- * the file is removed from the records. A draft says so across the page.
+ * server had when the protocol was signed, also once the file is in the bin,
+ * and nothing but where it lay once it is purged. A draft says so across the
+ * page.
  *
  * Every measured value stands with its verdict, and the limits are listed
  * with their sources under the table: the reader of a protocol has to be able
