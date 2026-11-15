@@ -380,11 +380,18 @@ export class SyncClient {
    * they no longer count as waiting, which they are not.
    */
   private settling: readonly Operation[] = []
+  /**
+   * For each settling operation, the version its row had on this device when
+   * the server took it (opengewerk#937): only a row newer than that one can
+   * carry it. Null where the device had no row of the server yet.
+   */
+  private settledFrom = new Map<OperationId, number | null>()
   /** What is laid over the server's rows: what settles, then what waits. */
   private laid: ReadonlyMap<string, Operation[]> = new Map()
   private readonly listeners = new Set<() => void>()
   private readonly lists = new Map<string, readonly RecordState[]>()
   private readonly projected = new Map<string, RecordState | null>()
+  private readonly binnedLists = new Map<string, readonly RecordState[]>()
 
   private cursor = 0
   /** The kinds of record this build knows, as the store keeps them (`entitiesKey`). */
@@ -628,6 +635,65 @@ export class SyncClient {
   }
 
   /**
+   * The records of a kind marked deleted, as the store keeps them
+   * (opengewerk#937): no list shows them, but a record that does not change
+   * may still show one it named, as its page does. Those this device removed
+   * and no pull has brought back yet come as the server last sent them, with
+   * their `deletedAt` still empty; one it made and removed before the server
+   * sent a row, as it stood before its removal. Cached until the next change, like the
+   * lists.
+   */
+  binned(entity: string): readonly RecordState[] {
+    const cached = this.binnedLists.get(entity)
+
+    if (cached) {
+      return cached
+    }
+
+    const rows: RecordState[] = []
+
+    for (const [id, server] of this.records.get(entity) ?? []) {
+      const pending = this.laid.get(recordKey(entity, id)) ?? []
+      const laid = project(server, pending, id, this.rules.policyFor)
+
+      if (laid && !sameValue(laid['deletedAt'], null)) {
+        rows.push(laid)
+      } else if (!laid && pending.some((operation) => operation.kind === 'delete')) {
+        // Removed on this device and not back yet: the row as the server last
+        // sent it. One the server has not marked deleted can only be this.
+        rows.push(server)
+      }
+    }
+
+    // Made on this device and removed again before the server sent a row:
+    // the record as it stood before its removal.
+    const known = this.records.get(entity)
+
+    for (const pending of this.laid.values()) {
+      const [head] = pending
+
+      if (!head || head.entity !== entity || known?.has(head.recordId)) {
+        continue
+      }
+
+      const ordered = inOutboxOrder(pending)
+      const removal = ordered.findIndex((operation) => operation.kind === 'delete')
+
+      if (removal > 0) {
+        const before = project(null, ordered.slice(0, removal), head.recordId, this.rules.policyFor)
+
+        if (before) {
+          rows.push(before)
+        }
+      }
+    }
+
+    this.binnedLists.set(entity, rows)
+
+    return rows
+  }
+
+  /**
    * One record as the screen should show it, or null when it is gone.
    *
    * Cached until the next change, like the lists and for the same reason: a
@@ -670,6 +736,68 @@ export class SyncClient {
   /** True while this record has not reached the server yet. */
   isPending(entity: string, id: string): boolean {
     return this.pending.has(recordKey(entity, id))
+  }
+
+  /**
+   * Whether the server has taken a change of this record that no pull has
+   * brought back yet (opengewerk#937): the server has stamped it, the row on
+   * this device still carries the stamps of before.
+   */
+  isSettling(entity: string, id: string): boolean {
+    const server = this.records.get(entity)?.get(id)
+    const pulled = typeof server?.['version'] === 'number' ? server['version'] : null
+
+    // A pull that brought the row back after the server took the change ends
+    // it, even where a later page of the same pull failed. A row of an earlier
+    // change does not: it came back before this one landed. Where the device
+    // had no row of the server yet (a create), any row it sends back ends it.
+    return this.settling.some((operation) => {
+      if (operation.entity !== entity || operation.recordId !== id) {
+        return false
+      }
+
+      const from = this.settledFrom.get(operation.id) ?? null
+
+      return !(pulled !== null && (from === null || pulled > from))
+    })
+  }
+
+  /**
+   * Whether this device first changed one record after its last change of
+   * another, both still waiting or settling (opengewerk#937); with a kind, its
+   * first change of that kind, so that the removal of a file counts and not
+   * the making of it. The server stamps them in this order: what it took is in
+   * the order it went (`pushPart`), what waits goes after it in the order of
+   * the outbox (opengewerk#939). The clock of the device does not reorder
+   * what has gone.
+   */
+  isRecordedAfter(
+    entity: string,
+    id: string,
+    otherEntity: string,
+    otherId: string,
+    kind?: OperationKind,
+  ): boolean {
+    const ordered = [...this.settling, ...inOutboxOrder(this.outbox)]
+    let last = -1
+    let first = -1
+
+    ordered.forEach((operation, index) => {
+      if (operation.entity === otherEntity && operation.recordId === otherId) {
+        last = index
+      }
+
+      if (
+        first < 0 &&
+        operation.entity === entity &&
+        operation.recordId === id &&
+        (kind === undefined || operation.kind === kind)
+      ) {
+        first = index
+      }
+    })
+
+    return last >= 0 && first > last
   }
 
   // Writing
@@ -976,6 +1104,7 @@ export class SyncClient {
       // Everything that settled is in the rows now, as the server holds it.
       if (this.settling.length > 0) {
         this.settling = []
+        this.settledFrom.clear()
         this.regroup()
       }
       await this.refreshConflicts()
@@ -1104,10 +1233,19 @@ export class SyncClient {
     // What landed stays laid over the rows until the pull brings them. What
     // did not land is not shown at all: a conflict is on its own list, and a
     // skipped operation changed nothing.
-    this.settling = [
-      ...this.settling,
-      ...this.outbox.filter((operation) => applied.has(operation.id)),
-    ]
+    // In the order they went, which is the order the server stamped them in.
+    const landed = sent.filter((operation) => applied.has(operation.id))
+
+    for (const operation of landed) {
+      const row = this.records.get(operation.entity)?.get(operation.recordId)
+
+      this.settledFrom.set(
+        operation.id,
+        typeof row?.['version'] === 'number' ? row['version'] : null,
+      )
+    }
+
+    this.settling = [...this.settling, ...landed]
     this.outbox = this.outbox.filter((operation) => !done.has(operation.id))
     this.regroup()
     this.publish({ pending: this.outbox.length })
@@ -1752,6 +1890,7 @@ export class SyncClient {
     this.snapshot = { ...this.snapshot, state: this.decideState() }
     this.lists.clear()
     this.projected.clear()
+    this.binnedLists.clear()
     this.generation += 1
 
     for (const listener of this.listeners) {

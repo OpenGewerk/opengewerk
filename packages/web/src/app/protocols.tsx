@@ -1,5 +1,7 @@
 import {
   type ApplianceFacts,
+  attachmentEntity,
+  attachmentVersionEntity,
   type BlockCircuit,
   type BlockField,
   chosenPhotos,
@@ -62,6 +64,7 @@ import { NotSent, SiteRow, SiteRows } from '@opengewerk/platform-web/site'
 import {
   refusalFor,
   text,
+  useBinnedRecords,
   useRecord,
   useRelated,
   useSync,
@@ -1149,32 +1152,71 @@ function usePhotos(
   installationId: string,
   applianceId: string,
   jobId: string,
-  signed: { readonly at: number | null; readonly named: readonly string[] } | null,
+  signed: {
+    readonly id: string
+    readonly at: number | null
+    readonly named: readonly string[]
+  } | null,
 ): readonly PhotoOption[] {
+  const client = useSync()
   // The files of what was tested: the installation, the appliance of the
   // register (#817), or the job of an acceptance, and of them the pictures
   // the page of the protocol prints (`form-records.controller.ts`).
-  const attachments = useRelated(
-    'attachments',
-    installationId ? 'installationId' : applianceId ? 'applianceId' : 'jobId',
-    installationId || applianceId || jobId,
-  )
+  const field = installationId ? 'installationId' : applianceId ? 'applianceId' : 'jobId'
+  const subject = installationId || applianceId || jobId
+  const attachments = useRelated('attachments', field, subject)
   // A signed protocol shows the files it names under the name of their
   // version, as its page does; they hang where they hung when it was signed
-  // (opengewerk#934).
+  // (opengewerk#934). One that went to the bin after the signature too, and
+  // none that lay there before (opengewerk#937). One this device removed and
+  // no pull has brought back (its `deletedAt` still empty) reaches the server
+  // after a signature that has come back, so it counts as removed after it.
+  const binned = useBinnedRecords('attachments')
   const versions = useVersions()
 
   return useMemo(
     () =>
       (signed
-        ? attachments.filter((attachment) => signed.named.includes(String(attachment['id'])))
+        ? [
+            ...attachments,
+            ...binned.filter(
+              (attachment) =>
+                attachment[field] === subject &&
+                (signed.at === null
+                  ? // A signature that waits or settles: only a file this
+                    // device removed after it, which the server stamps after
+                    // it too.
+                    !attachment['deletedAt'] &&
+                    client.isRecordedAfter(
+                      attachmentEntity,
+                      String(attachment['id']),
+                      'form_records',
+                      signed.id,
+                      'delete',
+                    )
+                  : !attachment['deletedAt'] ||
+                    (typeof attachment['changeSequence'] === 'number' &&
+                      attachment['changeSequence'] > signed.at)),
+            ),
+          ].filter((attachment) => signed.named.includes(String(attachment['id'])))
         : attachments
       ).flatMap((attachment) => {
-        const version = shownPhotoVersion(
-          versions.get(String(attachment['id'])) ?? [],
-          sequenceOf,
-          signed ? signed.at : null,
+        // While the signature waits or settles, the newest version is the
+        // one it will show, but none this device recorded after it: the
+        // server stamps those after the signature too.
+        const kept = (versions.get(String(attachment['id'])) ?? []).filter(
+          (candidate) =>
+            !signed ||
+            signed.at !== null ||
+            !client.isRecordedAfter(
+              attachmentVersionEntity,
+              String(candidate['id']),
+              'form_records',
+              signed.id,
+              'create',
+            ),
         )
+        const version = shownPhotoVersion(kept, sequenceOf, signed ? signed.at : null)
 
         // A draft offers pictures alone; a signed protocol names what it
         // named, and shows a picture where its version is one.
@@ -1188,7 +1230,7 @@ function usePhotos(
             ]
           : []
       }),
-    [attachments, versions, signed],
+    [attachments, binned, client, field, subject, versions, signed],
   )
 }
 
@@ -1247,9 +1289,12 @@ export function useProtocolDraft(record: RecordState): ProtocolDraft {
   const applianceId = text(record, 'applianceId') || null
   // A signature still in the outbox carries the stamp of the draft it was
   // laid over; the server stamps it after the versions sent before it, so
-  // until then the newest version is the one it will show.
+  // until then the newest version is the one it will show. So does one the
+  // server took that no pull has brought back yet (opengewerk#937).
   const signedAt =
-    isSigned(record) && !client.isPending('form_records', String(record['id']))
+    isSigned(record) &&
+    !client.isPending('form_records', String(record['id'])) &&
+    !client.isSettling('form_records', String(record['id']))
       ? sequenceOf(record)
       : null
   const named = useMemo(
@@ -1258,7 +1303,7 @@ export function useProtocolDraft(record: RecordState): ProtocolDraft {
     [definition, record],
   )
   const signed = useMemo(
-    () => (isSigned(record) ? { at: signedAt, named } : null),
+    () => (isSigned(record) ? { id: String(record['id']), at: signedAt, named } : null),
     [record, signedAt, named],
   )
   const photos = usePhotos(installationId, applianceId ?? '', text(record, 'jobId'), signed)

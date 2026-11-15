@@ -9,7 +9,7 @@ import {
   StreamableFile,
   type Type,
 } from '@nestjs/common'
-import { and, eq, getTableColumns, isNull } from 'drizzle-orm'
+import { and, eq, getTableColumns } from 'drizzle-orm'
 
 import { RequiresPermission } from '../api/authorization.js'
 import { CurrentIdentity, type RequestIdentity } from '../api/identity.js'
@@ -41,6 +41,8 @@ export interface AttachmentReading {
   readonly identity: RequestIdentity
   /** The file the version belongs to, with the columns of the application. */
   readonly attachment: Readonly<Record<string, unknown>>
+  /** The version asked for, by its id and when the server wrote it. */
+  readonly version: { readonly id: string; readonly changeSequence: number }
 }
 
 /** What the routes of the files are told by the application. */
@@ -65,6 +67,13 @@ export interface AttachmentRoutes<
    * application calls a file something else than the foundation does.
    */
   readonly gone?: string
+  /**
+   * Whether a file in the bin is still handed out (opengewerk#937), asked
+   * only of one that lies there: the application keeps one a record that does
+   * not change still shows, as that record's page does. Without it, a file in
+   * the bin is answered like one that is not there.
+   */
+  readonly keptInBin?: (reading: AttachmentReading) => Promise<boolean> | boolean
 }
 
 /** The rights the routes of the files ask for, the application's. */
@@ -81,7 +90,8 @@ type AnyRoutes = AttachmentRoutes
  *
  * Asked by the id of a version and never by hash. The version is found under
  * row level security together with its file, which has to be one nobody
- * removed and one the same policies show to whoever asks, and only then are
+ * removed, or one in the bin the application keeps (`keptInBin`,
+ * opengewerk#937), and one the same policies show to whoever asks, and only then are
  * the bytes looked up, by tenant and hash. A version id of another tenant
  * finds nothing, and neither does its hash, which is not a way in here at
  * all. An older version is handed out like the newest: a new version is laid
@@ -153,6 +163,7 @@ async function serve(
       .select({
         sha256: versions.sha256,
         previewSha256: versions.previewSha256,
+        versionChangeSequence: versions.changeSequence,
         fileName: versions.fileName,
         attachment: getTableColumns(attachments),
       })
@@ -161,12 +172,7 @@ async function serve(
         attachments,
         and(eq(attachments.tenantId, versions.tenantId), eq(attachments.id, versions.attachmentId)),
       )
-      .where(
-        and(
-          eq(versions.id, versionId as AttachmentVersionRow['id']),
-          isNull(attachments.deletedAt),
-        ),
-      )
+      .where(eq(versions.id, versionId as AttachmentVersionRow['id']))
 
     const hash = which === 'content' ? row?.sha256 : row?.previewSha256
 
@@ -176,7 +182,30 @@ async function serve(
 
     const attachment: AttachmentRow = row.attachment
 
-    if (routes.readable && !(await routes.readable({ tx, identity, attachment }))) {
+    if (
+      attachment.deletedAt !== null &&
+      !(
+        routes.keptInBin &&
+        (await routes.keptInBin({
+          tx,
+          identity,
+          attachment,
+          version: { id: versionId, changeSequence: row.versionChangeSequence },
+        }))
+      )
+    ) {
+      return null
+    }
+
+    if (
+      routes.readable &&
+      !(await routes.readable({
+        tx,
+        identity,
+        attachment,
+        version: { id: versionId, changeSequence: row.versionChangeSequence },
+      }))
+    ) {
       return null
     }
 

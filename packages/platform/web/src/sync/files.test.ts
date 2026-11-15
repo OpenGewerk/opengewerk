@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { syncRules } from '@opengewerk/platform-domain'
 import type { OperationId } from '@opengewerk/platform-domain'
 import { probePolicies } from '@opengewerk/platform-domain/testing'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SyncClient } from './client.js'
 import { openLocalStore } from './store.js'
@@ -263,6 +263,237 @@ describe('a file made on the device', () => {
       `2: parcel ${hashOf(second).slice(0, 8)}`,
     ])
     expect(client.status().pending).toBe(0)
+  })
+
+  it('ends a change as settling once a pull brought its row back, even where a later page failed (opengewerk#937)', async () => {
+    const client = await start()
+    const made = await client.create('notes', { title: 'Vorher' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    await client.synchronise()
+    await client.update('notes', made.id, { title: 'Nachher' })
+
+    const pull = server.pull.bind(server)
+    let pages = 0
+
+    // The first page brings the row back, the second does not come.
+    server.pull = async () => {
+      pages += 1
+
+      if (pages === 1) {
+        return { ...(await pull()), hasMore: true }
+      }
+
+      throw new TypeError('Failed to fetch')
+    }
+
+    await client.synchronise().catch(() => undefined)
+
+    expect(pages).toBeGreaterThanOrEqual(2)
+    expect(client.isSettling('notes', made.id)).toBe(false)
+  })
+
+  it('ends a create as settling once a pull brought its row back, even where a later page failed (opengewerk#937)', async () => {
+    const client = await start()
+    const made = await client.create('notes', { title: 'Neu' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    const pull = server.pull.bind(server)
+    let pages = 0
+
+    // The first page brings the new row, the second does not come.
+    server.pull = async () => {
+      pages += 1
+
+      if (pages === 1) {
+        return { ...(await pull()), hasMore: true }
+      }
+
+      throw new TypeError('Failed to fetch')
+    }
+
+    await client.synchronise().catch(() => undefined)
+
+    expect(pages).toBeGreaterThanOrEqual(2)
+    expect(client.isSettling('notes', made.id)).toBe(false)
+  })
+
+  it('keeps a change settling when the row that came back carries only an earlier change (opengewerk#937)', async () => {
+    const client = await start()
+    const made = await client.create('notes', { title: 'Vorher' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    await client.synchronise()
+    await client.update('notes', made.id, { title: 'Erste' })
+
+    const pull = server.pull.bind(server)
+    let entered!: () => void
+    let release!: () => void
+    const pulling = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    // The pull after the first change waits until the second is queued and
+    // then brings the first back; the pull after the second does not come.
+    let pages = 0
+
+    server.pull = async () => {
+      pages += 1
+
+      if (pages > 1) {
+        throw new TypeError('Failed to fetch')
+      }
+
+      entered()
+      await gate
+
+      return pull()
+    }
+
+    const exchange = client.synchronise().catch(() => undefined)
+
+    await pulling
+    await client.update('notes', made.id, { title: 'Zweite' })
+    release()
+    await exchange
+
+    expect(pages).toBeGreaterThanOrEqual(2)
+    expect(client.get('notes', made.id)?.['title']).toBe('Zweite')
+    expect(client.isPending('notes', made.id)).toBe(false)
+    expect(client.isSettling('notes', made.id)).toBe(true)
+  })
+
+  it('tells which of two waiting records this device changed after the other (opengewerk#937)', async () => {
+    const client = await start()
+    const first = await client.create('notes', { title: 'Erste' })
+    const second = await client.create('notes', { title: 'Zweite' })
+
+    if (first.outcome !== 'queued' || second.outcome !== 'queued') {
+      throw new Error('A note was refused on the device.')
+    }
+
+    expect(client.isRecordedAfter('notes', second.id, 'notes', first.id)).toBe(true)
+    expect(client.isRecordedAfter('notes', first.id, 'notes', second.id)).toBe(false)
+    // Against a record that waits for nothing, nothing came after.
+    expect(client.isRecordedAfter('notes', second.id, 'notes', 'not-waiting')).toBe(false)
+
+    await client.update('notes', first.id, { title: 'Erste, danach' })
+
+    // Its last change counts for the one it is measured against, the first
+    // change for the one measured.
+    expect(client.isRecordedAfter('notes', second.id, 'notes', first.id)).toBe(false)
+    expect(client.isRecordedAfter('notes', first.id, 'notes', second.id)).toBe(false)
+  })
+
+  it('keeps what has gone before what waits, even with the clock of the device put back (opengewerk#937)', async () => {
+    const client = await start()
+    const gone = await client.create('notes', { title: 'Gesendet' })
+
+    if (gone.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    // It goes, the pull after it does not come.
+    server.pull = () => Promise.reject(new TypeError('Failed to fetch'))
+    await client.synchronise().catch(() => undefined)
+    expect(client.isSettling('notes', gone.id)).toBe(true)
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+
+    try {
+      vi.setSystemTime(new Date(Date.now() - 60 * 60 * 1000))
+
+      const waits = await client.create('notes', { title: 'Wartet' })
+
+      if (waits.outcome !== 'queued') {
+        throw new Error('The note was refused on the device.')
+      }
+
+      expect(client.isRecordedAfter('notes', waits.id, 'notes', gone.id)).toBe(true)
+      expect(client.isRecordedAfter('notes', gone.id, 'notes', waits.id)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the order a transmission went in once the server took it (opengewerk#937)', async () => {
+    const client = await start()
+    const push = server.push.bind(server)
+
+    server.push = () => Promise.reject(new TypeError('Failed to fetch'))
+    server.pull = () => Promise.reject(new TypeError('Failed to fetch'))
+
+    const earlier = await client.create('notes', { title: 'Zuerst eingereiht' })
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+
+    try {
+      vi.setSystemTime(new Date(Date.now() - 60 * 60 * 1000))
+
+      const later = await client.create('notes', { title: 'Mit zurückgestellter Uhr' })
+
+      if (earlier.outcome !== 'queued' || later.outcome !== 'queued') {
+        throw new Error('A note was refused on the device.')
+      }
+
+      // By the clock the later one goes first, and so the server stamps it.
+      const before = client.isRecordedAfter('notes', later.id, 'notes', earlier.id)
+
+      server.push = push
+      await client.synchronise().catch(() => undefined)
+
+      expect(client.status().pending).toBe(0)
+      expect(before).toBe(false)
+      expect(client.isRecordedAfter('notes', later.id, 'notes', earlier.id)).toBe(false)
+      expect(client.isRecordedAfter('notes', earlier.id, 'notes', later.id)).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a record made and removed on the device among the binned, as it stood before (opengewerk#937)', async () => {
+    const client = await start()
+
+    server.push = () => Promise.reject(new TypeError('Failed to fetch'))
+
+    const made = await client.create('notes', { title: 'Nur hier' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    await client.update('notes', made.id, { title: 'Nur hier, geändert' })
+    await client.remove('notes', made.id)
+
+    expect(client.get('notes', made.id)).toBeNull()
+    expect(client.binned('notes').map((row) => row['title'])).toEqual(['Nur hier, geändert'])
+  })
+
+  it('measures the first change of a kind where one is asked for (opengewerk#937)', async () => {
+    const client = await start()
+    const note = await client.create('notes', { title: 'Vorher' })
+    const other = await client.create('notes', { title: 'Dazwischen' })
+
+    if (note.outcome !== 'queued' || other.outcome !== 'queued') {
+      throw new Error('A note was refused on the device.')
+    }
+
+    await client.remove('notes', note.id)
+
+    expect(client.isRecordedAfter('notes', note.id, 'notes', other.id)).toBe(false)
+    expect(client.isRecordedAfter('notes', note.id, 'notes', other.id, 'delete')).toBe(true)
   })
 
   it('waits on the device without a network, and goes up once there is one', async () => {

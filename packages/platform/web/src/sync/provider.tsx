@@ -56,6 +56,14 @@ export function useRecords(entity: string): readonly RecordState[] {
   return useSyncExternalStore(client.subscribe, read, read)
 }
 
+/** The records of one kind marked deleted, which no list shows (opengewerk#937). */
+export function useBinnedRecords(entity: string): readonly RecordState[] {
+  const client = useSync()
+  const read = useCallback(() => client.binned(entity), [client, entity])
+
+  return useSyncExternalStore(client.subscribe, read, read)
+}
+
 export function useRecord(entity: string, id: string | undefined): RecordState | null {
   const client = useSync()
   const read = useCallback(() => (id ? client.get(entity, id) : null), [client, entity, id])
