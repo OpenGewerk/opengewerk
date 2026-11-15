@@ -177,8 +177,9 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Schwärzt eine Löschung oder der Inhaber einen Wert im Protokoll, ruft jedes Gerät eines Monteurs einmal neu ab, denn
   den Umzug dahinter fände der Bereich danach nicht mehr. Zwei Teilindizes auf dem Protokoll der Änderungen (Migration
   0145) halten das schnell, ohne sie läse jeder Abruf das ganze Protokoll. Beim Update baut die Migration sie auf, und
-  so lange warten Änderungen auf das Protokoll, bei zwei Millionen Einträgen weniger als eine Sekunde. Ein Gerät, in
-  dessen Bereich schon früher etwas weggezogen ist, ruft nach dem Update einmal neu ab.
+  so lange warten Änderungen auf das Protokoll, bei zwei Millionen Einträgen weniger als eine Sekunde. Nach dem Update
+  ruft jedes Gerät eines Monteurs einmal neu ab, wenn im Betrieb schon einmal ein Wert geschwärzt wurde, sonst jedes,
+  in dessen Bereich früher etwas weg- oder hineingezogen ist.
 - Ein unterschriebenes Protokoll zeigt in der Anwendung jetzt dasselbe Foto wie sein PDF, auch wenn die Datei nach der
   Unterschrift aus den Akten entfernt wurde; eine Datei, die schon vor der Unterschrift entfernt war, zeigt es nicht
   (#937). Dafür gibt der Server die Fassung einer solchen Datei weiter heraus, solange ein unterschriebenes Protokoll
