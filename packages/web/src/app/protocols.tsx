@@ -1,5 +1,6 @@
 import {
   type ApplianceFacts,
+  attachmentEntity,
   attachmentVersionEntity,
   type BlockCircuit,
   type BlockField,
@@ -1181,10 +1182,21 @@ function usePhotos(
             ...binned.filter(
               (attachment) =>
                 attachment[field] === subject &&
-                signed.at !== null &&
-                (!attachment['deletedAt'] ||
-                  (typeof attachment['changeSequence'] === 'number' &&
-                    attachment['changeSequence'] > signed.at)),
+                (signed.at === null
+                  ? // A signature that waits or settles: only a file this
+                    // device removed after it, which the server stamps after
+                    // it too.
+                    !attachment['deletedAt'] &&
+                    client.isRecordedAfter(
+                      attachmentEntity,
+                      String(attachment['id']),
+                      'form_records',
+                      signed.id,
+                      'delete',
+                    )
+                  : !attachment['deletedAt'] ||
+                    (typeof attachment['changeSequence'] === 'number' &&
+                      attachment['changeSequence'] > signed.at)),
             ),
           ].filter((attachment) => signed.named.includes(String(attachment['id'])))
         : attachments
@@ -1201,6 +1213,7 @@ function usePhotos(
               String(candidate['id']),
               'form_records',
               signed.id,
+              'create',
             ),
         )
         const version = shownPhotoVersion(kept, sequenceOf, signed ? signed.at : null)

@@ -740,12 +740,21 @@ export class SyncClient {
 
   /**
    * Whether this device first changed one record after its last change of
-   * another, both still waiting or settling (opengewerk#937). The outbox keeps
-   * that order on its way to the server (opengewerk#939), so the server
-   * stamps the one after the other.
+   * another, both still waiting or settling (opengewerk#937); with a kind, its
+   * first change of that kind, so that the removal of a file counts and not
+   * the making of it. The server stamps them in this order: what it took is in
+   * the order it went (`pushPart`), what waits goes after it in the order of
+   * the outbox (opengewerk#939). The clock of the device does not reorder
+   * what has gone.
    */
-  isRecordedAfter(entity: string, id: string, otherEntity: string, otherId: string): boolean {
-    const ordered = inOutboxOrder([...this.settling, ...this.outbox])
+  isRecordedAfter(
+    entity: string,
+    id: string,
+    otherEntity: string,
+    otherId: string,
+    kind?: OperationKind,
+  ): boolean {
+    const ordered = [...this.settling, ...inOutboxOrder(this.outbox)]
     let last = -1
     let first = -1
 
@@ -754,7 +763,12 @@ export class SyncClient {
         last = index
       }
 
-      if (first < 0 && operation.entity === entity && operation.recordId === id) {
+      if (
+        first < 0 &&
+        operation.entity === entity &&
+        operation.recordId === id &&
+        (kind === undefined || operation.kind === kind)
+      ) {
         first = index
       }
     })

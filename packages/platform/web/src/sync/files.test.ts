@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { syncRules } from '@opengewerk/platform-domain'
 import type { OperationId } from '@opengewerk/platform-domain'
 import { probePolicies } from '@opengewerk/platform-domain/testing'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SyncClient } from './client.js'
 import { openLocalStore } from './store.js'
@@ -395,6 +395,52 @@ describe('a file made on the device', () => {
     // change for the one measured.
     expect(client.isRecordedAfter('notes', second.id, 'notes', first.id)).toBe(false)
     expect(client.isRecordedAfter('notes', first.id, 'notes', second.id)).toBe(false)
+  })
+
+  it('keeps what has gone before what waits, even with the clock of the device put back (opengewerk#937)', async () => {
+    const client = await start()
+    const gone = await client.create('notes', { title: 'Gesendet' })
+
+    if (gone.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    // It goes, the pull after it does not come.
+    server.pull = () => Promise.reject(new TypeError('Failed to fetch'))
+    await client.synchronise().catch(() => undefined)
+    expect(client.isSettling('notes', gone.id)).toBe(true)
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+
+    try {
+      vi.setSystemTime(new Date(Date.now() - 60 * 60 * 1000))
+
+      const waits = await client.create('notes', { title: 'Wartet' })
+
+      if (waits.outcome !== 'queued') {
+        throw new Error('The note was refused on the device.')
+      }
+
+      expect(client.isRecordedAfter('notes', waits.id, 'notes', gone.id)).toBe(true)
+      expect(client.isRecordedAfter('notes', gone.id, 'notes', waits.id)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('measures the first change of a kind where one is asked for (opengewerk#937)', async () => {
+    const client = await start()
+    const note = await client.create('notes', { title: 'Vorher' })
+    const other = await client.create('notes', { title: 'Dazwischen' })
+
+    if (note.outcome !== 'queued' || other.outcome !== 'queued') {
+      throw new Error('A note was refused on the device.')
+    }
+
+    await client.remove('notes', note.id)
+
+    expect(client.isRecordedAfter('notes', note.id, 'notes', other.id)).toBe(false)
+    expect(client.isRecordedAfter('notes', note.id, 'notes', other.id, 'delete')).toBe(true)
   })
 
   it('waits on the device without a network, and goes up once there is one', async () => {

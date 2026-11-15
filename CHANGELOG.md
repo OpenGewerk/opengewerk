@@ -173,12 +173,13 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   ihres Gegenstands sie nennt, und das Gerät liest die entfernten Dateien, die es ohnehin behält. Ebenso zeigt die
   Anwendung die neueste Fassung, solange der Server eine Unterschrift angenommen hat, der Abgleich danach aber noch
   nicht durchkam, auch wenn eine frühere Änderung des Protokolls schon zurück ist. Eine Fassung, die das Gerät erst
-  nach der Unterschrift aufgezeichnet hat, zeigt es dabei nicht, wie das PDF. Eine Datei, die auf dem Gerät nach einer
-  zurückgekommenen Unterschrift entfernt wurde, bleibt im Protokoll, auch bevor ihre Löschung zurück ist. Warum: Bisher
-  fehlte das Bild in der Anwendung, während das PDF es zeigte, und im zweiten Fall zeigte die Anwendung eine ältere
-  Fassung. Das Fundament bekommt dafür `keptInBin` an den Dateirouten, `binned`, `isSettling` und `isRecordedAfter` am
-  Client; `isSettling` misst an der Fassung, die die Zeile auf dem Gerät hatte, als der Server die Änderung annahm. Die
-  Haustechnik bekommt beides mit dem nächsten Anheben des Submoduls.
+  nach der Unterschrift aufgezeichnet hat, zeigt es dabei nicht, wie das PDF. Eine Datei, die auf dem Gerät nach der
+  Unterschrift entfernt wurde, bleibt im Protokoll, auch bevor ihre Löschung oder die Unterschrift zurück ist. Die
+  Reihenfolge, in der das Gerät beides aufgezeichnet hat, liest es dafür so, wie es gesendet hat, nicht nach seiner
+  Uhr. Warum: Bisher fehlte das Bild in der Anwendung, während das PDF es zeigte, und im zweiten Fall zeigte die
+  Anwendung eine ältere Fassung. Das Fundament bekommt dafür `keptInBin` an den Dateirouten, `binned`, `isSettling` und
+  `isRecordedAfter` am Client; `isSettling` misst an der Fassung, die die Zeile auf dem Gerät hatte, als der Server die
+  Änderung annahm. Die Haustechnik bekommt beides mit dem nächsten Anheben des Submoduls.
 - Der Abgleich eines Geräts schickt seine Änderungen in der Reihenfolge, in der sie entstanden sind, auch wenn eine
   Datei noch hochgeladen wird (#939). Bisher hielt der Ausgang im Fundament nur den Datensatz zurück, der auf die Datei
   wartet; eine spätere Änderung an etwas anderem ging sofort hinaus. Warum: So konnte die Unterschrift unter einem
