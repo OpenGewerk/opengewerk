@@ -50,15 +50,42 @@ export async function deviceScope(
   const jobIds = rows.map((row) => row.id)
   const openJobIds = rows.filter((row) => row.open).map((row) => row.id)
   const moved = await movesOf(tx, jobIds, userId)
+  const redacted = await lastRedactionOfOld(tx)
 
   return {
     userId,
     jobIds,
-    // Nothing added while nothing moved, so that the value stays what
-    // devices hold today.
-    value: `jobs:${fingerprintOf(jobIds)}${moved.length === 0 ? '' : `:moved:${fingerprintOf(moved)}`}`,
+    // Nothing added while nothing moved or was blacked out, so that the value
+    // stays what devices hold today.
+    value: [
+      `jobs:${fingerprintOf(jobIds)}`,
+      moved.length === 0 ? '' : `:moved:${fingerprintOf(moved)}`,
+      redacted === null ? '' : `:redacted:${redacted}`,
+    ].join(''),
     openJobIds,
   }
+}
+
+/**
+ * The place in the log of the last value of before that was blacked out, or
+ * null while none was. A deletion blacks out the old value of a move with
+ * the rest of what it erases (ADR 0013), and so can the person who leads the
+ * business by hand; `movesOf` then no longer finds where the record came
+ * from, and a device that held it and did not ask in between would get back
+ * the value it knows. Each redaction stands in the log itself, under the
+ * counter every logged change takes in the order it commits, so that the
+ * last one only grows. The value changes once for every device when values
+ * are blacked out, and the question costs one step down the partial index
+ * `audit_entries_redactions_idx` of migration 0145, however long the history
+ * of deletions is.
+ */
+async function lastRedactionOfOld(tx: TenantTransaction): Promise<number | null> {
+  const { rows } = await tx.execute<{ last: string | null }>(sql`
+    select max(a.sequence)::text as last from audit_entries a
+     where a.table_name = 'audit_redactions' and a.field = 'side' and a.new_value = 'old'`)
+  const last = rows[0]?.last ?? null
+
+  return last === null ? null : Number(last)
 }
 
 /**
@@ -213,16 +240,6 @@ async function movesOf(
                 and a.old_value in (select id::text from ${within} w(id))`,
           ],
     ),
-    // A deletion blacks out the old value of a move together with the rest
-    // of what it erases (ADR 0013), and the question above no longer finds
-    // it; a device that held the record and did not ask in between would get
-    // back the value it knows. Each move blacked out counts for every device:
-    // the value changes once, when the deletion runs.
-    sql`select a.record_id, a.sequence from audit_entries a
-      where ${sql.raw(`a.table_name in (${quoted(keys.filter((key) => key.within !== undefined).map((key) => key.table))})
-        and a.field in (${quoted(fieldsMovedAway())})`)}
-        and a.operation = 'update' and a.old_value is null
-        and exists (select 1 from audit_redactions r where r.entry_id = a.id and r.side = 'old')`,
   ]
   const { rows } = await tx.execute<{ moved: string }>(sql`
     select m.record_id::text || '@' || max(m.sequence)::text as moved
