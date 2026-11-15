@@ -6,6 +6,11 @@
 -- holds. Without this index PostgreSQL would read every entry of the table on
 -- every pull. Only the keys the scope follows are in it, ids each, so that no
 -- long text of another field comes near the limit of an index entry.
+-- Without CONCURRENTLY, since every pending migration runs in one transaction
+-- and an update is never half done: while the two indexes are built, changes
+-- of the application that is still running wait for the log. Built on a copy
+-- of two million entries as wide as those of the log (977 MB), both took less
+-- than a second together.
 CREATE INDEX "audit_entries_moves_idx" ON "audit_entries" USING btree ("tenant_id", "table_name", "field", "old_value")
 	WHERE "operation" = 'update'
 	  AND "field" IN ('appliance_id', 'appointment_id', 'assignee_user_id', 'attachment_id',
