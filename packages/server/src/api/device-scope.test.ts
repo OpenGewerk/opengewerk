@@ -570,29 +570,48 @@ describe('the device of a technician, when something moves', () => {
       [north.id],
     )
 
-    const client = await admin.connect()
+    const redact = async (entryId: string | undefined, side: 'old' | 'new') => {
+      const client = await admin.connect()
 
-    try {
-      await client.query('begin')
-      await client.query("select set_config('app.tenant_id', $1, true)", [north.id])
-      await client.query("select set_config('app.user_id', 'olga', true)")
-      await client.query(
-        `insert into audit_redactions (tenant_id, entry_id, side, reason, redacted_by)
-         values ($1, $2, 'old', 'Löschkonzept', 'olga')`,
-        [north.id, rows[0]?.id],
-      )
-      await client.query('commit')
-    } catch (error) {
-      await client.query('rollback')
-      throw error
-    } finally {
-      client.release()
+      try {
+        await client.query('begin')
+        await client.query("select set_config('app.tenant_id', $1, true)", [north.id])
+        await client.query("select set_config('app.user_id', 'olga', true)")
+        await client.query(
+          `insert into audit_redactions (tenant_id, entry_id, side, reason, redacted_by)
+           values ($1, $2, $3, 'Löschkonzept', 'olga')`,
+          [north.id, entryId, side],
+        )
+        await client.query('commit')
+      } catch (error) {
+        await client.query('rollback')
+        throw error
+      } finally {
+        client.release()
+      }
     }
+
+    await redact(rows[0]?.id, 'old')
 
     const after = await pull('toni')
 
     expect(after.narrowed['appliances']).not.toBe(before.narrowed['appliances'])
     expect(idsOf(after, 'appliances')).not.toContain(appliance)
+
+    // The side of that redaction blacked out in its turn: the value does not
+    // fall back to the one the device held before the move.
+    const { rows: sides } = await admin.query<{ id: string }>(
+      `select e.id from audit_entries e
+         join audit_redactions r on r.id = e.record_id
+        where e.table_name = 'audit_redactions' and e.field = 'side' and r.entry_id = $1`,
+      [rows[0]?.id],
+    )
+
+    await redact(sides[0]?.id, 'new')
+
+    const later = await pull('toni')
+
+    expect(later.narrowed['appliances']).not.toBe(before.narrowed['appliances'])
   })
 
   it('is narrowed to something else once an inverter moves into a system it holds (#947)', async () => {

@@ -13,9 +13,10 @@ CREATE INDEX "audit_entries_moves_idx" ON "audit_entries" USING btree ("tenant_i
 	                  'document_id', 'installation_id', 'inverter_id', 'job_id', 'pv_string_id',
 	                  'site_id', 'user_id');
 --> statement-breakpoint
--- The redactions of a value of before (opengewerk#946): a deletion blacks out
--- the old value of a move with the rest, and the index above no longer finds
--- it. Each redaction is itself an entry of the log, and the scope of a device
--- takes the last of them (`lastRedactionOfOld`), one step down this index.
+-- The redactions (opengewerk#946): a deletion blacks out the old value of a
+-- move with the rest, and the index above no longer finds it. Each redaction
+-- is itself an entry of the log, and the scope of a device takes the last of
+-- them (`lastRedaction`), one step down this index. By the field alone, since
+-- the value of a redaction's side can be blacked out in its turn.
 CREATE INDEX "audit_entries_redactions_idx" ON "audit_entries" USING btree ("tenant_id", "sequence")
-	WHERE "table_name" = 'audit_redactions' AND "field" = 'side' AND "new_value" = 'old';
+	WHERE "table_name" = 'audit_redactions' AND "field" = 'side';

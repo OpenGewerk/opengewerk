@@ -50,7 +50,7 @@ export async function deviceScope(
   const jobIds = rows.map((row) => row.id)
   const openJobIds = rows.filter((row) => row.open).map((row) => row.id)
   const moved = await movesOf(tx, jobIds, userId)
-  const redacted = await lastRedactionOfOld(tx)
+  const redacted = await lastRedaction(tx)
 
   return {
     userId,
@@ -67,22 +67,25 @@ export async function deviceScope(
 }
 
 /**
- * The place in the log of the last value of before that was blacked out, or
- * null while none was. A deletion blacks out the old value of a move with
- * the rest of what it erases (ADR 0013), and so can the person who leads the
- * business by hand; `movesOf` then no longer finds where the record came
- * from, and a device that held it and did not ask in between would get back
- * the value it knows. Each redaction stands in the log itself, under the
- * counter every logged change takes in the order it commits, so that the
- * last one only grows. The value changes once for every device when values
- * are blacked out, and the question costs one step down the partial index
- * `audit_entries_redactions_idx` of migration 0145, however long the history
- * of deletions is.
+ * The place in the log of the last redaction, or null while there was none.
+ * A deletion blacks out the old value of a move with the rest of what it
+ * erases (ADR 0013), and so can the person who leads the business by hand;
+ * `movesOf` then no longer finds where the record came from, and a device
+ * that held it and did not ask in between would get back the value it knows.
+ * Each redaction stands in the log itself, under the counter every logged
+ * change takes in the order it commits, so that the last one only grows.
+ * Asked by the field alone and not by what it says: the side of a
+ * redaction can itself be blacked out, and the last one would fall back.
+ * This counts the redactions of a value of after as well, which costs a
+ * device a fetch more and nothing else. The value changes once for every
+ * device when values are blacked out, and the question costs one step down
+ * the partial index `audit_entries_redactions_idx` of migration 0145, however
+ * long the history of deletions is.
  */
-async function lastRedactionOfOld(tx: TenantTransaction): Promise<number | null> {
+async function lastRedaction(tx: TenantTransaction): Promise<number | null> {
   const { rows } = await tx.execute<{ last: string | null }>(sql`
     select max(a.sequence)::text as last from audit_entries a
-     where a.table_name = 'audit_redactions' and a.field = 'side' and a.new_value = 'old'`)
+     where a.table_name = 'audit_redactions' and a.field = 'side'`)
   const last = rows[0]?.last ?? null
 
   return last === null ? null : Number(last)
