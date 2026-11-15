@@ -1,5 +1,6 @@
 import {
   type ApplianceFacts,
+  attachmentVersionEntity,
   type BlockCircuit,
   type BlockField,
   chosenPhotos,
@@ -1150,8 +1151,13 @@ function usePhotos(
   installationId: string,
   applianceId: string,
   jobId: string,
-  signed: { readonly at: number | null; readonly named: readonly string[] } | null,
+  signed: {
+    readonly id: string
+    readonly at: number | null
+    readonly named: readonly string[]
+  } | null,
 ): readonly PhotoOption[] {
+  const client = useSync()
   // The files of what was tested: the installation, the appliance of the
   // register (#817), or the job of an acceptance, and of them the pictures
   // the page of the protocol prints (`form-records.controller.ts`).
@@ -1183,11 +1189,21 @@ function usePhotos(
           ].filter((attachment) => signed.named.includes(String(attachment['id'])))
         : attachments
       ).flatMap((attachment) => {
-        const version = shownPhotoVersion(
-          versions.get(String(attachment['id'])) ?? [],
-          sequenceOf,
-          signed ? signed.at : null,
+        // While the signature waits or settles, the newest version is the
+        // one it will show, but none this device recorded after it: the
+        // server stamps those after the signature too.
+        const kept = (versions.get(String(attachment['id'])) ?? []).filter(
+          (candidate) =>
+            !signed ||
+            signed.at !== null ||
+            !client.isRecordedAfter(
+              attachmentVersionEntity,
+              String(candidate['id']),
+              'form_records',
+              signed.id,
+            ),
         )
+        const version = shownPhotoVersion(kept, sequenceOf, signed ? signed.at : null)
 
         // A draft offers pictures alone; a signed protocol names what it
         // named, and shows a picture where its version is one.
@@ -1201,7 +1217,7 @@ function usePhotos(
             ]
           : []
       }),
-    [attachments, binned, field, subject, versions, signed],
+    [attachments, binned, client, field, subject, versions, signed],
   )
 }
 
@@ -1274,7 +1290,7 @@ export function useProtocolDraft(record: RecordState): ProtocolDraft {
     [definition, record],
   )
   const signed = useMemo(
-    () => (isSigned(record) ? { at: signedAt, named } : null),
+    () => (isSigned(record) ? { id: String(record['id']), at: signedAt, named } : null),
     [record, signedAt, named],
   )
   const photos = usePhotos(installationId, applianceId ?? '', text(record, 'jobId'), signed)

@@ -840,4 +840,69 @@ describe('a test signed on the device and not sent yet (#817)', () => {
     expect(client.isSettling('form_records', 'p-7')).toBe(true)
     expect(await screen.findByRole('img', { name: 'neu.jpg' })).toBeTruthy()
   })
+
+  it('shows no version recorded after a signature the server took and no pull brought back (#937)', async () => {
+    const shown = '01000000-0000-7000-8000-000000000002'
+
+    vi.stubGlobal('fetch', (path: string) =>
+      Promise.resolve(
+        path === `/attachments/versions/${shown}/preview`
+          ? new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), {
+              headers: { 'Content-Type': 'image/jpeg' },
+            })
+          : new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } }),
+      ),
+    )
+
+    const draft = { ...lastYear, photo: 'f-1', tester_signature: undefined }
+    const { client } = await mount('/auftraege/j-1/pruefprotokolle/p-7', {
+      form_records: [
+        ...(rows()['form_records'] ?? []),
+        {
+          id: 'p-7',
+          definitionKey: 'dguv-v3',
+          definitionVersion: 2,
+          installationId: null,
+          applianceId: 'a-2',
+          jobId: 'j-1',
+          performedOn: today(),
+          status: 'draft',
+          changeSequence: 10,
+          values: JSON.stringify(draft),
+        },
+      ],
+      attachments: [{ id: 'f-1', applianceId: 'a-2', title: 'Anschlussleitung' }],
+      attachment_versions: [
+        {
+          id: shown,
+          attachmentId: 'f-1',
+          fileName: 'neu.jpg',
+          mediaType: 'image/jpeg',
+          previewSha256: 'b'.repeat(64),
+          changeSequence: 15,
+        },
+      ],
+    })
+
+    // The signature and, after it, a further version go through; the pulls
+    // after them do not.
+    server.pull = () => Promise.reject(new Error('Keine Verbindung'))
+    await client.update('form_records', 'p-7', {
+      status: 'signed',
+      values: JSON.stringify({ ...lastYear, photo: 'f-1' }),
+    })
+    await client.synchronise().catch(() => undefined)
+    await client.create('attachment_versions', {
+      attachmentId: 'f-1',
+      fileName: 'spaeter.jpg',
+      mediaType: 'image/jpeg',
+      previewSha256: 'd'.repeat(64),
+    })
+    await client.synchronise().catch(() => undefined)
+
+    expect(client.status().pending).toBe(0)
+    expect(client.isSettling('form_records', 'p-7')).toBe(true)
+    expect(await screen.findByRole('img', { name: 'neu.jpg' })).toBeTruthy()
+    expect(document.body.textContent).not.toContain('spaeter.jpg')
+  })
 })

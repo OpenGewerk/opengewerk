@@ -738,6 +738,30 @@ export class SyncClient {
     })
   }
 
+  /**
+   * Whether this device first changed one record after its last change of
+   * another, both still waiting or settling (opengewerk#937). The outbox keeps
+   * that order on its way to the server (opengewerk#939), so the server
+   * stamps the one after the other.
+   */
+  isRecordedAfter(entity: string, id: string, otherEntity: string, otherId: string): boolean {
+    const ordered = inOutboxOrder([...this.settling, ...this.outbox])
+    let last = -1
+    let first = -1
+
+    ordered.forEach((operation, index) => {
+      if (operation.entity === otherEntity && operation.recordId === otherId) {
+        last = index
+      }
+
+      if (first < 0 && operation.entity === entity && operation.recordId === id) {
+        first = index
+      }
+    })
+
+    return last >= 0 && first > last
+  }
+
   // Writing
 
   create(entity: string, values: Draft): Promise<EditResult> {

@@ -375,6 +375,28 @@ describe('a file made on the device', () => {
     expect(client.isSettling('notes', made.id)).toBe(true)
   })
 
+  it('tells which of two waiting records this device changed after the other (opengewerk#937)', async () => {
+    const client = await start()
+    const first = await client.create('notes', { title: 'Erste' })
+    const second = await client.create('notes', { title: 'Zweite' })
+
+    if (first.outcome !== 'queued' || second.outcome !== 'queued') {
+      throw new Error('A note was refused on the device.')
+    }
+
+    expect(client.isRecordedAfter('notes', second.id, 'notes', first.id)).toBe(true)
+    expect(client.isRecordedAfter('notes', first.id, 'notes', second.id)).toBe(false)
+    // Against a record that waits for nothing, nothing came after.
+    expect(client.isRecordedAfter('notes', second.id, 'notes', 'not-waiting')).toBe(false)
+
+    await client.update('notes', first.id, { title: 'Erste, danach' })
+
+    // Its last change counts for the one it is measured against, the first
+    // change for the one measured.
+    expect(client.isRecordedAfter('notes', second.id, 'notes', first.id)).toBe(false)
+    expect(client.isRecordedAfter('notes', first.id, 'notes', second.id)).toBe(false)
+  })
+
   it('waits on the device without a network, and goes up once there is one', async () => {
     const client = await start()
 
