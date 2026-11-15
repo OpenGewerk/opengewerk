@@ -206,11 +206,22 @@ async function movesOf(
   jobIds: readonly string[],
   userId: string,
 ): Promise<string[]> {
+  const { rows } = await tx.execute<{ moved: string }>(movesQuery(jobIds, userId))
+
+  return rows.map((row) => row.moved)
+}
+
+/** The question `movesOf` asks, on its own for the test of its plan. */
+export function movesQuery(jobIds: readonly string[], userId: string): SQL {
   const keys = movingKeys(placesOf(jobIds), userId)
   // One part per table and direction rather than one condition with `or`,
   // which PostgreSQL would answer by reading the whole log on every pull. The
   // names are written into the text, not passed as parameters, so that the
-  // planner sees the partial index fit.
+  // planner sees the partial index fit. The old values a part looks for go
+  // as one array the planner works out first: compared with a list of
+  // `id::text` instead, the comparison went through `uuid_out`, which is not
+  // leakproof, and under the policy of the log PostgreSQL then read every
+  // move of the key in the business and compared afterwards.
   const into = new Map<string, { readonly fields: string[]; readonly held: SQL }>()
 
   for (const { table, field, held } of keys) {
@@ -240,17 +251,16 @@ async function movesOf(
             sql`select a.record_id, a.sequence from audit_entries a
               where ${sql.raw(`a.table_name = '${table}' and a.field = '${field}'`)}
                 and a.operation = 'update'
-                and a.old_value in (select id::text from ${within} w(id))`,
+                and a.old_value = any(array(select id::text from ${within} w(id)))`,
           ],
     ),
   ]
-  const { rows } = await tx.execute<{ moved: string }>(sql`
+
+  return sql`
     select m.record_id::text || '@' || max(m.sequence)::text as moved
       from (${sql.join(parts, sql` union all `)}) m
      group by m.record_id
-     order by 1`)
-
-  return rows.map((row) => row.moved)
+     order by 1`
 }
 
 /**

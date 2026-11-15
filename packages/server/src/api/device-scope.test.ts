@@ -2,11 +2,12 @@ import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import type { RoleKey, TenantId } from '@opengewerk/domain'
 import { Database, newId } from '@opengewerk/platform-server'
+import { sql } from 'drizzle-orm'
 import type { Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { deviceScope, fieldsMovedAway } from '../database/device-scope.js'
+import { deviceScope, fieldsMovedAway, movesQuery } from '../database/device-scope.js'
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
 import { type Somebody, testIdentities as identities } from './test-identity.js'
@@ -731,6 +732,26 @@ describe('the moves away from what a device holds', () => {
       .expect(200)
 
     expect((answer.body as Pulled).narrowed['jobs']).toMatch(/^jobs:[0-9a-f]{16}/)
+  })
+
+  it('look up the old value in the index under the policy of the log', async () => {
+    // As the application asks, under the restrictive policy of the log: a
+    // comparison PostgreSQL may not push below it would read every move of a
+    // key in the business and compare afterwards.
+    const plan = await database.forTenant({ tenantId: north.id }, async (tx) => {
+      const scope = await deviceScope(tx, 'toni')
+
+      await tx.execute(sql`set local enable_seqscan = off`)
+
+      const { rows } = await tx.execute<{ 'QUERY PLAN': string }>(
+        sql`explain ${movesQuery(scope.jobIds, 'toni')}`,
+      )
+
+      return rows.map((row) => row['QUERY PLAN']).join('\n')
+    })
+
+    expect(plan).toMatch(/Index Cond: .*old_value = ANY/)
+    expect(plan).not.toMatch(/(Filter|Hash Cond|Merge Cond): .*old_value/)
   })
 
   it('are each read through the partial index of the log', async () => {
