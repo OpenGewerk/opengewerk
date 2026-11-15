@@ -161,6 +161,13 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Ein Gerät zeigt einen Datensatz jetzt so, wie der Server ihn hält, auch wenn seine Uhr zwischen zwei Übertragungen
+  zurückgestellt wurde und der Abgleich danach noch nicht durchkam (#950). Warum: Die Anzeige ordnete die Änderungen,
+  die der Server schon angenommen hatte, nach der Uhr des Geräts. Eine später gesendete Änderung mit früherer Zeit kam
+  dann zuerst, eine Löschung ließ die Datei wieder als vorhanden erscheinen, und eine Änderung zeigte den Wert von
+  vorher. Jetzt legen Anzeige, Papierkorb und die Frage nach der Reihenfolge aus #937 die Änderungen in derselben
+  Reihenfolge an: was der Server angenommen hat, in der Reihenfolge der Übertragung, dahinter, was wartet, in der
+  Reihenfolge des Ausgangs.
 - Zieht eine Anlage oder ein Gerät auf das Objekt eines Auftrags um, kommen ihre Dateien, Protokolle und was sonst an
   ihr hängt jetzt auch auf ein Gerät, das schon abgeglichen hat (#938). Warum: Der Bereich eines Geräts änderte seinen
   Wert nur mit den Aufträgen, und was an der Anlage hing, lag mit seinen Änderungen hinter dem Stand des Geräts. Jetzt

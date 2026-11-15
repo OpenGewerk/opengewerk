@@ -676,11 +676,10 @@ export class SyncClient {
         continue
       }
 
-      const ordered = inOutboxOrder(pending)
-      const removal = ordered.findIndex((operation) => operation.kind === 'delete')
+      const removal = pending.findIndex((operation) => operation.kind === 'delete')
 
       if (removal > 0) {
-        const before = project(null, ordered.slice(0, removal), head.recordId, this.rules.policyFor)
+        const before = project(null, pending.slice(0, removal), head.recordId, this.rules.policyFor)
 
         if (before) {
           rows.push(before)
@@ -778,7 +777,7 @@ export class SyncClient {
     otherId: string,
     kind?: OperationKind,
   ): boolean {
-    const ordered = [...this.settling, ...inOutboxOrder(this.outbox)]
+    const ordered = this.inLaidOrder()
     let last = -1
     let first = -1
 
@@ -1865,7 +1864,19 @@ export class SyncClient {
   /** The two views of the queue, after it changed. */
   private regroup(): void {
     this.pending = byRecord(this.outbox)
-    this.laid = byRecord([...this.settling, ...this.outbox])
+    this.laid = byRecord(this.inLaidOrder())
+  }
+
+  /**
+   * Every operation the device lays over the rows of the server, in the order
+   * the server applies them (opengewerk#950): what it took in the order it
+   * went (`pushPart`), what waits after it in the order of the outbox, the
+   * order it goes in (opengewerk#939). One order for the projection,
+   * `binned` and `isRecordedAfter`; the clock of the device does not reorder
+   * what has gone.
+   */
+  private inLaidOrder(): readonly Operation[] {
+    return [...this.settling, ...inOutboxOrder(this.outbox)]
   }
 
   private decideState(): SyncState {

@@ -237,22 +237,21 @@ describe('the projection', () => {
     expect(shown?.['place']).toBe('ground floor')
   })
 
-  it('applies two queued changes in the order they were recorded', () => {
-    const shown = project(
-      row({ id: 's-1', name: 'Hall' }),
-      [
-        operation({
-          id: operationId('op-2'),
-          recordedAt: new Date('2026-10-02T09:00:00Z'),
-          patches: [{ field: 'name', from: 'A', to: 'B' }],
-        }),
-        operation({ patches: [{ field: 'name', from: 'Hall', to: 'A' }] }),
-      ],
-      's-1',
-      rules.policyFor,
-    )
+  // In the order the client lays them, not by the clock of the device
+  // (opengewerk#950): a change the server took after another can carry an
+  // earlier time once the clock was put back.
+  it('applies the changes in the order it is given', () => {
+    const first = operation({ patches: [{ field: 'name', from: 'Hall', to: 'A' }] })
+    const second = operation({
+      id: operationId('op-2'),
+      recordedAt: new Date('2026-01-01T09:00:00Z'),
+      patches: [{ field: 'name', from: 'A', to: 'B' }],
+    })
+    const shown = (pending: readonly Operation[]) =>
+      project(row({ id: 's-1', name: 'Hall' }), pending, 's-1', rules.policyFor)?.['name']
 
-    expect(shown?.['name']).toBe('B')
+    expect(shown([first, second])).toBe('B')
+    expect(shown([second, first])).toBe('A')
   })
 
   it('shows nothing for a record the outbox deletes', () => {

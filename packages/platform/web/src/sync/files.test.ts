@@ -428,6 +428,42 @@ describe('a file made on the device', () => {
     }
   })
 
+  it('lays what the server took in the order it went, with the clock of the device put back (opengewerk#950)', async () => {
+    const client = await start()
+    const made = await client.create('notes', { title: 'Vorher' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    // Each change goes, the pull after it does not come.
+    server.pull = () => Promise.reject(new TypeError('Failed to fetch'))
+    await client.synchronise().catch(() => undefined)
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+
+    try {
+      vi.setSystemTime(new Date(Date.now() - 60 * 60 * 1000))
+      await client.update('notes', made.id, { title: 'Nachher' })
+      await client.synchronise().catch(() => undefined)
+
+      expect(client.status().pending).toBe(0)
+      // The server took the change after the note was made, whatever the
+      // clock said, and holds it so.
+      expect(client.get('notes', made.id)?.['title']).toBe('Nachher')
+
+      vi.setSystemTime(new Date(Date.now() - 60 * 60 * 1000))
+      await client.remove('notes', made.id)
+      await client.synchronise().catch(() => undefined)
+
+      expect(client.status().pending).toBe(0)
+      expect(client.get('notes', made.id)).toBeNull()
+      expect(client.binned('notes').map((row) => row['id'])).toContain(made.id)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps the order a transmission went in once the server took it (opengewerk#937)', async () => {
     const client = await start()
     const push = server.push.bind(server)
