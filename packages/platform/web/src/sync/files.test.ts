@@ -463,6 +463,24 @@ describe('a file made on the device', () => {
     }
   })
 
+  it('keeps a record made and removed on the device among the binned, as it stood before (opengewerk#937)', async () => {
+    const client = await start()
+
+    server.push = () => Promise.reject(new TypeError('Failed to fetch'))
+
+    const made = await client.create('notes', { title: 'Nur hier' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    await client.update('notes', made.id, { title: 'Nur hier, geändert' })
+    await client.remove('notes', made.id)
+
+    expect(client.get('notes', made.id)).toBeNull()
+    expect(client.binned('notes').map((row) => row['title'])).toEqual(['Nur hier, geändert'])
+  })
+
   it('measures the first change of a kind where one is asked for (opengewerk#937)', async () => {
     const client = await start()
     const note = await client.create('notes', { title: 'Vorher' })

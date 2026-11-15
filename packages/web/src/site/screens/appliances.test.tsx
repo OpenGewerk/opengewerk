@@ -841,7 +841,10 @@ describe('a test signed on the device and not sent yet (#817)', () => {
     expect(await screen.findByRole('img', { name: 'neu.jpg' })).toBeTruthy()
   })
 
-  const signedWithPhoto = async (before?: (client: SyncClient) => Promise<unknown>) => {
+  const signedWithPhoto = async (
+    before?: (client: SyncClient) => Promise<unknown>,
+    photo: () => string = () => 'f-1',
+  ) => {
     vi.stubGlobal('fetch', (path: string) =>
       Promise.resolve(
         path === '/attachments/versions/v-1/preview'
@@ -888,7 +891,7 @@ describe('a test signed on the device and not sent yet (#817)', () => {
     await before?.(mounted.client)
     await mounted.client.update('form_records', 'p-7', {
       status: 'signed',
-      values: JSON.stringify({ ...lastYear, photo: 'f-1' }),
+      values: JSON.stringify({ ...lastYear, photo: photo() }),
     })
 
     return mounted
@@ -917,6 +920,35 @@ describe('a test signed on the device and not sent yet (#817)', () => {
 
     expect(client.isPending('form_records', 'p-7')).toBe(true)
     expect(await screen.findByRole('img', { name: 'leitung.jpg' })).toBeTruthy()
+  })
+
+  it('keeps a file made on the device and removed after a waiting signature', async () => {
+    server.push = () => Promise.reject(new Error('Keine Verbindung'))
+    let file = ''
+    const { client } = await signedWithPhoto(
+      async (device) => {
+        const made = await device.create('attachments', { applianceId: 'a-2', title: 'Vor Ort' })
+
+        if (made.outcome !== 'queued') {
+          throw new Error('The file was refused on the device.')
+        }
+
+        file = made.id
+        await device.create('attachment_versions', {
+          attachmentId: file,
+          fileName: 'vor-ort.jpg',
+          mediaType: 'image/jpeg',
+          previewSha256: 'e'.repeat(64),
+        })
+      },
+      () => file,
+    )
+
+    await client.remove('attachments', file)
+    await client.synchronise().catch(() => undefined)
+
+    expect(client.isPending('form_records', 'p-7')).toBe(true)
+    expect(await screen.findByText('vor-ort.jpg')).toBeTruthy()
   })
 
   it('keeps a file removed after a signature the server took and no pull brought back', async () => {

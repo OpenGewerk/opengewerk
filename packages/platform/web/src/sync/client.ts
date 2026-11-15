@@ -639,7 +639,8 @@ export class SyncClient {
    * (opengewerk#937): no list shows them, but a record that does not change
    * may still show one it named, as its page does. Those this device removed
    * and no pull has brought back yet come as the server last sent them, with
-   * their `deletedAt` still empty. Cached until the next change, like the
+   * their `deletedAt` still empty; one it made and removed before the server
+   * sent a row, as it stood before its removal. Cached until the next change, like the
    * lists.
    */
   binned(entity: string): readonly RecordState[] {
@@ -661,6 +662,29 @@ export class SyncClient {
         // Removed on this device and not back yet: the row as the server last
         // sent it. One the server has not marked deleted can only be this.
         rows.push(server)
+      }
+    }
+
+    // Made on this device and removed again before the server sent a row:
+    // the record as it stood before its removal.
+    const known = this.records.get(entity)
+
+    for (const pending of this.laid.values()) {
+      const [head] = pending
+
+      if (!head || head.entity !== entity || known?.has(head.recordId)) {
+        continue
+      }
+
+      const ordered = inOutboxOrder(pending)
+      const removal = ordered.findIndex((operation) => operation.kind === 'delete')
+
+      if (removal > 0) {
+        const before = project(null, ordered.slice(0, removal), head.recordId, this.rules.policyFor)
+
+        if (before) {
+          rows.push(before)
+        }
       }
     }
 
