@@ -428,6 +428,41 @@ describe('a file made on the device', () => {
     }
   })
 
+  it('keeps the order a transmission went in once the server took it (opengewerk#937)', async () => {
+    const client = await start()
+    const push = server.push.bind(server)
+
+    server.push = () => Promise.reject(new TypeError('Failed to fetch'))
+    server.pull = () => Promise.reject(new TypeError('Failed to fetch'))
+
+    const earlier = await client.create('notes', { title: 'Zuerst eingereiht' })
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+
+    try {
+      vi.setSystemTime(new Date(Date.now() - 60 * 60 * 1000))
+
+      const later = await client.create('notes', { title: 'Mit zurückgestellter Uhr' })
+
+      if (earlier.outcome !== 'queued' || later.outcome !== 'queued') {
+        throw new Error('A note was refused on the device.')
+      }
+
+      // By the clock the later one goes first, and so the server stamps it.
+      const before = client.isRecordedAfter('notes', later.id, 'notes', earlier.id)
+
+      server.push = push
+      await client.synchronise().catch(() => undefined)
+
+      expect(client.status().pending).toBe(0)
+      expect(before).toBe(false)
+      expect(client.isRecordedAfter('notes', later.id, 'notes', earlier.id)).toBe(false)
+      expect(client.isRecordedAfter('notes', earlier.id, 'notes', later.id)).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('measures the first change of a kind where one is asked for (opengewerk#937)', async () => {
     const client = await start()
     const note = await client.create('notes', { title: 'Vorher' })

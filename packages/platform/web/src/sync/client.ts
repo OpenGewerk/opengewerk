@@ -1209,7 +1209,8 @@ export class SyncClient {
     // What landed stays laid over the rows until the pull brings them. What
     // did not land is not shown at all: a conflict is on its own list, and a
     // skipped operation changed nothing.
-    const landed = this.outbox.filter((operation) => applied.has(operation.id))
+    // In the order they went, which is the order the server stamped them in.
+    const landed = sent.filter((operation) => applied.has(operation.id))
 
     for (const operation of landed) {
       const row = this.records.get(operation.entity)?.get(operation.recordId)
