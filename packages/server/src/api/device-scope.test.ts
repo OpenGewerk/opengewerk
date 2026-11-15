@@ -28,6 +28,10 @@ const people = {
   gesperrt: { name: 'Gerd Gesperrt', roles: ['technician'] },
   // Past the last day of the access, without a block (opengewerk-haustechnik#339).
   beendet: { name: 'Bea Beendet', roles: ['technician'] },
+  // On more jobs than one statement has parameters for each id of them.
+  viele: { name: 'Vera Viele', roles: ['technician'] },
+  // Who blacks out a value of the log, as a deletion does.
+  olga: { name: 'Olga Owner', roles: ['owner'] },
 } as const
 
 type Person = keyof typeof people
@@ -423,6 +427,7 @@ describe('the device of a technician, when something moves', () => {
     const fremd = await household('Fremd')
     const nebenan = await post('/sites', { customerId: fremd.customer, designation: 'Nebenan' })
     const appliance = newId<'appliance'>()
+    const task = newId<'task'>()
 
     await make([
       created('appliances', appliance, {
@@ -432,6 +437,13 @@ describe('the device of a technician, when something moves', () => {
         protectionClass: 'I',
         mobility: 'portable',
       }),
+      created('tasks', task, {
+        title: 'Angebot nachfassen',
+        dueOn: '2026-12-01',
+        assigneeUserId: 'max',
+        status: 'open',
+        customerId: fremd.customer,
+      }),
     ])
     await assign(roth.job, ['toni'])
 
@@ -439,6 +451,8 @@ describe('the device of a technician, when something moves', () => {
 
     await move('appliances', appliance, { siteId: { from: fremd.site, to: nebenan } })
     await move('installations', fremd.installation, { siteId: { from: fremd.site, to: nebenan } })
+    // A key that was empty and is set counts no more than any other.
+    await move('tasks', task, { jobId: { from: null, to: fremd.job } })
 
     const after = await pull('toni')
 
@@ -522,6 +536,65 @@ describe('the device of a technician, when something moves', () => {
     expect(idsOf(into, 'attachments')).toContain(plan)
   })
 
+  it('is narrowed to something else once a move away is blacked out by a deletion', async () => {
+    const lenz = await household('Lenz')
+    const fremd = await household('Lenzfremd')
+    const appliance = newId<'appliance'>()
+
+    await make([
+      created('appliances', appliance, {
+        siteId: lenz.site,
+        inventoryNumber: '301',
+        designation: 'Staubsauger',
+        protectionClass: 'II',
+        mobility: 'portable',
+      }),
+    ])
+    await assign(lenz.job, ['toni'])
+
+    const before = await pull('toni')
+
+    await move('appliances', appliance, { siteId: { from: lenz.site, to: fremd.site } })
+
+    // The site it went to is deleted before the device asks again, and the
+    // deletion blacks out the old value of the move with the rest.
+    const { rows } = await admin.query<{ id: string }>(
+      `select id from audit_entries where table_name = 'appliances' and record_id = $1
+          and field = 'site_id' and operation = 'update'`,
+      [appliance],
+    )
+    // Olga leads the business, which a redaction asks of whoever writes it.
+    await admin.query(
+      `insert into tenant_roles (tenant_id, key, label, rights, leads, second_factor)
+       values ($1, 'owner', 'Inhaber', '{}', true, false) on conflict do nothing`,
+      [north.id],
+    )
+
+    const client = await admin.connect()
+
+    try {
+      await client.query('begin')
+      await client.query("select set_config('app.tenant_id', $1, true)", [north.id])
+      await client.query("select set_config('app.user_id', 'olga', true)")
+      await client.query(
+        `insert into audit_redactions (tenant_id, entry_id, side, reason, redacted_by)
+         values ($1, $2, 'old', 'Löschkonzept', 'olga')`,
+        [north.id, rows[0]?.id],
+      )
+      await client.query('commit')
+    } catch (error) {
+      await client.query('rollback')
+      throw error
+    } finally {
+      client.release()
+    }
+
+    const after = await pull('toni')
+
+    expect(after.narrowed['appliances']).not.toBe(before.narrowed['appliances'])
+    expect(idsOf(after, 'appliances')).not.toContain(appliance)
+  })
+
   it('is narrowed to something else once an inverter moves into a system it holds (#947)', async () => {
     const vogel = await household('Vogel')
     const fremd = await household('Anders')
@@ -601,6 +674,46 @@ describe('the device of a technician, when something moves', () => {
 })
 
 describe('the moves away from what a device holds', () => {
+  it('are asked for a person on more jobs than a statement has parameters', async () => {
+    // A business of its own, so that the jobs stay out of every other pull.
+    const south = newId<'tenant'>()
+    const { rows } = await admin.query<{ customer: string; site: string }>(
+      `with tenant as (insert into tenants (id, name) values ($1, 'Elektro Süd GmbH') returning id),
+            member as (insert into memberships (tenant_id, user_id, roles)
+                       select id, 'viele', '{technician}' from tenant),
+            customer as (insert into customers (tenant_id, kind, name)
+                         select id, 'private', 'Familie Viele' from tenant returning id, tenant_id),
+            site as (insert into sites (tenant_id, customer_id, designation)
+                     select tenant_id, id, 'Haus Viele' from customer returning id)
+       select customer.id as customer, site.id as site from customer, site`,
+      [south],
+    )
+
+    await admin.query(
+      `with made as (
+         insert into jobs (tenant_id, customer_id, site_id, kind, status, designation)
+         select $1, $2, $3, 'service', 'active', 'Auftrag ' || n from generate_series(1, 900) n
+         returning id)
+       insert into job_assignments (tenant_id, job_id, user_id)
+       select $1, id, 'viele' from made`,
+      [south, rows[0]?.customer, rows[0]?.site],
+    )
+
+    const answer = await http()
+      .get('/sync?since=0')
+      .set(
+        'x-test-identity',
+        JSON.stringify({
+          userId: 'viele',
+          tenantId: south,
+          roles: ['technician'],
+        } satisfies Somebody),
+      )
+      .expect(200)
+
+    expect((answer.body as Pulled).narrowed['jobs']).toMatch(/^jobs:[0-9a-f]{16}/)
+  })
+
   it('are each read through the partial index of the log', async () => {
     const { rows } = await admin.query<{ indexdef: string }>(
       "select indexdef from pg_indexes where indexname = 'audit_entries_moves_idx'",

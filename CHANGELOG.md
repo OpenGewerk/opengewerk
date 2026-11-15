@@ -173,8 +173,9 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   wegzieht, was es hält: eine Anlage oder ein Gerät, das vom Objekt eines Auftrags wegzieht, eine Aufgabe, die jemand
   anderem übergeben wird, eine Datei, die an etwas anderes kommt. Warum: Der Bereich eines Geräts nahm seit #938 nur
   die Umzüge der Anlagen und Geräte in seinen Wert, die er danach noch erreicht. Jetzt nimmt er jeden Schlüssel, dem er
-  folgt, in beide Richtungen: den Umzug von etwas, das er erreicht, und den Umzug weg von etwas, das er erreicht. Ein
-  Teilindex auf dem Protokoll der Änderungen (Migration 0145) hält das schnell, ohne ihn läse jeder Abruf das ganze
+  folgt, in beide Richtungen: den Umzug von etwas, das er erreicht, und den Umzug weg von etwas, das er erreicht.
+  Schwärzt eine Löschung den alten Wert eines Umzugs, zählt der Umzug für jedes Gerät, und jedes ruft einmal neu ab.
+  Ein Teilindex auf dem Protokoll der Änderungen (Migration 0145) hält das schnell, ohne ihn läse jeder Abruf das ganze
   Protokoll. Ein Gerät, in dessen Bereich schon früher etwas weggezogen ist, ruft nach dem Update einmal neu ab.
 - Ein unterschriebenes Protokoll zeigt in der Anwendung jetzt dasselbe Foto wie sein PDF, auch wenn die Datei nach der
   Unterschrift aus den Akten entfernt wurde; eine Datei, die schon vor der Unterschrift entfernt war, zeigt es nicht

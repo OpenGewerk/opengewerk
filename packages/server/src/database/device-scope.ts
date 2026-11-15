@@ -143,6 +143,11 @@ function movingKeys(places: Places, userId: string): readonly MovingKey[] {
   ]
 }
 
+/** Names written into the text of a query, each once. */
+function quoted(names: readonly string[]): string {
+  return [...new Set(names)].map((name) => `'${name}'`).join(', ')
+}
+
 /** The fields of `movingKeys` read by where they came from, for the test of the index. */
 export function fieldsMovedAway(): readonly string[] {
   const keys = movingKeys(placesOf([]), '').filter((key) => key.within !== undefined)
@@ -192,7 +197,7 @@ async function movesOf(
 
   const parts = [
     ...[...into].map(([table, { fields, held }]) => {
-      const names = fields.map((field) => `'${field}'`).join(', ')
+      const names = quoted(fields)
 
       return sql`select a.record_id, a.sequence from audit_entries a
         where ${sql.raw(`a.table_name = '${table}' and a.field in (${names})`)}
@@ -208,6 +213,16 @@ async function movesOf(
                 and a.old_value in (select id::text from ${within} w(id))`,
           ],
     ),
+    // A deletion blacks out the old value of a move together with the rest
+    // of what it erases (ADR 0013), and the question above no longer finds
+    // it; a device that held the record and did not ask in between would get
+    // back the value it knows. Each move blacked out counts for every device:
+    // the value changes once, when the deletion runs.
+    sql`select a.record_id, a.sequence from audit_entries a
+      where ${sql.raw(`a.table_name in (${quoted(keys.filter((key) => key.within !== undefined).map((key) => key.table))})
+        and a.field in (${quoted(fieldsMovedAway())})`)}
+        and a.operation = 'update' and a.old_value is null
+        and exists (select 1 from audit_redactions r where r.entry_id = a.id and r.side = 'old')`,
   ]
   const { rows } = await tx.execute<{ moved: string }>(sql`
     select m.record_id::text || '@' || max(m.sequence)::text as moved
@@ -216,6 +231,15 @@ async function movesOf(
      order by 1`)
 
   return rows.map((row) => row.moved)
+}
+
+/**
+ * A list of ids as one parameter. Each id as a parameter of its own, as
+ * `idArray` passes them, put a person on 830 jobs past the 65 535 parameters
+ * of one statement once `movesOf` asks for each key what the jobs reach.
+ */
+function idsParameter(ids: readonly string[]): SQL {
+  return sql`${sql.param([...ids])}::uuid[]`
 }
 
 /** What the jobs reach, as `narrowedTo` asks it. */
@@ -237,10 +261,7 @@ interface Places {
 }
 
 function placesOf(jobIds: readonly string[]): Places {
-  const ids = sql`array[${sql.join(
-    jobIds.map((id) => sql`${id}`),
-    sql`, `,
-  )}]::uuid[]`
+  const ids = idsParameter(jobIds)
   const jobs = sql`(select id from jobs where id = any(${ids}))`
   const customers = sql`(select customer_id from jobs where id = any(${ids}))`
   const sites = sql`(select site_id from jobs where id = any(${ids}) and site_id is not null)`
@@ -605,10 +626,7 @@ export function restrictedOut(restricted: RestrictedOnDevices, entity: string): 
     return undefined
   }
 
-  const ids = sql`array[${sql.join(
-    restricted.customerIds.map((id) => sql`${id}`),
-    sql`, `,
-  )}]::uuid[]`
+  const ids = idsParameter(restricted.customerIds)
   const jobs = sql`(select id from jobs where customer_id = any(${ids}))`
   const sites = sql`(select id from sites where customer_id = any(${ids}))`
   const installations = sql`(select id from installations where site_id in ${sites})`
