@@ -380,6 +380,12 @@ export class SyncClient {
    * they no longer count as waiting, which they are not.
    */
   private settling: readonly Operation[] = []
+  /**
+   * For each settling operation, the version its row had on this device when
+   * the server took it (opengewerk#937): only a row newer than that one can
+   * carry it. Null where the device had no row of the server yet.
+   */
+  private settledFrom = new Map<OperationId, number | null>()
   /** What is laid over the server's rows: what settles, then what waits. */
   private laid: ReadonlyMap<string, Operation[]> = new Map()
   private readonly listeners = new Set<() => void>()
@@ -631,8 +637,10 @@ export class SyncClient {
   /**
    * The records of a kind marked deleted, as the store keeps them
    * (opengewerk#937): no list shows them, but a record that does not change
-   * may still show one it named, as its page does. Cached until the next
-   * change, like the lists.
+   * may still show one it named, as its page does. Those this device removed
+   * and no pull has brought back yet come as the server last sent them, with
+   * their `deletedAt` still empty. Cached until the next change, like the
+   * lists.
    */
   binned(entity: string): readonly RecordState[] {
     const cached = this.binnedLists.get(entity)
@@ -644,15 +652,15 @@ export class SyncClient {
     const rows: RecordState[] = []
 
     for (const [id, server] of this.records.get(entity) ?? []) {
-      const laid = project(
-        server,
-        this.laid.get(recordKey(entity, id)) ?? [],
-        id,
-        this.rules.policyFor,
-      )
+      const pending = this.laid.get(recordKey(entity, id)) ?? []
+      const laid = project(server, pending, id, this.rules.policyFor)
 
       if (laid && !sameValue(laid['deletedAt'], null)) {
         rows.push(laid)
+      } else if (!laid && pending.some((operation) => operation.kind === 'delete')) {
+        // Removed on this device and not back yet: the row as the server last
+        // sent it. One the server has not marked deleted can only be this.
+        rows.push(server)
       }
     }
 
@@ -715,14 +723,19 @@ export class SyncClient {
     const server = this.records.get(entity)?.get(id)
     const pulled = typeof server?.['version'] === 'number' ? server['version'] : null
 
-    // A pull that brought the row back after the change ends it, even where a
-    // later page of the same pull failed.
-    return this.settling.some(
-      (operation) =>
-        operation.entity === entity &&
-        operation.recordId === id &&
-        !(operation.baseVersion !== null && pulled !== null && pulled > operation.baseVersion),
-    )
+    // A pull that brought the row back after the server took the change ends
+    // it, even where a later page of the same pull failed. A row of an earlier
+    // change does not: it came back before this one landed. Where the device
+    // had no row of the server yet (a create), any row it sends back ends it.
+    return this.settling.some((operation) => {
+      if (operation.entity !== entity || operation.recordId !== id) {
+        return false
+      }
+
+      const from = this.settledFrom.get(operation.id) ?? null
+
+      return !(pulled !== null && (from === null || pulled > from))
+    })
   }
 
   // Writing
@@ -1029,6 +1042,7 @@ export class SyncClient {
       // Everything that settled is in the rows now, as the server holds it.
       if (this.settling.length > 0) {
         this.settling = []
+        this.settledFrom.clear()
         this.regroup()
       }
       await this.refreshConflicts()
@@ -1157,10 +1171,18 @@ export class SyncClient {
     // What landed stays laid over the rows until the pull brings them. What
     // did not land is not shown at all: a conflict is on its own list, and a
     // skipped operation changed nothing.
-    this.settling = [
-      ...this.settling,
-      ...this.outbox.filter((operation) => applied.has(operation.id)),
-    ]
+    const landed = this.outbox.filter((operation) => applied.has(operation.id))
+
+    for (const operation of landed) {
+      const row = this.records.get(operation.entity)?.get(operation.recordId)
+
+      this.settledFrom.set(
+        operation.id,
+        typeof row?.['version'] === 'number' ? row['version'] : null,
+      )
+    }
+
+    this.settling = [...this.settling, ...landed]
     this.outbox = this.outbox.filter((operation) => !done.has(operation.id))
     this.regroup()
     this.publish({ pending: this.outbox.length })

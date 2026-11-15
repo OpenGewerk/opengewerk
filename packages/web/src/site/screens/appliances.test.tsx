@@ -646,6 +646,37 @@ describe('a photo of a signed protocol whose file went to the bin (#937)', () =>
     expect(await screen.findByRole('img', { name: 'leitung-alt.jpg' })).toBeTruthy()
   })
 
+  it('stays while its removal on this device has not come back', async () => {
+    vi.stubGlobal('fetch', (path: string) =>
+      Promise.resolve(
+        path === '/attachments/versions/v-7/preview'
+          ? new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), {
+              headers: { 'Content-Type': 'image/jpeg' },
+            })
+          : new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } }),
+      ),
+    )
+
+    const kept = binnedAt(8)
+    const { client } = await mount('/auftraege/j-1/pruefprotokolle/p-7', {
+      ...kept,
+      attachments: [{ id: 'f-7', applianceId: 'a-2', title: 'Leitung', changeSequence: 8 }],
+    })
+
+    expect(await screen.findByRole('img', { name: 'leitung-alt.jpg' })).toBeTruthy()
+
+    // Removed here, then sent, and the pull after it does not come.
+    server.pull = () => Promise.reject(new Error('Keine Verbindung'))
+    await client.remove('attachments', 'f-7')
+    expect(await screen.findByRole('img', { name: 'leitung-alt.jpg' })).toBeTruthy()
+
+    await client.synchronise().catch(() => undefined)
+
+    expect(client.isPending('attachments', 'f-7')).toBe(false)
+    expect(client.isSettling('attachments', 'f-7')).toBe(true)
+    expect(await screen.findByRole('img', { name: 'leitung-alt.jpg' })).toBeTruthy()
+  })
+
   it('is not shown when the file lay there before the signature', async () => {
     await mount('/auftraege/j-1/pruefprotokolle/p-7', binnedAt(8))
 

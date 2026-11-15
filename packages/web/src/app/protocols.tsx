@@ -1161,7 +1161,9 @@ function usePhotos(
   // A signed protocol shows the files it names under the name of their
   // version, as its page does; they hang where they hung when it was signed
   // (opengewerk#934). One that went to the bin after the signature too, and
-  // none that lay there before (opengewerk#937).
+  // none that lay there before (opengewerk#937). One this device removed and
+  // no pull has brought back (its `deletedAt` still empty) reaches the server
+  // after a signature that has come back, so it counts as removed after it.
   const binned = useBinnedRecords('attachments')
   const versions = useVersions()
 
@@ -1174,8 +1176,9 @@ function usePhotos(
               (attachment) =>
                 attachment[field] === subject &&
                 signed.at !== null &&
-                typeof attachment['changeSequence'] === 'number' &&
-                attachment['changeSequence'] > signed.at,
+                (!attachment['deletedAt'] ||
+                  (typeof attachment['changeSequence'] === 'number' &&
+                    attachment['changeSequence'] > signed.at)),
             ),
           ].filter((attachment) => signed.named.includes(String(attachment['id'])))
         : attachments

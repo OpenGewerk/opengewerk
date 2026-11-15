@@ -296,6 +296,85 @@ describe('a file made on the device', () => {
     expect(client.isSettling('notes', made.id)).toBe(false)
   })
 
+  it('ends a create as settling once a pull brought its row back, even where a later page failed (opengewerk#937)', async () => {
+    const client = await start()
+    const made = await client.create('notes', { title: 'Neu' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    const pull = server.pull.bind(server)
+    let pages = 0
+
+    // The first page brings the new row, the second does not come.
+    server.pull = async () => {
+      pages += 1
+
+      if (pages === 1) {
+        return { ...(await pull()), hasMore: true }
+      }
+
+      throw new TypeError('Failed to fetch')
+    }
+
+    await client.synchronise().catch(() => undefined)
+
+    expect(pages).toBeGreaterThanOrEqual(2)
+    expect(client.isSettling('notes', made.id)).toBe(false)
+  })
+
+  it('keeps a change settling when the row that came back carries only an earlier change (opengewerk#937)', async () => {
+    const client = await start()
+    const made = await client.create('notes', { title: 'Vorher' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    await client.synchronise()
+    await client.update('notes', made.id, { title: 'Erste' })
+
+    const pull = server.pull.bind(server)
+    let entered!: () => void
+    let release!: () => void
+    const pulling = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    // The pull after the first change waits until the second is queued and
+    // then brings the first back; the pull after the second does not come.
+    let pages = 0
+
+    server.pull = async () => {
+      pages += 1
+
+      if (pages > 1) {
+        throw new TypeError('Failed to fetch')
+      }
+
+      entered()
+      await gate
+
+      return pull()
+    }
+
+    const exchange = client.synchronise().catch(() => undefined)
+
+    await pulling
+    await client.update('notes', made.id, { title: 'Zweite' })
+    release()
+    await exchange
+
+    expect(pages).toBeGreaterThanOrEqual(2)
+    expect(client.get('notes', made.id)?.['title']).toBe('Zweite')
+    expect(client.isPending('notes', made.id)).toBe(false)
+    expect(client.isSettling('notes', made.id)).toBe(true)
+  })
+
   it('waits on the device without a network, and goes up once there is one', async () => {
     const client = await start()
 
