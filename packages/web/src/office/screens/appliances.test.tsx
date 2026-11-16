@@ -222,6 +222,7 @@ describe('the register of appliances in the office (#303)', () => {
     await user.type(screen.getByLabelText('Inventarnummer'), '001')
     await user.selectOptions(screen.getByLabelText(/Schutzklasse/), 'II')
     await user.type(screen.getByLabelText('Länge der Anschlussleitung in m'), '4,5')
+    await user.type(screen.getByLabelText('Heizleistung in kW'), '1,4')
     await user.click(
       within(screen.getByRole('region', { name: 'Gerät anlegen' })).getByRole('button', {
         name: 'Gerät anlegen',
@@ -239,6 +240,7 @@ describe('the register of appliances in the office (#303)', () => {
       protectionClass: 'II',
       mobility: 'portable',
       cordLengthMilli: 4_500,
+      heatingPowerWatts: 1_400,
     })
   })
 

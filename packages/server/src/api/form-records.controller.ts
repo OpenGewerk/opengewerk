@@ -144,6 +144,8 @@ export class FormRecordsController {
           ? ((record.status === 'signed' ? readApplianceFacts(record.applianceFacts) : null) ?? {
               protectionClass: appliance.protectionClass,
               cordLengthMilli: appliance.cordLengthMilli,
+              cordCrossSectionMilli: appliance.cordCrossSectionMilli,
+              heatingPowerWatts: appliance.heatingPowerWatts,
             })
           : null
         return {

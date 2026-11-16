@@ -332,7 +332,8 @@ export async function emptySite(tx: TenantTransaction, siteId: string): Promise<
   await take(
     'appliances',
     sql`update appliances set designation = 'Gelöscht', inventory_number = null, manufacturer = null,
-           model = null, serial_number = null, location = null, cord_length_milli = null, notes = null,
+           model = null, serial_number = null, location = null, cord_length_milli = null,
+           cord_cross_section_milli = null, heating_power_watts = null, notes = null,
            deleted_at = coalesce(deleted_at, now())
      where site_id = ${k} returning id`,
   )

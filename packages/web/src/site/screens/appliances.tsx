@@ -337,6 +337,8 @@ export function SiteNewApplianceScreen() {
     'protectionClass',
     'mobility',
     'cordLength',
+    'cordCrossSection',
+    'heatingPower',
     'location',
     'manufacturer',
     'model',
@@ -406,7 +408,7 @@ export function SiteNewApplianceScreen() {
             label={label}
             hint={field.hint}
             autoComplete="off"
-            inputMode={name === 'cordLength' ? 'decimal' : undefined}
+            inputMode={field.numeric ? 'decimal' : undefined}
             numeric={field.numeric}
             value={values[name] ?? ''}
             onChange={(event) => {

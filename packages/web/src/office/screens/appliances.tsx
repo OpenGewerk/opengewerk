@@ -1,6 +1,8 @@
 import {
   applianceMobilityLabel,
   type ApplianceMobility,
+  cordText,
+  heatingPowerText,
   readFormValues,
   type RecordState,
 } from '@opengewerk/domain'
@@ -469,7 +471,11 @@ export function ApplianceScreen() {
   const last = lastResult(tested)
   const lastSigned = (tested ?? []).find((test) => isSigned(test) && definitionOf(test) !== null)
   const found = lastSigned ? readFormValues(lastSigned['values'])?.['defects'] : undefined
-  const length = appliance['cordLengthMilli']
+  const count = (key: string) => {
+    const value = appliance[key]
+
+    return typeof value === 'number' ? value : null
+  }
   const mobility = appliance['mobility'] as ApplianceMobility
 
   return (
@@ -595,9 +601,15 @@ export function ApplianceScreen() {
                   {
                     label: 'Anschlussleitung',
                     value:
-                      typeof length === 'number'
-                        ? `${(length / 1000).toLocaleString('de-DE', { maximumFractionDigits: 3 })} m`
-                        : '',
+                      cordText({
+                        cordLengthMilli: count('cordLengthMilli'),
+                        cordCrossSectionMilli: count('cordCrossSectionMilli'),
+                      }) ?? '',
+                  },
+                  {
+                    label: 'Heizleistung',
+                    value:
+                      heatingPowerText({ heatingPowerWatts: count('heatingPowerWatts') }) ?? '',
                   },
                   {
                     label: 'Nächste Prüfung',

@@ -178,16 +178,24 @@ describe('the next inspection on a printed protocol (#301)', () => {
 describe('the test of an appliance on paper (#303)', () => {
   const test = elektroRegistry.definitionFor('dguv-v3', 1)
   const printed = (
-    appliance: PrintedProtocol['appliance'],
+    appliance: Partial<NonNullable<PrintedProtocol['appliance']>> & {
+      readonly protectionClass: 'I' | 'II' | 'III'
+    },
     values: PrintedProtocol['values'],
+    definition = test,
   ): string =>
     protocolPrintJob({
       ...protocol,
-      definition: test as FormDefinition,
+      definition: definition as FormDefinition,
       values,
       performedOn: '2026-11-02',
       installation: '002 Verlängerungsleitung 25 m, Schutzklasse I, Anschlussleitung 25 m',
-      appliance,
+      appliance: {
+        cordLengthMilli: null,
+        cordCrossSectionMilli: null,
+        heatingPowerWatts: null,
+        ...appliance,
+      },
       rules: elektroRules,
     }).html
 
@@ -212,6 +220,34 @@ describe('the test of an appliance on paper (#303)', () => {
     )
     expect(printed({ protectionClass: 'II', cordLengthMilli: null }, {})).toContain(
       '<strong>Isolationswiderstand Riso:</strong> mindestens 2,00 MΩ; DGUV Information 203-070',
+    )
+  })
+
+  it('names the limits of heating elements and of a lead over 1,5 mm² in version 3 (opengewerk#816)', () => {
+    const third = elektroRegistry.definitionFor('dguv-v3', 3)
+    const heater = { protectionClass: 'I' as const, heatingPowerWatts: 5_000 }
+    const drum = {
+      protectionClass: 'I' as const,
+      cordLengthMilli: 50_000,
+      cordCrossSectionMilli: 2_500,
+    }
+
+    expect(printed(heater, {}, third)).toContain(
+      '<strong>Schutzleiterstrom IPE:</strong> höchstens 5,00 mA; DGUV Information 203-070',
+    )
+    expect(printed(heater, { insulation: 100 }, third)).toContain(
+      '0,10 MΩ <span class="outside">außerhalb des Grenzwerts</span>',
+    )
+    expect(printed({ ...heater, heatingPowerWatts: 2_000 }, {}, third)).toContain(
+      '<strong>Isolationswiderstand Riso:</strong> mindestens 0,30 MΩ; DGUV Information 203-070',
+    )
+    // 50 m of 2,5 mm²: 50 / (56 · 2,5) Ω and 0,1 Ω, 0,457 Ω, written to the hundredth a value
+    // is measured in: 0,45 Ω is within, 0,46 Ω is not.
+    expect(printed(drum, { protective_conductor: 460 }, third)).toContain(
+      '0,46 Ω <span class="outside">außerhalb des Grenzwerts</span>',
+    )
+    expect(printed(drum, {}, third)).toContain(
+      '<strong>Schutzleiterwiderstand RPE:</strong> höchstens 0,45 Ω; DGUV Information 203-070',
     )
   })
 })

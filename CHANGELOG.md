@@ -9,6 +9,23 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Hinzugefügt
 
+- Die Prüfung eines Geräts nach DGUV Vorschrift 3 kennt Geräte mit Heizelementen und Anschlussleitungen über 1,5 mm²
+  (#816, Migration 0147, Paket Elektro 0.12.0, Fassung 3 des Formulars). Am Gerät stehen, beide freiwillig, die
+  Heizleistung in kW und der Querschnitt der Anschlussleitung in mm², im Büro und auf der Baustelle. Ein Gerät der
+  Schutzklasse I mit Heizelementen wird beim Isolationswiderstand gegen 0,3 MΩ gemessen, und über 3,5 kW darf sein
+  Schutzleiterstrom 1 mA je kW betragen, höchstens 10 mA. Über 3,5 kW ist ein solches Gerät nach der Quelle auch mit
+  weniger als 0,3 MΩ einwandfrei, wenn der Schutzleiterstrom eingehalten ist; das Protokoll zeigt den Wert trotzdem
+  als außerhalb, damit er auch ohne gemessenen Strom auffällt, und der Prüfer entscheidet im Ergebnis. Eine Leitung
+  über 1,5 mm² mit Länge wird gegen ihren berechneten Widerstand gemessen, Länge durch Leitfähigkeit von Kupfer und
+  Querschnitt, zuzüglich 0,1 Ω für den Übergang, höchstens 1 Ω wie in der Tabelle. Ohne Heizleistung bleibt es bei
+  den strengeren Werten wie bisher. Ohne Querschnitt gilt wie bisher die Tabelle für 1,5 mm², die für eine dickere
+  Leitung großzügiger ist als ihr berechneter Widerstand; wer den Querschnitt einträgt, misst eine solche Leitung nie
+  großzügiger. Den Schutzleiterstrom je kW kennt erst Fassung 3; ein Entwurf, der vor dem Update in einer älteren
+  Fassung begonnen wurde, misst ihn weiter gegen 3,5 mA. Ein unterschriebenes Protokoll hält die beiden Angaben mit
+  fest (#954); eines, das vorher unterschrieben wurde, behält, womit es unterschrieben wurde. Das Löschen eines
+  Objekts leert sie mit den übrigen Angaben des Geräts. Die Werte stehen im Regelpaket mit Fundstelle und gehen zur
+  fachkundigen Abnahme in #31. Warum: Ein Heizlüfter mit 0,5 MΩ stand bisher als außerhalb des Grenzwerts im
+  Protokoll, obwohl er in Ordnung ist. Das Fundament kennt dafür die Einheit `square_micrometres`.
 - Ein Gerät des Verzeichnisses hat Dateien wie eine Anlage, und die Prüfung nach DGUV Vorschrift 3 hat in Fassung 2
   ihres Formulars ein Foto (#817, Migration 0143, Paket Elektro 0.11.0). Auf der Baustelle nimmt der Monteur im
   Ergebnis der Prüfung ein „Foto zum Mangel“ auf, auch ohne Netz; es liegt bei den Dateien des Geräts und lässt sich
@@ -161,6 +178,9 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Ein Test des Tors, der unter der Last der CI manchmal rot wurde, wartet auf den Namen des nächsten Kontos (#962).
+  Warum: Er fragte im selben Takt, in dem die Bildschirme des alten Kontos gingen, und die Seite nennt das neue
+  einen Takt später; die Reihenfolge, um die es geht, hält eine eigene Zusicherung.
 - Ein unterschriebenes Prüfprotokoll eines Geräts rechnet jetzt mit den Angaben, mit denen es unterschrieben wurde,
   auf dem Bildschirm und im PDF (#954). Warum: Die Grenzwerte der Geräteprüfung hängen an der Schutzklasse und der
   Länge der Anschlussleitung, und beide wurden bei jedem Aufruf neu vom Gerät gelesen. Wer danach eine Angabe am Gerät

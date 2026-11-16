@@ -1,4 +1,5 @@
 import {
+  type ApplianceFacts,
   coreDeadlineKinds,
   deadlineRegistry,
   definitionProblems,
@@ -49,6 +50,7 @@ describe('the package Elektro und PV', () => {
       'formulare/vde-0105-100.v1.json',
       'formulare/dguv-v3.v1.json',
       'formulare/dguv-v3.v2.json',
+      'formulare/dguv-v3.v3.json',
       'formulare/vde-ar-n-4105.v1.json',
       'formulare/iec-62446-1.v1.json',
       'formulare/vde-0100-722.v1.json',
@@ -127,7 +129,7 @@ describe('the package Elektro und PV', () => {
     ).toEqual([
       ['vde-0100-600', 3],
       ['vde-0105-100', 1],
-      ['dguv-v3', 2],
+      ['dguv-v3', 3],
       ['vde-ar-n-4105', 1],
       ['iec-62446-1', 1],
       ['vde-0100-722', 1],
@@ -182,6 +184,30 @@ describe('the package Elektro und PV', () => {
           : section,
       ),
     }).toEqual(first)
+  })
+
+  it('works out in version 3 of the test of an appliance the protective conductor current and changes nothing else (opengewerk#816)', () => {
+    const second = elektroRegistry.definitionFor('dguv-v3', 2) as FormDefinition
+    const third = elektroRegistry.definitionFor('dguv-v3', 3) as FormDefinition
+    const current = (definition: FormDefinition) =>
+      definition.sections
+        .flatMap((section) => section.fields)
+        .find((field) => field.key === 'protective_conductor_current')
+
+    expect(current(second)).toMatchObject({
+      limit: { kind: 'at_most', rule: 'elektro.appliance.protective_conductor_current' },
+    })
+    expect(current(third)).toMatchObject({
+      limit: { kind: 'appliance_protective_conductor_current' },
+    })
+    expect(
+      JSON.parse(
+        JSON.stringify(third).replace(
+          '{"kind":"appliance_protective_conductor_current"}',
+          '{"kind":"at_most","rule":"elektro.appliance.protective_conductor_current"}',
+        ),
+      ),
+    ).toEqual({ ...second, version: 3 })
   })
 
   it('adds in version 3 the interval to the first recurring inspection and changes nothing else (#814)', () => {
@@ -320,10 +346,12 @@ describe('the package Elektro und PV', () => {
       appliance: { protectionClass: 'I' | 'II' | 'III'; cordLengthMilli: number | null },
       on = '2026-11-02',
     ) => {
+      const facts = { cordCrossSectionMilli: null, heatingPowerWatts: null, ...appliance }
       const entry = field(key)
 
       return (
-        entry && limitVerdict(entry, milli, { rules: elektroRules, on, circuit: null, appliance })
+        entry &&
+        limitVerdict(entry, milli, { rules: elektroRules, on, circuit: null, appliance: facts })
       )
     }
     const classOne = (cordLengthMilli: number | null) => ({
@@ -373,6 +401,92 @@ describe('the package Elektro und PV', () => {
     )
     // Before DIN EN 50699 (VDE 0702):2021-06 no limit rather than an invented one.
     expect(judged('insulation', 999, classOne(null), '2021-05-31')?.within).toBeNull()
+  })
+
+  it('judges an appliance with heating elements and a lead over 1,5 mm² by what they come to (opengewerk#816)', () => {
+    const third = elektroRegistry.definitionFor('dguv-v3', 3)
+    const second = elektroRegistry.definitionFor('dguv-v3', 2)
+    const judged = (
+      protocol: FormDefinition | null,
+      key: string,
+      milli: number,
+      appliance: Partial<ApplianceFacts>,
+    ) => {
+      const entry = (protocol ? fieldsOf(protocol) : []).find(
+        (field): field is MeasurementField => field.key === key && field.kind === 'measurement',
+      )
+
+      return (
+        entry &&
+        limitVerdict(entry, milli, {
+          rules: elektroRules,
+          on: '2026-11-16',
+          circuit: null,
+          appliance: {
+            protectionClass: 'I',
+            cordLengthMilli: null,
+            cordCrossSectionMilli: null,
+            heatingPowerWatts: null,
+            ...appliance,
+          },
+        })
+      )
+    }
+    const heating = (heatingPowerWatts: number) => ({ heatingPowerWatts })
+
+    // With heating elements 0,3 MΩ instead of 1 MΩ, up to 3,5 kW.
+    expect(judged(third, 'insulation', 299, heating(1_400))).toMatchObject({
+      within: false,
+      limitMilli: 300,
+    })
+    expect(judged(third, 'insulation', 300, heating(3_500))?.within).toBe(true)
+    expect(judged(third, 'insulation', 999, {})).toMatchObject({ within: false, limitMilli: 1000 })
+    // Beyond 3,5 kW as well: a low value is seen, and the tester decides in the result.
+    expect(judged(third, 'insulation', 100, heating(5_000))).toMatchObject({
+      within: false,
+      limitMilli: 300,
+    })
+    // Heating elements count only for class I; class II keeps its 2 MΩ.
+    expect(
+      judged(third, 'insulation', 1999, { protectionClass: 'II', heatingPowerWatts: 2_000 }),
+    ).toMatchObject({ within: false, limitMilli: 2000 })
+
+    // The current: 3,5 mA up to 3,5 kW, then 1 mA per kW, at most 10 mA.
+    const currentLimit = (appliance: Partial<ApplianceFacts>) =>
+      judged(third, 'protective_conductor_current', 0, appliance)?.limitMilli
+    expect(currentLimit({})).toBe(3500)
+    expect(currentLimit(heating(2_000))).toBe(3500)
+    expect(currentLimit(heating(3_500))).toBe(3500)
+    expect(currentLimit(heating(5_000))).toBe(5000)
+    expect(currentLimit(heating(15_000))).toBe(10_000)
+    expect(currentLimit({ protectionClass: 'II', heatingPowerWatts: 5_000 })).toBe(3500)
+    expect(judged(third, 'protective_conductor_current', 5001, heating(5_000))?.within).toBe(false)
+    // Version 2 keeps the value of the package for every appliance.
+    expect(judged(second, 'protective_conductor_current', 0, heating(5_000))?.limitMilli).toBe(3500)
+
+    // Over 1,5 mm² the resistance of the lead, l / (56 · A), and 0,1 Ω on top.
+    const resistanceLimit = (
+      cordLengthMilli: number | null,
+      cordCrossSectionMilli: number | null,
+    ) =>
+      judged(third, 'protective_conductor', 0, { cordLengthMilli, cordCrossSectionMilli })
+        ?.limitMilli
+    expect(resistanceLimit(50_000, 2_500)).toBe(457)
+    expect(resistanceLimit(50_000, 1_501)).toBe(695)
+    expect(resistanceLimit(5_000, 2_500)).toBe(136)
+    expect(resistanceLimit(100_000, 2_500)).toBe(814)
+    // Never more than 1 Ω, as the table: 150 m of 2,5 mm² would come to 1,171 Ω.
+    expect(resistanceLimit(150_000, 2_500)).toBe(1000)
+    // Up to 1,5 mm², or without a length, the table as before.
+    expect(resistanceLimit(50_000, 1_500)).toBe(900)
+    expect(resistanceLimit(50_000, null)).toBe(900)
+    expect(resistanceLimit(null, 2_500)).toBe(300)
+    expect(
+      judged(third, 'protective_conductor', 458, {
+        cordLengthMilli: 50_000,
+        cordCrossSectionMilli: 2_500,
+      })?.within,
+    ).toBe(false)
   })
 
   it('brings the commissioning protocol after VDE-AR-N 4105 for a PV system and a battery (#304)', () => {

@@ -1241,6 +1241,8 @@ export function applianceFactsOf(appliance: RecordState | null): ApplianceFacts 
     ? {
         protectionClass: appliance['protectionClass'],
         cordLengthMilli: appliance['cordLengthMilli'] ?? null,
+        cordCrossSectionMilli: appliance['cordCrossSectionMilli'] ?? null,
+        heatingPowerWatts: appliance['heatingPowerWatts'] ?? null,
       }
     : null
 

@@ -10,6 +10,8 @@ import {
   applianceSubject,
   applianceFactsText,
   cordLengthText,
+  cordText,
+  heatingPowerText,
   isApplianceFacts,
   readApplianceFacts,
   sameApplianceFacts,
@@ -23,6 +25,30 @@ describe('an appliance of the register (#303)', () => {
     expect(applianceProblems({ cordLengthMilli: 1_000_001 })).toHaveProperty('cordLengthMilli')
     expect(applianceProblems({ cordLengthMilli: 1.5 })).toHaveProperty('cordLengthMilli')
     expect(applianceProblems({ cordLengthMilli: null })).toEqual({})
+  })
+
+  it('takes a cross-section of the lead and a heating power above nothing and up to their largest (opengewerk#816)', () => {
+    expect(applianceProblems({ cordCrossSectionMilli: 2_500, heatingPowerWatts: 1_400 })).toEqual(
+      {},
+    )
+    expect(applianceProblems({ cordCrossSectionMilli: null, heatingPowerWatts: null })).toEqual({})
+    expect(applianceProblems({ cordCrossSectionMilli: 0 })).toEqual({
+      cordCrossSectionMilli: 'Der Querschnitt ist größer als 0 und höchstens 1000 mm².',
+    })
+    expect(applianceProblems({ cordCrossSectionMilli: 1_000_001 })).toHaveProperty(
+      'cordCrossSectionMilli',
+    )
+    expect(applianceProblems({ cordCrossSectionMilli: 2.5 })).toHaveProperty(
+      'cordCrossSectionMilli',
+    )
+    expect(applianceProblems({ heatingPowerWatts: 0 })).toEqual({
+      heatingPowerWatts: 'Die Heizleistung ist größer als 0 und höchstens 1000 kW.',
+    })
+    expect(applianceProblems({ heatingPowerWatts: 1_000_001 })).toHaveProperty('heatingPowerWatts')
+    expect(applianceProblems({ heatingPowerWatts: 1.5 })).toHaveProperty('heatingPowerWatts')
+    expect(
+      applianceProblems({ cordCrossSectionMilli: 1_000_000, heatingPowerWatts: 1_000_000 }),
+    ).toEqual({})
   })
 
   it('is named by its inventory number before its designation, where it has one', () => {
@@ -40,16 +66,34 @@ describe('an appliance of the register (#303)', () => {
         designation: 'Kaffeemaschine',
         protectionClass: 'I',
         cordLengthMilli: 1200,
+        cordCrossSectionMilli: null,
+        heatingPowerWatts: 1_400,
       }),
-    ).toBe('005 Kaffeemaschine, Schutzklasse I, Anschlussleitung 1,2 m')
+    ).toBe('005 Kaffeemaschine, Schutzklasse I, Anschlussleitung 1,2 m, Heizleistung 1,4 kW')
     expect(
       applianceSubject({
         inventoryNumber: null,
         designation: 'Bohrhammer',
         protectionClass: 'II',
         cordLengthMilli: null,
+        cordCrossSectionMilli: null,
+        heatingPowerWatts: null,
       }),
     ).toBe('Bohrhammer, Schutzklasse II')
+    expect(
+      applianceSubject({
+        inventoryNumber: '008',
+        designation: 'Kabeltrommel',
+        protectionClass: 'I',
+        cordLengthMilli: 50_000,
+        cordCrossSectionMilli: 2_500,
+        heatingPowerWatts: null,
+      }),
+    ).toBe('008 Kabeltrommel, Schutzklasse I, Anschlussleitung 50 m, 2,5 mm²')
+    expect(cordText({ cordLengthMilli: null, cordCrossSectionMilli: 1_500 })).toBe('1,5 mm²')
+    expect(cordText({ cordLengthMilli: null, cordCrossSectionMilli: null })).toBeNull()
+    expect(heatingPowerText({ heatingPowerWatts: 2_000 })).toBe('2 kW')
+    expect(heatingPowerText({ heatingPowerWatts: null })).toBeNull()
   })
 
   it('is what a limit is worked out from only with a protection class it knows', () => {
@@ -57,28 +101,42 @@ describe('an appliance of the register (#303)', () => {
     expect(isApplianceFacts({ protectionClass: 'II', cordLengthMilli: 25_000 })).toBe(true)
     expect(isApplianceFacts({ protectionClass: 'IV', cordLengthMilli: null })).toBe(false)
     expect(isApplianceFacts({ protectionClass: 'I', cordLengthMilli: -1 })).toBe(false)
+    expect(isApplianceFacts({ protectionClass: 'I' })).toBe(false)
+    expect(
+      isApplianceFacts({ protectionClass: 'I', cordLengthMilli: null, heatingPowerWatts: 0 }),
+    ).toBe(false)
+    expect(
+      isApplianceFacts({ protectionClass: 'I', cordLengthMilli: null, cordCrossSectionMilli: 1.5 }),
+    ).toBe(false)
     // A circuit is not an appliance.
     expect(isApplianceFacts({ tripCharacteristic: 'b', ratedCurrentMilli: 16_000 })).toBe(false)
   })
 
   it('keeps the facts a protocol was signed with as text, and reads back only such facts (opengewerk#954)', () => {
-    const facts = { protectionClass: 'I', cordLengthMilli: 25_000 } as const
+    const facts = {
+      protectionClass: 'I',
+      cordLengthMilli: 25_000,
+      cordCrossSectionMilli: 2_500,
+      heatingPowerWatts: null,
+    } as const
+    const none = { cordCrossSectionMilli: null, heatingPowerWatts: null } as const
 
     expect(readApplianceFacts(applianceFactsText(facts))).toEqual(facts)
-    // As the database writes them for a protocol signed by an older version.
+    // As the database wrote them before opengewerk#816, without cross-section and heating power.
     expect(readApplianceFacts('{"cordLengthMilli": null, "protectionClass": "II"}')).toEqual({
       protectionClass: 'II',
       cordLengthMilli: null,
+      ...none,
     })
     expect(readApplianceFacts('{"protectionClass": "IV", "cordLengthMilli": null}')).toBeNull()
     expect(readApplianceFacts('{"protectionClass": "I"}')).toBeNull()
     expect(readApplianceFacts('kein JSON')).toBeNull()
     expect(readApplianceFacts(null)).toBeNull()
-    expect(sameApplianceFacts(facts, { protectionClass: 'I', cordLengthMilli: 25_000 })).toBe(true)
-    expect(sameApplianceFacts(facts, { protectionClass: 'II', cordLengthMilli: 25_000 })).toBe(
-      false,
-    )
-    expect(sameApplianceFacts(facts, { protectionClass: 'I', cordLengthMilli: null })).toBe(false)
+    expect(sameApplianceFacts(facts, { ...facts })).toBe(true)
+    expect(sameApplianceFacts(facts, { ...facts, protectionClass: 'II' })).toBe(false)
+    expect(sameApplianceFacts(facts, { ...facts, cordLengthMilli: null })).toBe(false)
+    expect(sameApplianceFacts(facts, { ...facts, cordCrossSectionMilli: null })).toBe(false)
+    expect(sameApplianceFacts(facts, { ...facts, heatingPowerWatts: 2_000 })).toBe(false)
   })
 })
 
@@ -139,7 +197,12 @@ describe('the limits worked out of an appliance (#303)', () => {
       rules,
       on: '2026-11-02',
       circuit: null,
-      appliance: { protectionClass: 'I', cordLengthMilli: null },
+      appliance: {
+        protectionClass: 'I',
+        cordLengthMilli: null,
+        cordCrossSectionMilli: null,
+        heatingPowerWatts: null,
+      },
     })
 
     expect(verdict.text).toContain('mindestens')

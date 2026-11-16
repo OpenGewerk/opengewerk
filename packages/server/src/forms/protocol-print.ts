@@ -309,7 +309,9 @@ function limitLegend(fields: readonly BlockField[], protocol: PrintedProtocol): 
           : null
       // The limit of an appliance as it was worked out for it (#303), or why there is none.
       const worked =
-        limit?.kind === 'appliance_insulation' || limit?.kind === 'appliance_protective_conductor'
+        limit?.kind === 'appliance_insulation' ||
+        limit?.kind === 'appliance_protective_conductor' ||
+        limit?.kind === 'appliance_protective_conductor_current'
           ? limitVerdict(field, null, {
               rules: protocol.rules,
               on: protocol.performedOn,

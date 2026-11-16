@@ -132,6 +132,20 @@ const rules: RecordRules = {
       problem: (at) =>
         applianceProblems({ cordLengthMilli: at('cordLengthMilli') })['cordLengthMilli'] ?? null,
     },
+    // The cross-section of the lead and the heating power (opengewerk#816).
+    {
+      fields: ['cordCrossSectionMilli'],
+      problem: (at) =>
+        applianceProblems({ cordCrossSectionMilli: at('cordCrossSectionMilli') })[
+          'cordCrossSectionMilli'
+        ] ?? null,
+    },
+    {
+      fields: ['heatingPowerWatts'],
+      problem: (at) =>
+        applianceProblems({ heatingPowerWatts: at('heatingPowerWatts') })['heatingPowerWatts'] ??
+        null,
+    },
   ],
   // The terms of a job are a yes or a no (#310), as the columns of `jobs` hold.
   jobs: [

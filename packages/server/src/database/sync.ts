@@ -399,6 +399,8 @@ const signedFacts: Check = async ({ tx, tenantId, operation, values, current }) 
     .select({
       protectionClass: schema.appliances.protectionClass,
       cordLengthMilli: schema.appliances.cordLengthMilli,
+      cordCrossSectionMilli: schema.appliances.cordCrossSectionMilli,
+      heatingPowerWatts: schema.appliances.heatingPowerWatts,
     })
     .from(schema.appliances)
     .where(eq(schema.appliances.id, applianceId as never))

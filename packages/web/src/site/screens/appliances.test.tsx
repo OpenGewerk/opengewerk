@@ -305,6 +305,8 @@ describe('the appliances of a site on site (#303)', () => {
     await user.type(await screen.findByLabelText('Bezeichnung'), 'Kabeltrommel 50 m')
     await user.type(screen.getByLabelText('Inventarnummer'), '008')
     await user.type(screen.getByLabelText('Länge der Anschlussleitung in m'), '50')
+    // The cross-section of the lead, and no heating power (opengewerk#816).
+    await user.type(screen.getByLabelText('Querschnitt der Anschlussleitung in mm²'), '2,5')
     await user.click(screen.getByRole('button', { name: 'Anlegen und prüfen' }))
     await waitFor(() => {
       expect(router.state.location.pathname).toMatch(/pruefprotokolle\//)
@@ -320,10 +322,13 @@ describe('the appliances of a site on site (#303)', () => {
       protectionClass: 'I',
       mobility: 'portable',
       cordLengthMilli: 50_000,
+      cordCrossSectionMilli: 2_500,
     })
+    // Nothing typed is nothing sent.
+    expect(appliance?.['heatingPowerWatts'] ?? null).toBeNull()
     expect(
       client.list('form_records').find((record) => record['applianceId'] === appliance?.['id']),
-    ).toMatchObject({ definitionKey: 'dguv-v3', values: '{}' })
+    ).toMatchObject({ definitionKey: 'dguv-v3', definitionVersion: 3, values: '{}' })
   })
 
   it('refuses a lead that is no figure before anything is made', async () => {
@@ -336,6 +341,36 @@ describe('the appliances of a site on site (#303)', () => {
 
     expect(
       await screen.findByText('Die Länge der Anschlussleitung ist eine Zahl in Metern, etwa 1,5.'),
+    ).toBeTruthy()
+    expect(client.list('appliances')).toHaveLength(2)
+  })
+
+  it('refuses a cross-section and a heating power that are no figures (opengewerk#816)', async () => {
+    const user = userEvent.setup()
+    const { client } = await mount('/auftraege/j-1/geraete/neu')
+
+    await user.type(await screen.findByLabelText('Bezeichnung'), 'Heizlüfter')
+    await user.type(screen.getByLabelText('Querschnitt der Anschlussleitung in mm²'), 'dick')
+    await user.click(screen.getByRole('button', { name: 'Anlegen und prüfen' }))
+
+    expect(
+      await screen.findByText(
+        'Der Querschnitt der Anschlussleitung ist eine Zahl in mm², etwa 2,5.',
+      ),
+    ).toBeTruthy()
+
+    await user.clear(screen.getByLabelText('Querschnitt der Anschlussleitung in mm²'))
+    await user.type(screen.getByLabelText('Heizleistung in kW'), 'warm')
+    await user.click(screen.getByRole('button', { name: 'Anlegen und prüfen' }))
+
+    expect(await screen.findByText('Die Heizleistung ist eine Zahl in kW, etwa 2,4.')).toBeTruthy()
+
+    await user.clear(screen.getByLabelText('Heizleistung in kW'))
+    await user.type(screen.getByLabelText('Heizleistung in kW'), '0')
+    await user.click(screen.getByRole('button', { name: 'Anlegen und prüfen' }))
+
+    expect(
+      await screen.findByText('Die Heizleistung ist größer als 0 und höchstens 1000 kW.'),
     ).toBeTruthy()
     expect(client.list('appliances')).toHaveLength(2)
   })
@@ -419,6 +454,8 @@ describe('the facts a test of an appliance is signed with', () => {
     expect(JSON.parse(String(signed['applianceFacts']))).toEqual({
       protectionClass: 'I',
       cordLengthMilli: 25_000,
+      cordCrossSectionMilli: null,
+      heatingPowerWatts: null,
     })
   })
 

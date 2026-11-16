@@ -235,6 +235,40 @@ describe('an appliance of the register', () => {
     expect(nothing.message).toBe('Die Länge ist größer als 0 und höchstens 1000 m.')
   })
 
+  it('takes a cross-section of the lead and a heating power, and refuses ones that are none (opengewerk#816)', async () => {
+    const office = as(north.id, 'office')
+    const appliance = newId<'appliance'>()
+    const thin = await push(
+      app,
+      office,
+      [anAppliance(newId<'appliance'>(), { cordCrossSectionMilli: 0 })],
+      400,
+    )
+    const cold = await push(
+      app,
+      office,
+      [anAppliance(newId<'appliance'>(), { heatingPowerWatts: 1_000_001 })],
+      400,
+    )
+
+    expect(thin.message).toBe('Der Querschnitt ist größer als 0 und höchstens 1000 mm².')
+    expect(cold.message).toBe('Die Heizleistung ist größer als 0 und höchstens 1000 kW.')
+
+    const { receipts } = await push(app, office, [
+      anAppliance(appliance, { cordCrossSectionMilli: 2_500, heatingPowerWatts: 2_000 }),
+    ])
+
+    expect(receipts.map((receipt) => receipt.outcome)).toEqual(['applied'])
+    expect(
+      (
+        await admin.query(
+          'select cord_cross_section_milli, heating_power_watts from appliances where id = $1',
+          [appliance],
+        )
+      ).rows,
+    ).toEqual([{ cord_cross_section_milli: 2500, heating_power_watts: 2000 }])
+  })
+
   it('is written by nobody without the right to change installations', async () => {
     // Everything a technician may, but changing the installations: the
     // register is part of the installations of a site, and so is their right.
@@ -278,6 +312,25 @@ describe('an appliance of the register', () => {
         ),
       ),
     ).toEqual({ code: checkViolation, constraint: 'appliances_designation_named' })
+    // The cross-section of the lead and the heating power (opengewerk#816).
+    expect(
+      await refusedBy(
+        admin.query(
+          `insert into appliances (tenant_id, site_id, designation, protection_class, cord_cross_section_milli)
+         values ($1, $2, 'Kabeltrommel', 'I', 0)`,
+          [north.id, site],
+        ),
+      ),
+    ).toEqual({ code: checkViolation, constraint: 'appliances_cord_cross_section' })
+    expect(
+      await refusedBy(
+        admin.query(
+          `insert into appliances (tenant_id, site_id, designation, protection_class, heating_power_watts)
+         values ($1, $2, 'Heizlüfter', 'I', 1000001)`,
+          [north.id, site],
+        ),
+      ),
+    ).toEqual({ code: checkViolation, constraint: 'appliances_heating_power' })
   })
 
   it('reaches a device with the sites of its jobs and no other', async () => {
@@ -477,6 +530,8 @@ describe('the facts a test of an appliance is signed with', () => {
   }
 
   const shortened = () => ({ cordLengthMilli: { from: 25_000, to: 2_000 } })
+  // As the trigger writes them for an appliance without heating elements and cross-section (opengewerk#816).
+  const unheated = { protectionClass: 'I', cordCrossSectionMilli: null, heatingPowerWatts: null }
 
   it('prints a signed test with them, whatever the appliance becomes, and a draft with the appliance', async () => {
     const appliance = newId<'appliance'>()
@@ -493,7 +548,12 @@ describe('the facts a test of an appliance is signed with', () => {
       aTest(draft, { applianceId: appliance }, before),
     ])
 
-    expect(await factsOf(id)).toEqual({ protectionClass: 'I', cordLengthMilli: 25_000 })
+    expect(await factsOf(id)).toEqual({
+      protectionClass: 'I',
+      cordLengthMilli: 25_000,
+      cordCrossSectionMilli: null,
+      heatingPowerWatts: null,
+    })
     expect(await factsOf(draft)).toBeNull()
 
     // The lead corrected in the office afterwards.
@@ -540,7 +600,7 @@ describe('the facts a test of an appliance is signed with', () => {
     const fresh = await push(app, technician, [signedWith(id, before, after, now)])
 
     expect(fresh.receipts.map((receipt) => receipt.outcome)).toEqual(['applied'])
-    expect(await factsOf(id)).toEqual({ protectionClass: 'I', cordLengthMilli: 2_000 })
+    expect(await factsOf(id)).toEqual({ ...unheated, cordLengthMilli: 2_000 })
 
     const broken = await push(
       app,
@@ -652,6 +712,37 @@ describe('the facts a test of an appliance is signed with', () => {
     }
   })
 
+  it('keep the heating power and the cross-section of the lead, and a signature judged without them is refused (opengewerk#816)', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const id = newId<'form-record'>()
+    const before = complete({ protective_conductor: 400 })
+    const after = complete({ protective_conductor: 400, tester_signature: signature })
+    const facts = { protectionClass: 'I', cordLengthMilli: 25_000 }
+
+    await push(app, technician, [
+      anAppliance(appliance, { cordCrossSectionMilli: 2_500, heatingPowerWatts: 2_000 }),
+      aTest(id, { applianceId: appliance }, before),
+    ])
+
+    // A device of the version before knows neither, and judged without them.
+    const unaware = await push(app, technician, [
+      signedWith(id, before, after, JSON.stringify(facts)),
+    ])
+
+    expect(unaware.receipts.map((receipt) => [receipt.outcome, receipt.reason])).toEqual([
+      ['conflict', 'changed_elsewhere'],
+    ])
+
+    const whole = { ...facts, cordCrossSectionMilli: 2_500, heatingPowerWatts: 2_000 }
+    const aware = await push(app, technician, [
+      signedWith(id, before, after, JSON.stringify(whole)),
+    ])
+
+    expect(aware.receipts.map((receipt) => receipt.outcome)).toEqual(['applied'])
+    expect(await factsOf(id)).toEqual(whole)
+  })
+
   it('are written by the database alone: none on a draft, and the appliance’s at the signature', async () => {
     const appliance = newId<'appliance'>()
     const id = newId<'form-record'>()
@@ -671,11 +762,11 @@ describe('the facts a test of an appliance is signed with', () => {
       [id, written],
     )
 
-    expect(await factsOf(id)).toEqual({ protectionClass: 'I', cordLengthMilli: 25_000 })
+    expect(await factsOf(id)).toEqual({ ...unheated, cordLengthMilli: 25_000 })
 
     await admin.query(`update appliances set protection_class = 'II' where id = $1`, [appliance])
 
-    expect(await factsOf(id)).toEqual({ protectionClass: 'I', cordLengthMilli: 25_000 })
+    expect(await factsOf(id)).toEqual({ ...unheated, cordLengthMilli: 25_000 })
 
     // A signed protocol changed past the lock of 0043 keeps what it was signed
     // with, unless the change names them, as the erasure of a site does.
@@ -687,7 +778,7 @@ describe('the facts a test of an appliance is signed with', () => {
        commit;`,
     )
 
-    expect(await factsOf(id)).toEqual({ protectionClass: 'I', cordLengthMilli: 25_000 })
+    expect(await factsOf(id)).toEqual({ ...unheated, cordLengthMilli: 25_000 })
   })
 })
 

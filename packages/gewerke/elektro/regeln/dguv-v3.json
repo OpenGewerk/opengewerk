@@ -9,7 +9,7 @@
       "unit": "milliohms",
       "value": 300,
       "source": "DGUV Information 203-070:2026-04, Tabelle 1, nach DIN EN 50699 (VDE 0702):2021-06",
-      "note": "Schutzleiterwiderstand eines Geräts der Schutzklasse I mit einer Leitung bis 5 m und einem Leiterquerschnitt bis 1,5 mm². Für größere Querschnitte gilt der berechnete Widerstand der Leitung; das unterscheidet das Protokoll in dieser Fassung noch nicht."
+      "note": "Schutzleiterwiderstand eines Geräts der Schutzklasse I mit einer Leitung bis 5 m und einem Leiterquerschnitt bis 1,5 mm². Für größere Querschnitte gilt der berechnete Widerstand der Leitung, siehe elektro.appliance.cord_cross_section_base."
     },
     {
       "key": "elektro.appliance.protective_conductor_base_length",
@@ -54,7 +54,7 @@
       "unit": "kiloohms",
       "value": 1000,
       "source": "DGUV Information 203-070:2026-04, Tabelle 1, nach DIN EN 50699 (VDE 0702):2021-06",
-      "note": "Schutzklasse I, zwischen aktiven Teilen und Schutzleiter samt den damit verbundenen berührbaren leitfähigen Teilen. Bei Geräten mit Heizelementen gelten 0,3 MΩ, und über 3,5 kW ist ein Gerät auch darunter einwandfrei, wenn der Schutzleiterstrom eingehalten ist; das unterscheidet das Protokoll in dieser Fassung noch nicht."
+      "note": "Schutzklasse I, zwischen aktiven Teilen und Schutzleiter samt den damit verbundenen berührbaren leitfähigen Teilen. Für Geräte mit Heizelementen gilt elektro.appliance.insulation_class_one_heating."
     },
     {
       "key": "elektro.appliance.insulation_class_two",
@@ -81,7 +81,7 @@
       "unit": "microamperes",
       "value": 3500,
       "source": "DGUV Information 203-070:2026-04, Tabelle 1, nach DIN EN 50699 (VDE 0702):2021-06",
-      "note": "An leitfähigen Teilen mit Verbindung zum Schutzleiter. Bei Geräten mit Heizelementen über 3,5 kW gilt 1 mA je kW bis höchstens 10 mA; das unterscheidet das Protokoll in dieser Fassung noch nicht."
+      "note": "An leitfähigen Teilen mit Verbindung zum Schutzleiter. Bei Geräten mit Heizelementen über 3,5 kW gilt elektro.appliance.protective_conductor_current_per_kilowatt bis höchstens elektro.appliance.protective_conductor_current_heating_maximum."
     },
     {
       "key": "elektro.appliance.touch_current",
@@ -91,6 +91,60 @@
       "value": 500,
       "source": "DGUV Information 203-070:2026-04, Tabelle 1, nach DIN EN 50699 (VDE 0702):2021-06",
       "note": "An berührbaren leitfähigen Teilen ohne Verbindung zum Schutzleiter, bei Schutzklasse I und II."
+    },
+    {
+      "key": "elektro.appliance.cord_cross_section_base",
+      "validFrom": "2021-06-01",
+      "validUntil": null,
+      "unit": "square_micrometres",
+      "value": 1500000,
+      "source": "DGUV Information 203-070:2026-04, Tabelle 1, nach DIN EN 50699 (VDE 0702):2021-06",
+      "note": "Bis zu diesem Querschnitt der Leitung, 1,5 mm², gilt beim Schutzleiterwiderstand der Grundwert mit seinen Zuschlägen. Darüber gilt der Widerstand der Leitung, berechnet aus Länge, Querschnitt und Leitfähigkeit, zuzüglich des Übergangs, höchstens elektro.appliance.protective_conductor_maximum."
+    },
+    {
+      "key": "elektro.appliance.cord_conductivity",
+      "validFrom": "2021-06-01",
+      "validUntil": null,
+      "unit": "factor",
+      "value": 56,
+      "source": "DGUV Information 203-070:2026-04, Tabelle 1, nach DIN EN 50699 (VDE 0702):2021-06",
+      "note": "Leitfähigkeit von Kupfer in m/(Ω·mm²), mit der der Widerstand einer Leitung über 1,5 mm² berechnet wird."
+    },
+    {
+      "key": "elektro.appliance.protective_conductor_transition",
+      "validFrom": "2021-06-01",
+      "validUntil": null,
+      "unit": "milliohms",
+      "value": 100,
+      "source": "DGUV Information 203-070:2026-04, Tabelle 1, nach DIN EN 50699 (VDE 0702):2021-06",
+      "note": "Zuschlag für die Übergänge, der zum berechneten Widerstand einer Leitung über 1,5 mm² hinzukommt."
+    },
+    {
+      "key": "elektro.appliance.insulation_class_one_heating",
+      "validFrom": "2021-06-01",
+      "validUntil": null,
+      "unit": "kiloohms",
+      "value": 300,
+      "source": "DGUV Information 203-070:2026-04, Tabelle 1, nach DIN EN 50699 (VDE 0702):2021-06",
+      "note": "Schutzklasse I, Geräte mit Heizelementen. Über 3,5 kW Heizleistung ist ein Gerät nach der Quelle auch darunter einwandfrei, wenn der Schutzleiterstrom eingehalten ist; das Protokoll misst es trotzdem gegen diesen Wert, und ob es einwandfrei ist, sagt der Prüfer im Ergebnis."
+    },
+    {
+      "key": "elektro.appliance.protective_conductor_current_per_kilowatt",
+      "validFrom": "2021-06-01",
+      "validUntil": null,
+      "unit": "microamperes",
+      "value": 1000,
+      "source": "DGUV Information 203-070:2026-04, Tabelle 1, nach DIN EN 50699 (VDE 0702):2021-06",
+      "note": "Schutzleiterstrom eines Geräts mit Heizelementen über 3,5 kW, je kW Heizleistung. Bis 3,5 kW gilt elektro.appliance.protective_conductor_current; die Grenze von 3,5 kW ist die Heizleistung, bei der beide gleich sind."
+    },
+    {
+      "key": "elektro.appliance.protective_conductor_current_heating_maximum",
+      "validFrom": "2021-06-01",
+      "validUntil": null,
+      "unit": "microamperes",
+      "value": 10000,
+      "source": "DGUV Information 203-070:2026-04, Tabelle 1, nach DIN EN 50699 (VDE 0702):2021-06",
+      "note": "Höchster Schutzleiterstrom eines Geräts mit Heizelementen, gleich wie groß seine Heizleistung ist."
     }
   ]
 }
