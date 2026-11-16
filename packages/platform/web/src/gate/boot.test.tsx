@@ -887,7 +887,12 @@ describe('the sync client behind the gate', () => {
       expect(screen.queryByText('Leiter im Flur vergessen')).toBeNull()
     })
     expect(namedAsTheyWent).toEqual([account.userId])
-    expect(workingInHeaders()[workingAsHeader]).toBe('u-2')
+    // The page names the next account a tick after the screens went; asked
+    // in the same tick, a slow machine still answered with the first
+    // (opengewerk#962). The order is what the line above holds.
+    await waitFor(() => {
+      expect(workingInHeaders()[workingAsHeader]).toBe('u-2')
+    })
   })
 })
 

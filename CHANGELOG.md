@@ -174,6 +174,9 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Ein Test des Tors, der unter der Last der CI manchmal rot wurde, wartet auf den Namen des nächsten Kontos (#962).
+  Warum: Er fragte im selben Takt, in dem die Bildschirme des alten Kontos gingen, und die Seite nennt das neue
+  einen Takt später; die Reihenfolge, um die es geht, hält eine eigene Zusicherung.
 - Ein unterschriebenes Prüfprotokoll eines Geräts rechnet jetzt mit den Angaben, mit denen es unterschrieben wurde,
   auf dem Bildschirm und im PDF (#954). Warum: Die Grenzwerte der Geräteprüfung hängen an der Schutzklasse und der
   Länge der Anschlussleitung, und beide wurden bei jedem Aufruf neu vom Gerät gelesen. Wer danach eine Angabe am Gerät
