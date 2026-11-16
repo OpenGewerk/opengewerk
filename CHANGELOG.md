@@ -161,6 +161,16 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Ein unterschriebenes Prüfprotokoll eines Geräts rechnet jetzt mit den Angaben, mit denen es unterschrieben wurde,
+  auf dem Bildschirm und im PDF (#954). Warum: Die Grenzwerte der Geräteprüfung hängen an der Schutzklasse und der
+  Länge der Anschlussleitung, und beide wurden bei jedem Aufruf neu vom Gerät gelesen. Wer danach eine Angabe am Gerät
+  berichtigte, änderte Grenzwerte und Urteil eines Nachweises, den niemand angefasst hatte. Jetzt hält das Protokoll
+  beim Unterschreiben die Angaben fest (Migration 0146). Hat das Büro sie geändert, während das Gerät offline war,
+  lehnt der Server die Unterschrift als Konflikt ab; das Protokoll bleibt ein Entwurf mit den neuen Grenzwerten und
+  wird noch einmal unterschrieben. Ein Entwurf folgt weiter dem Gerät. Protokolle, die vor dem Update unterschrieben
+  wurden, bekommen die Angaben, die ihr Gerät beim Update hat; was davor am Gerät geändert wurde, ist nicht mehr
+  bekannt. Eine Fassung der Anwendung von vor dem Update schickt keine Angaben mit; der Server liest sie dann beim
+  Unterschreiben vom Gerät, ohne zu vergleichen.
 - Zieht eine Anlage oder ein Gerät auf das Objekt eines Auftrags um, kommen ihre Dateien, Protokolle und was sonst an
   ihr hängt jetzt auch auf ein Gerät, das schon abgeglichen hat (#938). Warum: Der Bereich eines Geräts änderte seinen
   Wert nur mit den Aufträgen, und was an der Anlage hing, lag mit seinen Änderungen hinter dem Stand des Geräts. Jetzt

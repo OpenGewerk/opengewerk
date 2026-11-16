@@ -1,5 +1,6 @@
 import {
   type ApplianceFacts,
+  applianceFactsText,
   type BlockCircuit,
   type BlockField,
   circuitBlocks,
@@ -408,6 +409,7 @@ function DraftProtocol({
     return (
       <SigningStep
         record={record}
+        appliance={protocol.appliance}
         onBack={() => {
           setSigning(false)
         }}
@@ -1215,9 +1217,12 @@ function DefectPhoto({ record, jobId }: { readonly record: RecordState; readonly
  */
 function SigningStep({
   record,
+  appliance,
   onBack,
 }: {
   readonly record: RecordState
+  /** What the limits of the test of an appliance were worked out from, sent with the signature (opengewerk#954). */
+  readonly appliance: ApplianceFacts | null
   readonly onBack: () => void
 }) {
   const client = useSync()
@@ -1276,6 +1281,8 @@ function SigningStep({
       const signedAt = new Date().toISOString()
       const signed = await client.update('form_records', String(record['id']), {
         status: 'signed',
+        // The server keeps them only while they are still the appliance's.
+        ...(appliance ? { applianceFacts: applianceFactsText(appliance) } : {}),
         values: formValuesText({
           ...values,
           ...Object.fromEntries(

@@ -74,6 +74,45 @@ export function isApplianceFacts(value: unknown): value is ApplianceFacts {
   )
 }
 
+/**
+ * The facts a protocol was signed with (opengewerk#954), as its column holds
+ * them: JSON text, because the sync carries plain values. Its limits are
+ * worked out of them from then on, whatever becomes of the appliance. Null
+ * for anything that is not such facts.
+ */
+export function readApplianceFacts(value: unknown): ApplianceFacts | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  let parsed: unknown
+
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    return null
+  }
+
+  return isApplianceFacts(parsed)
+    ? { protectionClass: parsed.protectionClass, cordLengthMilli: parsed.cordLengthMilli }
+    : null
+}
+
+/** The facts as a signed protocol keeps them, read again by `readApplianceFacts`. */
+export function applianceFactsText(facts: ApplianceFacts): string {
+  return JSON.stringify({
+    protectionClass: facts.protectionClass,
+    cordLengthMilli: facts.cordLengthMilli,
+  })
+}
+
+/** Whether two sets of facts are the same, and so give the same limits. */
+export function sameApplianceFacts(left: ApplianceFacts, right: ApplianceFacts): boolean {
+  return (
+    left.protectionClass === right.protectionClass && left.cordLengthMilli === right.cordLengthMilli
+  )
+}
+
 /** The longest lead an appliance can have, a kilometre, in millimetres; the database holds the same. */
 export const longestCordMilli = 1_000_000
 

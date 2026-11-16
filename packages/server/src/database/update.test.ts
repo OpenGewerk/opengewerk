@@ -2089,9 +2089,10 @@ describe('the rollback of the register of appliances', () => {
       `begin; set local session_replication_role = replica;
        delete from form_records; delete from appliances; commit;`,
     )
-    // The files of an appliance (0143, #817) hang on the table, and the
-    // trigger of 0144 on their column; a rollback takes back the later
-    // migrations first.
+    // The files of an appliance (0143, #817) hang on the table, the trigger of
+    // 0144 on their column, and the facts of a signed test (0146, #954) on the
+    // appliance of a protocol; a rollback takes back the later migrations first.
+    await revertMigration(admin, '0146_signed_appliance_facts')
     await revertMigration(admin, '0144_signed_photos_stay')
     await revertMigration(admin, '0143_appliance_files')
     await revertMigration(admin, '0114_appliances')
@@ -2148,6 +2149,124 @@ describe('the rollback of the register of appliances', () => {
     expect(await columnNames(admin, 'attachments')).not.toContain('appliance_id')
     expect((await admin.query('select id from attachments')).rows).toEqual([{ id: file }])
     expect(await forced('attachments')).toBe(true)
+  })
+})
+
+/**
+ * The facts of a signed test of an appliance (0146, opengewerk#954). An
+ * installation migrates as the owner of the tables, under FORCE: the tests
+ * signed before get the facts their appliance has at the update all the same,
+ * a draft none, and the lock on a signed protocol holds again afterwards. The
+ * rollback deletes none of them and stops while there is one.
+ */
+describe('the facts of the tests signed before 0146', () => {
+  const before = () =>
+    readMigrationIndex().findIndex((entry) => entry.tag === '0146_signed_appliance_facts')
+  const customer = newId<'customer'>()
+  const site = newId<'site'>()
+  const appliance = newId<'appliance'>()
+  const signed = newId<'form-record'>()
+  const draft = newId<'form-record'>()
+
+  async function forced(table: string): Promise<boolean> {
+    const { rows } = await admin.query<{ forced: boolean }>(
+      'select relforcerowsecurity as forced from pg_class where relname = $1',
+      [table],
+    )
+
+    return rows[0]?.forced ?? false
+  }
+
+  async function facts(): Promise<Record<string, unknown>> {
+    const { rows } = await admin.query<{ id: string; appliance_facts: string | null }>(
+      'select id, appliance_facts from form_records order by id',
+    )
+
+    return Object.fromEntries(
+      rows.map((row) => [
+        row.id,
+        row.appliance_facts === null ? null : (JSON.parse(row.appliance_facts) as unknown),
+      ]),
+    )
+  }
+
+  it('get those of their appliance at the update, a draft none, and stay signed', async () => {
+    expect(before()).toBeGreaterThan(0)
+
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), releaseFolder(before()))
+    await admin.query('insert into tenants (id, name) values ($1, $2)', [tenant.id, tenant.name])
+    await admin.query(
+      "insert into customers (id, tenant_id, kind, name) values ($1, $2, 'business', 'Hausverwaltung Süd GmbH')",
+      [customer, tenant.id],
+    )
+    await admin.query(
+      "insert into sites (id, tenant_id, customer_id, designation) values ($1, $2, $3, 'Rheinstraße 12')",
+      [site, tenant.id, customer],
+    )
+    await admin.query(
+      `insert into appliances (id, tenant_id, site_id, designation, protection_class, cord_length_milli)
+       values ($1, $2, $3, 'Verlängerungsleitung', 'I', 25000)`,
+      [appliance, tenant.id, site],
+    )
+    await admin.query(
+      `insert into form_records (id, tenant_id, definition_key, definition_version, appliance_id, performed_on, status)
+       values ($1, $3, 'dguv-v3', 1, $4, '2026-11-02', 'signed'),
+              ($2, $3, 'dguv-v3', 1, $4, '2026-11-03', 'draft')`,
+      [signed, draft, tenant.id, appliance],
+    )
+
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+
+    expect(await facts()).toEqual({
+      [signed]: { protectionClass: 'I', cordLengthMilli: 25_000 },
+      [draft]: null,
+    })
+    expect(await forced('form_records')).toBe(true)
+    expect(await forced('appliances')).toBe(true)
+    await expect(
+      admin.query(`update form_records set performed_on = '2026-11-04' where id = $1`, [signed]),
+    ).rejects.toThrow('Ein unterschriebenes Protokoll wird nicht mehr geändert.')
+  })
+
+  it('stay at a rollback, which stops while a test holds them', async () => {
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+    await admin.query('insert into tenants (id, name) values ($1, $2)', [tenant.id, tenant.name])
+    await admin.query(
+      "insert into customers (id, tenant_id, kind, name) values ($1, $2, 'business', 'Hausverwaltung Süd GmbH')",
+      [customer, tenant.id],
+    )
+    await admin.query(
+      "insert into sites (id, tenant_id, customer_id, designation) values ($1, $2, $3, 'Rheinstraße 12')",
+      [site, tenant.id, customer],
+    )
+    await admin.query(
+      `insert into appliances (id, tenant_id, site_id, designation, protection_class)
+       values ($1, $2, $3, 'Kaffeemaschine', 'II')`,
+      [appliance, tenant.id, site],
+    )
+    await admin.query(
+      `insert into form_records (id, tenant_id, definition_key, definition_version, appliance_id, performed_on, status)
+       values ($1, $2, 'dguv-v3', 1, $3, '2026-11-02', 'signed')`,
+      [signed, tenant.id, appliance],
+    )
+
+    await expect(revertMigration(admin, '0146_signed_appliance_facts')).rejects.toThrow(
+      'Die Rücknahme von 0146 löscht keine Nachweise',
+    )
+    expect(await facts()).toEqual({ [signed]: { protectionClass: 'II', cordLengthMilli: null } })
+    expect(await forced('form_records')).toBe(true)
+
+    // Taken out by hand, as the sentence says, the rollback goes through.
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       delete from form_records; commit;`,
+    )
+    await revertMigration(admin, '0146_signed_appliance_facts')
+
+    expect(await columnNames(admin, 'form_records')).not.toContain('appliance_facts')
+    expect(await forced('form_records')).toBe(true)
   })
 })
 

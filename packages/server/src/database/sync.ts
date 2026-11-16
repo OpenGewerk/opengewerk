@@ -15,8 +15,10 @@ import {
   offlineRules,
   type Operation,
   paymentTermProblem,
+  readApplianceFacts,
   readFormValues,
   type RecordState,
+  sameApplianceFacts,
   signaturePathIsValid,
   type TenantId,
   tradeContacts,
@@ -333,6 +335,68 @@ const signedPhotos: Check = async ({ tx, tenantId, operation, values, current })
   return files.every((file) => file[column] !== null && file[column] === at(column))
     ? null
     : { kind: 'conflict', reason: 'changed_elsewhere', fields: ['values'] }
+}
+
+/**
+ * A test of an appliance is signed with the facts the device worked its
+ * limits out from (opengewerk#954). Where they are no longer those of the
+ * appliance, because the office corrected its protection class or its lead
+ * while the device was offline, the signature is refused as a conflict about
+ * this protocol: the protocol would keep facts other than the ones the tester
+ * signed the verdicts of. The counter of the tenant is taken before the
+ * appliance is read, after the row of the protocol as `signedPhotos` takes
+ * them: every change of an appliance takes it too, so that the appliance stays
+ * what is read here until the trigger of migration 0146 writes its facts into
+ * the protocol, in this transaction. A device of an older version sends no
+ * facts; the trigger reads them from the appliance all the same.
+ */
+const signedFacts: Check = async ({ tx, tenantId, operation, values, current }) => {
+  if (
+    operation.entity !== 'form_records' ||
+    operation.kind === 'delete' ||
+    values['applianceFacts'] === undefined
+  ) {
+    return null
+  }
+
+  const at = standing(values, current)
+  const applianceId = at('applianceId')
+
+  if (
+    at('status') !== 'signed' ||
+    current?.['status'] === 'signed' ||
+    typeof applianceId !== 'string'
+  ) {
+    return null
+  }
+
+  const sent = readApplianceFacts(values['applianceFacts'])
+
+  if (sent === null) {
+    return {
+      kind: 'client',
+      message: 'Die Angaben des Geräts sind keine, aus denen ein Grenzwert entsteht.',
+    }
+  }
+
+  await tx.execute(sql`select public.file_naming_lock(${tenantId})`)
+
+  const [appliance] = await tx
+    .select({
+      protectionClass: schema.appliances.protectionClass,
+      cordLengthMilli: schema.appliances.cordLengthMilli,
+    })
+    .from(schema.appliances)
+    .where(eq(schema.appliances.id, applianceId as never))
+
+  // An appliance it cannot see is the reference check's to refuse.
+  if (!appliance) {
+    return null
+  }
+
+  return sameApplianceFacts(sent, appliance)
+    ? null
+    : { kind: 'conflict', reason: 'changed_elsewhere', fields: ['applianceFacts'] }
 }
 
 /**
@@ -659,6 +723,7 @@ export const sync = serverSync<FoundIdentity>({
     reveal,
     formRecord,
     signedPhotos,
+    signedFacts,
     reportFields,
     structure,
     recordRules,

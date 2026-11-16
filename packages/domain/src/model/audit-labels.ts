@@ -216,6 +216,7 @@ export const auditTables: Readonly<Record<string, AuditTableWords>> = {
       appliance_id: 'Gerät',
       performed_on: 'Geprüft am',
       values: 'Werte',
+      appliance_facts: 'Angaben des Geräts beim Unterschreiben',
     },
   },
   // The register of appliances of a site (#303).
