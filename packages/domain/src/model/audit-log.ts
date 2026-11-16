@@ -133,6 +133,8 @@ const auditRecordTables = [
   'documents',
   'articles',
   'suppliers',
+  // A defect with its steps (#311); its button led into the whole log (#967).
+  'defects',
 ] as const
 
 /**

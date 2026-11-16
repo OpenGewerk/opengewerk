@@ -1,6 +1,9 @@
 import { type AuditChange, type AuditPage, auditVocabulary } from '@opengewerk/domain'
 import { euros } from '@opengewerk/platform-web/format'
 import { auditWords } from '@opengewerk/platform-web/office'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import { auditScreenWords } from './audit.js'
@@ -132,7 +135,7 @@ describe('the ways from the log to a record', () => {
 
   it('says what the log of a record takes in beside it', () => {
     expect(auditScreenWords.partsWords?.['documents']).toBe(
-      'mit Positionen, Unterschrift und Zahlungen',
+      'mit Positionen, Unterschrift, Belehrungen, Herkunft und Zahlungen',
     )
     expect(auditScreenWords.partsWords?.['suppliers']).toBe(
       'mit Ansprechpartnern, Aufschlag und Metallpreisen',
@@ -146,6 +149,23 @@ describe('the ways from the log to a record', () => {
 
     expect(withParts.length).toBeGreaterThan(0)
     expect(withParts.filter((table) => !auditScreenWords.partsWords?.[table])).toEqual([])
+  })
+
+  it('opens the log of its own record from every button "Änderungen" of the office (#967)', () => {
+    // The tests run from the package, where the screens of the office lie under src.
+    const screens = join(process.cwd(), 'src', 'office', 'screens')
+    const tables = readdirSync(screens)
+      .filter((file) => file.endsWith('.tsx') && !file.endsWith('.test.tsx'))
+      .flatMap((file) =>
+        [
+          ...readFileSync(join(screens, file), 'utf8').matchAll(
+            /<ChangesButton\s+table="([a-z_]+)"/g,
+          ),
+        ].map((match) => match[1]),
+      )
+
+    expect(tables).toContain('defects')
+    expect(tables.filter((table) => !auditVocabulary.records.includes(String(table)))).toEqual([])
   })
 })
 

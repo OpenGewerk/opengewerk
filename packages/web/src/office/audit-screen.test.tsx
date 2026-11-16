@@ -142,7 +142,7 @@ describe('the change log in this application', () => {
     )
 
     expect(await screen.findByText('Kunde Hausverwaltung Süd GmbH')).toBeTruthy()
-    expect(screen.getByText('mit seinen Ansprechpartnern')).toBeTruthy()
+    expect(screen.getByText('mit Ansprechpartnern und Tags')).toBeTruthy()
     await waitFor(() => {
       expect(calls).toContain(`/audit/changes?table=customers&record=${customerId}`)
     })
