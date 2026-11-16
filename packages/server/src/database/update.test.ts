@@ -3296,9 +3296,11 @@ describe('an instance whose cluster lets every role create in public', () => {
 
     expect(await open()).toEqual({ creates: false, executes: false })
 
-    // And every function, the application's own among them, searches the
-    // temporary schema last, where a type of another role would otherwise
-    // stand in for one it declares.
+    // And every function that sets a search path, the application's own among
+    // them, searches the temporary schema last, where a type of another role
+    // would otherwise stand in for one it declares; every function that runs
+    // as the owner sets one. A function that runs as its caller and sets none
+    // takes the path of whoever calls it, within one of the owner that one.
     const { rows: paths } = await admin.query<{ signature: string; path: string }>(
       `select p.oid::regprocedure::text as signature, s as path
          from pg_proc p
@@ -3309,6 +3311,16 @@ describe('an instance whose cluster lets every role create in public', () => {
 
     expect(paths.length).toBeGreaterThan(90)
     expect(paths.filter((row) => !row.path.endsWith('pg_temp'))).toEqual([])
+
+    const { rows: unset } = await admin.query<{ signature: string }>(
+      `select p.oid::regprocedure::text as signature
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.prosecdef
+          and not exists (select 1 from unnest(p.proconfig) s where s like 'search_path=%')`,
+    )
+
+    expect(unset).toEqual([])
 
     await revertMigration(admin, '0150_definer_triggers_closed')
 
