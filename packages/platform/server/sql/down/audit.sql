@@ -1,4 +1,18 @@
 -- Takes the block `audit.sql` back out, before the tables it stands on.
+--
+-- A chain the transaction has open is written first, so that its trigger can
+-- go (opengewerk#953).
+DO $$
+BEGIN
+	IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'audit_chain_closes') THEN
+		SET CONSTRAINTS "audit_chain_closes" IMMEDIATE;
+	END IF;
+END
+$$;--> statement-breakpoint
+DROP TRIGGER IF EXISTS "audit_chain_closes" ON "audit_chains";--> statement-breakpoint
+DROP FUNCTION IF EXISTS "close_audit_chain"();--> statement-breakpoint
+DROP FUNCTION IF EXISTS "audit_chain_head"(uuid, bigint, text);--> statement-breakpoint
+DROP FUNCTION IF EXISTS "lock_audit_chain"(uuid);--> statement-breakpoint
 DROP TRIGGER IF EXISTS "audit_entries_stay_on_truncate" ON "audit_entries";--> statement-breakpoint
 DROP TRIGGER IF EXISTS "audit_entries_stay" ON "audit_entries";--> statement-breakpoint
 DROP FUNCTION IF EXISTS "audit_entry_stays"();--> statement-breakpoint
