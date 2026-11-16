@@ -128,7 +128,10 @@ describe('the ways from the log to a record', () => {
   it('leads back to every record with a button, the defect among them (#967)', () => {
     expect(
       auditVocabulary.records.filter(
-        (table) => recordHref(table, 'x-1') === null || recordLinkWords(table) === null,
+        // The words of this application, not the ones with the fallback "Zum Datensatz".
+        (table) =>
+          recordHref(table, 'x-1') === null ||
+          (auditScreenWords.linkWords?.(table) ?? null) === null,
       ),
     ).toEqual([])
     expect(recordHref('defects', 'd-1')).toBe('/maengel/d-1')
