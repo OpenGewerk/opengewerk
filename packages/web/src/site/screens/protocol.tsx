@@ -1298,7 +1298,8 @@ function SigningStep({
       const signedAt = new Date().toISOString()
       const signed = await client.update('form_records', String(record['id']), {
         status: 'signed',
-        // The server keeps them only while they are still the appliance's.
+        // Asked against the appliance: the server refuses the signature where
+        // they are no longer its facts, and keeps the appliance's own.
         ...(judged ? { applianceFacts: applianceFactsText(judged) } : {}),
         values: formValuesText({
           ...values,

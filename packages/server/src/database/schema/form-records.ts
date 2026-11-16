@@ -58,9 +58,10 @@ export const formRecords = pgTable(
     /**
      * What the limits of a signed test of an appliance are worked out from
      * (opengewerk#954), as they stood at the signature: JSON text read by
-     * `readApplianceFacts`. The device sends what it judged with, the sync
-     * asks it against the appliance, and the trigger of migration 0146 keeps
-     * it or reads it from the appliance for a signature that names none.
+     * `readApplianceFacts`. The device sends what it judged with, and the sync
+     * refuses the signature where they are no longer the appliance's; the
+     * trigger of migration 0146 writes the appliance's own facts at the
+     * signature, whatever was sent.
      */
     applianceFacts: text('appliance_facts'),
     ...timestamps,
