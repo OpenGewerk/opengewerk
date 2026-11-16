@@ -343,12 +343,13 @@ const signedPhotos: Check = async ({ tx, tenantId, operation, values, current })
  * appliance, because the office corrected its protection class or its lead
  * while the device was offline, the signature is refused as a conflict about
  * this protocol: the protocol would keep facts other than the ones the tester
- * signed the verdicts of. The counter of the tenant is taken before the
- * appliance is read, after the row of the protocol as `signedPhotos` takes
- * them: every change of an appliance takes it too, so that the appliance stays
- * what is read here until the trigger of migration 0146 writes its facts into
- * the protocol, in this transaction. A device of an older version sends no
- * facts; the trigger reads them from the appliance all the same.
+ * signed the verdicts of. The row of the protocol is read again under its
+ * lock, as `signedPhotos` takes it, and the counter of the tenant after it:
+ * a writer that hung the draft on another appliance since `current` was read
+ * went before, and every change of an appliance takes the counter too, so that
+ * appliance and facts stay what is read here until the trigger of migration
+ * 0146 writes them into the protocol, in this transaction. A device of an
+ * older version sends no facts; the trigger reads them all the same.
  */
 const signedFacts: Check = async ({ tx, tenantId, operation, values, current }) => {
   if (
@@ -359,14 +360,7 @@ const signedFacts: Check = async ({ tx, tenantId, operation, values, current }) 
     return null
   }
 
-  const at = standing(values, current)
-  const applianceId = at('applianceId')
-
-  if (
-    at('status') !== 'signed' ||
-    current?.['status'] === 'signed' ||
-    typeof applianceId !== 'string'
-  ) {
+  if (standing(values, current)('status') !== 'signed' || current?.['status'] === 'signed') {
     return null
   }
 
@@ -377,6 +371,26 @@ const signedFacts: Check = async ({ tx, tenantId, operation, values, current }) 
       kind: 'client',
       message: 'Die Angaben des Geräts sind keine, aus denen ein Grenzwert entsteht.',
     }
+  }
+
+  let applianceId: unknown = values['applianceId']
+
+  if (current && !('applianceId' in values)) {
+    const [row] = await tx
+      .select({ status: schema.formRecords.status, applianceId: schema.formRecords.applianceId })
+      .from(schema.formRecords)
+      .where(eq(schema.formRecords.id, operation.recordId as never))
+      .for('no key update')
+
+    if (!row || row.status === 'signed') {
+      return null
+    }
+
+    applianceId = row.applianceId
+  }
+
+  if (typeof applianceId !== 'string') {
+    return null
   }
 
   await tx.execute(sql`select public.file_naming_lock(${tenantId})`)

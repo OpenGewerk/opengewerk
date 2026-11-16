@@ -603,6 +603,55 @@ describe('the facts a test of an appliance is signed with', () => {
     }
   })
 
+  it('are asked of the appliance the draft hangs on once a writer that moved it is through', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const other = newId<'appliance'>()
+    const id = newId<'form-record'>()
+    const before = complete({ protective_conductor: 650 })
+    const after = complete({ protective_conductor: 650, tester_signature: signature })
+
+    await push(app, technician, [
+      anAppliance(appliance),
+      anAppliance(other, { inventoryNumber: '097', cordLengthMilli: 2_000 }),
+      aTest(id, { applianceId: appliance }, before),
+    ])
+
+    const moving = await admin.connect()
+    let signing: ReturnType<typeof push> = Promise.resolve({ receipts: [] })
+
+    try {
+      // The office hangs the draft on the other appliance and has not committed yet.
+      await moving.query('begin')
+      await moving.query("select set_config('app.tenant_id', $1, true)", [north.id])
+      await moving.query("select set_config('app.user_id', 'lena', true)")
+      await moving.query('update form_records set appliance_id = $1 where id = $2', [other, id])
+
+      signing = push(app, technician, [
+        signedWith(
+          id,
+          before,
+          after,
+          JSON.stringify({ protectionClass: 'I', cordLengthMilli: 25_000 }),
+        ),
+      ])
+      await waitingFor(admin, moving, signing)
+      await moving.query('commit')
+
+      const { receipts } = await signing
+
+      expect(receipts.map(({ outcome, reason }) => [outcome, reason])).toEqual([
+        ['conflict', 'changed_elsewhere'],
+      ])
+      expect(await statusOf(id)).toBe('draft')
+      expect(await factsOf(id)).toBeNull()
+    } finally {
+      await moving.query('rollback').catch(() => undefined)
+      await signing.catch(() => undefined)
+      moving.release()
+    }
+  })
+
   it('are written by the database alone: none on a draft, and the appliance’s at the signature', async () => {
     const appliance = newId<'appliance'>()
     const id = newId<'form-record'>()

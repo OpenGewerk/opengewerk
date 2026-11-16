@@ -421,6 +421,50 @@ describe('the facts a test of an appliance is signed with', () => {
       cordLengthMilli: 25_000,
     })
   })
+
+  it('stop a signature where they changed while it was open, which shows no limits', async () => {
+    const user = userEvent.setup()
+    const { tester_signature: _signature, ...unsigned } = lastYear
+    const [lead] = rows()['appliances'] ?? []
+    const { client } = await mount('/auftraege/j-1/pruefprotokolle/p-6', {
+      form_records: [
+        ...(rows()['form_records'] ?? []),
+        {
+          id: 'p-6',
+          definitionKey: 'dguv-v3',
+          definitionVersion: 1,
+          installationId: null,
+          applianceId: 'a-2',
+          jobId: 'j-1',
+          performedOn: today(),
+          status: 'draft',
+          values: JSON.stringify(unsigned),
+        },
+      ],
+    })
+
+    await user.click(await screen.findByRole('button', { name: 'Unterschreiben' }))
+    // The office shortens the lead while the tester signs.
+    server.put('appliances', { ...lead, cordLengthMilli: 2_000 } as RecordState)
+    await client.synchronise()
+    signOn(screen.getByRole('img', { name: 'Unterschriftsfeld' }))
+    await user.click(screen.getByRole('button', { name: 'Unterschreiben' }))
+
+    expect(
+      await screen.findByText(
+        'Die Angaben des Geräts haben sich geändert. Bitte die Messwerte mit den neuen Grenzwerten prüfen und dann unterschreiben.',
+      ),
+    ).toBeTruthy()
+
+    await client.synchronise()
+
+    expect(server.row('form_records', 'p-6')?.['status']).toBe('draft')
+    expect(
+      server
+        .operations()
+        .some((operation) => operation.patches.some((patch) => patch.field === 'status')),
+    ).toBe(false)
+  })
 })
 
 describe('a photo of what is wrong with an appliance (#817)', () => {

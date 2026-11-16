@@ -21,6 +21,7 @@ import {
   measurementUnitSign,
   type RecordState,
   type RuleLimitKind,
+  sameApplianceFacts,
   sealingField,
   type SignatureField,
   signerNameProblem,
@@ -1238,6 +1239,14 @@ function SigningStep({
   const [trouble, setTrouble] = useState<string | null>(null)
   const [working, setWorking] = useState(false)
   const formId = useId()
+  // What the limits were worked out from when the signing opened. The step
+  // shows no measured value, so facts that change while it is open are facts
+  // the tester has not seen the limits of (opengewerk#954).
+  const [judged] = useState(appliance)
+  const unchanged =
+    judged === null
+      ? appliance === null
+      : appliance !== null && sameApplianceFacts(judged, appliance)
 
   async function sign(event: FormEvent) {
     event.preventDefault()
@@ -1274,6 +1283,14 @@ function SigningStep({
       return
     }
 
+    if (!unchanged) {
+      setTrouble(
+        'Die Angaben des Geräts haben sich geändert. Bitte die Messwerte mit den neuen Grenzwerten prüfen und dann unterschreiben.',
+      )
+
+      return
+    }
+
     setTrouble(null)
     setWorking(true)
 
@@ -1282,7 +1299,7 @@ function SigningStep({
       const signed = await client.update('form_records', String(record['id']), {
         status: 'signed',
         // The server keeps them only while they are still the appliance's.
-        ...(appliance ? { applianceFacts: applianceFactsText(appliance) } : {}),
+        ...(judged ? { applianceFacts: applianceFactsText(judged) } : {}),
         values: formValuesText({
           ...values,
           ...Object.fromEntries(
