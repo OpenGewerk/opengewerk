@@ -125,6 +125,15 @@ describe('the values of the change log', () => {
 })
 
 describe('the ways from the log to a record', () => {
+  it('leads back to every record with a button, the defect among them (#967)', () => {
+    expect(
+      auditVocabulary.records.filter(
+        (table) => recordHref(table, 'x-1') === null || recordLinkWords(table) === null,
+      ),
+    ).toEqual([])
+    expect(recordHref('defects', 'd-1')).toBe('/maengel/d-1')
+  })
+
   it('opens the records the office has a screen for, and names the link to each', () => {
     expect(recordHref('customers', 'c-1')).toBe('/kunden/c-1')
     expect(recordHref('pv_strings', 's-1')).toBe('/strings/s-1')

@@ -187,7 +187,8 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   das Verlangen auf vorzeitigen Beginn, beim Beleg Belehrungen und Herkunft.
 - Der Knopf „Änderungen“ an einem Mangel zeigt den Mangel mit seinen Schritten statt des ganzen Protokolls (#967).
   Warum: Der Mangel fehlte seit #311 in der Liste der Datensätze mit Knopf, und die Seite schränkte auf nichts ein.
-  Ein Test hält jetzt jeden Knopf „Änderungen“ des Büros gegen diese Liste.
+  Ein Test hält jetzt jeden Knopf „Änderungen“ des Büros gegen diese Liste. Aus dem Protokoll führt „Zum Mangel“
+  zurück zu ihm, wie zu jedem anderen Datensatz mit Knopf.
 - Viele protokollierte Änderungen in einer Transaktion brauchen je Änderung etwa gleich lange (#953). Bisher
   schrieb jede Änderung die Zählerzeile des Abgleichs und die Kettenzeile des Änderungsprotokolls neu und fand beide
   über ihren Schlüssel wieder, vorbei an jeder Fassung, die die Transaktion von ihnen schon geschrieben hatte. Jetzt

@@ -52,6 +52,8 @@ const screens: Words = {
   funding_programs: '/foerderprogramme/',
   maintenance_contracts: '/wartungsvertraege/',
   prospects: '/leads/',
+  // A defect opened from its log (#967).
+  defects: '/maengel/',
 }
 
 /** The label of the link to a record, "Zum Kunden". */
@@ -73,6 +75,7 @@ const links: Words = {
   funding_programs: 'Zum Förderprogramm',
   maintenance_contracts: 'Zum Wartungsvertrag',
   prospects: 'Zum Lead',
+  defects: 'Zum Mangel',
 }
 
 /** What happened to a document where one word says it. */
