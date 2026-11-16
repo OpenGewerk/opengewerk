@@ -876,6 +876,11 @@ describe('the sync client behind the gate', () => {
     expect(await screen.findByText('Leiter im Flur vergessen')).toBeTruthy()
     expect(workingInHeaders()[workingAsHeader]).toBe(account.userId)
 
+    // The browser is signed in as the next account now, whoever asks. Without
+    // a network the page answers who is signed in from what it remembers, and
+    // a question asked again after the switch named the first account and
+    // took the page back to it (opengewerk#973).
+    rememberAccount({ ...account, tenantId, userId: 'u-2' })
     act(() => {
       queries.setQueryData(['account'], {
         ...(queries.getQueryData(['account']) as object),
