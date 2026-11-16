@@ -123,7 +123,10 @@ $$;--> statement-breakpoint
 -- Before the commit `close_sync_counter` writes the last number to the row,
 -- once. A sequence is not rolled back, which is why it is set at every opening
 -- and trusted for no longer than one transaction; a number given out under a
--- savepoint that is rolled back is simply not used again.
+-- savepoint that is rolled back is not used again while the counter stays
+-- open. Takes the savepoint the opening back as well, the next opening starts
+-- from the last number committed again and hands those numbers out anew; none
+-- of them stands in a row that was committed.
 --
 -- The sequences stand in public under the name of their tenant
 -- (`sync_counter_t<id>`) and belong to the owner of the tables. The application
