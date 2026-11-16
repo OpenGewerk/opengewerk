@@ -14,8 +14,9 @@
 -- limits it was signed against.
 --
 -- **Fits the version before it**: the older version writes neither column,
--- and they stay empty.
-ALTER TYPE "public"."rule_unit" ADD VALUE 'square_micrometres';--> statement-breakpoint
+-- and they stay empty. The unit is added only where it is missing: the
+-- rollback leaves it in the enum, and 0147 applied again goes through.
+ALTER TYPE "public"."rule_unit" ADD VALUE IF NOT EXISTS 'square_micrometres';--> statement-breakpoint
 ALTER TABLE "appliances" ADD COLUMN "cord_cross_section_milli" integer;--> statement-breakpoint
 ALTER TABLE "appliances" ADD COLUMN "heating_power_watts" integer;--> statement-breakpoint
 ALTER TABLE "appliances" ADD CONSTRAINT "appliances_cord_cross_section" CHECK ("appliances"."cord_cross_section_milli" is null or "appliances"."cord_cross_section_milli" between 1 and 1000000);--> statement-breakpoint

@@ -2385,6 +2385,16 @@ describe('the heating power and the cross-section of the lead from 0147', () => 
       protectionClass: 'I',
       cordLengthMilli: 1800,
     })
+
+    // Applied again once its line of the history is gone as well, the unit it
+    // left in the enum does not stop it.
+    await admin.query(
+      `delete from drizzle.__drizzle_migrations
+        where created_at = (select max(created_at) from drizzle.__drizzle_migrations)`,
+    )
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+
+    expect(await columnNames(admin, 'appliances')).toContain('heating_power_watts')
   })
 })
 
