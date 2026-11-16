@@ -224,11 +224,21 @@ describe('the walk through the pages', () => {
       '/': { path: '/', press: null },
       '/kunden/:id': { path: `/kunden/${id(1)}`, press: null },
       '/kunden/:id (Bearbeiten)': { path: `/kunden/${id(1)}`, press: 'Bearbeiten' },
-      '/kunden/:id (… bearbeiten)': { path: `/kunden/${id(1)}`, press: named },
+      '/kunden/:id (/ bearbeiten$/)': { path: `/kunden/${id(1)}`, press: named },
     })
-    expect(openerLabel(named)).toBe('… bearbeiten')
+    expect(openerLabel(named)).toBe('/ bearbeiten$/')
     expect(openerLabel('Bearbeiten')).toBe('Bearbeiten')
     expect(named.test('Bearbeiten')).toBe(false)
+  })
+
+  it('keeps two patterns of the same words apart', async () => {
+    const site = siteOf({
+      '/': { buttons: ['Neu anlegen', 'Vorlage Neu'] },
+    })
+
+    const kinds = await walkThrough(site.reader, { entries: ['/'], openers: [/^Neu/, /Neu$/] })
+
+    expect([...kinds.keys()]).toEqual(['/', '/ (/^Neu/)', '/ (/Neu$/)'])
   })
 
   /**

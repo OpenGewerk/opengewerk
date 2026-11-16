@@ -226,14 +226,16 @@ function opener(page, name) {
 
 /**
  * How a button to press is named in a kind of page and in a report: its name,
- * or for a pattern what the names it finds have in common. `/ bearbeiten$/`
- * reads "… bearbeiten" and stands for "Maria Weber bearbeiten" and every other
- * button that opens the form of what it names (opengewerk#448).
+ * or a pattern as it is written, anchors and flags included. "Maria Weber
+ * bearbeiten" and every other button that opens the form of what it names
+ * stand under `/ bearbeiten$/` (opengewerk#448). Written out whole, two
+ * patterns never share a name, so that neither stands in for the other
+ * (CodeRabbit).
  *
  * @param {string | RegExp} name
  */
 export function openerLabel(name) {
-  return typeof name === 'string' ? name : `…${name.source.replace(/^\^/, '').replace(/\$$/, '')}`
+  return typeof name === 'string' ? name : String(name)
 }
 
 /**

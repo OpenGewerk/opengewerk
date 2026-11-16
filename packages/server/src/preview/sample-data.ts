@@ -304,6 +304,31 @@ export async function plantSampleData(base: string, today: IsoDate): Promise<voi
     tagIds: [],
     newTags: ['Zufahrt Hubsteiger nur über den Innenhof'],
   })
+  // A contact at each customer and an access at each site, with long names,
+  // so that the check of widths opens their forms behind "<Name> bearbeiten"
+  // on the first customer and site it finds (#448). The accesses carry a hint
+  // and no value, which needs no key of the instance.
+  for (const [customerId, givenName, familyName] of [
+    [berg, 'Maria-Theresa', 'Berg-Lindenfeld'],
+    [nordblick, 'Hans-Christian', 'Oberhausen-Wedel'],
+  ] as const) {
+    await post('/contacts', {
+      customerId,
+      givenName,
+      familyName,
+      role: 'Ansprechpartnerin für Termine vor Ort',
+      phone: '040 987 654 33',
+    })
+  }
+  for (const [siteId, designation] of [
+    [house, 'Schlüsseltresor am Hoftor neben der Garage'],
+    [estate, 'Generalschlüssel Hausmeisterbüro Treppenhaus B'],
+  ] as const) {
+    await post(`/sites/${siteId}/accesses`, {
+      designation,
+      hint: 'Code beim Büro erfragen',
+    })
+  }
 
   const cabinet = idOf(
     await post('/installations', {
