@@ -125,10 +125,10 @@ $$;--> statement-breakpoint
 -- and trusted for no longer than one transaction; a number given out under a
 -- savepoint that is rolled back is simply not used again.
 --
--- The sequences have a schema of their own, which the application role cannot
--- look into: it could neither make one in advance under the name of a tenant
--- nor move one.
-CREATE SCHEMA "sync_counters";--> statement-breakpoint
+-- The sequences stand in public under the name of their tenant
+-- (`sync_counter_t<id>`) and belong to the owner of the tables. The application
+-- role has no right on them and may create nothing in public: it can neither
+-- make one in advance under the name of a tenant nor move one.
 
 -- Takes the next numbers of a tenant from its sequence and returns the first.
 -- The first call of a transaction locks the row, sets the sequence to the last
@@ -143,7 +143,7 @@ CREATE FUNCTION "take_sync_numbers"(tenant uuid, amount bigint) RETURNS bigint
 	SET enable_seqscan = off
 AS $$
 DECLARE
-	counter text := format('%I.%I', 'sync_counters', 't' || replace(tenant::text, '-', ''));
+	counter text := format('%I.%I', 'public', 'sync_counter_t' || replace(tenant::text, '-', ''));
 	opened xid8;
 	committed bigint;
 	first bigint;
@@ -206,7 +206,7 @@ CREATE FUNCTION "close_sync_counter"() RETURNS trigger
 AS $$
 BEGIN
 	UPDATE public.sync_sequences
-	   SET next_value = currval(format('%I.%I', 'sync_counters', 't' || replace(new.tenant_id::text, '-', ''))::regclass),
+	   SET next_value = currval(format('%I.%I', 'public', 'sync_counter_t' || replace(new.tenant_id::text, '-', ''))::regclass),
 	       opened_in = NULL,
 	       updated_at = now()
 	 WHERE tenant_id = new.tenant_id AND opened_in = pg_current_xact_id();

@@ -29,7 +29,20 @@ $$;--> statement-breakpoint
 DROP TRIGGER IF EXISTS "sync_counter_closes" ON "sync_sequences";--> statement-breakpoint
 DROP FUNCTION IF EXISTS "close_sync_counter"();--> statement-breakpoint
 DROP FUNCTION IF EXISTS "take_sync_numbers"(uuid, bigint);--> statement-breakpoint
-DROP SCHEMA IF EXISTS "sync_counters" CASCADE;--> statement-breakpoint
+DO $$
+DECLARE
+	counter text;
+BEGIN
+	FOR counter IN
+		SELECT c.relname
+		  FROM pg_class c
+		  JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public' AND c.relkind = 'S' AND c.relname LIKE 'sync\_counter\_t%'
+	LOOP
+		EXECUTE format('DROP SEQUENCE IF EXISTS %I.%I', 'public', counter);
+	END LOOP;
+END
+$$;--> statement-breakpoint
 DROP FUNCTION IF EXISTS "lock_sync_counter"(uuid);--> statement-breakpoint
 DROP FUNCTION IF EXISTS "counter_address"(text, uuid);--> statement-breakpoint
 DROP FUNCTION IF EXISTS "keep_counter_hint"(text, uuid, text);--> statement-breakpoint

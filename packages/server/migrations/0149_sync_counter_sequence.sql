@@ -9,14 +9,13 @@
 -- (block `sync.sql`); `reserve_sync_sequences` of the article import takes its
 -- numbers the same way.
 ALTER TABLE "sync_sequences" ADD COLUMN "opened_in" "xid8";--> statement-breakpoint
-CREATE SCHEMA "sync_counters";--> statement-breakpoint
 CREATE FUNCTION "take_sync_numbers"(tenant uuid, amount bigint) RETURNS bigint
 	LANGUAGE plpgsql
 	SET search_path = pg_catalog, public
 	SET enable_seqscan = off
 AS $$
 DECLARE
-	counter text := format('%I.%I', 'sync_counters', 't' || replace(tenant::text, '-', ''));
+	counter text := format('%I.%I', 'public', 'sync_counter_t' || replace(tenant::text, '-', ''));
 	opened xid8;
 	committed bigint;
 	first bigint;
@@ -67,7 +66,7 @@ CREATE FUNCTION "close_sync_counter"() RETURNS trigger
 AS $$
 BEGIN
 	UPDATE public.sync_sequences
-	   SET next_value = currval(format('%I.%I', 'sync_counters', 't' || replace(new.tenant_id::text, '-', ''))::regclass),
+	   SET next_value = currval(format('%I.%I', 'public', 'sync_counter_t' || replace(new.tenant_id::text, '-', ''))::regclass),
 	       opened_in = NULL,
 	       updated_at = now()
 	 WHERE tenant_id = new.tenant_id AND opened_in = pg_current_xact_id();

@@ -232,7 +232,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 - Der Zähler des Abgleichs braucht für jede Nummer gleich lange, auch in sehr großen Transaktionen (#965). Seine
   Zeile bekam je Nummer eine neue Fassung, und mit jeder vollen Seite prüfte sein eindeutiger Schlüssel alle früheren
   Fassungen der Transaktion; die Zeit je Nummer stieg von 15 µs bei den ersten 100 000 auf 120 µs bei 1,5 Millionen.
-  Jetzt kommen die Nummern aus einer Sequenz je Mandant (Schema `sync_counters`, `take_sync_numbers`): Die erste
+  Jetzt kommen die Nummern aus einer Sequenz je Mandant (`sync_counter_t…`, `take_sync_numbers`): Die erste
   Nummer einer Transaktion setzt sie auf die letzte festgeschriebene, und `close_sync_counter` schreibt die letzte
   einmal vor dem Commit in die Zeile (Spalte `sync_sequences.opened_in`, Migration 0149). Auf der Testdatenbank
   15 bis 17 µs je Nummer über 1,5 Millionen, vorher 74 bis 92 µs und steigend. Warum: Importe, Migrationen und

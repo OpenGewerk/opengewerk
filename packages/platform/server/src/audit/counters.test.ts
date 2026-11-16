@@ -343,7 +343,7 @@ describe('many logged changes in one transaction', () => {
  * committed at every opening, and is the owner's alone.
  */
 describe('the numbers of the sync', () => {
-  const sequenceOf = (tenantId: TenantId) => `sync_counters.t${tenantId.replaceAll('-', '')}`
+  const sequenceOf = (tenantId: TenantId) => `sync_counter_t${tenantId.replaceAll('-', '')}`
 
   async function numbersOf(tenantId: TenantId, label?: string) {
     const { rows } = await admin.query<{ change_sequence: string }>(
@@ -512,7 +512,7 @@ describe('the numbers of the sync', () => {
       sql`select nextval(${sequenceOf(north.id)}::regclass)`,
       sql`select setval(${sequenceOf(north.id)}::regclass, 1)`,
       sql`select take_sync_numbers(${north.id}::uuid, 1)`,
-      sql`create sequence sync_counters.t00000000000000000000000000000000`,
+      sql`create sequence public.sync_counter_t00000000000000000000000000000000`,
     ]) {
       await expect(inTenant(north.id, (tx) => tx.execute(statement))).rejects.toMatchObject({
         cause: { code: '42501' },
