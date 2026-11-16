@@ -240,6 +240,8 @@ export const foundationDefinerFunctions: Readonly<Record<string, string>> = {
     'the trigger empties the value a redaction names in the log, which no role may change',
   'audit_redaction_checked()':
     'the trigger finds the entry a redaction is about through the policy that keeps the log to its writer',
+  'close_audit_chain()':
+    'the trigger writes the head of the chain at the commit of whoever changed something, who may not write the chain (opengewerk#953)',
   'create_first_tenant(company text)':
     'the one tenant a first run creates; the application has no insert on tenants',
   'create_tenant(company text)':

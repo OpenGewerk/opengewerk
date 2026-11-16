@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm'
 import {
   bigint,
   check,
+  customType,
   index,
   pgEnum,
   pgTable,
@@ -17,6 +18,11 @@ import {
 import { primaryId, timestamps } from './columns.js'
 import { redactedByWhoeverLeads, writtenByTriggerOnly } from './rls.js'
 import { tenantColumn } from './tenants.js'
+
+/** A transaction id with its epoch, as `pg_current_xact_id()` gives it. */
+const transactionId = customType<{ data: string; driverData: string }>({
+  dataType: () => 'xid8',
+})
 
 export const auditOperation = pgEnum('audit_operation', auditOperations)
 
@@ -167,6 +173,11 @@ export const auditChains = pgTable(
     ...tenantColumn,
     nextSequence: bigint('next_sequence', { mode: 'number' }).notNull().default(1),
     headHash: text('head_hash'),
+    // The transaction that has the chain open (opengewerk#953). It appends
+    // with the head it finds among its own entries and writes it here once,
+    // before it commits (`close_audit_chain`); between transactions it is
+    // empty.
+    openedIn: transactionId('opened_in'),
     ...timestamps,
   },
   (table) => [

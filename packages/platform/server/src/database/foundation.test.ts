@@ -109,6 +109,7 @@ describe('the foundation, built from its building blocks alone', () => {
       'attachment_may_go',
       'attachment_purging',
       'attachment_version_stays_as_written',
+      'audit_chain_head',
       'audit_entry_problem',
       'audit_entry_stays',
       'audit_fingerprint',
@@ -117,6 +118,9 @@ describe('the foundation, built from its building blocks alone', () => {
       'audit_value_commitment',
       'audit_value_digest',
       'audit_witness',
+      'close_audit_chain',
+      'counter_address',
+      'counter_hint',
       'create_first_tenant',
       'create_tenant',
       'every_tenant',
@@ -127,7 +131,10 @@ describe('the foundation, built from its building blocks alone', () => {
       'instance_change_stays',
       'instance_is_empty',
       'invitation_for',
+      'keep_counter_hint',
       'keep_label_blocked',
+      'lock_audit_chain',
+      'lock_sync_counter',
       'next_sync_sequence',
       'purge_attachment',
       'record_attachment_uploader',
@@ -277,7 +284,7 @@ describe('the foundation, built from its building blocks alone', () => {
     const reading = await readDefinerFunctions(admin, { 'long_gone()': 'of an earlier day' })
 
     expect(reading.unexplained).toEqual(Object.keys(foundationDefinerFunctions).sort())
-    expect(reading.unexplained).toHaveLength(14)
+    expect(reading.unexplained).toHaveLength(15)
     expect(reading.stale).toEqual(['long_gone()'])
   })
 

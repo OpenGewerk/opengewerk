@@ -148,6 +148,12 @@ export interface AuditChain {
   /** The number the next entry will get. */
   readonly nextSequence: number
   readonly headHash: string | null
+  /**
+   * The transaction that has the chain open (opengewerk#953). It appends
+   * without moving this row at every change and writes the head here once,
+   * before it commits; between transactions it is empty.
+   */
+  readonly openedIn: string | null
   readonly createdAt: Date
   readonly updatedAt: Date
 }

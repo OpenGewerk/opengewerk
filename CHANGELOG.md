@@ -178,6 +178,16 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Viele protokollierte Änderungen in einer Transaktion brauchen je Änderung etwa gleich lange (#953). Bisher
+  schrieb jede Änderung die Zählerzeile des Abgleichs und die Kettenzeile des Änderungsprotokolls neu und fand beide
+  über ihren Schlüssel wieder, vorbei an jeder Fassung, die die Transaktion von ihnen schon geschrieben hatte. Jetzt
+  geht der Zähler über die Adresse der eigenen Fassung, und die Kette nimmt ihren Kopf aus den eigenen Einträgen und
+  schreibt ihn einmal, vor dem Commit (Spalte `audit_chains.opened_in`, Migration 0148). Gemessen in einer
+  Testdatenbank: 2000 geänderte Geräte in 0,35 s, 20 000 in 3,8 s; vorher brauchten 8000 schon 17 s. Warum:
+  Migrationen, Importe und Löschungen nach dem Löschkonzept schreiben viel in einer Transaktion, und 152 000
+  Änderungen waren nach neun Minuten nicht durch. Eine Einschränkung bleibt: Der Zähler des Abgleichs bekommt weiter
+  eine Fassung je Änderung, und jenseits von 100 000 Änderungen in einer Transaktion wird jede weitere dadurch wieder
+  etwas langsamer, weit weniger als vorher.
 - Ein Test des Tors, der unter der Last der CI manchmal rot wurde, wartet auf den Namen des nächsten Kontos (#962).
   Warum: Er fragte im selben Takt, in dem die Bildschirme des alten Kontos gingen, und die Seite nennt das neue
   einen Takt später; die Reihenfolge, um die es geht, hält eine eigene Zusicherung.

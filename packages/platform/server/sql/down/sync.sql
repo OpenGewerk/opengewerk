@@ -18,4 +18,8 @@ BEGIN
 END
 $$;--> statement-breakpoint
 DROP FUNCTION IF EXISTS "stamp_sync_columns"();--> statement-breakpoint
-DROP FUNCTION IF EXISTS "next_sync_sequence"(uuid);
+DROP FUNCTION IF EXISTS "next_sync_sequence"(uuid);--> statement-breakpoint
+DROP FUNCTION IF EXISTS "lock_sync_counter"(uuid);--> statement-breakpoint
+DROP FUNCTION IF EXISTS "counter_address"(text, uuid);--> statement-breakpoint
+DROP FUNCTION IF EXISTS "keep_counter_hint"(text, uuid, text);--> statement-breakpoint
+DROP FUNCTION IF EXISTS "counter_hint"(text, uuid);

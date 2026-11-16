@@ -132,16 +132,8 @@ BEGIN
 			USING ERRCODE = 'OG001';
 	END IF;
 
-	PERFORM 1 FROM public.sync_sequences WHERE tenant_id = p_tenant FOR NO KEY UPDATE;
-
-	IF NOT FOUND THEN
-		INSERT INTO public.sync_sequences (tenant_id, next_value) VALUES (p_tenant, 0) ON CONFLICT (tenant_id) DO NOTHING;
-		PERFORM 1 FROM public.sync_sequences WHERE tenant_id = p_tenant FOR NO KEY UPDATE;
-	END IF;
-
-	INSERT INTO public.audit_chains (tenant_id)
-	VALUES (p_tenant)
-	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();
+	PERFORM public.lock_sync_counter(p_tenant);
+	PERFORM public.lock_audit_chain(p_tenant);
 END;
 $$;--> statement-breakpoint
 
@@ -163,16 +155,8 @@ AS $$
 DECLARE
 	named boolean;
 BEGIN
-	PERFORM 1 FROM public.sync_sequences WHERE tenant_id = p_tenant FOR NO KEY UPDATE;
-
-	IF NOT FOUND THEN
-		INSERT INTO public.sync_sequences (tenant_id, next_value) VALUES (p_tenant, 0) ON CONFLICT (tenant_id) DO NOTHING;
-		PERFORM 1 FROM public.sync_sequences WHERE tenant_id = p_tenant FOR NO KEY UPDATE;
-	END IF;
-
-	INSERT INTO public.audit_chains (tenant_id)
-	VALUES (p_tenant)
-	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();
+	PERFORM public.lock_sync_counter(p_tenant);
+	PERFORM public.lock_audit_chain(p_tenant);
 
 	IF to_regprocedure('public.application_file_named_by_a_value(uuid,text)') IS NULL THEN
 		RETURN false;

@@ -2364,7 +2364,11 @@ describe('the heating power and the cross-section of the lead from 0147', () => 
   })
 
   it('stay at a rollback, which stops while an appliance holds one', async () => {
-    await anInstallation(migrationsFolder)
+    // Up to 0147, so that its line is the last of the history whatever comes
+    // after it.
+    const upToIt = releaseFolder(before() + 1)
+
+    await anInstallation(upToIt)
     await admin.query('update appliances set heating_power_watts = 2000 where id = $1', [appliance])
 
     await expect(revertMigration(admin, '0147_appliance_heating')).rejects.toThrow(
@@ -2392,7 +2396,7 @@ describe('the heating power and the cross-section of the lead from 0147', () => 
       `delete from drizzle.__drizzle_migrations
         where created_at = (select max(created_at) from drizzle.__drizzle_migrations)`,
     )
-    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+    await runMigrations(ownerDatabaseUrl(), upToIt)
 
     expect(await columnNames(admin, 'appliances')).toContain('heating_power_watts')
   })

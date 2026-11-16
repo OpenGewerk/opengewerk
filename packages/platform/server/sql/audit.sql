@@ -155,6 +155,153 @@ BEGIN
 END;
 $$;--> statement-breakpoint
 
+-- The chain of a tenant, locked, through the address the transaction holds or
+-- else through the key (opengewerk#953, as the counter of the sync). The row is
+-- created on first use. ON CONFLICT DO UPDATE rather than DO NOTHING on
+-- purpose: DO NOTHING would let a second transaction fall through without
+-- seeing the row the first one has not committed yet, and the chain would
+-- fork. It runs as whoever calls it, and only the functions that run as the
+-- owner of the tables do.
+CREATE FUNCTION "lock_audit_chain"(tenant uuid, OUT next_sequence bigint, OUT head_hash text, OUT opened_in xid8, OUT address tid)
+	LANGUAGE plpgsql
+	SET search_path = pg_catalog, public
+	SET enable_seqscan = off
+	SET enable_indexscan = off
+	SET enable_bitmapscan = off
+AS $$
+BEGIN
+	address := public.counter_address('audit', tenant);
+
+	IF address IS NOT NULL THEN
+		SELECT c.next_sequence, c.head_hash, c.opened_in, c.ctid INTO next_sequence, head_hash, opened_in, address
+		  FROM public.audit_chains c
+		 WHERE c.ctid = address AND c.tenant_id = tenant FOR NO KEY UPDATE;
+	END IF;
+
+	IF address IS NULL THEN
+		SELECT c.next_sequence, c.head_hash, c.opened_in, c.ctid INTO next_sequence, head_hash, opened_in, address
+		  FROM public.audit_chains c
+		 WHERE c.tenant_id = tenant FOR NO KEY UPDATE;
+
+		IF NOT FOUND THEN
+			INSERT INTO public.audit_chains AS c (tenant_id)
+			VALUES (tenant)
+			ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now()
+			RETURNING c.next_sequence, c.head_hash, c.opened_in, c.ctid INTO next_sequence, head_hash, opened_in, address;
+		END IF;
+
+		PERFORM public.keep_counter_hint('audit', tenant, address::text);
+	END IF;
+END;
+$$;--> statement-breakpoint
+
+-- The head of a chain the transaction has open: after its own last entry.
+-- The id of that entry is kept as a hint (`audit_head`), or `opened` while the
+-- transaction has written none since it opened the chain, and the entry is
+-- found through its primary key. Anybody may set the hint, and nothing in it
+-- is taken on trust that the constraint on the place of an entry
+-- (`audit_entries_sequence`) does not check: an entry of another tenant, or
+-- one below the head of the row, is no answer, and an entry of the own
+-- transaction that is not its last, or `opened` after the first entry, names a
+-- place that is taken, so that the next entry fails and the chain does not
+-- fork. Without a hint that answers, the highest entry above the head of the
+-- row does.
+--
+-- It names its scans as the functions that go by an address do: the entry by
+-- its key and nothing else, and the highest one through the place, not through
+-- another index of the tenant and a sort.
+CREATE FUNCTION "audit_chain_head"(tenant uuid, committed_place bigint, committed_hash text, OUT place bigint, OUT previous text)
+	LANGUAGE plpgsql
+	STABLE
+	SET search_path = pg_catalog, public
+	SET enable_seqscan = off
+	SET enable_bitmapscan = off
+	SET enable_sort = off
+AS $$
+DECLARE
+	held text := public.counter_hint('audit_head', tenant);
+	last record;
+BEGIN
+	place := committed_place;
+	previous := committed_hash;
+
+	IF held = 'opened' THEN
+		RETURN;
+	END IF;
+
+	IF held ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+		SELECT e.tenant_id, e.sequence, e.hash INTO last FROM public.audit_entries e WHERE e.id = held::uuid;
+
+		IF FOUND AND last.tenant_id = tenant AND last.sequence >= committed_place THEN
+			place := last.sequence + 1;
+			previous := last.hash;
+			RETURN;
+		END IF;
+	END IF;
+
+	SELECT e.sequence + 1, e.hash INTO place, previous
+	  FROM public.audit_entries e
+	 WHERE e.tenant_id = tenant AND e.sequence >= committed_place
+	 ORDER BY e.sequence DESC
+	 LIMIT 1;
+
+	IF NOT FOUND THEN
+		place := committed_place;
+		previous := committed_hash;
+	END IF;
+END;
+$$;--> statement-breakpoint
+
+-- The head of the chain, written once a transaction (opengewerk#953). A logged
+-- change moved the chain row at every entry and found it again through its key
+-- at the next one, past every version it had written. Now the first change of
+-- a transaction opens the chain (`opened_in`) once its entries are written,
+-- every further one takes the head from its own entries (`audit_chain_head`),
+-- and this trigger writes it to the row before the transaction commits. It is deferred to the end and
+-- fires once for the opening; it clears `opened_in`, so that a change after a
+-- firing brought forward (`SET CONSTRAINTS ... IMMEDIATE`) opens the chain
+-- again. A transaction that rolls back takes the opening, its entries and the
+-- waiting trigger with it, a savepoint that is rolled back the part it holds.
+--
+-- SECURITY DEFINER because it fires at the commit of whoever changed
+-- something, who may not write the chain. A chain that is gone by then, with
+-- its tenant, is not created again.
+--
+-- A migration that alters `audit_chains` in the same transaction as logged
+-- changes before it fails on the waiting trigger ("pending trigger events");
+-- `SET CONSTRAINTS "audit_chain_closes" IMMEDIATE` before it writes the head
+-- first.
+CREATE FUNCTION "close_audit_chain"() RETURNS trigger
+	LANGUAGE plpgsql
+	SECURITY DEFINER
+	SET search_path = pg_catalog, public
+AS $$
+DECLARE
+	chain record;
+	head record;
+BEGIN
+	SELECT c.next_sequence, c.head_hash, c.ctid AS address INTO chain
+	  FROM public.audit_chains c
+	 WHERE c.tenant_id = new.tenant_id FOR NO KEY UPDATE;
+
+	IF NOT FOUND THEN
+		RETURN NULL;
+	END IF;
+
+	head := public.audit_chain_head(new.tenant_id, chain.next_sequence, chain.head_hash);
+
+	UPDATE public.audit_chains
+	   SET next_sequence = head.place, head_hash = head.previous, opened_in = NULL, updated_at = now()
+	 WHERE ctid = chain.address AND tenant_id = new.tenant_id;
+
+	RETURN NULL;
+END;
+$$;--> statement-breakpoint
+CREATE CONSTRAINT TRIGGER "audit_chain_closes" AFTER UPDATE ON "audit_chains"
+	DEFERRABLE INITIALLY DEFERRED
+	FOR EACH ROW WHEN (new.opened_in IS NOT NULL AND new.opened_in IS DISTINCT FROM old.opened_in)
+	EXECUTE FUNCTION "close_audit_chain"();--> statement-breakpoint
+
 -- The writer. SECURITY DEFINER so that it reaches the log even when the role
 -- that triggered it may not write there, which is precisely the case worth
 -- having: otherwise the log would only be as complete as the rights of whoever
@@ -165,10 +312,10 @@ $$;--> statement-breakpoint
 -- makes the insert fail on NOT NULL, and that is the right direction: loud
 -- while migrating beats silent in the log.
 --
--- The chain row is created on first use and locked either way. ON CONFLICT DO
--- UPDATE rather than DO NOTHING on purpose: DO NOTHING would let a second
--- transaction fall through without seeing the row the first one has not
--- committed yet, and the chain would fork.
+-- The chain row is created on first use and locked either way
+-- (`lock_audit_chain`). The first change of a transaction opens the chain, and
+-- its head is written to the row once, before the commit (`close_audit_chain`,
+-- opengewerk#953).
 --
 -- One row per field that genuinely differs, compared over the text form from
 -- to_jsonb rather than over a list of columns, and written one at a time in a
@@ -195,8 +342,10 @@ DECLARE
 	before_row jsonb := '{}'::jsonb;
 	after_row jsonb := '{}'::jsonb;
 	present jsonb;
-	chain public.audit_chains;
+	chain record;
+	head record;
 	entry public.audit_entries;
+	wrote boolean := false;
 	place bigint;
 	previous text;
 	changed text;
@@ -230,20 +379,21 @@ BEGIN
 	-- take the two in one order and no two transactions of a tenant wait for
 	-- each other in a circle. Locked without being moved; a row created here
 	-- has handed out no number yet, so that the first is still 1.
-	PERFORM 1 FROM public.sync_sequences WHERE tenant_id = entry.tenant_id FOR NO KEY UPDATE;
+	PERFORM public.lock_sync_counter(entry.tenant_id);
 
-	IF NOT FOUND THEN
-		INSERT INTO public.sync_sequences (tenant_id, next_value) VALUES (entry.tenant_id, 0) ON CONFLICT (tenant_id) DO NOTHING;
-		PERFORM 1 FROM public.sync_sequences WHERE tenant_id = entry.tenant_id FOR NO KEY UPDATE;
-	END IF;
-
-	INSERT INTO public.audit_chains (tenant_id)
-	VALUES (entry.tenant_id)
-	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now()
-	RETURNING * INTO chain;
-
+	-- The first change of the transaction starts at the head of the row and
+	-- opens the chain; every further one starts after its own last entry, and
+	-- the head reaches the row before the commit (`close_audit_chain`,
+	-- opengewerk#953).
+	chain := public.lock_audit_chain(entry.tenant_id);
 	place := chain.next_sequence;
 	previous := chain.head_hash;
+
+	IF chain.opened_in = pg_current_xact_id() THEN
+		head := public.audit_chain_head(entry.tenant_id, chain.next_sequence, chain.head_hash);
+		place := head.place;
+		previous := head.previous;
+	END IF;
 
 	FOR changed IN
 		SELECT k.field
@@ -275,12 +425,24 @@ BEGIN
 
 		previous := entry.hash;
 		place := place + 1;
+		wrote := true;
 	END LOOP;
 
-	IF place <> chain.next_sequence THEN
-		UPDATE public.audit_chains
-		   SET next_sequence = place, head_hash = previous, updated_at = now()
-		 WHERE tenant_id = entry.tenant_id;
+	IF wrote THEN
+		PERFORM public.keep_counter_hint('audit_head', entry.tenant_id, entry.id::text);
+	ELSIF chain.opened_in IS DISTINCT FROM pg_current_xact_id() THEN
+		PERFORM public.keep_counter_hint('audit_head', entry.tenant_id, 'opened');
+	END IF;
+
+	-- Opened after the entries and after the hint: whoever has the trigger
+	-- fire at once (`SET CONSTRAINTS ... IMMEDIATE`) has it write the head
+	-- with them, not before them.
+	IF chain.opened_in IS DISTINCT FROM pg_current_xact_id() THEN
+		UPDATE public.audit_chains SET opened_in = pg_current_xact_id(), updated_at = now()
+		 WHERE ctid = chain.address AND tenant_id = entry.tenant_id
+		RETURNING ctid INTO chain.address;
+
+		PERFORM public.keep_counter_hint('audit', entry.tenant_id, chain.address::text);
 	END IF;
 
 	RETURN NULL;
@@ -383,16 +545,8 @@ BEGIN
 	-- (opengewerk#914): a deletion holds both when it blacks out the entries of
 	-- what it deletes, and a redaction that held the entry first and then
 	-- waited for them, to log itself, would wait in a circle with it.
-	PERFORM 1 FROM public.sync_sequences WHERE tenant_id = new.tenant_id FOR NO KEY UPDATE;
-
-	IF NOT FOUND THEN
-		INSERT INTO public.sync_sequences (tenant_id, next_value) VALUES (new.tenant_id, 0) ON CONFLICT (tenant_id) DO NOTHING;
-		PERFORM 1 FROM public.sync_sequences WHERE tenant_id = new.tenant_id FOR NO KEY UPDATE;
-	END IF;
-
-	INSERT INTO public.audit_chains (tenant_id)
-	VALUES (new.tenant_id)
-	ON CONFLICT (tenant_id) DO UPDATE SET updated_at = now();
+	PERFORM public.lock_sync_counter(new.tenant_id);
+	PERFORM public.lock_audit_chain(new.tenant_id);
 
 	SELECT * INTO entry FROM public.audit_entries e
 	 WHERE e.id = new.entry_id AND e.tenant_id = new.tenant_id
