@@ -1120,10 +1120,14 @@ export class SyncClient {
         sending()
       }
 
-      this.outdated = await this.pullChanges()
+      const pulled = await this.pullChanges()
 
-      // Everything that settled is in the rows now, as the server holds it.
-      if (this.settling.length > 0) {
+      this.outdated = pulled.outdated
+
+      // Everything that settled is in the rows now, as the server holds it,
+      // once the pull got to the end. One that stopped at the limit of its
+      // pages may not have brought them yet (opengewerk#960).
+      if (pulled.complete && this.settling.length > 0) {
         this.settling = []
         this.settledAt.clear()
         this.regroup()
@@ -1335,11 +1339,12 @@ export class SyncClient {
   /**
    * Pulls what changed since the cursor, page by page, until the server has
    * nothing more, and writes each page down with the cursor it ends at while
-   * the store still stands where it began (opengewerk#899). True where a tab
-   * of a newer build pulls for the store and this one pulled into its memory
-   * alone.
+   * the store still stands where it began (opengewerk#899). `outdated` where a
+   * tab of a newer build pulls for the store and this one pulled into its
+   * memory alone; `complete` where the pull got to the end, and not to the
+   * limit of its pages (opengewerk#960).
    */
-  private async pullChanges(): Promise<boolean> {
+  private async pullChanges(): Promise<{ outdated: boolean; complete: boolean }> {
     let guard = 0
     let outdated = false
 
@@ -1399,7 +1404,7 @@ export class SyncClient {
 
       if (written === 'fewerKinds' || written === 'unchecked' || written === 'moved') {
         if ((guard += 1) > 100) {
-          return outdated
+          return { outdated, complete: false }
         }
 
         continue
@@ -1424,8 +1429,12 @@ export class SyncClient {
       // `hasMore` means the server stopped at its limit. Asking again is the
       // whole point; the counter is there so a server that always says yes
       // cannot spin this for ever.
-      if (!answer.hasMore || (guard += 1) > 100) {
-        return outdated
+      if (!answer.hasMore) {
+        return { outdated, complete: true }
+      }
+
+      if ((guard += 1) > 100) {
+        return { outdated, complete: false }
       }
     }
   }

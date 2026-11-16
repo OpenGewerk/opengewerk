@@ -764,6 +764,28 @@ describe('a file made on the device', () => {
     expect(client.get('notes', made.id)?.['title']).toBe('X')
   })
 
+  it('keeps what the server took while a pull stops at the limit of its pages (opengewerk#960)', async () => {
+    const client = await start()
+    const made = await client.create('notes', { title: 'Vorher' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    await client.synchronise()
+
+    const pull = server.pull.bind(server)
+
+    // A server that has more on every page, none of it the note.
+    server.pull = async () => ({ ...(await pull()), changes: [], hasMore: true })
+    await client.update('notes', made.id, { title: 'X' })
+    await client.synchronise().catch(() => undefined)
+
+    expect(server.row('notes', made.id)?.['title']).toBe('X')
+    expect(client.isSettling('notes', made.id)).toBe(true)
+    expect(client.get('notes', made.id)?.['title']).toBe('X')
+  })
+
   it('keeps the order a transmission went in once the server took it (opengewerk#937)', async () => {
     const client = await start()
     const push = server.push.bind(server)
