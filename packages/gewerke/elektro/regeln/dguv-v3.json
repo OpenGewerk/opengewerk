@@ -99,7 +99,7 @@
       "unit": "square_micrometres",
       "value": 1500000,
       "source": "DGUV Information 203-070:2026-04, Tabelle 1, nach DIN EN 50699 (VDE 0702):2021-06",
-      "note": "Bis zu diesem Querschnitt der Leitung, 1,5 mm², gilt beim Schutzleiterwiderstand der Grundwert mit seinen Zuschlägen. Darüber gilt der Widerstand der Leitung, berechnet aus Länge, Querschnitt und Leitfähigkeit, zuzüglich des Übergangs."
+      "note": "Bis zu diesem Querschnitt der Leitung, 1,5 mm², gilt beim Schutzleiterwiderstand der Grundwert mit seinen Zuschlägen. Darüber gilt der Widerstand der Leitung, berechnet aus Länge, Querschnitt und Leitfähigkeit, zuzüglich des Übergangs, höchstens elektro.appliance.protective_conductor_maximum."
     },
     {
       "key": "elektro.appliance.cord_conductivity",

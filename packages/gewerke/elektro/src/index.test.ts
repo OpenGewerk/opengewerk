@@ -477,6 +477,9 @@ describe('the package Elektro und PV', () => {
     expect(resistanceLimit(50_000, 2_500)).toBe(457)
     expect(resistanceLimit(50_000, 1_501)).toBe(695)
     expect(resistanceLimit(5_000, 2_500)).toBe(136)
+    expect(resistanceLimit(100_000, 2_500)).toBe(814)
+    // Never more than 1 Ω, as the table: 150 m of 2,5 mm² would come to 1,171 Ω.
+    expect(resistanceLimit(150_000, 2_500)).toBe(1000)
     // Up to 1,5 mm², or without a length, the table as before.
     expect(resistanceLimit(50_000, 1_500)).toBe(900)
     expect(resistanceLimit(50_000, null)).toBe(900)

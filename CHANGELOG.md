@@ -15,10 +15,11 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Schutzklasse I mit Heizelementen wird beim Isolationswiderstand gegen 0,3 MΩ gemessen; über 3,5 kW urteilt der
   Schutzleiterstrom, der dann 1 mA je kW betragen darf, höchstens 10 mA. Eine Leitung über 1,5 mm² mit Länge wird
   gegen ihren berechneten Widerstand gemessen, Länge durch Leitfähigkeit von Kupfer und Querschnitt, zuzüglich 0,1 Ω
-  für den Übergang. Ohne Heizleistung bleibt es bei den strengeren Werten wie bisher. Ohne Querschnitt gilt wie
-  bisher die Tabelle für 1,5 mm², die für eine dickere Leitung großzügiger ist als ihr berechneter Widerstand; wer den
-  Querschnitt einträgt, misst eine solche Leitung strenger. Den Schutzleiterstrom je kW kennt erst
-  Fassung 3; ein Entwurf, der vor dem Update in einer älteren Fassung begonnen wurde, misst ihn weiter gegen 3,5 mA.
+  für den Übergang, höchstens 1 Ω wie in der Tabelle. Ohne Heizleistung bleibt es bei den strengeren Werten wie
+  bisher. Ohne Querschnitt gilt wie bisher die Tabelle für 1,5 mm², die für eine dickere Leitung großzügiger ist als
+  ihr berechneter Widerstand; wer den Querschnitt einträgt, misst eine solche Leitung nie großzügiger. Den
+  Schutzleiterstrom je kW kennt erst Fassung 3; ein Entwurf, der vor dem Update in einer älteren Fassung begonnen
+  wurde, misst ihn weiter gegen 3,5 mA.
   Ein unterschriebenes Protokoll hält die beiden Angaben mit fest (#954); eines, das vorher unterschrieben wurde,
   behält, womit es unterschrieben wurde. Das Löschen eines Objekts leert sie mit den übrigen Angaben des Geräts.
   Die Werte stehen im Regelpaket mit Fundstelle und gehen zur fachkundigen Abnahme in #31. Warum: Ein Heizlüfter mit

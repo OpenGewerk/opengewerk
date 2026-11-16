@@ -119,8 +119,8 @@ export const applianceInsulation: LimitCalculator = (_field, { rules, on, item }
  * entered is held to the base value, which is never looser than the rule. A
  * lead of more than 1.5 mm² with a length is held to its own resistance,
  * worked out of length, cross-section and the conductivity of copper, and the
- * transition on top (opengewerk#816). An appliance of class II or III has no
- * protective conductor.
+ * transition on top, and never more than the maximum either (opengewerk#816).
+ * An appliance of class II or III has no protective conductor.
  */
 export const applianceProtectiveConductor: LimitCalculator = (_field, { rules, on, item }) => {
   const appliance = applianceOf(item)
@@ -141,8 +141,9 @@ export const applianceProtectiveConductor: LimitCalculator = (_field, { rules, o
   if (length !== null && crossSection !== null && largest && crossSection * 1000 > largest.value) {
     const conductivity = rules.at('elektro.appliance.cord_conductivity', on)
     const transition = rules.at('elektro.appliance.protective_conductor_transition', on)
+    const maximum = rules.at('elektro.appliance.protective_conductor_maximum', on)
 
-    if (!conductivity || !transition || conductivity.value <= 0) {
+    if (!conductivity || !transition || !maximum || conductivity.value <= 0) {
       return { none: 'Für diesen Tag ist kein Grenzwert des Schutzleiterwiderstands hinterlegt.' }
     }
 
@@ -150,7 +151,13 @@ export const applianceProtectiveConductor: LimitCalculator = (_field, { rules, o
     // and thousandths of a square millimetre the same quotient is milliohms.
     const lead = Math.round((length * 1000) / (conductivity.value * crossSection))
 
-    return { limitMilli: lead + transition.value, atLeast: false, source: largest.source }
+    // Never more than the maximum, however long the lead: a long one would
+    // otherwise be held looser than without its cross-section.
+    return {
+      limitMilli: Math.min(lead + transition.value, maximum.value),
+      atLeast: false,
+      source: largest.source,
+    }
   }
 
   const base = rules.at('elektro.appliance.protective_conductor_base', on)
