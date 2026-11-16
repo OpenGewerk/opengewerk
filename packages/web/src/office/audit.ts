@@ -114,5 +114,7 @@ export const auditScreenWords: AuditScreenWords = {
     installations: 'mit ihrer Struktur',
     jobs: 'mit Notizen und Einteilung',
     documents: 'mit Positionen, Unterschrift und Zahlungen',
+    articles: 'mit Verkaufspreisen, Aufschlag und Bezugsquellen samt Einkaufspreisen und Metall',
+    suppliers: 'mit Ansprechpartnern, Aufschlag und Metallpreisen',
   },
 }

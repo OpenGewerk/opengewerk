@@ -178,6 +178,11 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Das Änderungsprotokoll eines Lieferanten und eines Artikels sagt unter der Überschrift, was es mitnimmt (#557):
+  „mit Ansprechpartnern, Aufschlag und Metallpreisen“ und „mit Verkaufspreisen, Aufschlag und Bezugsquellen samt
+  Einkaufspreisen und Metall“. Warum: Die Änderungen dieser Teile standen schon in der Liste, nur sagte die Seite
+  nicht, warum unter einem Lieferanten die Änderung an einer Person steht. Ein Test hält jeden Datensatz mit Knopf
+  und Teilen gegen diese Sätze.
 - Viele protokollierte Änderungen in einer Transaktion brauchen je Änderung etwa gleich lange (#953). Bisher
   schrieb jede Änderung die Zählerzeile des Abgleichs und die Kettenzeile des Änderungsprotokolls neu und fand beide
   über ihren Schlüssel wieder, vorbei an jeder Fassung, die die Transaktion von ihnen schon geschrieben hatte. Jetzt

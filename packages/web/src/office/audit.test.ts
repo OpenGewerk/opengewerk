@@ -1,4 +1,4 @@
-import type { AuditChange, AuditPage } from '@opengewerk/domain'
+import { type AuditChange, type AuditPage, auditVocabulary } from '@opengewerk/domain'
 import { euros } from '@opengewerk/platform-web/format'
 import { auditWords } from '@opengewerk/platform-web/office'
 import { describe, expect, it } from 'vitest'
@@ -134,6 +134,18 @@ describe('the ways from the log to a record', () => {
     expect(auditScreenWords.partsWords?.['documents']).toBe(
       'mit Positionen, Unterschrift und Zahlungen',
     )
+    expect(auditScreenWords.partsWords?.['suppliers']).toBe(
+      'mit Ansprechpartnern, Aufschlag und Metallpreisen',
+    )
+  })
+
+  it('says it for every record with a button whose log takes in parts (#557)', () => {
+    const withParts = auditVocabulary.records.filter(
+      (table) => (auditVocabulary.parts[table] ?? []).length > 0,
+    )
+
+    expect(withParts.length).toBeGreaterThan(0)
+    expect(withParts.filter((table) => !auditScreenWords.partsWords?.[table])).toEqual([])
   })
 })
 
