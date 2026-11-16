@@ -158,6 +158,19 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Geändert
 
+- Ein langer Tag bricht in seiner Pille um, statt mit „…“ gekürzt zu werden (#449). Warum: Den ganzen Namen trug die
+  Pille nur im `title`, und der erscheint nur mit einer Maus; am Telefon ließ sich ein gekürzter Tag nirgends ganz
+  lesen. Ein Name hat höchstens 40 Zeichen und passt so auch in einer schmalen Spalte in drei Zeilen.
+- Eine Liste im Büro hält eine Seite an einem Eintrag fest statt an ihrer Nummer: vorwärts an dem, mit dem sie
+  beginnt, zurück an dem, vor dem sie endet. Warum: Die Größe
+  einer Seite misst die Liste an der Höhe einer Zeile, und ein Tag in zwei Zeilen macht eine Zeile höher. Änderte
+  sich die Größe zwischen zwei Seiten, begann die nächste weiter hinten, als die letzte endete, und die Einträge
+  dazwischen erschienen nie (CodeRabbit an #969). Als Karten ohne Seiten zeigt eine Liste immer alle Einträge ab dem
+  ersten, auch nach dem Blättern in einem breiteren Fenster. Gemessen wird jetzt an der niedrigsten Zeile der Seite
+  statt an der ersten (#971): Eine hohe Zeile oben machte die Seite kürzer, die kürzere begann mit einer niedrigen
+  und wurde wieder länger, und so konnte die Größe hin und her springen. Eine Seite mit einigen hohen Zeilen reicht
+  dafür etwas über das Fenster hinaus. Das gilt für jede Liste des Fundaments; die Haustechnik bekommt es mit dem
+  nächsten Anheben ihres Submoduls.
 - Die Prüfung „Breiten und Auflösungen“ misst auch die Formulare hinter einem Knopf, der den Namen dessen trägt,
   was er bearbeitet, etwa „Maria Weber bearbeiten“ an einem Ansprechpartner oder „Schlüsseltresor Hof bearbeiten“
   an einem Zugang (#448). Das Werkzeug des Fundaments nimmt dafür neben Namen auch Muster als Knöpfe, hier
@@ -189,6 +202,14 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Tests der Oberfläche warten auf das, was ein Klick sendet, bevor sie es lesen (#972): zwei der Prüfprotokolle,
+  drei des Bildschirms der Konflikte und einer der Leiste des Abgleichs. Warum: Der Klick sendet einen Takt später,
+  und unter der Last der CI war beim Lesen noch nichts da. Die Tests, die festhalten, dass nichts gesendet wird,
+  waren dadurch immer grün; sie prüfen jetzt erst, wenn die Entscheidung durch ist.
+- Der Test des Tors, der das Konto wechselt, merkt sich das nächste Konto auch für den Browser (#973). Warum: Ohne
+  Netz beantwortet die Seite die Frage, wer angemeldet ist, aus dem Gemerkten, und eine erneute Frage nach dem
+  Wechsel brachte sie zum ersten Konto zurück; der Test war nur grün, wenn er das kurze Fenster dazwischen traf, und
+  wurde auf `main` trotz #962 wieder rot.
 - Das Änderungsprotokoll eines Lieferanten und eines Artikels sagt unter der Überschrift, was es mitnimmt (#557):
   „mit Ansprechpartnern, Aufschlag und Metallpreisen“ und „mit Verkaufspreisen, Aufschlag und Bezugsquellen samt
   Einkaufspreisen und Metall“. Warum: Die Änderungen dieser Teile standen schon in der Liste, nur sagte die Seite

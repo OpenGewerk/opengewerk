@@ -33,17 +33,19 @@ const links: Readonly<
 }
 
 const pillSizes = {
-  small: 'h-[21px] gap-1 px-2 text-[11px]',
-  normal: 'h-[22px] gap-1 px-2 text-[12px]',
-  large: 'h-[23px] gap-1 px-2 text-[13px]',
+  small: 'min-h-[21px] gap-1 px-2 py-px text-[11px] rounded-[10.5px]',
+  normal: 'min-h-[22px] gap-1 px-2 py-px text-[12px] rounded-[11px]',
+  large: 'min-h-[23px] gap-1 px-2 py-px text-[13px] rounded-[11.5px]',
 } as const
 
 /**
  * One tag, `tag_pill()` of the canvas: a rounded label with the tag in front,
  * set apart from a status by its shape. Small in a list, large in a form,
  * where it can be taken off at its cross. A name as long as a tag may have
- * is cut short with an ellipsis rather than running past the edge of a
- * telephone; the whole name stays in the text and in the title.
+ * breaks into further lines rather than running past the edge of a
+ * telephone or being cut short (#449): a title shows only to a mouse, and a
+ * finger could not read a name cut short. A name has at most 40 characters
+ * (`tagNameMaxLength`), so that even a narrow column holds it in three lines.
  */
 export function TagPill({
   name,
@@ -60,12 +62,12 @@ export function TagPill({
     <span
       title={name}
       className={clsx(
-        'inline-flex max-w-full min-w-0 items-center self-start rounded-full border border-line bg-surface-sunken text-ink-muted',
+        'inline-flex max-w-full min-w-0 items-center self-start border border-line bg-surface-sunken text-ink-muted',
         pillSizes[size],
       )}
     >
       <TagIcon size={icon} strokeWidth={2.2} aria-hidden="true" className="shrink-0" />
-      <span className="min-w-0 truncate">{name}</span>
+      <span className="min-w-0 leading-[1.3] [overflow-wrap:anywhere]">{name}</span>
       {onRemove ? (
         <button
           type="button"

@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto'
 import type { Operation, OperationReceipt, SyncConflict } from '@opengewerk/platform-domain'
 import { syncRules } from '@opengewerk/platform-domain'
 import { probePolicies } from '@opengewerk/platform-domain/testing'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -263,8 +263,11 @@ describe('the bar above every screen', () => {
     server.push = push
     await userEvent.click(screen.getByRole('button', { name: 'Erneut versuchen' }))
 
-    expect(server.sent.flat().map((operation) => operation.entity)).toEqual(['shelves'])
-    expect(screen.queryByRole('status')).toBeNull()
+    // The click sends a moment later (opengewerk#972).
+    await waitFor(() => {
+      expect(server.sent.flat().map((operation) => operation.entity)).toEqual(['shelves'])
+      expect(screen.queryByRole('status')).toBeNull()
+    })
   })
 
   /**

@@ -555,6 +555,10 @@ describe('a test protocol in the office (#79)', () => {
 
     await user.click(screen.getByRole('button', { name: 'Speichern' }))
 
+    // The click writes the operation a moment later (opengewerk#972).
+    await waitFor(() => {
+      expect(server.operations().some((operation) => operation.kind === 'update')).toBe(true)
+    })
     const saved = server.operations().find((operation) => operation.kind === 'update')
     const values = readFormValues(
       saved?.patches.find((patch) => patch.field === 'values')?.to ?? null,
@@ -616,6 +620,10 @@ describe('a test protocol in the office (#79)', () => {
       }),
     )
 
+    // The click writes the operation a moment later (opengewerk#972).
+    await waitFor(() => {
+      expect(server.operations().some((operation) => operation.kind === 'create')).toBe(true)
+    })
     const made = server.operations().find((operation) => operation.kind === 'create')
     const values = readFormValues(
       made?.patches.find((patch) => patch.field === 'values')?.to ?? null,

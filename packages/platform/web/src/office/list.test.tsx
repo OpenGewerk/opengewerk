@@ -7,8 +7,17 @@ import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { InRouter } from '../in-router.js'
-import { EmptyState, entries, lastChanged, ListCard, ListScreen, SortChoice } from './list.js'
-import type { ListScreenProps } from './list.js'
+import {
+  EmptyState,
+  entries,
+  lastChanged,
+  ListCard,
+  ListScreen,
+  pageFrom,
+  shownOf,
+  SortChoice,
+} from './list.js'
+import type { ListScreenProps, PageAnchor } from './list.js'
 import { isLocked } from '../testing.js'
 
 /**
@@ -214,6 +223,70 @@ describe('a list at a desk', () => {
     )
 
     expect(await screen.findByText('/regale/s-01')).toBe(screen.getByTestId('where'))
+  })
+})
+
+/**
+ * The size of a page is measured from the height of a row and changes when a
+ * taller row comes to the top. Counted as page times size, the next page began
+ * further on than the last one ended (CodeRabbit on opengewerk#969).
+ */
+describe('the pages of a list whose size changes between them', () => {
+  /** The rows each page shows, paging the given way with the sizes measured. */
+  function paged(sizes: readonly number[], from: PageAnchor, way: 'next' | 'back') {
+    const pages: number[][] = []
+    let anchor: PageAnchor | null = from
+
+    for (const size of sizes) {
+      if (anchor === null) {
+        break
+      }
+
+      const page = pageFrom(40, anchor, size)
+
+      pages.push(Array.from({ length: page.end - page.first }, (_, row) => page.first + row))
+      anchor = page[way]
+    }
+
+    return pages
+  }
+
+  it('shows every row once going forward, whatever size each page is measured at', () => {
+    expect(paged([6, 10, 7, 10, 6, 9], { from: 0 }, 'next').flat()).toEqual(
+      Array.from({ length: 40 }, (_, row) => row),
+    )
+  })
+
+  it('leaves no row out going back, each page ending where the one before began', () => {
+    const pages = paged([6, 6, 10, 6, 7, 10, 6, 9], { from: 34 }, 'back')
+
+    for (let page = 1; page < pages.length; page += 1) {
+      expect(pages[page]?.at(-1)).toBe((pages[page - 1]?.[0] ?? 0) - 1)
+    }
+    // Every row once: the first page is shorter rather than show rows again.
+    expect(pages.flat().sort((a, b) => a - b)).toEqual(Array.from({ length: 40 }, (_, row) => row))
+  })
+
+  it('falls back onto the last rows when a filter took the row a page was held at', () => {
+    expect(pageFrom(40, { from: 6 }, 10)).toEqual({
+      first: 6,
+      end: 16,
+      back: { to: 6 },
+      next: { from: 16 },
+    })
+    expect(pageFrom(40, { to: 6 }, 10)).toEqual({
+      first: 0,
+      end: 6,
+      back: null,
+      next: { from: 6 },
+    })
+    expect(pageFrom(5, { from: 16 }, 10)).toEqual({ first: 0, end: 5, back: null, next: null })
+    expect(pageFrom(25, { from: 30 }, 10)).toMatchObject({ first: 15, end: 25, next: null })
+  })
+
+  it('shows every row as cards, also after paging further on at a wider window', () => {
+    expect(shownOf(40, { from: 10 }, 6, false)).toMatchObject({ first: 0, end: 40 })
+    expect(shownOf(40, { from: 10 }, 6, true)).toMatchObject({ first: 10, end: 16 })
   })
 })
 
@@ -596,6 +669,28 @@ describe('the page of a list', () => {
 
     expect(await screen.findByText('1 bis 8 von 30')).toBeTruthy()
     expect(names()).toHaveLength(8)
+  })
+
+  /**
+   * Measured from the first row, a tall one at the top made the page shorter,
+   * and the shorter page, held up to a row, began with a low one and grew
+   * again (opengewerk#971). The lowest row of the page does not move with it.
+   */
+  it('is measured from its lowest row, not from a tall one at the top', async () => {
+    windowHolding(8)
+
+    const measured = vi.mocked(HTMLElement.prototype.getBoundingClientRect)
+    const low = measured.getMockImplementation()
+
+    measured.mockImplementation(function (this: HTMLElement) {
+      const rect = low?.call(this) as DOMRect
+      const tallOnTop = this.tagName === 'TR' && this.parentElement?.firstElementChild === this
+
+      return { ...rect, height: tallOnTop ? 60 : rect.height }
+    })
+    await shown()
+
+    expect(await screen.findByText('1 bis 8 von 30')).toBeTruthy()
   })
 
   it('is never shorter than six rows, however short the window', async () => {

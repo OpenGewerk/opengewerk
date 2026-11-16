@@ -208,6 +208,14 @@ const chrome = { pager: 45, head: 33, below: 18 }
  * while a list is empty, finds nothing or is drawn as cards, and an effect
  * hung on a ref ran once, when the list came: a list whose rows arrived after
  * it stayed at the fallback for good (opengewerk-haustechnik#31).
+ *
+ * Measured from the lowest row of the page and not from its first. Which rows
+ * a page shows depends on its size, and the first of them on the size as well
+ * when the page is held up to a row: a tall first row made the page shorter,
+ * a shorter page began with a low row and grew again, and the two chased each
+ * other (opengewerk#971). The lowest row can only be lower on a longer page,
+ * which holds more rows, and only higher on a shorter one, so the size settles.
+ * A page with taller rows among low ones runs a little past the window.
  */
 function useRowsThatFit(element: HTMLElement | null, fallback: number): number {
   const [rows, setRows] = useState(fallback)
@@ -219,7 +227,11 @@ function useRowsThatFit(element: HTMLElement | null, fallback: number): number {
 
     const measure = () => {
       const top = element.getBoundingClientRect().top
-      const row = element.querySelector('tbody tr')?.getBoundingClientRect().height ?? assumedRow
+      const heights = Array.from(
+        element.querySelectorAll('tbody tr'),
+        (tr) => tr.getBoundingClientRect().height,
+      ).filter((height) => height > 0)
+      const row = heights.length > 0 ? Math.min(...heights) : assumedRow
       const room = window.innerHeight - top - chrome.head - chrome.pager - chrome.below
 
       setRows(Math.max(6, Math.floor(room / Math.max(row, 20))))
@@ -235,6 +247,65 @@ function useRowsThatFit(element: HTMLElement | null, fallback: number): number {
   }, [element])
 
   return rows
+}
+
+/**
+ * Where a page is held: from its first row, as paging forward leaves it, or
+ * up to the first row of the page it came back from, as paging back leaves it.
+ */
+export type PageAnchor = { readonly from: number } | { readonly to: number }
+
+/**
+ * The rows of one page from where it is held: where it begins and ends, and
+ * where the pages before and after it are held, or null where there is none.
+ *
+ * Held at a row and not as a number of the page. The size of a page is
+ * measured from the height of its rows and changes with the window, or when
+ * a page holds only taller rows, tags in two lines, say; counted as page times
+ * size, the next page then
+ * began further on than the last one ended and the rows between were never
+ * shown (CodeRabbit on opengewerk#969). Forward a page is held from the row
+ * where the shown one ends, back up to the row where it begins, so that the
+ * pages meet in both directions whatever the size is now. Back at the start,
+ * the first page is shorter rather than show rows of the page it came from
+ * again (CodeRabbit on opengewerk#969). A row the rows no longer reach, after a
+ * filter took some away, falls back onto the last ones.
+ */
+export function pageFrom(
+  total: number,
+  anchor: PageAnchor,
+  size: number,
+): {
+  readonly first: number
+  readonly end: number
+  readonly back: PageAnchor | null
+  readonly next: PageAnchor | null
+} {
+  const step = Math.max(size, 1)
+  const first =
+    'to' in anchor
+      ? Math.max(0, Math.min(anchor.to, total) - step)
+      : anchor.from < total
+        ? Math.max(anchor.from, 0)
+        : Math.max(0, total - step)
+  const end = 'to' in anchor ? Math.min(anchor.to, total) : Math.min(total, first + step)
+
+  return {
+    first,
+    end,
+    back: first > 0 ? { to: first } : null,
+    next: end < total ? { from: end } : null,
+  }
+}
+
+/**
+ * The rows a list shows: a page of them where it pages, held where paging
+ * left it, and all of them where it does not. A list drawn as cards has no
+ * pages and no way back to rows before a page further on, so it starts at the
+ * first wherever paging held it (CodeRabbit on opengewerk#969).
+ */
+export function shownOf(total: number, anchor: PageAnchor, size: number, paged: boolean) {
+  return paged ? pageFrom(total, anchor, size) : pageFrom(total, { from: 0 }, total)
 }
 
 /** The rows a filter, a search and an order leave. */
@@ -307,7 +378,7 @@ export function ListScreen(props: ListScreenProps) {
   const [facetId, setFacetId] = useState<string | null>(null)
   const [choiceId, setChoiceId] = useState<string | null>(null)
   const [sortId, setSortId] = useState<string | null>(sorts[0]?.id ?? null)
-  const [page, setPage] = useState(0)
+  const [anchor, setAnchor] = useState<PageAnchor>({ from: 0 })
   const [chosen, setChosen] = useState<string | null>(null)
   const [closed, setClosed] = useState(false)
   const input = useRef<HTMLInputElement>(null)
@@ -333,10 +404,8 @@ export function ListScreen(props: ListScreenProps) {
 
   const fit = useRowsThatFit(frame, 20)
   const paged = band !== 'S'
-  const size = paged ? fit : found.length
-  const pages = Math.max(1, Math.ceil(found.length / Math.max(size, 1)))
-  const shownPage = Math.min(page, pages - 1)
-  const shown = found.slice(shownPage * size, shownPage * size + size)
+  const page = shownOf(found.length, anchor, fit, paged)
+  const shown = found.slice(page.first, page.end)
 
   const beside = (band === 'XL' && preview) || (band === 'XXL' && record)
   // The selection falls back to the first row shown, as the boards draw it,
@@ -381,25 +450,25 @@ export function ListScreen(props: ListScreenProps) {
       countId={countId}
       onChange={(value) => {
         setSearch(value)
-        setPage(0)
+        setAnchor({ from: 0 })
       }}
       filters={filters}
       filterId={filterId}
       onFilter={(id) => {
         setFilterId(id)
-        setPage(0)
+        setAnchor({ from: 0 })
       }}
       facets={facets}
       facetId={facetId}
       onFacet={(id) => {
         setFacetId(id)
-        setPage(0)
+        setAnchor({ from: 0 })
       }}
       choice={choice && choice.options.length > 0 ? choice : undefined}
       choiceId={picked ? choiceId : null}
       onChoice={(id) => {
         setChoiceId(id)
-        setPage(0)
+        setAnchor({ from: 0 })
       }}
       sorts={sorts}
       sortId={sortId}
@@ -442,11 +511,23 @@ export function ListScreen(props: ListScreenProps) {
               grow
               footer={
                 <Pager
-                  first={shownPage * size + 1}
-                  last={Math.min(found.length, shownPage * size + size)}
+                  first={page.first + 1}
+                  last={page.end}
                   total={found.length}
-                  onBack={shownPage > 0 ? () => setPage(shownPage - 1) : undefined}
-                  onNext={shownPage < pages - 1 ? () => setPage(shownPage + 1) : undefined}
+                  onBack={
+                    page.back === null
+                      ? undefined
+                      : () => {
+                          setAnchor(page.back ?? { from: 0 })
+                        }
+                  }
+                  onNext={
+                    page.next === null
+                      ? undefined
+                      : () => {
+                          setAnchor(page.next ?? { from: 0 })
+                        }
+                  }
                 />
               }
             >
