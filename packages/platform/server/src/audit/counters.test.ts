@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { type ProbeFoundation, probeFoundation } from '../authentication/probe-application.js'
 import { Database, type TenantTransaction } from '../database/database.js'
 import { newId } from '../database/identifier.js'
+import { applicationRoleName } from '../database/roles.js'
 import { probeSyncMade } from '../sync/probe-sync.js'
 
 /**
@@ -522,5 +523,36 @@ describe('the numbers of the sync', () => {
     await inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Danach'))
 
     expect(await numbersOf(north.id)).toEqual([1, 2])
+  })
+
+  it("count with no sequence of the tenant's name that the owner of the tables did not make", async () => {
+    // Where the application may create in public, as in a cluster upgraded from
+    // a version that let every role, it could make the sequence of a tenant
+    // before the counter does, give the owner the right on it and move it at
+    // will (security review on opengewerk#974).
+    const client = await admin.connect()
+
+    try {
+      await client.query('begin')
+
+      const { rows } = await client.query<{ owner: string }>(
+        `select relowner::regrole::text as owner from pg_class
+          where oid = 'public.sync_sequences'::regclass`,
+      )
+
+      await client.query(`grant create on schema public to "${applicationRoleName}"`)
+      await client.query(`set local role "${applicationRoleName}"`)
+      await client.query(`create sequence public.${sequenceOf(north.id)} as bigint minvalue 0`)
+      await client.query(
+        `grant all on sequence public.${sequenceOf(north.id)} to ${String(rows[0]?.owner)}`,
+      )
+
+      await expect(client.query('select next_sync_sequence($1)', [north.id])).rejects.toMatchObject(
+        { code: 'P0001' },
+      )
+    } finally {
+      await client.query('rollback')
+      client.release()
+    }
   })
 })

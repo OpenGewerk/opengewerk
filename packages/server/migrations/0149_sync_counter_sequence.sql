@@ -42,6 +42,14 @@ BEGIN
 
 	IF to_regclass(counter) IS NULL THEN
 		EXECUTE format('CREATE SEQUENCE %s AS bigint MINVALUE 0', counter);
+	ELSIF NOT EXISTS (
+		SELECT 1
+		  FROM pg_class c
+		 WHERE c.oid = to_regclass(counter)
+		   AND c.relkind = 'S'
+		   AND c.relowner = (SELECT t.relowner FROM pg_class t WHERE t.oid = 'public.sync_sequences'::regclass)
+	) THEN
+		RAISE EXCEPTION 'Der Zähler des Abgleichs eines Mandanten ist keine Sequenz des Eigentümers der Tabellen: %', counter;
 	END IF;
 
 	PERFORM setval(counter::regclass, committed, true);

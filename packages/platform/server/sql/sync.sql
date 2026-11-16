@@ -127,8 +127,12 @@ $$;--> statement-breakpoint
 --
 -- The sequences stand in public under the name of their tenant
 -- (`sync_counter_t<id>`) and belong to the owner of the tables. The application
--- role has no right on them and may create nothing in public: it can neither
--- make one in advance under the name of a tenant nor move one.
+-- role has no right on them. That it may create nothing in public is the
+-- default since PostgreSQL 15 and not something this block can rely on: a
+-- cluster upgraded from an older version still lets every role. So the counter
+-- takes a relation of that name only if it is a sequence of the owner of the
+-- tables, and refuses otherwise, rather than count with one the application
+-- made in advance and could move (security review on opengewerk#974).
 
 -- Takes the next numbers of a tenant from its sequence and returns the first.
 -- The first call of a transaction locks the row, sets the sequence to the last
@@ -170,6 +174,14 @@ BEGIN
 
 	IF to_regclass(counter) IS NULL THEN
 		EXECUTE format('CREATE SEQUENCE %s AS bigint MINVALUE 0', counter);
+	ELSIF NOT EXISTS (
+		SELECT 1
+		  FROM pg_class c
+		 WHERE c.oid = to_regclass(counter)
+		   AND c.relkind = 'S'
+		   AND c.relowner = (SELECT t.relowner FROM pg_class t WHERE t.oid = 'public.sync_sequences'::regclass)
+	) THEN
+		RAISE EXCEPTION 'Der Zähler des Abgleichs eines Mandanten ist keine Sequenz des Eigentümers der Tabellen: %', counter;
 	END IF;
 
 	PERFORM setval(counter::regclass, committed, true);
