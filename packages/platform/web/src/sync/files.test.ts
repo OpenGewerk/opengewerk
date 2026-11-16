@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto'
 import { createHash } from 'node:crypto'
 
 import { syncRules } from '@opengewerk/platform-domain'
-import type { OperationId } from '@opengewerk/platform-domain'
+import type { OperationId, RecordState } from '@opengewerk/platform-domain'
 import { probePolicies } from '@opengewerk/platform-domain/testing'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -727,6 +727,41 @@ describe('a file made on the device', () => {
     expect(client.isSettling('notes', made.id)).toBe(false)
     expect(client.get('notes', made.id)?.['number']).toBe('N-1')
     expect(client.get('notes', made.id)?.['title']).toBe('Hier angelegt')
+  })
+
+  it('keeps what the server took over a row read before it took it, laid in by another tab afterwards (opengewerk#959)', async () => {
+    const client = await start()
+    const made = await client.create('notes', { title: 'Vorher' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    await client.synchronise()
+
+    // Somebody else changed it, and another tab read the row of then.
+    server.put('notes', { ...server.row('notes', made.id), title: 'Anderswo', version: 2 })
+
+    const read = { ...server.row('notes', made.id) } as RecordState
+    const pull = server.pull.bind(server)
+    let pages = 0
+
+    // The first page brings the row the other tab read, the next one fails.
+    server.pull = async () => {
+      pages += 1
+
+      if (pages > 1) {
+        throw new TypeError('Failed to fetch')
+      }
+
+      return { ...(await pull()), changes: [{ entity: 'notes', rows: [read] }], hasMore: true }
+    }
+    await client.update('notes', made.id, { title: 'X' })
+    await client.synchronise().catch(() => undefined)
+
+    expect(server.row('notes', made.id)?.['version']).toBe(3)
+    expect(client.isSettling('notes', made.id)).toBe(true)
+    expect(client.get('notes', made.id)?.['title']).toBe('X')
   })
 
   it('keeps the order a transmission went in once the server took it (opengewerk#937)', async () => {

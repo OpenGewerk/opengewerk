@@ -26,6 +26,7 @@ import {
   entitiesKey,
   type LocalStore,
   narrowedKey,
+  placeKey,
   settledKey,
   type StoredFile,
   StoreTakenOver,
@@ -235,6 +236,7 @@ const bookkeeping: readonly string[] = [
   checkedKey,
   checkedForKey,
   adoptedKey,
+  placeKey,
 ]
 
 /**
@@ -381,11 +383,13 @@ export class SyncClient {
    */
   private settling: readonly Operation[] = []
   /**
-   * For each settling operation, the version its row had on this device when
-   * the server took it (opengewerk#937): only a row newer than that one can
-   * carry it. Null where the device had no row of the server yet.
+   * For each settling operation, the version its record has with it, as the
+   * receipt of the server says (opengewerk#959): a row of that version or a
+   * later one carries it. Null where the receipt says none, from a server of
+   * an older version; such an operation is carried by no row until a pull
+   * goes through.
    */
-  private settledFrom = new Map<OperationId, number | null>()
+  private settledAt = new Map<OperationId, number | null>()
   /** What is laid over the server's rows: what settles, then what waits. */
   private laid: ReadonlyMap<string, Operation[]> = new Map()
   private readonly listeners = new Set<() => void>()
@@ -746,10 +750,10 @@ export class SyncClient {
     const server = this.records.get(entity)?.get(id)
     const pulled = typeof server?.['version'] === 'number' ? server['version'] : null
 
-    // A pull that brought the row back after the server took the change ends
-    // it, even where a later page of the same pull failed. A row of an earlier
-    // change does not: it came back before this one landed. Where the device
-    // had no row of the server yet (a create), any row it sends back ends it.
+    // A pull that brought the row with the change in it ends it, even where a
+    // later page of the same pull failed. An older row does not, whenever it
+    // came: another tab may have read it before the server took the change
+    // and laid it into the store afterwards (opengewerk#959).
     return this.settling.some(
       (operation) =>
         operation.entity === entity &&
@@ -760,19 +764,15 @@ export class SyncClient {
 
   /**
    * Whether the row of the server on this device holds an operation the
-   * server took already (opengewerk#956): a row that came back after it
-   * landed, or any row for one made here. Laid over it once more, a record
-   * made here would show only what the device sent and none of what the
-   * server put in, and a change the value it had before somebody else's.
+   * server took already (opengewerk#956): a row of at least the version the
+   * receipt named (opengewerk#959). Laid over it once more, a record made here
+   * would show only what the device sent and none of what the server put in,
+   * and a change the value it had before somebody else's.
    */
   private carries(pulled: number | null, operation: Operation): boolean {
-    if (!this.settledFrom.has(operation.id)) {
-      return false
-    }
+    const at = this.settledAt.get(operation.id) ?? null
 
-    const from = this.settledFrom.get(operation.id) ?? null
-
-    return pulled !== null && (from === null || pulled > from)
+    return at !== null && pulled !== null && pulled >= at
   }
 
   /** What is laid over the row of the server: all of `laid` but what it carries. */
@@ -1125,7 +1125,7 @@ export class SyncClient {
       // Everything that settled is in the rows now, as the server holds it.
       if (this.settling.length > 0) {
         this.settling = []
-        this.settledFrom.clear()
+        this.settledAt.clear()
         this.regroup()
       }
       await this.refreshConflicts()
@@ -1236,7 +1236,8 @@ export class SyncClient {
     }
 
     const done = new Set<OperationId>()
-    const applied = new Set<OperationId>()
+    // What was applied, with the version its record has with it (opengewerk#959).
+    const applied = new Map<OperationId, number | null>()
 
     for (const receipt of receipts) {
       // Every outcome empties the slot, a conflict included. The server has
@@ -1246,7 +1247,10 @@ export class SyncClient {
       done.add(receipt.operationId)
 
       if (receipt.outcome === 'applied') {
-        applied.add(receipt.operationId)
+        applied.set(
+          receipt.operationId,
+          typeof receipt.version === 'number' ? receipt.version : null,
+        )
       }
     }
 
@@ -1263,12 +1267,7 @@ export class SyncClient {
     const landed = sent.filter((operation) => applied.has(operation.id))
 
     for (const operation of landed) {
-      const row = this.records.get(operation.entity)?.get(operation.recordId)
-
-      this.settledFrom.set(
-        operation.id,
-        typeof row?.['version'] === 'number' ? row['version'] : null,
-      )
+      this.settledAt.set(operation.id, applied.get(operation.id) ?? null)
     }
 
     this.settling = [...this.settling, ...landed]

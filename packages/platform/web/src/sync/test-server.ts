@@ -86,13 +86,19 @@ export class TestServer implements SyncTransport, DirectWriter {
 
     // As the server does: what it has taken once it does not apply again, and
     // answers with the receipt it gave. It applies a transmission in the order
-    // of the outbox, whatever order it came in.
+    // of the outbox, whatever order it came in. Each receipt names the version
+    // its record has with it, one seen before the version it has now
+    // (opengewerk#959).
     const seen = new Set(this.taken)
+    const versions = new Map<string, number>()
+    const versionOf = (operation: Operation) =>
+      Number(this.row(operation.entity, operation.recordId)?.['version'] ?? 0)
 
     for (const operation of inOutboxOrder(operations)) {
       if (!seen.has(operation.id)) {
         this.apply(operation)
         this.taken.add(operation.id)
+        versions.set(operation.id, versionOf(operation))
       }
     }
 
@@ -102,6 +108,7 @@ export class TestServer implements SyncTransport, DirectWriter {
         outcome: 'applied',
         reason: seen.has(operation.id) ? 'already_seen' : null,
         fields: [],
+        version: versions.get(operation.id) ?? versionOf(operation),
       })),
     )
   }

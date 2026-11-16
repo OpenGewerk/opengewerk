@@ -174,6 +174,11 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   zurück ist (#956). Warum: Bis ein Abruf ganz durchkam, legte das Gerät die Anlage über die Zeile des Servers und
   zeigte nur, was es selbst gesendet hatte; scheiterte ein späterer Teil des Abrufs, fehlten etwa die Nummer und der
   Stand der Zeile, bis der nächste ganz durchkam.
+- Eine Änderung, die der Server angenommen hat, bleibt auf dem Gerät sichtbar, bis eine Zeile zurück ist, die sie
+  enthält (#959). Warum: Das Gerät hielt jede Zeile für eine solche, die neuer war als die beim Senden. Hatte ein
+  anderer Tab eine Zeile von vor der Annahme gelesen und legte sie danach in den Speicher, zeigte das Gerät deren
+  Wert statt der eigenen Eingabe, und nichts deutete auf eine offene Änderung hin. Jetzt nennt der Server in jeder
+  Quittung die Version, die der Datensatz mit der Änderung hat, und das Gerät vergleicht mit ihr.
 - Zieht eine Anlage oder ein Gerät auf das Objekt eines Auftrags um, kommen ihre Dateien, Protokolle und was sonst an
   ihr hängt jetzt auch auf ein Gerät, das schon abgeglichen hat (#938). Warum: Der Bereich eines Geräts änderte seinen
   Wert nur mit den Aufträgen, und was an der Anlage hing, lag mit seinen Änderungen hinter dem Stand des Geräts. Jetzt

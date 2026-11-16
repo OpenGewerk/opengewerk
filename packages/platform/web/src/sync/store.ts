@@ -288,7 +288,7 @@ const ownerKey = 'records-owner'
  * The next place of the outbox (opengewerk#955). Of nobody, so that letting a
  * person go keeps it, and cleared only with the outbox.
  */
-const placeKey = 'outbox-place'
+export const placeKey = 'outbox-place'
 
 /** Where the sync client is in the changes of the server. */
 export const cursorKey = 'cursor'

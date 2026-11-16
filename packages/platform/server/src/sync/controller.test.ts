@@ -381,6 +381,66 @@ describe('sending an outbox', () => {
     expect(note?.text).toBe('B')
   })
 
+  it('names in each receipt the version its record has with the operation, and for one seen before the version it has now (opengewerk#959)', async () => {
+    const noteId = newId<'note'>()
+    const receipts = async (operations: readonly Sent[]) =>
+      (
+        (await push(olga(), operations).expect(201)).body as {
+          receipts: { reason: string | null; version?: number }[]
+        }
+      ).receipts.map((receipt) => [receipt.reason, receipt.version])
+    const made = operation({
+      entity: 'notes',
+      recordId: noteId,
+      patches: [{ field: 'text', to: 'Vorher' }],
+    })
+    const changed = operation({
+      entity: 'notes',
+      recordId: noteId,
+      kind: 'update',
+      patches: [{ field: 'text', from: 'Vorher', to: 'A' }],
+    })
+
+    expect(await receipts([made, changed])).toEqual([
+      [null, 1],
+      [null, 2],
+    ])
+
+    // Changed again since, and the answer to the first transmission was lost.
+    await receipts([
+      operation({
+        entity: 'notes',
+        recordId: noteId,
+        kind: 'update',
+        patches: [{ field: 'text', from: 'A', to: 'B' }],
+      }),
+    ])
+
+    expect(await receipts([made, changed])).toEqual([
+      ['already_seen', 3],
+      ['already_seen', 3],
+    ])
+
+    // Sent again naming another record, it is still the record it was applied to.
+    const other = operation({ entity: 'notes', patches: [{ field: 'text', to: 'Andere' }] })
+
+    expect(await receipts([other])).toEqual([[null, 1]])
+    expect(await receipts([{ ...changed, recordId: other.recordId }])).toEqual([
+      ['already_seen', 3],
+    ])
+    // A conflict changed nothing and names no version.
+    expect(
+      await receipts([
+        operation({
+          entity: 'notes',
+          recordId: noteId,
+          kind: 'update',
+          patches: [{ field: 'text', from: 'Vorher', to: 'C' }],
+        }),
+      ]),
+    ).toEqual([['changed_elsewhere', undefined]])
+  })
+
   it('refuses a place in the outbox that is not a whole number from zero (opengewerk#955)', async () => {
     for (const place of [-1, 1.5, '3']) {
       const answer = await push(olga(), [

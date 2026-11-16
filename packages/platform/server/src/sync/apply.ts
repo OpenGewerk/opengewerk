@@ -384,6 +384,29 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
     }
   }
 
+  /**
+   * The version a record has now, for the receipt of an operation applied to
+   * it (opengewerk#959); none for a table or row this server does not hold.
+   */
+  async function versionNow(
+    tx: TenantTransaction,
+    entity: string,
+    recordId: string,
+  ): Promise<number | undefined> {
+    const table = tableFor(entity)
+    const columns = table ? (getTableColumns(table) as Record<string, PgColumn>) : {}
+    const id = columns['id']
+    const version = columns['version']
+
+    if (!table || !id || !version) {
+      return undefined
+    }
+
+    const [row] = await tx.select({ version }).from(table).where(eq(id, recordId))
+
+    return typeof row?.version === 'number' ? row.version : undefined
+  }
+
   async function applyOne(
     tx: TenantTransaction,
     tenantId: TenantId,
@@ -407,7 +430,11 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
     )
 
     const seen = await tx
-      .select({ outcome: syncOperations.outcome })
+      .select({
+        outcome: syncOperations.outcome,
+        entity: syncOperations.entity,
+        recordId: syncOperations.recordId,
+      })
       .from(syncOperations)
       .where(eq(syncOperations.id, sent.id))
 
@@ -416,12 +443,20 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
     if (already) {
       // The receipt is the whole answer to "the same transmission twice". A
       // device that lost the connection after the server committed sends its
-      // queue again, and that is the ordinary case, not the exception.
+      // queue again, and that is the ordinary case, not the exception. For one
+      // applied, the version its record has now, which holds it
+      // (opengewerk#959), of the record it was applied to then.
+      const version =
+        already.outcome === 'applied'
+          ? await versionNow(tx, already.entity, already.recordId)
+          : undefined
+
       return {
         operationId: sent.id,
         outcome: already.outcome,
         reason: 'already_seen',
         fields: [],
+        ...(version === undefined ? {} : { version }),
       }
     }
 
@@ -537,7 +572,15 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
       await application.afterWrite({ ...context, values: complete })
     }
 
-    return await record(tx, tenantId, operation, { outcome: 'applied', reason: null, fields: [] })
+    return await record(tx, tenantId, operation, {
+      outcome: 'applied',
+      reason: null,
+      fields: [],
+      // As the triggers and `afterWrite` left the row (opengewerk#959). The
+      // lock of its write holds until the end of the transaction, so nothing
+      // else has changed it since.
+      version: await versionNow(tx, operation.entity, operation.recordId),
+    })
   }
 
   return {
@@ -639,6 +682,8 @@ async function record(
     reason: string | null
     fields: readonly string[]
     current?: RecordState | null
+    /** The version the record has with an applied operation in it (opengewerk#959). */
+    version?: number | undefined
   },
 ): Promise<OperationReceipt> {
   if (result.outcome === 'conflict') {
@@ -690,6 +735,7 @@ async function record(
     outcome: result.outcome,
     reason: result.reason,
     fields: result.fields,
+    ...(result.version === undefined ? {} : { version: result.version }),
   }
 }
 

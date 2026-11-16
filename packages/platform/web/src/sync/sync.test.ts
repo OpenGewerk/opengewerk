@@ -2880,6 +2880,9 @@ describe('what a device keeps for itself', () => {
       'narrowed-settled',
       'cursor-checked',
       'cursor-checked-for',
+      'narrowed-adopted',
+      // The next place of the outbox (opengewerk#955).
+      'outbox-place',
     ]) {
       await expect(keeping(`kept-${name}`, [name]), name).rejects.toThrow(
         /keeps its own bookkeeping under this name/,
