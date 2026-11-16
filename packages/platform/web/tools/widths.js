@@ -511,7 +511,7 @@ function stands() {
  * all the same, once the time is up.
  *
  * @param {object} page
- * @param {string} name
+ * @param {string | RegExp} name A name, or a pattern of names (#448).
  * @param {number} [within] How long it may take, in milliseconds.
  * @returns {Promise<boolean>}
  */
