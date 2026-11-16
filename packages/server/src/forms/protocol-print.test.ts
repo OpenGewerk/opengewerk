@@ -235,8 +235,8 @@ describe('the test of an appliance on paper (#303)', () => {
     expect(printed(heater, {}, third)).toContain(
       '<strong>Schutzleiterstrom IPE:</strong> höchstens 5,00 mA; DGUV Information 203-070',
     )
-    expect(printed(heater, {}, third)).toContain(
-      '<strong>Isolationswiderstand Riso:</strong> Bei 5 kW Heizleistung urteilt der Schutzleiterstrom',
+    expect(printed(heater, { insulation: 100 }, third)).toContain(
+      '0,10 MΩ <span class="outside">außerhalb des Grenzwerts</span>',
     )
     expect(printed({ ...heater, heatingPowerWatts: 2_000 }, {}, third)).toContain(
       '<strong>Isolationswiderstand Riso:</strong> mindestens 0,30 MΩ; DGUV Information 203-070',

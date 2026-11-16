@@ -441,14 +441,11 @@ describe('the package Elektro und PV', () => {
     })
     expect(judged(third, 'insulation', 300, heating(3_500))?.within).toBe(true)
     expect(judged(third, 'insulation', 999, {})).toMatchObject({ within: false, limitMilli: 1000 })
-    // Beyond 3,5 kW the current decides, and the insulation names no limit.
-    expect(judged(third, 'insulation', 100, heating(3_501))).toMatchObject({
-      within: null,
-      limitMilli: null,
+    // Beyond 3,5 kW as well: a low value is seen, and the tester decides in the result.
+    expect(judged(third, 'insulation', 100, heating(5_000))).toMatchObject({
+      within: false,
+      limitMilli: 300,
     })
-    expect(judged(third, 'insulation', 100, heating(5_000))?.text).toContain(
-      'urteilt der Schutzleiterstrom',
-    )
     // Heating elements count only for class I; class II keeps its 2 MΩ.
     expect(
       judged(third, 'insulation', 1999, { protectionClass: 'II', heatingPowerWatts: 2_000 }),

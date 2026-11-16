@@ -1,9 +1,4 @@
-import {
-  type IsoDate,
-  type LimitCalculator,
-  milliText,
-  type RuleSet,
-} from '@opengewerk/platform-domain'
+import { type IsoDate, type LimitCalculator, type RuleSet } from '@opengewerk/platform-domain'
 
 import { type ApplianceFacts, isApplianceFacts } from '../model/appliance.js'
 
@@ -48,7 +43,7 @@ function heatingCurrent(
   rules: RuleSet,
   on: IsoDate,
   watts: number,
-): { readonly limitMilli: number; readonly beyondBase: boolean; readonly source: string } | null {
+): { readonly limitMilli: number; readonly source: string } | null {
   const base = rules.at('elektro.appliance.protective_conductor_current', on)
   const perKilowatt = rules.at('elektro.appliance.protective_conductor_current_per_kilowatt', on)
   const maximum = rules.at('elektro.appliance.protective_conductor_current_heating_maximum', on)
@@ -61,21 +56,19 @@ function heatingCurrent(
   const byPower = Math.round((perKilowatt.value * watts) / 1000)
 
   return byPower > base.value
-    ? {
-        limitMilli: Math.min(byPower, maximum.value),
-        beyondBase: true,
-        source: perKilowatt.source,
-      }
-    : { limitMilli: base.value, beyondBase: false, source: base.source }
+    ? { limitMilli: Math.min(byPower, maximum.value), source: perKilowatt.source }
+    : { limitMilli: base.value, source: base.source }
 }
 
 /**
  * The least insulation resistance, by the protection class of the appliance.
  * A rule in kiloohms is a thousandth of a megaohm, the unit of the field, so
  * the value is the limit in thousandths as it stands. An appliance of class I
- * with heating elements is held to their value; above the power at which its
- * protective conductor current may grow, 3.5 kW, it is sound below that as
- * well where that current is kept, and the protocol names no limit here.
+ * with heating elements is held to their value, at every power. Above 3.5 kW
+ * the source counts one below it as sound where its protective conductor
+ * current is kept; the protocol holds it to the value all the same, so that a
+ * low value is seen where the current was not measured, and the tester says
+ * in the result whether the appliance is sound.
  */
 export const applianceInsulation: LimitCalculator = (_field, { rules, on, item }) => {
   const appliance = applianceOf(item)
@@ -88,16 +81,9 @@ export const applianceInsulation: LimitCalculator = (_field, { rules, on, item }
 
   if (watts !== null) {
     const heating = rules.at('elektro.appliance.insulation_class_one_heating', on)
-    const current = heatingCurrent(rules, on, watts)
 
-    if (!heating || !current) {
+    if (!heating) {
       return { none: 'Für diesen Tag ist kein Grenzwert für Geräte mit Heizelementen hinterlegt.' }
-    }
-
-    if (current.beyondBase) {
-      return {
-        none: `Bei ${milliText(watts)} kW Heizleistung urteilt der Schutzleiterstrom; ein Isolationswiderstand unter ${milliText(heating.value)} MΩ ist dann kein Mangel, wenn er eingehalten ist.`,
-      }
     }
 
     return { limitMilli: heating.value, atLeast: true, source: heating.source }

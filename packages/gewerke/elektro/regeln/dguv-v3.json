@@ -126,7 +126,7 @@
       "unit": "kiloohms",
       "value": 300,
       "source": "DGUV Information 203-070:2026-04, Tabelle 1, nach DIN EN 50699 (VDE 0702):2021-06",
-      "note": "Schutzklasse I, Geräte mit Heizelementen. Über 3,5 kW Heizleistung ist ein Gerät auch darunter einwandfrei, wenn der Schutzleiterstrom eingehalten ist; das Protokoll nennt dann keinen Grenzwert des Isolationswiderstands und urteilt nach dem Schutzleiterstrom."
+      "note": "Schutzklasse I, Geräte mit Heizelementen. Über 3,5 kW Heizleistung ist ein Gerät nach der Quelle auch darunter einwandfrei, wenn der Schutzleiterstrom eingehalten ist; das Protokoll misst es trotzdem gegen diesen Wert, und ob es einwandfrei ist, sagt der Prüfer im Ergebnis."
     },
     {
       "key": "elektro.appliance.protective_conductor_current_per_kilowatt",
