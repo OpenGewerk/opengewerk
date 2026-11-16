@@ -236,8 +236,11 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Nummer einer Transaktion setzt sie auf die letzte festgeschriebene, und `close_sync_counter` schreibt die letzte
   einmal vor dem Commit in die Zeile (Spalte `sync_sequences.opened_in`, Migration 0149). Auf der Testdatenbank
   15 bis 17 µs je Nummer über 1,5 Millionen, vorher 74 bis 92 µs und steigend. Warum: Importe, Migrationen und
-  Löschungen nach dem Löschkonzept vergeben viele Nummern in einer Transaktion. Die Nummern bleiben lückenlos und in
-  der Reihenfolge der Commits; die Haustechnik braucht beim Anheben des Submoduls eine Migration wie 0149.
+  Löschungen nach dem Löschkonzept vergeben viele Nummern in einer Transaktion. Die Nummern kommen weiter in der
+  Reihenfolge der Commits, und eine Transaktion, die zurückrollt, hinterlässt keine Lücke. Eine Lücke entsteht neu
+  nur innerhalb einer Transaktion: Nummern unter einem Savepoint, der zurückgerollt wird, vergibt sie nicht noch
+  einmal; ein Abruf liest bis zur letzten festgeschriebenen Nummer und braucht keine lückenlose Folge. Die
+  Haustechnik braucht beim Anheben des Submoduls eine Migration wie 0149.
 - Ein Test des Tors, der unter der Last der CI manchmal rot wurde, wartet auf den Namen des nächsten Kontos (#962).
   Warum: Er fragte im selben Takt, in dem die Bildschirme des alten Kontos gingen, und die Seite nennt das neue
   einen Takt später; die Reihenfolge, um die es geht, hält eine eigene Zusicherung.
