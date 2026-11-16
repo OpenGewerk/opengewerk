@@ -158,6 +158,9 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Geändert
 
+- Ein langer Tag bricht in seiner Pille um, statt mit „…“ gekürzt zu werden (#449). Warum: Den ganzen Namen trug die
+  Pille nur im `title`, und der erscheint nur mit einer Maus; am Telefon ließ sich ein gekürzter Tag nirgends ganz
+  lesen. Ein Name hat höchstens 40 Zeichen und passt so auch in einer schmalen Spalte in drei Zeilen.
 - Transaktionen eines Betriebs und der Instanz laufen ausdrücklich mit `READ COMMITTED`, nicht mit der Voreinstellung des Datenbankservers. Warum: Mehrere Prüfungen nehmen erst eine Sperre und lesen danach, was sie prüfen (Abwesenheiten einer Person, Aufdecken eines Zugangscodes, Zähler der Zugangsdaten); unter einer strengeren Voreinstellung hätten sie einen Stand von vor dem Warten gelesen.
 - Die Tests des Servers, die einen Wettlauf erzwingen, halten ihre Abfrage über eine gemeinsame Hilfsfunktion an, die den Datenbank-Client bei Testende in jedem Fall wiederherstellt. Warum: Fünf Tests hielten sie mit je einer eigenen Kopie derselben Konstruktion an, und wurde die Abfrage nie erreicht, blieb der überschriebene Client nach dem Timeout für die übrigen Tests der Datei stehen.
 - Die Ansprechpartner eines Lieferanten hängen am Recht „Lieferanten ansehen“ statt an „Kunden ansehen“: Die Liste aller Kontakte zeigt sie nur noch mit diesem Recht, die neue Route `GET /suppliers/:id/contacts` gibt sie mit ihm allein heraus, und der Abgleich folgt beiden. Ein Ansprechpartner wechselt nicht mehr zwischen einem Lieferanten und einem Kunden oder Objekt, weil ein Gerät mit nur einem der beiden Rechte von dem Wechsel nichts erführe. Warum: Bis jetzt sah eine Rolle mit „Kunden ansehen“ die Ansprechpartner von Lieferanten, die sie selbst nicht sehen darf, und eine Rolle, die nur die Lieferanten pflegt, sah deren Ansprechpartner nicht (opengewerk#883). Für die mitgelieferten Rollen ändert sich nichts.
