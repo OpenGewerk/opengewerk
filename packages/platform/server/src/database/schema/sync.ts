@@ -17,7 +17,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 
-import { primaryId, timestamps } from './columns.js'
+import { primaryId, timestamps, transactionId } from './columns.js'
 import { tenantIsolation, writtenByTriggerOnly } from './rls.js'
 import { tenantColumn } from './tenants.js'
 
@@ -41,6 +41,11 @@ export const syncSequences = pgTable(
   {
     ...tenantColumn,
     nextValue: bigint('next_value', { mode: 'number' }).notNull().default(1),
+    // The transaction that has the counter open (opengewerk#965). It takes its
+    // numbers from the sequence of the tenant and writes the last of them
+    // here once, before it commits (`close_sync_counter`); between
+    // transactions it is empty.
+    openedIn: transactionId('opened_in'),
     ...timestamps,
   },
   (table) => [

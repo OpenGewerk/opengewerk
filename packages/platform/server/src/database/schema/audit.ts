@@ -3,7 +3,6 @@ import { sql } from 'drizzle-orm'
 import {
   bigint,
   check,
-  customType,
   index,
   pgEnum,
   pgTable,
@@ -15,14 +14,9 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 
-import { primaryId, timestamps } from './columns.js'
+import { primaryId, timestamps, transactionId } from './columns.js'
 import { redactedByWhoeverLeads, writtenByTriggerOnly } from './rls.js'
 import { tenantColumn } from './tenants.js'
-
-/** A transaction id with its epoch, as `pg_current_xact_id()` gives it. */
-const transactionId = customType<{ data: string; driverData: string }>({
-  dataType: () => 'xid8',
-})
 
 export const auditOperation = pgEnum('audit_operation', auditOperations)
 

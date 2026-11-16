@@ -242,6 +242,8 @@ export const foundationDefinerFunctions: Readonly<Record<string, string>> = {
     'the trigger finds the entry a redaction is about through the policy that keeps the log to its writer',
   'close_audit_chain()':
     'the trigger writes the head of the chain at the commit of whoever changed something, who may not write the chain (opengewerk#953)',
+  'close_sync_counter()':
+    'the trigger writes the last number of the sync at the commit of whoever changed something, who may not write the counter (opengewerk#965)',
   'create_first_tenant(company text)':
     'the one tenant a first run creates; the application has no insert on tenants',
   'create_tenant(company text)':

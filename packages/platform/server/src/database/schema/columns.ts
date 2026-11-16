@@ -1,6 +1,6 @@
 import type { Id } from '@opengewerk/platform-domain'
 import { sql } from 'drizzle-orm'
-import { bigint, integer, text, timestamp, uuid } from 'drizzle-orm/pg-core'
+import { bigint, customType, integer, text, timestamp, uuid } from 'drizzle-orm/pg-core'
 
 // Building blocks only. Nothing here may import a table: the tenant column
 // needs `tenants`, and `tenants` needs these blocks, which would close a
@@ -26,6 +26,11 @@ export function primaryId<Entity extends string>() {
 export function reference<Entity extends string>(name: string) {
   return uuid(name).$type<Id<Entity>>()
 }
+
+/** A transaction id with its epoch, as `pg_current_xact_id()` gives it. */
+export const transactionId = customType<{ data: string; driverData: string }>({
+  dataType: () => 'xid8',
+})
 
 /** When the row was written and when it last changed. */
 export const timestamps = {

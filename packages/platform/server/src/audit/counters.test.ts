@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { type ProbeFoundation, probeFoundation } from '../authentication/probe-application.js'
 import { Database, type TenantTransaction } from '../database/database.js'
 import { newId } from '../database/identifier.js'
+import { applicationRoleName } from '../database/roles.js'
 import { probeSyncMade } from '../sync/probe-sync.js'
 
 /**
@@ -334,4 +335,298 @@ describe('many logged changes in one transaction', () => {
     expect(Number(last) / Number(second)).toBeLessThan(2)
     expect(Number((await counterOf(north.id))?.next_value)).toBe(before + 20_000)
   }, 180_000)
+})
+
+/**
+ * The numbers of the sync come from a sequence of the tenant (opengewerk#965).
+ * The row of the counter is opened by the first number of a transaction and
+ * written once, before the commit; the sequence is set to the last number
+ * committed at every opening, and is the owner's alone.
+ */
+describe('the numbers of the sync', () => {
+  const sequenceOf = (tenantId: TenantId) => `sync_counter_t${tenantId.replaceAll('-', '')}`
+
+  async function numbersOf(tenantId: TenantId, label?: string) {
+    const { rows } = await admin.query<{ change_sequence: string }>(
+      `select change_sequence from shelves
+        where tenant_id = $1 and ($2::text is null or label like $2 || '%')
+        order by change_sequence`,
+      [tenantId, label ?? null],
+    )
+
+    return rows.map((row) => Number(row.change_sequence))
+  }
+
+  async function openedOf(tenantId: TenantId) {
+    const { rows } = await admin.query<{ next_value: string; opened_in: string | null }>(
+      'select next_value, opened_in from sync_sequences where tenant_id = $1',
+      [tenantId],
+    )
+
+    return rows[0]
+  }
+
+  it('move the row of the counter once for all the numbers of a transaction', async () => {
+    const moved = await inTenant(north.id, async (tx) => {
+      await shelves(tx, north.id, 300)
+
+      const { rows } = await tx.execute<{ moved: string }>(sql`
+        select n_tup_upd as moved
+          from pg_stat_xact_user_tables where relname = 'sync_sequences'`)
+
+      return Number(rows[0]?.moved)
+    })
+
+    // The opening; the closing comes at the commit.
+    expect(moved).toBe(1)
+    expect(await numbersOf(north.id)).toEqual(Array.from({ length: 300 }, (_, i) => i + 1))
+    expect(await openedOf(north.id)).toEqual({ next_value: '300', opened_in: null })
+  })
+
+  it('go on from the last number committed, whatever a transaction that rolled back took', async () => {
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 3, 'Vorher'))
+
+    await expect(
+      inTenant(north.id, async (tx) => {
+        await shelves(tx, north.id, 2, 'Zurück')
+        throw new Error('rolled back')
+      }),
+    ).rejects.toThrow('rolled back')
+
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Danach'))
+
+    expect(await numbersOf(north.id)).toEqual([1, 2, 3, 4])
+    expect(await openedOf(north.id)).toEqual({ next_value: '4', opened_in: null })
+  })
+
+  it('hand out no number twice when the sequence of the tenant is behind or gone', async () => {
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 3, 'Vorher'))
+
+    // Behind, as after a restore that took the rows from a later state.
+    await admin.query('select setval($1::regclass, 1)', [sequenceOf(north.id)])
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Hinterher'))
+
+    // Gone altogether.
+    await admin.query(`drop sequence ${sequenceOf(north.id)}`)
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Neu'))
+
+    expect(await numbersOf(north.id)).toEqual([1, 2, 3, 4, 5])
+    expect(await openedOf(north.id)).toEqual({ next_value: '5', opened_in: null })
+  })
+
+  it('open the counter again after its number was written early', async () => {
+    await inTenant(north.id, async (tx) => {
+      await shelves(tx, north.id, 3)
+      await tx.execute(sql`set constraints all immediate`)
+      await shelves(tx, north.id, 3, 'Danach')
+    })
+
+    expect(await numbersOf(north.id)).toEqual([1, 2, 3, 4, 5, 6])
+    expect(await openedOf(north.id)).toEqual({ next_value: '6', opened_in: null })
+  })
+
+  it('take back an opening with its savepoint, and nothing of a number before it', async () => {
+    await inTenant(north.id, async (tx) => {
+      // The opening itself under a savepoint that is rolled back.
+      await tx.execute(sql`savepoint first`)
+      await shelves(tx, north.id, 2, 'Zurück')
+      await tx.execute(sql`rollback to savepoint first`)
+      await shelves(tx, north.id, 2, 'Erste')
+
+      // Numbers under a savepoint after the opening.
+      await tx.execute(sql`savepoint later`)
+      await shelves(tx, north.id, 2, 'Zurück')
+      await tx.execute(sql`rollback to savepoint later`)
+      await shelves(tx, north.id, 1, 'Zweite')
+    })
+
+    expect(await numbersOf(north.id, 'Erste')).toEqual([1, 2])
+
+    const [last] = await numbersOf(north.id, 'Zweite')
+
+    // Above the numbers under the second savepoint, which are not used again.
+    expect(last).toBe(5)
+    expect(await openedOf(north.id)).toEqual({ next_value: '5', opened_in: null })
+  })
+
+  it.each([
+    ['a number', (tx: TenantTransaction) => shelves(tx, north.id, 1, 'Erste')],
+    // The lock alone, as whoever names a file takes it (opengewerk#911): the
+    // row is locked and not changed, and nothing but the lock holds the
+    // second back.
+    [
+      'the lock alone',
+      (tx: TenantTransaction) => tx.execute(sql`select file_naming_lock(${north.id}::uuid)`),
+    ],
+  ])(
+    'number two transactions of a tenant in the order they commit, the first holding %s',
+    async (_start, start) => {
+      let release = () => {}
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let opened = () => {}
+      const isOpen = new Promise<void>((resolve) => {
+        opened = resolve
+      })
+
+      // A counter that is there and committed, so that it is the lock on its
+      // row that holds the second back, and not the row the first is making.
+      await inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Vorher'))
+
+      const first = inTenant(north.id, async (tx) => {
+        await start(tx)
+        opened()
+        await held
+        await shelves(tx, north.id, 2, 'Erste')
+      })
+
+      // Or the first failed before it held anything, and says why.
+      await Promise.race([isOpen, first])
+
+      const second = inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Zweite'))
+
+      try {
+        // The second waits for the counter the first has open.
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        expect(await numbersOf(north.id)).toEqual([1])
+      } finally {
+        // Let the first go in any case, so that a failing check leaves no
+        // transaction holding the counter behind it.
+        release()
+        await Promise.allSettled([first, second])
+      }
+      await Promise.all([first, second])
+
+      const firsts = await numbersOf(north.id, 'Erste')
+
+      // Every number of the first below the one of the second, none twice.
+      expect(firsts).toEqual(Array.from({ length: firsts.length }, (_, i) => i + 2))
+      expect(await numbersOf(north.id, 'Zweite')).toEqual([firsts.length + 2])
+    },
+  )
+
+  it('leave the sequence of a tenant and its opening to the owner of the tables', async () => {
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 1))
+
+    for (const statement of [
+      sql`select nextval(${sequenceOf(north.id)}::regclass)`,
+      sql`select setval(${sequenceOf(north.id)}::regclass, 1)`,
+      sql`select take_sync_numbers(${north.id}::uuid, 1)`,
+      sql`create sequence public.sync_counter_t00000000000000000000000000000000`,
+    ]) {
+      await expect(inTenant(north.id, (tx) => tx.execute(statement))).rejects.toMatchObject({
+        cause: { code: '42501' },
+      })
+    }
+
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Danach'))
+
+    expect(await numbersOf(north.id)).toEqual([1, 2])
+  })
+
+  it("count with no sequence of the tenant's name that the owner of the tables did not make", async () => {
+    // Where the application may create in public, as in a cluster upgraded from
+    // a version that let every role, it could make the sequence of a tenant
+    // before the counter does, give the owner the right on it and move it at
+    // will (security review on opengewerk#974).
+    const client = await admin.connect()
+
+    try {
+      await client.query('begin')
+
+      const { rows } = await client.query<{ owner: string }>(
+        `select relowner::regrole::text as owner from pg_class
+          where oid = 'public.sync_sequences'::regclass`,
+      )
+
+      await client.query(`grant create on schema public to "${applicationRoleName}"`)
+      await client.query(`set local role "${applicationRoleName}"`)
+      await client.query(`create sequence public.${sequenceOf(north.id)} as bigint minvalue 0`)
+      await client.query(
+        `grant all on sequence public.${sequenceOf(north.id)} to ${String(rows[0]?.owner)}`,
+      )
+
+      await expect(client.query('select next_sync_sequence($1)', [north.id])).rejects.toMatchObject(
+        { code: 'P0001' },
+      )
+    } finally {
+      await client.query('rollback')
+      client.release()
+    }
+  })
+
+  it('run nothing the application made in public as the owner, and take no table of its own for the catalogue', async () => {
+    // Where the application may create in public: an overload that is a closer
+    // match than the counter's own, an overload of format, an operator for
+    // the comparison of a sequence with its owner, and a temporary pg_class
+    // that lets its own sequence pass as the owner's (security reviews on
+    // opengewerk#974). A number is committed first, so that the sequence is
+    // there and its owner is asked.
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Vorher'))
+
+    const client = await admin.connect()
+    const ranAs = async () =>
+      (
+        await client.query<{ who: string | null }>(
+          `select current_setting('probe.ran_as', true) as who`,
+        )
+      ).rows[0]?.who ?? null
+
+    try {
+      await client.query('begin')
+
+      const { rows } = await client.query<{ owner: string; owner_oid: string }>(
+        `select relowner::regrole::text as owner, relowner::text as owner_oid from pg_class
+          where oid = 'public.sync_sequences'::regclass`,
+      )
+      const owner = String(rows[0]?.owner)
+
+      await client.query(`grant create on schema public to "${applicationRoleName}"`)
+      await client.query(`set local role "${applicationRoleName}"`)
+      await client.query(`
+        create function public.take_sync_numbers(tenant uuid, amount integer) returns bigint
+          language sql as $$ select length(set_config('probe.ran_as', current_user, true))::bigint * 0 + 777 $$`)
+      await client.query(`
+        create function public.format(a text, b text, c text) returns text
+          language sql as $$ select pg_catalog.format(a, b, c) || substr(set_config('probe.ran_as', current_user, true), 1, 0) $$`)
+      await client.query(`
+        create function public.equal_probe(a oid, b regclass) returns boolean
+          language plpgsql as $$ begin perform set_config('probe.ran_as', current_user, true); return a = b::oid; end $$`)
+      await client.query(
+        'create operator public.= (leftarg = oid, rightarg = regclass, function = public.equal_probe)',
+      )
+
+      const { rows: numbers } = await client.query<{ number: string }>(
+        'select next_sync_sequence($1) as number',
+        [north.id],
+      )
+
+      expect(numbers[0]?.number).toBe('2')
+      expect(await ranAs()).toBeFalsy()
+
+      // South has no sequence yet, so that the application can make one first.
+      await client.query('rollback')
+      await client.query('begin')
+      await client.query(`grant create on schema public to "${applicationRoleName}"`)
+      await client.query(`set local role "${applicationRoleName}"`)
+      await client.query(`create sequence public.${sequenceOf(south.id)} as bigint minvalue 0`)
+      await client.query(`grant all on sequence public.${sequenceOf(south.id)} to ${owner}`)
+      await client.query('create temporary table pg_class (oid oid, relkind "char", relowner oid)')
+      await client.query(
+        `insert into pg_temp.pg_class values
+           (to_regclass($1)::oid, 'S', $2::oid),
+           ('public.sync_sequences'::regclass::oid, 'r', $2::oid)`,
+        [`public.${sequenceOf(south.id)}`, rows[0]?.owner_oid],
+      )
+      await client.query(`grant select on pg_temp.pg_class to ${owner}`)
+
+      await expect(client.query('select next_sync_sequence($1)', [south.id])).rejects.toMatchObject(
+        { code: 'P0001' },
+      )
+    } finally {
+      await client.query('rollback')
+      client.release()
+    }
+  })
 })
