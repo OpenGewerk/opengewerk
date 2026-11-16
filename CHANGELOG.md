@@ -161,7 +161,8 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 - Ein langer Tag bricht in seiner Pille um, statt mit „…“ gekürzt zu werden (#449). Warum: Den ganzen Namen trug die
   Pille nur im `title`, und der erscheint nur mit einer Maus; am Telefon ließ sich ein gekürzter Tag nirgends ganz
   lesen. Ein Name hat höchstens 40 Zeichen und passt so auch in einer schmalen Spalte in drei Zeilen.
-- Eine Liste im Büro blättert vom ersten Eintrag der Seite weiter statt nach der Nummer der Seite. Warum: Die Größe
+- Eine Liste im Büro hält eine Seite an einem Eintrag fest statt an ihrer Nummer: vorwärts an dem, mit dem sie
+  beginnt, zurück an dem, vor dem sie endet. Warum: Die Größe
   einer Seite misst die Liste an der Höhe einer Zeile, und ein Tag in zwei Zeilen macht eine Zeile höher. Änderte
   sich die Größe zwischen zwei Seiten, begann die nächste weiter hinten, als die letzte endete, und die Einträge
   dazwischen erschienen nie (CodeRabbit an #969). Als Karten ohne Seiten zeigt eine Liste immer alle Einträge ab dem

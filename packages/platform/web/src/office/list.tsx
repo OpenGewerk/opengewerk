@@ -238,48 +238,59 @@ function useRowsThatFit(element: HTMLElement | null, fallback: number): number {
 }
 
 /**
- * The rows of one page, from the first row it shows: where it ends, and where
- * the pages before and after it start, or null where there is none.
+ * Where a page is held: from its first row, as paging forward leaves it, or
+ * up to the first row of the page it came back from, as paging back leaves it.
+ */
+export type PageAnchor = { readonly from: number } | { readonly to: number }
+
+/**
+ * The rows of one page from where it is held: where it begins and ends, and
+ * where the pages before and after it are held, or null where there is none.
  *
- * Kept as the first row and not as a number of the page. The size of a page
- * is measured from the height of a row and changes when a taller row comes
- * to the top, a tag in two lines, say; counted as page times size, the next
- * page then began further on than the last one ended and the rows between
- * were never shown (CodeRabbit on opengewerk#969). From its first row the
- * next page starts where the shown one ends, whatever the size is now. A
- * first row the rows no longer reach, after a filter took some away, falls
- * back onto the last rows.
+ * Held at a row and not as a number of the page. The size of a page is
+ * measured from the height of a row and changes when a taller row comes to the
+ * top, a tag in two lines, say; counted as page times size, the next page then
+ * began further on than the last one ended and the rows between were never
+ * shown (CodeRabbit on opengewerk#969). Forward a page is held from the row
+ * where the shown one ends, back up to the row where it begins, so that the
+ * pages meet in both directions whatever the size is now. A row the rows no
+ * longer reach, after a filter took some away, falls back onto the last ones.
  */
 export function pageFrom(
   total: number,
-  start: number,
+  anchor: PageAnchor,
   size: number,
 ): {
   readonly first: number
   readonly end: number
-  readonly back: number | null
-  readonly next: number | null
+  readonly back: PageAnchor | null
+  readonly next: PageAnchor | null
 } {
   const step = Math.max(size, 1)
-  const first = start < total ? Math.max(start, 0) : Math.max(0, total - step)
+  const first =
+    'to' in anchor
+      ? Math.max(0, Math.min(anchor.to, total) - step)
+      : anchor.from < total
+        ? Math.max(anchor.from, 0)
+        : Math.max(0, total - step)
   const end = Math.min(total, first + step)
 
   return {
     first,
     end,
-    back: first > 0 ? Math.max(0, first - step) : null,
-    next: end < total ? end : null,
+    back: first > 0 ? { to: first } : null,
+    next: end < total ? { from: end } : null,
   }
 }
 
 /**
- * The rows a list shows: a page of them where it pages, from the first row
- * kept, and all of them where it does not. A list drawn as cards has no pages
- * and no way back to rows before a first row kept from a page further on, so
- * it starts at the first whatever was kept (CodeRabbit on opengewerk#969).
+ * The rows a list shows: a page of them where it pages, held where paging
+ * left it, and all of them where it does not. A list drawn as cards has no
+ * pages and no way back to rows before a page further on, so it starts at the
+ * first wherever paging held it (CodeRabbit on opengewerk#969).
  */
-export function shownOf(total: number, start: number, size: number, paged: boolean) {
-  return paged ? pageFrom(total, start, size) : pageFrom(total, 0, total)
+export function shownOf(total: number, anchor: PageAnchor, size: number, paged: boolean) {
+  return paged ? pageFrom(total, anchor, size) : pageFrom(total, { from: 0 }, total)
 }
 
 /** The rows a filter, a search and an order leave. */
@@ -352,7 +363,7 @@ export function ListScreen(props: ListScreenProps) {
   const [facetId, setFacetId] = useState<string | null>(null)
   const [choiceId, setChoiceId] = useState<string | null>(null)
   const [sortId, setSortId] = useState<string | null>(sorts[0]?.id ?? null)
-  const [start, setStart] = useState(0)
+  const [anchor, setAnchor] = useState<PageAnchor>({ from: 0 })
   const [chosen, setChosen] = useState<string | null>(null)
   const [closed, setClosed] = useState(false)
   const input = useRef<HTMLInputElement>(null)
@@ -378,7 +389,7 @@ export function ListScreen(props: ListScreenProps) {
 
   const fit = useRowsThatFit(frame, 20)
   const paged = band !== 'S'
-  const page = shownOf(found.length, start, fit, paged)
+  const page = shownOf(found.length, anchor, fit, paged)
   const shown = found.slice(page.first, page.end)
 
   const beside = (band === 'XL' && preview) || (band === 'XXL' && record)
@@ -424,25 +435,25 @@ export function ListScreen(props: ListScreenProps) {
       countId={countId}
       onChange={(value) => {
         setSearch(value)
-        setStart(0)
+        setAnchor({ from: 0 })
       }}
       filters={filters}
       filterId={filterId}
       onFilter={(id) => {
         setFilterId(id)
-        setStart(0)
+        setAnchor({ from: 0 })
       }}
       facets={facets}
       facetId={facetId}
       onFacet={(id) => {
         setFacetId(id)
-        setStart(0)
+        setAnchor({ from: 0 })
       }}
       choice={choice && choice.options.length > 0 ? choice : undefined}
       choiceId={picked ? choiceId : null}
       onChoice={(id) => {
         setChoiceId(id)
-        setStart(0)
+        setAnchor({ from: 0 })
       }}
       sorts={sorts}
       sortId={sortId}
@@ -488,8 +499,20 @@ export function ListScreen(props: ListScreenProps) {
                   first={page.first + 1}
                   last={page.end}
                   total={found.length}
-                  onBack={page.back === null ? undefined : () => setStart(page.back ?? 0)}
-                  onNext={page.next === null ? undefined : () => setStart(page.next ?? 0)}
+                  onBack={
+                    page.back === null
+                      ? undefined
+                      : () => {
+                          setAnchor(page.back ?? { from: 0 })
+                        }
+                  }
+                  onNext={
+                    page.next === null
+                      ? undefined
+                      : () => {
+                          setAnchor(page.next ?? { from: 0 })
+                        }
+                  }
                 />
               }
             >

@@ -17,7 +17,7 @@ import {
   shownOf,
   SortChoice,
 } from './list.js'
-import type { ListScreenProps } from './list.js'
+import type { ListScreenProps, PageAnchor } from './list.js'
 import { isLocked } from '../testing.js'
 
 /**
@@ -232,37 +232,55 @@ describe('a list at a desk', () => {
  * further on than the last one ended (CodeRabbit on opengewerk#969).
  */
 describe('the pages of a list whose size changes between them', () => {
-  it('shows every row once going forward, whatever size each page is measured at', () => {
-    const seen: number[] = []
-    let start = 0
+  /** The rows each page shows, paging the given way with the sizes measured. */
+  function paged(sizes: readonly number[], from: PageAnchor, way: 'next' | 'back') {
+    const pages: number[][] = []
+    let anchor: PageAnchor | null = from
 
-    for (const size of [6, 10, 7, 10, 6, 9]) {
-      const page = pageFrom(40, start, size)
-
-      for (let row = page.first; row < page.end; row += 1) {
-        seen.push(row)
-      }
-
-      if (page.next === null) {
+    for (const size of sizes) {
+      if (anchor === null) {
         break
       }
 
-      start = page.next
+      const page = pageFrom(40, anchor, size)
+
+      pages.push(Array.from({ length: page.end - page.first }, (_, row) => page.first + row))
+      anchor = page[way]
     }
 
-    expect(seen).toEqual(Array.from({ length: 40 }, (_, row) => row))
+    return pages
+  }
+
+  it('shows every row once going forward, whatever size each page is measured at', () => {
+    expect(paged([6, 10, 7, 10, 6, 9], { from: 0 }, 'next').flat()).toEqual(
+      Array.from({ length: 40 }, (_, row) => row),
+    )
   })
 
-  it('goes back without a gap, and falls back onto the last rows when a filter took the first one away', () => {
-    expect(pageFrom(40, 6, 10)).toEqual({ first: 6, end: 16, back: 0, next: 16 })
-    expect(pageFrom(40, 0, 10)).toMatchObject({ back: null })
-    expect(pageFrom(5, 16, 10)).toEqual({ first: 0, end: 5, back: null, next: null })
-    expect(pageFrom(25, 30, 10)).toEqual({ first: 15, end: 25, back: 5, next: null })
+  it('leaves no row out going back, each page ending where the one before began', () => {
+    const pages = paged([6, 6, 10, 6, 7, 10, 6, 9], { from: 34 }, 'back')
+
+    for (let page = 1; page < pages.length; page += 1) {
+      expect(pages[page]?.at(-1)).toBeGreaterThanOrEqual((pages[page - 1]?.[0] ?? 0) - 1)
+    }
+    expect(new Set(pages.flat())).toEqual(new Set(Array.from({ length: 40 }, (_, row) => row)))
+  })
+
+  it('falls back onto the last rows when a filter took the row a page was held at', () => {
+    expect(pageFrom(40, { from: 6 }, 10)).toEqual({
+      first: 6,
+      end: 16,
+      back: { to: 6 },
+      next: { from: 16 },
+    })
+    expect(pageFrom(40, { to: 6 }, 10)).toMatchObject({ first: 0, back: null })
+    expect(pageFrom(5, { from: 16 }, 10)).toEqual({ first: 0, end: 5, back: null, next: null })
+    expect(pageFrom(25, { from: 30 }, 10)).toMatchObject({ first: 15, end: 25, next: null })
   })
 
   it('shows every row as cards, also after paging further on at a wider window', () => {
-    expect(shownOf(40, 10, 6, false)).toEqual({ first: 0, end: 40, back: null, next: null })
-    expect(shownOf(40, 10, 6, true)).toEqual({ first: 10, end: 16, back: 4, next: 16 })
+    expect(shownOf(40, { from: 10 }, 6, false)).toMatchObject({ first: 0, end: 40 })
+    expect(shownOf(40, { from: 10 }, 6, true)).toMatchObject({ first: 10, end: 16 })
   })
 })
 
