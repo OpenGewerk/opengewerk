@@ -484,10 +484,16 @@ describe('the numbers of the sync', () => {
 
       const second = inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Zweite'))
 
-      // The second waits for the counter the first has open.
-      await new Promise((resolve) => setTimeout(resolve, 300))
-      expect(await numbersOf(north.id)).toEqual([1])
-      release()
+      try {
+        // The second waits for the counter the first has open.
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        expect(await numbersOf(north.id)).toEqual([1])
+      } finally {
+        // Let the first go in any case, so that a failing check leaves no
+        // transaction holding the counter behind it.
+        release()
+        await Promise.allSettled([first, second])
+      }
       await Promise.all([first, second])
 
       const firsts = await numbersOf(north.id, 'Erste')
