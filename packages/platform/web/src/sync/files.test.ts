@@ -464,6 +464,41 @@ describe('a file made on the device', () => {
     }
   })
 
+  it('shows what waits as it will land, with the clock of the device put back between two changes (opengewerk#950)', async () => {
+    const client = await start()
+    const made = await client.create('notes', { title: 'Vorher' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    await client.synchronise()
+
+    const push = server.push.bind(server)
+
+    server.push = () => Promise.reject(new TypeError('Failed to fetch'))
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+
+    try {
+      await client.update('notes', made.id, { title: 'A' })
+      vi.setSystemTime(new Date(Date.now() - 60 * 60 * 1000))
+      await client.update('notes', made.id, { title: 'B' })
+
+      // Both wait, in the order the outbox hands them over: what the screen
+      // shows now is what the server holds once they went.
+      const waiting = client.get('notes', made.id)?.['title']
+
+      server.push = push
+      await client.synchronise()
+
+      expect(client.status().pending).toBe(0)
+      expect(waiting).toBe(client.get('notes', made.id)?.['title'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps the order a transmission went in once the server took it (opengewerk#937)', async () => {
     const client = await start()
     const push = server.push.bind(server)
