@@ -1,11 +1,14 @@
 -- Back to the counter row moved at every number. A counter opened in this
 -- transaction is written first, so that the trigger can go; every number a
 -- sequence handed out is in the row by then.
+-- The two functions come back as they were, with the temporary schema searched
+-- last: searched first, it would let a type another role made there in its
+-- session stand in for one of theirs (opengewerk#975).
 SET CONSTRAINTS "sync_counter_closes" IMMEDIATE;--> statement-breakpoint
 CREATE OR REPLACE FUNCTION "next_sync_sequence"(tenant uuid) RETURNS bigint
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 	SET enable_seqscan = off
 	SET enable_indexscan = off
 	SET enable_bitmapscan = off
@@ -36,7 +39,7 @@ $$;--> statement-breakpoint
 CREATE OR REPLACE FUNCTION "reserve_sync_sequences"(amount integer) RETURNS bigint
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	tenant uuid := nullif(current_setting('app.tenant_id', true), '')::uuid;

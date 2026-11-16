@@ -662,12 +662,28 @@ export function testDatabase(options: TestDatabaseOptions): TestDatabase {
 
   async function revertMigration(pool: Pool, name: string): Promise<void> {
     const sql = readFileSync(join(migrationsFolder, 'down', `${name}.sql`), 'utf8')
+    // In one transaction, as the runner applies a migration: a statement that
+    // means something only inside one (`SET CONSTRAINTS`) takes effect, and a
+    // rollback that fails halfway leaves nothing half done (CodeRabbit on
+    // opengewerk#974).
+    const client = await pool.connect()
 
-    for (const statement of sql.split('--> statement-breakpoint')) {
-      const trimmed = statement.trim()
-      if (trimmed.length > 0) {
-        await pool.query(trimmed)
+    try {
+      await client.query('begin')
+
+      for (const statement of sql.split('--> statement-breakpoint')) {
+        const trimmed = statement.trim()
+        if (trimmed.length > 0) {
+          await client.query(trimmed)
+        }
       }
+
+      await client.query('commit')
+    } catch (error) {
+      await client.query('rollback').catch(() => undefined)
+      throw error
+    } finally {
+      client.release()
     }
   }
 
