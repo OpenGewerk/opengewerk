@@ -2209,11 +2209,15 @@ describe('the facts of the tests signed before 0146', () => {
        values ($1, $2, $3, 'Verlängerungsleitung', 'I', 25000)`,
       [appliance, tenant.id, site],
     )
+    // And one emptied with an erased site, in the bin, which gets none.
+    const erased = newId<'form-record'>()
+
     await admin.query(
-      `insert into form_records (id, tenant_id, definition_key, definition_version, appliance_id, performed_on, status)
-       values ($1, $3, 'dguv-v3', 1, $4, '2026-11-02', 'signed'),
-              ($2, $3, 'dguv-v3', 1, $4, '2026-11-03', 'draft')`,
-      [signed, draft, tenant.id, appliance],
+      `insert into form_records (id, tenant_id, definition_key, definition_version, appliance_id, performed_on, status, deleted_at)
+       values ($1, $4, 'dguv-v3', 1, $5, '2026-11-02', 'signed', null),
+              ($2, $4, 'dguv-v3', 1, $5, '2026-11-03', 'draft', null),
+              ($3, $4, 'dguv-v3', 1, $5, '2016-11-03', 'signed', '2026-11-04')`,
+      [signed, draft, erased, tenant.id, appliance],
     )
 
     await runMigrations(ownerDatabaseUrl(), migrationsFolder)
@@ -2221,6 +2225,7 @@ describe('the facts of the tests signed before 0146', () => {
     expect(await facts()).toEqual({
       [signed]: { protectionClass: 'I', cordLengthMilli: 25_000 },
       [draft]: null,
+      [erased]: null,
     })
     expect(await forced('form_records')).toBe(true)
     expect(await forced('appliances')).toBe(true)

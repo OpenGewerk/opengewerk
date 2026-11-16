@@ -643,10 +643,11 @@ describe('deleting a site (#848)', () => {
         )
       ).rows,
     ).toEqual([{ consumer: null, rated_current_milli: null, cable_cross_section_milli: null }])
-    expect((await admin.query(`select "values" from form_records`)).rows).toEqual([
-      { values: '{}' },
-      { values: '{}' },
-      { values: '{}' },
+    // The facts the test of the appliance was signed with as well (opengewerk#954).
+    expect((await admin.query(`select "values", appliance_facts from form_records`)).rows).toEqual([
+      { values: '{}', appliance_facts: null },
+      { values: '{}', appliance_facts: null },
+      { values: '{}', appliance_facts: null },
     ])
     // A blocked label stays blocked.
     expect(

@@ -9,15 +9,17 @@
 -- the facts of its appliance in the same statement; every other row keeps
 -- none, whatever a client sends. The device sends the facts it judged with,
 -- and the sync refuses the signature as a conflict when they are not those of
--- the appliance (`signedFacts` in `database/sync.ts`). That check holds the
--- counter of the tenant, which every change of an appliance takes as well
--- (`stamp_sync_columns`), so that the appliance this trigger reads is the one
--- the check compared. A protocol that is signed already is left alone: the
--- trigger of 0043 refuses to change it, and the erasure of a site (0132)
--- empties it without asking this.
+-- the appliance (`signedFacts` in `database/sync.ts`). That check reads the
+-- row of the protocol under its lock and holds the counter of the tenant,
+-- which every change of an appliance takes as well (`stamp_sync_columns`), so
+-- that the appliance this trigger reads is the one the check compared. A
+-- protocol that is signed already is left as it is written: the trigger of
+-- 0043 refuses to change it, and the erasure of a site (0132) empties it,
+-- these facts included (`emptySite` in `privacy/site-erasure.ts`).
 --
 -- **The protocols signed before.** They get the facts their appliance has
--- now, the best that is known; the CHANGELOG says so. The trigger of 0043 is
+-- now, the best that is known; the CHANGELOG says so. A protocol in the bin
+-- after the erasure of its site gets none. The trigger of 0043 is
 -- off for the one statement, and row level security on both tables, because
 -- an installation migrates as the owner of the tables (as 0096 does). The
 -- statement is logged and counted like every change, so that the devices
@@ -60,7 +62,8 @@ UPDATE "form_records" f
 		'protectionClass', a.protection_class,
 		'cordLengthMilli', a.cord_length_milli)::text
 	FROM "appliances" a
-	WHERE a.tenant_id = f.tenant_id AND a.id = f.appliance_id AND f.status = 'signed';--> statement-breakpoint
+	WHERE a.tenant_id = f.tenant_id AND a.id = f.appliance_id AND f.status = 'signed'
+	  AND f.deleted_at IS NULL;--> statement-breakpoint
 SELECT set_config('app.reason', '', true);--> statement-breakpoint
 ALTER TABLE "form_records" ENABLE TRIGGER "form_records_stay_signed";--> statement-breakpoint
 ALTER TABLE "appliances" FORCE ROW LEVEL SECURITY;--> statement-breakpoint

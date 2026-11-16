@@ -677,8 +677,8 @@ describe('the facts a test of an appliance is signed with', () => {
 
     expect(await factsOf(id)).toEqual({ protectionClass: 'I', cordLengthMilli: 25_000 })
 
-    // A signed protocol changed where the lock of 0043 lets it, as the
-    // erasure of a site does, keeps what it was signed with.
+    // A signed protocol changed past the lock of 0043 keeps what it was signed
+    // with, unless the change names them, as the erasure of a site does.
     await admin.query(
       `begin;
        alter table form_records disable trigger form_records_stay_signed;

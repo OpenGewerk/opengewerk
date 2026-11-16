@@ -262,7 +262,11 @@ export async function emptySite(tx: TenantTransaction, siteId: string): Promise<
   )
   await take(
     'form_records',
-    sql`update form_records set "values" = '{}', deleted_at = coalesce(deleted_at, now())
+    // The facts a test of an appliance was signed with (opengewerk#954) go
+    // with the values; the trigger of migration 0146 leaves a signed row as
+    // it is written.
+    sql`update form_records set "values" = '{}', appliance_facts = null,
+           deleted_at = coalesce(deleted_at, now())
      where installation_id in ${installationsOf} or appliance_id in ${appliancesOf}
         or job_id in ${jobsOf} returning id`,
   )
