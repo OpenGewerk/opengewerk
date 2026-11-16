@@ -8,6 +8,7 @@ import type {
   OperatorView,
 } from '@opengewerk/domain'
 import {
+  InstanceLegalTextsScreen,
   InstanceLogScreen,
   InstanceMeasuresScreen,
   InstanceOperatorsScreen,
@@ -36,8 +37,8 @@ import { InstanceShell } from './shell.js'
 
 /**
  * The area of the instance (#188) in this application, as the boards
- * "Instanz: Betriebe", "Instanz: Einstellungen", "Instanz: Betreiber" and
- * "Instanz: Protokoll" draw it.
+ * "Instanz: Betriebe", "Instanz: Einstellungen", "Instanz: Betreiber",
+ * "Instanz: Rechtstexte" and "Instanz: Protokoll" draw it.
  *
  * Its frame and its screens are the foundation's and have their tests there
  * (ADR 0010). Here is what only this application can get wrong: the screens
@@ -107,6 +108,11 @@ async function mount(path: string) {
           getParentRoute: () => instance,
           path: '/betreiber',
           component: InstanceOperatorsScreen,
+        }),
+        createRoute({
+          getParentRoute: () => instance,
+          path: '/rechtstexte',
+          component: InstanceLegalTextsScreen,
         }),
         createRoute({
           getParentRoute: () => instance,
@@ -184,7 +190,7 @@ afterEach(() => {
 })
 
 describe('the area of the instance in this application', () => {
-  it('lists the businesses, the settings, the measures, the operators and the log, and the way back to the office', async () => {
+  it('lists the businesses, the settings, the measures, the operators, the legal texts and the log, and the way back to the office', async () => {
     answer('GET', '/instance/tenants', [])
     await mount('/instanz')
 
@@ -199,6 +205,7 @@ describe('the area of the instance in this application', () => {
       ['Einstellungen', '/instanz/einstellungen'],
       ['Maßnahmen', '/instanz/massnahmen'],
       ['Betreiber', '/instanz/betreiber'],
+      ['Rechtstexte', '/instanz/rechtstexte'],
       ['Protokoll', '/instanz/protokoll'],
       ['Zurück zum Büro', '/'],
     ])
@@ -351,6 +358,30 @@ const operators: readonly OperatorView[] = [
     secondFactor: false,
   },
 ]
+
+describe('the legal texts of the instance in this application', () => {
+  it('are the screen of the foundation for every business on the instance (#619)', async () => {
+    answer('GET', '/instance/legal-texts', {
+      imprint: { text: null, changedAt: null, changedBy: null },
+      privacy: { text: null, changedAt: null, changedBy: null },
+    })
+    await mount('/instanz/rechtstexte')
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Rechtstexte' })).toBeTruthy()
+    // The addresses are the instance's own, the last sentence this application's.
+    expect(
+      await screen.findByText(
+        /^Steht im Fuß der Anmeldung .* Es gilt für alle Betriebe auf dieser Instanz\.$/,
+      ),
+    ).toBeTruthy()
+
+    const nav = (await screen.findAllByRole('navigation', { name: 'Instanz' }))[0] as HTMLElement
+
+    expect(
+      within(nav).getByRole('link', { name: 'Rechtstexte' }).getAttribute('aria-current'),
+    ).toBe('page')
+  })
+})
 
 describe('the operators in this application', () => {
   it('are operators in every word', async () => {

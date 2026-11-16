@@ -1,4 +1,5 @@
 import {
+  InstanceLegalTextsScreen,
   InstanceLogScreen,
   InstanceMeasuresScreen,
   InstanceOperatorsScreen,
@@ -224,6 +225,11 @@ const instanceRoutes = [
     getParentRoute: () => instance,
     path: '/betreiber',
     component: InstanceOperatorsScreen,
+  }),
+  createRoute({
+    getParentRoute: () => instance,
+    path: '/rechtstexte',
+    component: InstanceLegalTextsScreen,
   }),
   createRoute({ getParentRoute: () => instance, path: '/protokoll', component: InstanceLogScreen }),
 ]
