@@ -214,6 +214,10 @@ BEGIN
 	RETURN NULL;
 END;
 $$;--> statement-breakpoint
+-- Closed to every role but the owner (opengewerk#975). A trigger already on a
+-- table fires without the right; hung on a temporary table of its own, a role
+-- that may execute it would have it write as the owner of the tables.
+REVOKE EXECUTE ON FUNCTION "close_sync_counter"() FROM PUBLIC;--> statement-breakpoint
 CREATE CONSTRAINT TRIGGER "sync_counter_closes" AFTER UPDATE ON "sync_sequences"
 	DEFERRABLE INITIALLY DEFERRED
 	FOR EACH ROW WHEN (new.opened_in IS NOT NULL AND new.opened_in IS DISTINCT FROM old.opened_in)

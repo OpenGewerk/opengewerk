@@ -293,8 +293,10 @@ export interface DefinerReading {
  * And who may call them. The comparison holds that against the blocks, which
  * says nothing when a block left a function open as well: the counter of the
  * sync was created without a word about it and stayed callable by every role
- * in both (#471). A trigger function is not counted. It cannot be called,
- * only hung on a table, and that takes the owner of the table.
+ * in both (#471). A trigger function counts as well. It cannot be called, only
+ * hung on a table, but every role may make a temporary table in its session
+ * and hang on it what it may execute, and the function then writes as the
+ * owner of the tables (opengewerk#975).
  */
 export async function readDefinerFunctions(
   pool: Pool,
@@ -302,10 +304,9 @@ export async function readDefinerFunctions(
 ): Promise<DefinerReading> {
   const { rows } = await pool.query<{ signature: string; open: boolean }>(
     `select p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as signature,
-            (p.prorettype <> 'trigger'::regtype
-             and exists (select 1
-                           from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) g
-                          where g.grantee = 0 and g.privilege_type = 'EXECUTE')) as open
+            exists (select 1
+                      from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) g
+                     where g.grantee = 0 and g.privilege_type = 'EXECUTE') as open
        from pg_proc p
        join pg_namespace n on n.oid = p.pronamespace
       where n.nspname = 'public'

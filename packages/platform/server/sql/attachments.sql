@@ -210,6 +210,10 @@ BEGIN
 	RETURN NULL;
 END;
 $$;--> statement-breakpoint
+-- Closed to every role but the owner (opengewerk#975). A trigger already on a
+-- table fires without the right; hung on a temporary table of its own, a role
+-- that may execute it would have it write as the owner of the tables.
+REVOKE EXECUTE ON FUNCTION "version_takes_its_files"() FROM PUBLIC;--> statement-breakpoint
 
 -- Lets a document go for good (#658), on the way the application opens for it
 -- (`application_attachment_may_go`) and nowhere else: its versions go, and so

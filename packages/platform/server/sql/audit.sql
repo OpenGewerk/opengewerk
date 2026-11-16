@@ -317,6 +317,10 @@ BEGIN
 	RETURN NULL;
 END;
 $$;--> statement-breakpoint
+-- Closed to every role but the owner (opengewerk#975). A trigger already on a
+-- table fires without the right; hung on a temporary table of its own, a role
+-- that may execute it would have it write as the owner of the tables.
+REVOKE EXECUTE ON FUNCTION "close_audit_chain"() FROM PUBLIC;--> statement-breakpoint
 CREATE CONSTRAINT TRIGGER "audit_chain_closes" AFTER UPDATE ON "audit_chains"
 	DEFERRABLE INITIALLY DEFERRED
 	FOR EACH ROW WHEN (new.opened_in IS NOT NULL AND new.opened_in IS DISTINCT FROM old.opened_in)
@@ -468,6 +472,10 @@ BEGIN
 	RETURN NULL;
 END;
 $$;--> statement-breakpoint
+-- Closed to every role but the owner (opengewerk#975). A trigger already on a
+-- table fires without the right; hung on a temporary table of its own, a role
+-- that may execute it would have it write as the owner of the tables.
+REVOKE EXECUTE ON FUNCTION "record_change"() FROM PUBLIC;--> statement-breakpoint
 
 -- Walks a tenant's chain and reports the first place that does not fit. Not
 -- SECURITY DEFINER: run by the application it sees its own tenant and nothing
@@ -605,6 +613,10 @@ BEGIN
 	RETURN new;
 END;
 $$;--> statement-breakpoint
+-- Closed to every role but the owner (opengewerk#975). A trigger already on a
+-- table fires without the right; hung on a temporary table of its own, a role
+-- that may execute it would have it write as the owner of the tables.
+REVOKE EXECUTE ON FUNCTION "audit_redaction_checked"() FROM PUBLIC;--> statement-breakpoint
 
 -- After it is written: the value goes, and an entry of version 1 keeps the
 -- fingerprints of its values. The bolt below lets exactly this change through
@@ -635,6 +647,10 @@ BEGIN
 	RETURN NULL;
 END;
 $$;--> statement-breakpoint
+-- Closed to every role but the owner (opengewerk#975). A trigger already on a
+-- table fires without the right; hung on a temporary table of its own, a role
+-- that may execute it would have it write as the owner of the tables.
+REVOKE EXECUTE ON FUNCTION "audit_redaction_applied"() FROM PUBLIC;--> statement-breakpoint
 
 -- And the bolt in front of it. An entry is written once and not touched again,
 -- with the one exception of a redaction under way: the value of the side it

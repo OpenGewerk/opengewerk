@@ -3263,3 +3263,41 @@ describe('the rollback of the record of the processing', () => {
     expect(await tableNames(admin)).not.toContain('processing_record_activities')
   })
 })
+
+/**
+ * A cluster upgraded from before PostgreSQL 15 lets every role create in
+ * public, and what the application put there first would be found by the
+ * functions that run as the owner of the tables; every trigger function of the
+ * foundation that runs as the owner was open to every role as well (#975).
+ * 0150 takes both back. Its rollback opens the functions again and leaves the
+ * schema closed.
+ */
+describe('an instance whose cluster lets every role create in public', () => {
+  const before = () =>
+    readMigrationIndex().findIndex((entry) => entry.tag === '0150_definer_triggers_closed')
+
+  async function open(): Promise<{ creates: boolean; executes: boolean } | undefined> {
+    const { rows } = await admin.query<{ creates: boolean; executes: boolean }>(
+      `select has_schema_privilege('opengewerk_app', 'public', 'CREATE') as creates,
+              has_function_privilege('opengewerk_app', 'public.record_change()', 'EXECUTE') as executes`,
+    )
+
+    return rows[0]
+  }
+
+  it('takes the right to create there and to execute the trigger functions from every role', async () => {
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), releaseFolder(before()))
+    await admin.query('grant create on schema public to public')
+
+    expect(await open()).toEqual({ creates: true, executes: true })
+
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+
+    expect(await open()).toEqual({ creates: false, executes: false })
+
+    await revertMigration(admin, '0150_definer_triggers_closed')
+
+    expect(await open()).toEqual({ creates: false, executes: true })
+  })
+})

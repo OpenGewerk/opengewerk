@@ -98,4 +98,20 @@ describe('the role an application connects as (#685)', () => {
   it('is refused when it owns a table', async () => {
     expect(await problemOf(roles.owner)).toContain('diese Rolle besitzt Tabellen der Datenbank')
   })
+
+  it('is refused when every role may create in public, as in a cluster from before PostgreSQL 15', async () => {
+    // What the owner's functions find there would run with the owner's rights
+    // (opengewerk#975).
+    await pool.query('grant create on schema public to public')
+
+    try {
+      expect(await problemOf(roles.plain)).toContain(
+        `"${roles.plain}", und diese Rolle darf im Schema "public" anlegen`,
+      )
+    } finally {
+      await pool.query('revoke create on schema public from public')
+    }
+
+    expect(await problemOf(roles.plain)).toBeNull()
+  })
 })

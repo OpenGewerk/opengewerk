@@ -15,6 +15,7 @@ import { everyTenant } from './every-tenant.js'
 import { foundationMigration } from './foundation-migration.js'
 import { newId } from './identifier.js'
 import { probeDatabase, probeMigrations } from './probe-database.js'
+import { applicationRoleName } from './roles.js'
 import {
   auditEntryColumns,
   keysBetweenTenantTables,
@@ -277,6 +278,67 @@ describe('the foundation, built from its building blocks alone', () => {
     }
 
     expect((await readDefinerFunctions(admin)).openToEveryRole).toEqual([])
+  })
+
+  it('lets the application hang no trigger function that runs as its definer on a table of its own', async () => {
+    // A temporary table is a table of its own, which every role may make in
+    // its session. Hung there with the right to execute it, a function that
+    // runs as the owner of the tables would write the log, the counter or the
+    // files of any tenant (opengewerk#975).
+    const { rows } = await admin.query<{ name: string }>(
+      `select p.proname as name
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.prosecdef and p.prorettype = 'trigger'::regtype
+        order by 1`,
+    )
+
+    expect(rows.map((row) => row.name)).toEqual([
+      'audit_redaction_applied',
+      'audit_redaction_checked',
+      'close_audit_chain',
+      'close_sync_counter',
+      'record_change',
+      'record_instance_change',
+      'version_takes_its_files',
+    ])
+
+    const client = await admin.connect()
+
+    try {
+      for (const { name } of rows) {
+        await client.query('begin')
+        await client.query(`set local role "${applicationRoleName}"`)
+        await client.query('create temp table hung (id uuid, tenant_id uuid) on commit drop')
+
+        expect(
+          await errorCode(
+            client.query(
+              `create trigger hung after insert on pg_temp.hung
+                 for each row execute function public."${name}"()`,
+            ),
+          ),
+          name,
+        ).toBe(insufficientPrivilege)
+
+        await client.query('rollback')
+      }
+    } finally {
+      await client.query('rollback').catch(() => undefined)
+      client.release()
+    }
+  })
+
+  it('finds a trigger function that runs as its definer and was left open to every role', async () => {
+    // As every one of them was until opengewerk#975: the check passed over
+    // trigger functions, which cannot be called, only hung on a table.
+    await admin.query('grant execute on function "record_change"() to public')
+
+    try {
+      expect((await readDefinerFunctions(admin)).openToEveryRole).toEqual(['record_change()'])
+    } finally {
+      await admin.query('revoke execute on function "record_change"() from public')
+    }
   })
 
   it('finds every function that runs as its definer, when the list does not excuse it', async () => {

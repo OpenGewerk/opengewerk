@@ -20,4 +20,10 @@ BEGIN
 	END IF;
 END
 $$;--> statement-breakpoint
+-- And no role but the owner creates in the schema (opengewerk#975). The
+-- functions that run as the owner of the tables look there for what they call,
+-- and what another role put there first would run with the owner's rights.
+-- PostgreSQL 15 took the right from every role; a cluster upgraded from an
+-- older version still grants it. Taking it back is not undone with the block.
+REVOKE CREATE ON SCHEMA "public" FROM PUBLIC;--> statement-breakpoint
 GRANT USAGE ON SCHEMA "public" TO "opengewerk_app";

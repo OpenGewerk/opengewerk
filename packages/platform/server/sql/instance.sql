@@ -78,6 +78,10 @@ BEGIN
 	RETURN NULL;
 END;
 $$;--> statement-breakpoint
+-- Closed to every role but the owner (opengewerk#975). A trigger already on a
+-- table fires without the right; hung on a temporary table of its own, a role
+-- that may execute it would have it write as the owner of the tables.
+REVOKE EXECUTE ON FUNCTION "record_instance_change"() FROM PUBLIC;--> statement-breakpoint
 
 CREATE TRIGGER "instance_changes" AFTER INSERT OR UPDATE OR DELETE ON "instance_operators"
 	FOR EACH ROW EXECUTE FUNCTION "record_instance_change"();--> statement-breakpoint
