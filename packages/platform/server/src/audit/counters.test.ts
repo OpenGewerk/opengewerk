@@ -480,7 +480,8 @@ describe('the numbers of the sync', () => {
         await shelves(tx, north.id, 2, 'Erste')
       })
 
-      await isOpen
+      // Or the first failed before it held anything, and says why.
+      await Promise.race([isOpen, first])
 
       const second = inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Zweite'))
 
