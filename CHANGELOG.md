@@ -239,7 +239,9 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Löschungen nach dem Löschkonzept vergeben viele Nummern in einer Transaktion. Die Nummern kommen weiter in der
   Reihenfolge der Commits, und eine Transaktion, die zurückrollt, hinterlässt keine Lücke. Eine Lücke entsteht neu
   nur innerhalb einer Transaktion: Nummern unter einem Savepoint, der zurückgerollt wird, vergibt sie nicht noch
-  einmal; ein Abruf liest bis zur letzten festgeschriebenen Nummer und braucht keine lückenlose Folge. Eine
+  einmal. Nimmt der Savepoint auch das Öffnen des Zählers zurück, beginnt sie wieder bei der letzten
+  festgeschriebenen Nummer und vergibt die zurückgerollten neu; in keiner festgeschriebenen Zeile steht eine davon
+  zweimal. Ein Abruf liest bis zur letzten festgeschriebenen Nummer und braucht keine lückenlose Folge. Eine
   Sequenz unter dem Namen eines Mandanten nimmt der Zähler nur, wenn sie dem Eigentümer der Tabellen gehört, sonst
   bricht er ab: In einem Cluster, der von einer Fassung vor PostgreSQL 15 kam, darf jede Rolle in `public` anlegen.
   Die Haustechnik braucht beim Anheben des Submoduls eine Migration wie 0149.
