@@ -386,11 +386,6 @@ export class SyncClient {
    * carry it. Null where the device had no row of the server yet.
    */
   private settledFrom = new Map<OperationId, number | null>()
-  /**
-   * For each settling operation, when the server took it, as its receipt said
-   * (opengewerk#950): the order `inTakenOrder` lays them in.
-   */
-  private takenAt = new Map<OperationId, number>()
   /** What is laid over the server's rows: what settles, then what waits. */
   private laid: ReadonlyMap<string, Operation[]> = new Map()
   private readonly listeners = new Set<() => void>()
@@ -658,7 +653,7 @@ export class SyncClient {
     const rows: RecordState[] = []
 
     for (const [id, server] of this.records.get(entity) ?? []) {
-      const pending = this.laid.get(recordKey(entity, id)) ?? []
+      const pending = this.laidOver(server, recordKey(entity, id))
       const laid = project(server, pending, id, this.rules.policyFor)
 
       if (laid && !sameValue(laid['deletedAt'], null)) {
@@ -713,7 +708,7 @@ export class SyncClient {
     }
 
     const server = this.records.get(entity)?.get(id) ?? null
-    const laid = project(server, this.laid.get(key) ?? [], id, this.rules.policyFor)
+    const laid = project(server, this.laidOver(server, key), id, this.rules.policyFor)
 
     // A row marked deleted is kept in the store, because a repeated create has
     // to find it. It is not a row any screen shows.
@@ -755,15 +750,36 @@ export class SyncClient {
     // it, even where a later page of the same pull failed. A row of an earlier
     // change does not: it came back before this one landed. Where the device
     // had no row of the server yet (a create), any row it sends back ends it.
-    return this.settling.some((operation) => {
-      if (operation.entity !== entity || operation.recordId !== id) {
-        return false
-      }
+    return this.settling.some(
+      (operation) =>
+        operation.entity === entity &&
+        operation.recordId === id &&
+        !this.carries(pulled, operation),
+    )
+  }
 
-      const from = this.settledFrom.get(operation.id) ?? null
+  /**
+   * Whether the row of the server on this device holds an operation the
+   * server took already (opengewerk#956): a row that came back after it
+   * landed, or any row for one made here. Laid over it once more, a record
+   * made here would show only what the device sent and none of what the
+   * server put in, and a change the value it had before somebody else's.
+   */
+  private carries(pulled: number | null, operation: Operation): boolean {
+    if (!this.settledFrom.has(operation.id)) {
+      return false
+    }
 
-      return !(pulled !== null && (from === null || pulled > from))
-    })
+    const from = this.settledFrom.get(operation.id) ?? null
+
+    return pulled !== null && (from === null || pulled > from)
+  }
+
+  /** What is laid over the row of the server: all of `laid` but what it carries. */
+  private laidOver(server: RecordState | null, key: string): readonly Operation[] {
+    const pulled = typeof server?.['version'] === 'number' ? server['version'] : null
+
+    return (this.laid.get(key) ?? []).filter((operation) => !this.carries(pulled, operation))
   }
 
   /**
@@ -962,8 +978,9 @@ export class SyncClient {
       return { outcome: 'queued', id }
     }
 
-    await this.store.queue(operation)
-    this.outbox = [...this.outbox, operation]
+    const queued = await this.store.queue(operation)
+
+    this.outbox = [...this.outbox, queued]
     this.regroup()
     this.publish({ pending: this.outbox.length })
 
@@ -1109,7 +1126,6 @@ export class SyncClient {
       if (this.settling.length > 0) {
         this.settling = []
         this.settledFrom.clear()
-        this.takenAt.clear()
         this.regroup()
       }
       await this.refreshConflicts()
@@ -1231,10 +1247,6 @@ export class SyncClient {
 
       if (receipt.outcome === 'applied') {
         applied.add(receipt.operationId)
-
-        if (typeof receipt.takenAt === 'number' && Number.isFinite(receipt.takenAt)) {
-          this.takenAt.set(receipt.operationId, receipt.takenAt)
-        }
       }
     }
 
@@ -1242,10 +1254,12 @@ export class SyncClient {
     // What landed stays laid over the rows until the pull brings them. What
     // did not land is not shown at all: a conflict is on its own list, and a
     // skipped operation changed nothing.
-    // Laid in the order the server applied them, which its receipts say
-    // (`inTakenOrder`): an operation it had taken in a transmission whose
-    // answer was lost comes back with the moment of that one, and goes ahead
-    // of what it took since, in this part or in one before.
+    // In the order they went, which is the order the server applied them in
+    // (opengewerk#950): a transmission goes and is applied in the order of the
+    // outbox, by the place each operation has there (opengewerk#955), and one
+    // the server took in a transmission whose answer was lost has a place
+    // before everything queued after it, so it goes again ahead of that, in
+    // this part or in one before.
     const landed = sent.filter((operation) => applied.has(operation.id))
 
     for (const operation of landed) {
@@ -1257,7 +1271,7 @@ export class SyncClient {
       )
     }
 
-    this.settling = this.inTakenOrder([...this.settling, ...landed])
+    this.settling = [...this.settling, ...landed]
     this.outbox = this.outbox.filter((operation) => !done.has(operation.id))
     this.regroup()
     this.publish({ pending: this.outbox.length })
@@ -1878,28 +1892,6 @@ export class SyncClient {
   private regroup(): void {
     this.pending = byRecord(this.outbox)
     this.laid = byRecord(this.inLaidOrder())
-  }
-
-  /**
-   * What has gone, in the order the server applied it (opengewerk#950): by
-   * the transaction it was taken in, and within one in the order of the
-   * outbox, as the server applies a transmission. As it stands where a
-   * receipt said nothing of when, which a server of an older version does not.
-   */
-  private inTakenOrder(operations: readonly Operation[]): Operation[] {
-    const times = operations.map((operation) => this.takenAt.get(operation.id))
-
-    if (times.some((time) => time === undefined)) {
-      return [...operations]
-    }
-
-    const position = new Map(inOutboxOrder(operations).map((operation, at) => [operation.id, at]))
-
-    return [...operations].sort(
-      (left, right) =>
-        (this.takenAt.get(left.id) ?? 0) - (this.takenAt.get(right.id) ?? 0) ||
-        (position.get(left.id) ?? 0) - (position.get(right.id) ?? 0),
-    )
   }
 
   /**

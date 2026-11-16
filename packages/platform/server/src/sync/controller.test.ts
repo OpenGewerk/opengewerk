@@ -190,6 +190,7 @@ interface Sent {
   readonly baseVersion: number | null
   readonly patches: { field: string; from: SyncValue; to: SyncValue }[]
   readonly recordedAt: string
+  readonly place?: number
 }
 
 function operation(over: {
@@ -328,6 +329,71 @@ describe('sending an outbox', () => {
     )
 
     expect(note).toMatchObject({ id: noteId, text: 'Zähler ablesen', deviceId: 'probe-phone' })
+  })
+
+  it('applies a transmission in the order of its outbox, whatever the clock of the device said (opengewerk#955)', async () => {
+    const noteId = newId<'note'>()
+
+    await push(olga(), [
+      operation({ entity: 'notes', recordId: noteId, patches: [{ field: 'text', to: 'Vorher' }] }),
+    ]).expect(201)
+
+    const at = (minutes: number) => new Date(Date.now() + minutes * 60 * 1000).toISOString()
+    // Queued one after the other, with the clock put back an hour in between,
+    // and sent the other way round.
+    const first = {
+      ...operation({
+        entity: 'notes',
+        recordId: noteId,
+        kind: 'update',
+        patches: [{ field: 'text', from: 'Vorher', to: 'A' }],
+      }),
+      recordedAt: at(0),
+      place: 7,
+    }
+    const second = {
+      ...operation({
+        entity: 'notes',
+        recordId: noteId,
+        kind: 'update',
+        patches: [{ field: 'text', from: 'A', to: 'B' }],
+      }),
+      recordedAt: at(-60),
+      place: 8,
+    }
+    const answer = await push(olga(), [second, first]).expect(201)
+
+    expect(
+      (answer.body as { receipts: { outcome: string }[] }).receipts.map(
+        (receipt) => receipt.outcome,
+      ),
+    ).toEqual(['applied', 'applied'])
+
+    const [note] = await database.forTenant(
+      { tenantId: north.id, userId: 'olga', reason: 'probe' },
+      (tx) =>
+        tx
+          .select()
+          .from(notes)
+          .where(eq(notes.id, noteId as never)),
+    )
+
+    expect(note?.text).toBe('B')
+  })
+
+  it('refuses a place in the outbox that is not a whole number from zero (opengewerk#955)', async () => {
+    for (const place of [-1, 1.5, '3']) {
+      const answer = await push(olga(), [
+        {
+          ...operation({ entity: 'notes', patches: [{ field: 'text', to: 'x' }] }),
+          place,
+        } as never,
+      ]).expect(400)
+
+      expect(answer.body).toMatchObject({
+        message: 'Vorgang 1: place ist keine Stelle im Postausgang.',
+      })
+    }
   })
 
   it('takes the device from the transmission, not from an operation in it', async () => {

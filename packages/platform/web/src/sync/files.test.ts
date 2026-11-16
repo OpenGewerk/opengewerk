@@ -377,6 +377,9 @@ describe('a file made on the device', () => {
 
   it('tells which of two waiting records this device changed after the other (opengewerk#937)', async () => {
     const client = await start()
+
+    server.push = () => Promise.reject(new TypeError('Failed to fetch'))
+
     const first = await client.create('notes', { title: 'Erste' })
     const second = await client.create('notes', { title: 'Zweite' })
 
@@ -397,7 +400,7 @@ describe('a file made on the device', () => {
     expect(client.isRecordedAfter('notes', first.id, 'notes', second.id)).toBe(false)
   })
 
-  it('keeps what has gone before what waits, even with the clock of the device put back (opengewerk#937)', async () => {
+  it('keeps the order things were queued in, with the clock of the device put back (opengewerk#937, opengewerk#955)', async () => {
     const client = await start()
     const gone = await client.create('notes', { title: 'Gesendet' })
 
@@ -486,14 +489,17 @@ describe('a file made on the device', () => {
       await client.update('notes', made.id, { title: 'B' })
 
       // Both wait, in the order the outbox hands them over: what the screen
-      // shows now is what the server holds once they went.
+      // shows now is what the server holds once they went, and that is the
+      // change made last (opengewerk#955).
       const waiting = client.get('notes', made.id)?.['title']
 
       server.push = push
       await client.synchronise()
 
       expect(client.status().pending).toBe(0)
-      expect(waiting).toBe(client.get('notes', made.id)?.['title'])
+      expect(waiting).toBe('B')
+      expect(server.row('notes', made.id)?.['title']).toBe('B')
+      expect(client.get('notes', made.id)?.['title']).toBe('B')
     } finally {
       vi.useRealTimers()
     }
@@ -589,7 +595,7 @@ describe('a file made on the device', () => {
     }
   })
 
-  it('lays what the server took before an answer was lost ahead of what a part before it took (opengewerk#950)', async () => {
+  it('lays what the server took before an answer was lost ahead of what it took after it, across parts (opengewerk#950)', async () => {
     const client = await start()
     const made = await client.create('notes', { title: 'Vorher' })
 
@@ -613,21 +619,24 @@ describe('a file made on the device', () => {
     try {
       const now = Date.now()
 
-      // By the clock the change goes first, with as many notes behind it as
-      // fill the first part; the change taken before goes again in the second.
-      vi.setSystemTime(new Date(now - 2 * 60 * 60 * 1000))
-      await client.update('notes', made.id, { title: 'Y' })
+      // By the clock the notes and the change go before the change taken
+      // already, as many notes as fill the first part with the change in the
+      // second; by their places they go after it (opengewerk#955).
       vi.setSystemTime(new Date(now - 60 * 60 * 1000))
 
       for (let note = 1; note < mostTransmittedOperations; note += 1) {
         await client.create('notes', { title: `Notiz ${String(note)}` })
       }
 
+      vi.setSystemTime(new Date(now - 2 * 60 * 60 * 1000))
+      await client.update('notes', made.id, { title: 'Y' })
+
       server.push = push
       await client.synchronise().catch(() => undefined)
 
       expect(server.sent.at(-2)).toHaveLength(mostTransmittedOperations)
-      expect(server.sent.at(-1)?.map((operation) => operation.patches[0]?.to)).toEqual(['X'])
+      expect(server.sent.at(-2)?.[0]?.patches[0]?.to).toBe('X')
+      expect(server.sent.at(-1)?.map((operation) => operation.patches[0]?.to)).toEqual(['Y'])
       expect(client.status().pending).toBe(0)
       expect(server.row('notes', made.id)?.['title']).toBe('Y')
       expect(client.get('notes', made.id)?.['title']).toBe('Y')
@@ -635,6 +644,90 @@ describe('a file made on the device', () => {
       vi.useRealTimers()
     }
   }, 60_000)
+
+  it('keeps the order things were queued in when the device starts again, with the clock put back (opengewerk#955)', async () => {
+    const name = `files${String((counter += 1))}`
+    const begin = async () =>
+      await SyncClient.start({
+        store: await openLocalStore(name),
+        transport: server,
+        writer: server,
+        rules,
+        deviceId: 'phone',
+        entities: ['notes', 'parcels'],
+        onSignedOut: () => {},
+      })
+    const before = await begin()
+    const made = await before.create('notes', { title: 'Vorher' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    await before.synchronise()
+
+    const push = server.push.bind(server)
+
+    server.push = () => Promise.reject(new TypeError('Failed to fetch'))
+    vi.useFakeTimers({ toFake: ['Date'] })
+
+    try {
+      await before.update('notes', made.id, { title: 'A' })
+      vi.setSystemTime(new Date(Date.now() - 60 * 60 * 1000))
+      await before.update('notes', made.id, { title: 'B' })
+      await before.synchronise().catch(() => undefined)
+      before.stop()
+
+      // Read back from the store, where the outbox lies by the ids of its
+      // operations, and those follow the clock.
+      const after = await begin()
+
+      expect(after.status().pending).toBe(2)
+      expect(after.get('notes', made.id)?.['title']).toBe('B')
+
+      server.push = push
+      await after.synchronise()
+
+      expect(server.row('notes', made.id)?.['title']).toBe('B')
+      expect(after.get('notes', made.id)?.['title']).toBe('B')
+      after.stop()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows what the server put in a record made here, once its row came back, though a later page failed (opengewerk#956)', async () => {
+    const client = await start()
+    const made = await client.create('notes', { title: 'Hier angelegt' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    const pull = server.pull.bind(server)
+    let pages = 0
+
+    // The server takes it and gives it a number of its own; the first page of
+    // the pull brings the row, the next one fails.
+    server.pull = async () => {
+      pages += 1
+
+      if (pages > 1) {
+        throw new TypeError('Failed to fetch')
+      }
+
+      server.put('notes', { ...server.row('notes', made.id), number: 'N-1' })
+
+      return { ...(await pull()), hasMore: true }
+    }
+    await client.synchronise().catch(() => undefined)
+
+    // The exchange the note began on its own asks as well.
+    expect(pages).toBeGreaterThanOrEqual(2)
+    expect(client.isSettling('notes', made.id)).toBe(false)
+    expect(client.get('notes', made.id)?.['number']).toBe('N-1')
+    expect(client.get('notes', made.id)?.['title']).toBe('Hier angelegt')
+  })
 
   it('keeps the order a transmission went in once the server took it (opengewerk#937)', async () => {
     const client = await start()
@@ -656,16 +749,21 @@ describe('a file made on the device', () => {
         throw new Error('A note was refused on the device.')
       }
 
-      // By the clock the later one goes first, and so the server stamps it.
+      // Queued later, it goes later, whatever the clock said, and so the
+      // server stamps it.
       const before = client.isRecordedAfter('notes', later.id, 'notes', earlier.id)
 
       server.push = push
       await client.synchronise().catch(() => undefined)
 
       expect(client.status().pending).toBe(0)
-      expect(before).toBe(false)
-      expect(client.isRecordedAfter('notes', later.id, 'notes', earlier.id)).toBe(false)
-      expect(client.isRecordedAfter('notes', earlier.id, 'notes', later.id)).toBe(true)
+      expect(before).toBe(true)
+      expect(server.sent.at(-1)?.map((operation) => operation.recordId)).toEqual([
+        earlier.id,
+        later.id,
+      ])
+      expect(client.isRecordedAfter('notes', later.id, 'notes', earlier.id)).toBe(true)
+      expect(client.isRecordedAfter('notes', earlier.id, 'notes', later.id)).toBe(false)
     } finally {
       vi.useRealTimers()
     }
@@ -691,6 +789,9 @@ describe('a file made on the device', () => {
 
   it('measures the first change of a kind where one is asked for (opengewerk#937)', async () => {
     const client = await start()
+
+    server.push = () => Promise.reject(new TypeError('Failed to fetch'))
+
     const note = await client.create('notes', { title: 'Vorher' })
     const other = await client.create('notes', { title: 'Dazwischen' })
 

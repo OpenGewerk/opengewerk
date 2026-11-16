@@ -62,7 +62,9 @@ describe('the outbox of a device with more than one person', () => {
     // Anna is back: hers go out, as they were queued and with nothing added.
     const back = await openLocalStore(tenant, 'anna')
 
-    expect(await back.readOutbox()).toEqual([aNote('op-anna', 'Leiter im Flur')])
+    expect(await back.readOutbox()).toEqual([
+      { ...aNote('op-anna', 'Leiter im Flur'), place: expect.any(Number) as number },
+    ])
     expect((await back.waitingFiles()).map((file) => file.sha256)).toEqual([photo.sha256])
     expect(await back.countWaitingFiles()).toBe(1)
     back.close()
@@ -119,7 +121,9 @@ describe('what a device holds of the server, with more than one person', () => {
     // Anna's change and her photo still wait for her.
     const back = await openLocalStore(tenant, 'anna')
 
-    expect(await back.readOutbox()).toEqual([aNote('op-anna', 'Leiter im Flur')])
+    expect(await back.readOutbox()).toEqual([
+      { ...aNote('op-anna', 'Leiter im Flur'), place: expect.any(Number) as number },
+    ])
     expect((await back.waitingFiles()).map((file) => file.sha256)).toEqual([photo.sha256])
     back.close()
   })
@@ -1069,6 +1073,45 @@ describe('the pulls of the tabs of one browser', () => {
   })
 })
 
+describe('the place of a change in the outbox', () => {
+  it('rises with every change queued, one after the other in two tabs, and is never given twice (opengewerk#955)', async () => {
+    const tenant = aTenant()
+    const one = await openLocalStore(tenant, 'anna')
+    const two = await openLocalStore(tenant, 'anna')
+    const places: (number | undefined)[] = []
+
+    for (const [index, tab] of [one, two, one, two].entries()) {
+      places.push((await tab.queue(aNote(`op-${String(index)}`, 'Notiz'))).place)
+    }
+
+    // Two at the same moment, from both tabs.
+    const together = await Promise.all([
+      one.queue(aNote('op-a', 'Notiz')),
+      two.queue(aNote('op-b', 'Notiz')),
+    ])
+
+    places.push(...together.map((operation) => operation.place))
+
+    expect(places.slice(0, 4)).toEqual([0, 1, 2, 3])
+    expect(new Set(places).size).toBe(6)
+    expect([...places].sort()).toEqual([0, 1, 2, 3, 4, 5])
+    expect(
+      (await one.readOutbox()).map((operation) => [operation.id, operation.place]).sort(),
+    ).toEqual(
+      [
+        ['op-0', 0],
+        ['op-1', 1],
+        ['op-2', 2],
+        ['op-3', 3],
+        ['op-a', together[0]?.place],
+        ['op-b', together[1]?.place],
+      ].sort(),
+    )
+    one.close()
+    two.close()
+  })
+})
+
 describe('what waits on a device for nobody', () => {
   /** A store of a version that did not yet say whose a change is, with two changes and a photo. */
   async function storeFromBefore(tenant: string): Promise<void> {
@@ -1084,6 +1127,43 @@ describe('what waits on a device for nobody', () => {
     })
     await before.keepFile(photo, true)
     before.close()
+    // That version gave no place in the outbox (opengewerk#955).
+    await withoutPlaces(tenant)
+  }
+
+  /** Takes the place off every operation in the outbox, as a version before #955 wrote it. */
+  async function withoutPlaces(tenant: string): Promise<void> {
+    const raw = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(`opengewerk.${tenant}`)
+
+      request.onsuccess = () => {
+        resolve(request.result)
+      }
+      request.onerror = () => {
+        reject(request.error ?? new Error('not opened'))
+      }
+    })
+
+    await new Promise<void>((resolve, reject) => {
+      const transaction = raw.transaction('outbox', 'readwrite')
+      const outbox = transaction.objectStore('outbox')
+      const request = outbox.getAll()
+
+      request.onsuccess = () => {
+        for (const row of request.result as { place?: number }[]) {
+          const { place: _place, ...kept } = row
+
+          outbox.put(kept)
+        }
+      }
+      transaction.oncomplete = () => {
+        resolve()
+      }
+      transaction.onerror = () => {
+        reject(transaction.error ?? new Error('not written'))
+      }
+    })
+    raw.close()
   }
 
   it('is shown to the person signed in, oldest first, beside what is theirs', async () => {

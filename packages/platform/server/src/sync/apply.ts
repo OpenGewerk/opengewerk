@@ -400,14 +400,14 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
     //
     // The lock is on the id, in a key space of its own beside the named locks
     // of the foundation. Two transmissions take their locks in the same
-    // order, the one their operations were recorded in, so they do not wait
-    // for each other in a circle.
+    // order, the one of the outbox they came from (`inOutboxOrder`), so they
+    // do not wait for each other in a circle.
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext('opengewerk.sync_operation'), hashtext(${sent.id}::text))`,
     )
 
     const seen = await tx
-      .select({ outcome: syncOperations.outcome, takenAt: takenAt() })
+      .select({ outcome: syncOperations.outcome })
       .from(syncOperations)
       .where(eq(syncOperations.id, sent.id))
 
@@ -422,7 +422,6 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
         outcome: already.outcome,
         reason: 'already_seen',
         fields: [],
-        takenAt: Number(already.takenAt),
       }
     }
 
@@ -677,34 +676,21 @@ async function record(
     })
   }
 
-  const [written] = await tx
-    .insert(syncOperations)
-    .values({
-      id: operation.id,
-      tenantId,
-      entity: operation.entity,
-      recordId: operation.recordId,
-      outcome: result.outcome,
-      deviceId: operation.deviceId,
-    })
-    .returning({ takenAt: takenAt() })
+  await tx.insert(syncOperations).values({
+    id: operation.id,
+    tenantId,
+    entity: operation.entity,
+    recordId: operation.recordId,
+    outcome: result.outcome,
+    deviceId: operation.deviceId,
+  })
 
   return {
     operationId: operation.id,
     outcome: result.outcome,
     reason: result.reason,
     fields: result.fields,
-    takenAt: Number(written?.takenAt),
   }
-}
-
-/**
- * When a receipt was written, to the microsecond: a `Date` keeps only the
- * millisecond, and two transmissions of one device can fall into the same.
- * Exact as a number, which holds whole numbers up to 2^53, far beyond now.
- */
-function takenAt() {
-  return sql<string>`(extract(epoch from ${syncOperations.receivedAt}) * 1000000)::bigint`
 }
 
 /** A conflict as the table keeps it. */

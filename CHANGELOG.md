@@ -161,16 +161,19 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
-- Ein Gerät zeigt einen Datensatz jetzt so, wie der Server ihn hält, auch wenn seine Uhr zwischen zwei Übertragungen
-  zurückgestellt wurde und der Abgleich danach noch nicht durchkam (#950). Warum: Die Anzeige ordnete die Änderungen,
-  die der Server schon angenommen hatte, nach der Uhr des Geräts. Eine später gesendete Änderung mit früherer Zeit kam
-  dann zuerst, eine Löschung ließ die Datei wieder als vorhanden erscheinen, und eine Änderung zeigte den Wert von
-  vorher. Jetzt legen Anzeige, Papierkorb und die Frage nach der Reihenfolge aus #937 die Änderungen in derselben
-  Reihenfolge an: was der Server angenommen hat, in der Reihenfolge, in der er es angewandt hat, dahinter, was wartet,
-  in der Reihenfolge des Ausgangs. Dafür nennt der Server in jeder Quittung, wann er eine Operation angenommen hat, und
-  bei einer, die nach einer verlorenen Antwort noch einmal kommt, den Zeitpunkt vom ersten Mal. Schicken zwei Tabs
-  desselben Browsers zugleich verschiedene Änderungen am selben Datensatz, kann die Anzeige bis zum nächsten
-  vollständigen Abruf noch abweichen, weil der Zeitpunkt der Beginn einer Übertragung ist.
+- Der Abgleich ordnet die Änderungen eines Geräts jetzt nach der Reihenfolge, in der sie eingegeben wurden, und nicht
+  mehr nach der Uhr des Geräts (#950, #955). Warum: Wurde die Uhr zurückgestellt, gingen zwei Änderungen, die zugleich
+  warteten, in umgekehrter Reihenfolge hinaus, und die letzte Eingabe ging verloren. Die Anzeige ordnete auch, was der
+  Server schon angenommen hatte, nach der Uhr: Eine Löschung ließ die Datei wieder als vorhanden erscheinen, und eine
+  Änderung zeigte den Wert von vorher, bis ein Abruf durchkam. Jetzt bekommt jede Änderung beim Speichern eine Stelle
+  im Ausgang des Geräts, auch über mehrere Tabs hinweg, und nach ihr sendet das Gerät und wendet der Server an.
+  Anzeige, Papierkorb und die Frage nach der Reihenfolge aus #937 legen die Änderungen in dieser einen Reihenfolge an,
+  auch nach einer verlorenen Antwort des Servers. Was vor dem Update schon wartete, hat keine Stelle und geht wie
+  bisher nach der Uhr hinaus, vor allem, was danach gespeichert wird.
+- Ein Datensatz, der auf einem Gerät angelegt wurde, zeigt die Felder, die der Server vergibt, sobald seine Zeile
+  zurück ist (#956). Warum: Bis ein Abruf ganz durchkam, legte das Gerät die Anlage über die Zeile des Servers und
+  zeigte nur, was es selbst gesendet hatte; scheiterte ein späterer Teil des Abrufs, fehlten etwa die Nummer und der
+  Stand der Zeile, bis der nächste ganz durchkam.
 - Zieht eine Anlage oder ein Gerät auf das Objekt eines Auftrags um, kommen ihre Dateien, Protokolle und was sonst an
   ihr hängt jetzt auch auf ein Gerät, das schon abgeglichen hat (#938). Warum: Der Bereich eines Geräts änderte seinen
   Wert nur mit den Aufträgen, und was an der Anlage hing, lag mit seinen Änderungen hinter dem Stand des Geräts. Jetzt

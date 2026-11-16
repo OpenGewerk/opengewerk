@@ -118,19 +118,47 @@ export interface Operation {
   /** When the device recorded it, not when it arrived. */
   readonly recordedAt: Date
   readonly deviceId: DeviceId
+  /**
+   * Where it stands in the outbox of its device: given by the store of the
+   * device as it queues it, one higher than every operation before, in every
+   * tab of the browser (opengewerk#955). The order the person worked in,
+   * which the clock of the device is not once it was put back. Absent from
+   * an operation queued before there was one, and from a device of an older
+   * version.
+   */
+  readonly place?: number
 }
 
 /**
- * The order the outbox hands operations over in.
+ * The order the outbox hands operations over in, and the order the server
+ * applies a transmission in.
  *
- * By the moment of recording, and by id where two fall in the same
- * millisecond. The tie breaker is not cosmetic: two operations on the same
- * record in the wrong order turn a correct sequence of edits into a wrong
- * final state, and `Array.prototype.sort` is only stable within one array, not
- * across two transmissions of the same queue.
+ * By the place each has in the outbox of its device (opengewerk#955): the
+ * order they were queued in, whatever the clock of the device said. By the
+ * moment of recording only where there is no place, an operation queued
+ * before there was one, and those go first, since they were queued first.
+ * By id where two fall in the same millisecond. The tie breaker is not
+ * cosmetic: two operations on the same record in the wrong order turn a
+ * correct sequence of edits into a wrong final state, and
+ * `Array.prototype.sort` is only stable within one array, not across two
+ * transmissions of the same queue.
  */
 export function inOutboxOrder(operations: readonly Operation[]): readonly Operation[] {
   return [...operations].sort((left, right) => {
+    if (left.place !== undefined || right.place !== undefined) {
+      if (left.place === undefined) {
+        return -1
+      }
+
+      if (right.place === undefined) {
+        return 1
+      }
+
+      if (left.place !== right.place) {
+        return left.place - right.place
+      }
+    }
+
     const byTime = left.recordedAt.getTime() - right.recordedAt.getTime()
 
     return byTime !== 0 ? byTime : left.id.localeCompare(right.id)

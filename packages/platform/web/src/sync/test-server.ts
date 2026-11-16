@@ -38,13 +38,8 @@ export class TestServer implements SyncTransport, DirectWriter {
   private readonly tables = new Map<string, Map<string, Row>>()
   private changed = new Map<string, Set<string>>()
   private cursor = 1
-  /**
-   * Every operation applied, as the server keeps its receipts, with the
-   * transmission it was taken in: one number for each, rising, as the start of
-   * a transaction is on the server.
-   */
-  private readonly taken = new Map<string, number>()
-  private transmissions = 0
+  /** Every operation applied, as the server keeps its receipts. */
+  private readonly taken = new Set<string>()
 
   put(entity: string, row: Row): void {
     const table = this.tables.get(entity) ?? new Map<string, Row>()
@@ -92,14 +87,12 @@ export class TestServer implements SyncTransport, DirectWriter {
     // As the server does: what it has taken once it does not apply again, and
     // answers with the receipt it gave. It applies a transmission in the order
     // of the outbox, whatever order it came in.
-    const seen = new Set(this.taken.keys())
-
-    this.transmissions += 1
+    const seen = new Set(this.taken)
 
     for (const operation of inOutboxOrder(operations)) {
       if (!seen.has(operation.id)) {
         this.apply(operation)
-        this.taken.set(operation.id, this.transmissions)
+        this.taken.add(operation.id)
       }
     }
 
@@ -109,7 +102,6 @@ export class TestServer implements SyncTransport, DirectWriter {
         outcome: 'applied',
         reason: seen.has(operation.id) ? 'already_seen' : null,
         fields: [],
-        takenAt: this.taken.get(operation.id) ?? this.transmissions,
       })),
     )
   }

@@ -288,31 +288,6 @@ describe('applying what a device queued up', () => {
     expect(await inTenant(north.id, (tx) => tx.select().from(notes))).toHaveLength(1)
   })
 
-  it('says when it took each operation, one moment for a transmission and on a second the moment of the first (opengewerk#950)', async () => {
-    const note = () =>
-      operation({
-        entity: 'notes',
-        recordId: newId<'note'>(),
-        patches: [{ field: 'text', to: 'Zähler ablesen' }],
-      })
-    const first = [note(), note()]
-    const fresh = note()
-    const taken = await send(north.id, first)
-    const later = await send(north.id, [...first, fresh])
-    const at = (receipts: readonly OperationReceipt[], sent: { id: string }) =>
-      receipts.find((receipt) => receipt.operationId === sent.id)?.takenAt
-
-    const moment = at(taken, first[0] as { id: string })
-
-    expect(Number.isSafeInteger(moment)).toBe(true)
-    // Microseconds since 1970, within a minute of now.
-    expect(Math.abs(Number(moment) / 1000 - Date.now())).toBeLessThan(60_000)
-    expect(at(taken, first[1] as { id: string })).toBe(moment)
-    expect(at(later, first[0] as { id: string })).toBe(moment)
-    expect(at(later, first[1] as { id: string })).toBe(moment)
-    expect(Number(at(later, fresh))).toBeGreaterThan(Number(moment))
-  })
-
   it('takes two changes of different fields from two devices, and keeps the second of two on the same field for a person', async () => {
     const shelfId = newId<'shelf'>()
     const noteId = newId<'note'>()
