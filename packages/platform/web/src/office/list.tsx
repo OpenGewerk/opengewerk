@@ -272,6 +272,16 @@ export function pageFrom(
   }
 }
 
+/**
+ * The rows a list shows: a page of them where it pages, from the first row
+ * kept, and all of them where it does not. A list drawn as cards has no pages
+ * and no way back to rows before a first row kept from a page further on, so
+ * it starts at the first whatever was kept (CodeRabbit on opengewerk#969).
+ */
+export function shownOf(total: number, start: number, size: number, paged: boolean) {
+  return paged ? pageFrom(total, start, size) : pageFrom(total, 0, total)
+}
+
 /** The rows a filter, a search and an order leave. */
 function narrowed(
   rows: readonly RecordState[],
@@ -368,8 +378,7 @@ export function ListScreen(props: ListScreenProps) {
 
   const fit = useRowsThatFit(frame, 20)
   const paged = band !== 'S'
-  const size = paged ? fit : found.length
-  const page = pageFrom(found.length, start, size)
+  const page = shownOf(found.length, start, fit, paged)
   const shown = found.slice(page.first, page.end)
 
   const beside = (band === 'XL' && preview) || (band === 'XXL' && record)

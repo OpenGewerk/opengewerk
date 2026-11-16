@@ -14,6 +14,7 @@ import {
   ListCard,
   ListScreen,
   pageFrom,
+  shownOf,
   SortChoice,
 } from './list.js'
 import type { ListScreenProps } from './list.js'
@@ -257,6 +258,11 @@ describe('the pages of a list whose size changes between them', () => {
     expect(pageFrom(40, 0, 10)).toMatchObject({ back: null })
     expect(pageFrom(5, 16, 10)).toEqual({ first: 0, end: 5, back: null, next: null })
     expect(pageFrom(25, 30, 10)).toEqual({ first: 15, end: 25, back: 5, next: null })
+  })
+
+  it('shows every row as cards, also after paging further on at a wider window', () => {
+    expect(shownOf(40, 10, 6, false)).toEqual({ first: 0, end: 40, back: null, next: null })
+    expect(shownOf(40, 10, 6, true)).toEqual({ first: 10, end: 16, back: 4, next: 16 })
   })
 })
 
