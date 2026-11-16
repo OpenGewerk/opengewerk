@@ -26,6 +26,7 @@ import {
   themeKeyIn,
   themeProblem,
   troubleNote,
+  openerLabel,
   walkThrough,
   widths,
   worthFollowing,
@@ -159,7 +160,12 @@ function siteOf(pages) {
 
         return Promise.resolve()
       },
-      has: (name) => Promise.resolve((pages[open]?.buttons ?? []).includes(name)),
+      has: (name) =>
+        Promise.resolve(
+          (pages[open]?.buttons ?? []).some((button) =>
+            typeof name === 'string' ? button === name : name.test(button),
+          ),
+        ),
       paths: () => Promise.resolve(pages[open]?.links ?? []),
       pages: (candidates) => Promise.resolve(candidates.filter((path) => path in pages)),
     },
@@ -197,6 +203,42 @@ describe('the walk through the pages', () => {
     })
     // What answers with something other than a page is not opened.
     expect(site.opened).not.toContain('/api/notizen.pdf')
+  })
+
+  /**
+   * A form behind a button named for what it edits, "Maria Weber bearbeiten",
+   * is found through a pattern instead of a list of names (opengewerk#448),
+   * once per kind of page, and "Bearbeiten" alone is not such a button.
+   */
+  it('presses the first button a pattern finds, as a kind of its own', async () => {
+    const named = / bearbeiten$/
+    const site = siteOf({
+      '/': { links: [`/kunden/${id(1)}`, `/kunden/${id(2)}`] },
+      [`/kunden/${id(1)}`]: { buttons: ['Bearbeiten', 'Maria Weber bearbeiten'] },
+      [`/kunden/${id(2)}`]: { buttons: ['Bearbeiten', 'Jonas Kern bearbeiten'] },
+    })
+
+    const kinds = await walkThrough(site.reader, { entries: ['/'], openers: ['Bearbeiten', named] })
+
+    expect(Object.fromEntries(kinds)).toEqual({
+      '/': { path: '/', press: null },
+      '/kunden/:id': { path: `/kunden/${id(1)}`, press: null },
+      '/kunden/:id (Bearbeiten)': { path: `/kunden/${id(1)}`, press: 'Bearbeiten' },
+      '/kunden/:id (/ bearbeiten$/)': { path: `/kunden/${id(1)}`, press: named },
+    })
+    expect(openerLabel(named)).toBe('/ bearbeiten$/')
+    expect(openerLabel('Bearbeiten')).toBe('Bearbeiten')
+    expect(named.test('Bearbeiten')).toBe(false)
+  })
+
+  it('keeps two patterns of the same words apart', async () => {
+    const site = siteOf({
+      '/': { buttons: ['Neu anlegen', 'Vorlage Neu'] },
+    })
+
+    const kinds = await walkThrough(site.reader, { entries: ['/'], openers: [/^Neu/, /Neu$/] })
+
+    expect([...kinds.keys()]).toEqual(['/', '/ (/^Neu/)', '/ (/Neu$/)'])
   })
 
   /**

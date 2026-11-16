@@ -50,6 +50,10 @@ await checkWidths({
    */
   openers: [
     'Bearbeiten',
+    // A form behind a button named for what it edits, "Maria Weber
+    // bearbeiten" at a contact or "Schlüsseltresor Hof bearbeiten" at an
+    // access (#448): the first such button of a page, whatever it names.
+    / bearbeiten$/,
     'Position hinzufügen',
     'Material eintragen',
     'Dateien einlesen',
