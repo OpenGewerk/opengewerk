@@ -237,6 +237,41 @@ function useRowsThatFit(element: HTMLElement | null, fallback: number): number {
   return rows
 }
 
+/**
+ * The rows of one page, from the first row it shows: where it ends, and where
+ * the pages before and after it start, or null where there is none.
+ *
+ * Kept as the first row and not as a number of the page. The size of a page
+ * is measured from the height of a row and changes when a taller row comes
+ * to the top, a tag in two lines, say; counted as page times size, the next
+ * page then began further on than the last one ended and the rows between
+ * were never shown (CodeRabbit on opengewerk#969). From its first row the
+ * next page starts where the shown one ends, whatever the size is now. A
+ * first row the rows no longer reach, after a filter took some away, falls
+ * back onto the last rows.
+ */
+export function pageFrom(
+  total: number,
+  start: number,
+  size: number,
+): {
+  readonly first: number
+  readonly end: number
+  readonly back: number | null
+  readonly next: number | null
+} {
+  const step = Math.max(size, 1)
+  const first = start < total ? Math.max(start, 0) : Math.max(0, total - step)
+  const end = Math.min(total, first + step)
+
+  return {
+    first,
+    end,
+    back: first > 0 ? Math.max(0, first - step) : null,
+    next: end < total ? end : null,
+  }
+}
+
 /** The rows a filter, a search and an order leave. */
 function narrowed(
   rows: readonly RecordState[],
@@ -307,7 +342,7 @@ export function ListScreen(props: ListScreenProps) {
   const [facetId, setFacetId] = useState<string | null>(null)
   const [choiceId, setChoiceId] = useState<string | null>(null)
   const [sortId, setSortId] = useState<string | null>(sorts[0]?.id ?? null)
-  const [page, setPage] = useState(0)
+  const [start, setStart] = useState(0)
   const [chosen, setChosen] = useState<string | null>(null)
   const [closed, setClosed] = useState(false)
   const input = useRef<HTMLInputElement>(null)
@@ -334,9 +369,8 @@ export function ListScreen(props: ListScreenProps) {
   const fit = useRowsThatFit(frame, 20)
   const paged = band !== 'S'
   const size = paged ? fit : found.length
-  const pages = Math.max(1, Math.ceil(found.length / Math.max(size, 1)))
-  const shownPage = Math.min(page, pages - 1)
-  const shown = found.slice(shownPage * size, shownPage * size + size)
+  const page = pageFrom(found.length, start, size)
+  const shown = found.slice(page.first, page.end)
 
   const beside = (band === 'XL' && preview) || (band === 'XXL' && record)
   // The selection falls back to the first row shown, as the boards draw it,
@@ -381,25 +415,25 @@ export function ListScreen(props: ListScreenProps) {
       countId={countId}
       onChange={(value) => {
         setSearch(value)
-        setPage(0)
+        setStart(0)
       }}
       filters={filters}
       filterId={filterId}
       onFilter={(id) => {
         setFilterId(id)
-        setPage(0)
+        setStart(0)
       }}
       facets={facets}
       facetId={facetId}
       onFacet={(id) => {
         setFacetId(id)
-        setPage(0)
+        setStart(0)
       }}
       choice={choice && choice.options.length > 0 ? choice : undefined}
       choiceId={picked ? choiceId : null}
       onChoice={(id) => {
         setChoiceId(id)
-        setPage(0)
+        setStart(0)
       }}
       sorts={sorts}
       sortId={sortId}
@@ -442,11 +476,11 @@ export function ListScreen(props: ListScreenProps) {
               grow
               footer={
                 <Pager
-                  first={shownPage * size + 1}
-                  last={Math.min(found.length, shownPage * size + size)}
+                  first={page.first + 1}
+                  last={page.end}
                   total={found.length}
-                  onBack={shownPage > 0 ? () => setPage(shownPage - 1) : undefined}
-                  onNext={shownPage < pages - 1 ? () => setPage(shownPage + 1) : undefined}
+                  onBack={page.back === null ? undefined : () => setStart(page.back ?? 0)}
+                  onNext={page.next === null ? undefined : () => setStart(page.next ?? 0)}
                 />
               }
             >

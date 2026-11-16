@@ -7,7 +7,15 @@ import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { InRouter } from '../in-router.js'
-import { EmptyState, entries, lastChanged, ListCard, ListScreen, SortChoice } from './list.js'
+import {
+  EmptyState,
+  entries,
+  lastChanged,
+  ListCard,
+  ListScreen,
+  pageFrom,
+  SortChoice,
+} from './list.js'
 import type { ListScreenProps } from './list.js'
 import { isLocked } from '../testing.js'
 
@@ -214,6 +222,41 @@ describe('a list at a desk', () => {
     )
 
     expect(await screen.findByText('/regale/s-01')).toBe(screen.getByTestId('where'))
+  })
+})
+
+/**
+ * The size of a page is measured from the height of a row and changes when a
+ * taller row comes to the top. Counted as page times size, the next page began
+ * further on than the last one ended (CodeRabbit on opengewerk#969).
+ */
+describe('the pages of a list whose size changes between them', () => {
+  it('shows every row once going forward, whatever size each page is measured at', () => {
+    const seen: number[] = []
+    let start = 0
+
+    for (const size of [6, 10, 7, 10, 6, 9]) {
+      const page = pageFrom(40, start, size)
+
+      for (let row = page.first; row < page.end; row += 1) {
+        seen.push(row)
+      }
+
+      if (page.next === null) {
+        break
+      }
+
+      start = page.next
+    }
+
+    expect(seen).toEqual(Array.from({ length: 40 }, (_, row) => row))
+  })
+
+  it('goes back without a gap, and falls back onto the last rows when a filter took the first one away', () => {
+    expect(pageFrom(40, 6, 10)).toEqual({ first: 6, end: 16, back: 0, next: 16 })
+    expect(pageFrom(40, 0, 10)).toMatchObject({ back: null })
+    expect(pageFrom(5, 16, 10)).toEqual({ first: 0, end: 5, back: null, next: null })
+    expect(pageFrom(25, 30, 10)).toEqual({ first: 15, end: 25, back: 5, next: null })
   })
 })
 
