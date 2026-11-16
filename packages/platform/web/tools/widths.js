@@ -219,7 +219,23 @@ function keyed(path, pattern) {
  * details (opengewerk-haustechnik#128).
  */
 function opener(page, name) {
-  return page.getByRole('button', { name, exact: true, disabled: false }).first()
+  return page
+    .getByRole('button', { name, exact: typeof name === 'string', disabled: false })
+    .first()
+}
+
+/**
+ * How a button to press is named in a kind of page and in a report: its name,
+ * or a pattern as it is written, anchors and flags included. "Maria Weber
+ * bearbeiten" and every other button that opens the form of what it names
+ * stand under `/ bearbeiten$/` (opengewerk#448). Written out whole, two
+ * patterns never share a name, so that neither stands in for the other
+ * (CodeRabbit).
+ *
+ * @param {string | RegExp} name
+ */
+export function openerLabel(name) {
+  return typeof name === 'string' ? name : String(name)
 }
 
 /**
@@ -495,7 +511,7 @@ function stands() {
  * all the same, once the time is up.
  *
  * @param {object} page
- * @param {string} name
+ * @param {string | RegExp} name A name, or a pattern of names (#448).
  * @param {number} [within] How long it may take, in milliseconds.
  * @returns {Promise<boolean>}
  */
@@ -603,7 +619,7 @@ export async function walkThrough(
     await reader.open(path)
 
     for (const name of openers) {
-      const kind = `${kindOfPath(path)} (${name})`
+      const kind = `${kindOfPath(path)} (${openerLabel(name)})`
 
       if (!kinds.has(kind) && (await reader.has(name))) {
         kinds.set(kind, { path, press: name })
@@ -1129,7 +1145,7 @@ async function checkKind(lane, { kind, path, press }, { address, report, steps, 
           found(
             width,
             'unreachable',
-            `bei ${String(width)} px ist "${press}" nicht zu sehen${noted()}`,
+            `bei ${String(width)} px ist "${openerLabel(press)}" nicht zu sehen${noted()}`,
           )
         } else {
           found(width, 'empty', `bei ${String(width)} px ${notDrawn}${await emptied()}`)
@@ -1219,8 +1235,10 @@ export async function measuredTwice(measure) {
  * @param {readonly RegExp[]} [options.keys] Where the addresses name a record
  *   by its key rather than an identifier: patterns, each group of which
  *   captures such a key. Pages that differ only there are one kind.
- * @param {readonly string[]} [options.openers] The names of the buttons that
- *   open a form without an address of its own.
+ * @param {readonly (string | RegExp)[]} [options.openers] The names of the
+ *   buttons that open a form without an address of its own, or patterns: the
+ *   first button whose name matches is pressed, so that "Maria Weber
+ *   bearbeiten" is found without a list of names (opengewerk#448).
  * @param {number} [options.mostKinds] How many kinds of page the walk may
  *   find before it stops and fails, 120 unless said.
  * @param {number} [options.lanes] How many pages measure one theme at once,

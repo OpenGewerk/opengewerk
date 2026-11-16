@@ -46,6 +46,7 @@ describe('the change log in the words of the office', () => {
       'documents',
       'articles',
       'suppliers',
+      'defects',
     ])
     expect(audit.partsOf('documents').map((part) => part.table)).toContain('payments')
   })

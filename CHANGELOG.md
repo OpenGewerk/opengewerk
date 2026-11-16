@@ -169,7 +169,15 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   ersten, auch nach dem Blättern in einem breiteren Fenster. Gemessen wird jetzt an der niedrigsten Zeile der Seite
   statt an der ersten (#971): Eine hohe Zeile oben machte die Seite kürzer, die kürzere begann mit einer niedrigen
   und wurde wieder länger, und so konnte die Größe hin und her springen. Eine Seite mit einigen hohen Zeilen reicht
-  dafür etwas über das Fenster hinaus. Das gilt für jede Liste des Fundaments, auch in der Haustechnik.
+  dafür etwas über das Fenster hinaus. Das gilt für jede Liste des Fundaments; die Haustechnik bekommt es mit dem
+  nächsten Anheben ihres Submoduls.
+- Die Prüfung „Breiten und Auflösungen“ misst auch die Formulare hinter einem Knopf, der den Namen dessen trägt,
+  was er bearbeitet, etwa „Maria Weber bearbeiten“ an einem Ansprechpartner oder „Schlüsseltresor Hof bearbeiten“
+  an einem Zugang (#448). Das Werkzeug des Fundaments nimmt dafür neben Namen auch Muster als Knöpfe, hier
+  `/ bearbeiten$/`, und drückt den ersten passenden Knopf einer Seite. Warum: Gerade dort stehen lange Namen neben
+  einem Kreuz oder in einer schmalen Zeile, und die Prüfung kam bisher nur hinter einen Knopf „Bearbeiten“. Die
+  Vorschau legt dafür an ihren ersten beiden Kunden je einen Ansprechpartner und an ihren ersten beiden Objekten je
+  einen Zugang mit langem Namen an; vorher hatte sie keinen Zugang und nur einen Ansprechpartner an einem Lieferanten.
 - Transaktionen eines Betriebs und der Instanz laufen ausdrücklich mit `READ COMMITTED`, nicht mit der Voreinstellung des Datenbankservers. Warum: Mehrere Prüfungen nehmen erst eine Sperre und lesen danach, was sie prüfen (Abwesenheiten einer Person, Aufdecken eines Zugangscodes, Zähler der Zugangsdaten); unter einer strengeren Voreinstellung hätten sie einen Stand von vor dem Warten gelesen.
 - Die Tests des Servers, die einen Wettlauf erzwingen, halten ihre Abfrage über eine gemeinsame Hilfsfunktion an, die den Datenbank-Client bei Testende in jedem Fall wiederherstellt. Warum: Fünf Tests hielten sie mit je einer eigenen Kopie derselben Konstruktion an, und wurde die Abfrage nie erreicht, blieb der überschriebene Client nach dem Timeout für die übrigen Tests der Datei stehen.
 - Die Ansprechpartner eines Lieferanten hängen am Recht „Lieferanten ansehen“ statt an „Kunden ansehen“: Die Liste aller Kontakte zeigt sie nur noch mit diesem Recht, die neue Route `GET /suppliers/:id/contacts` gibt sie mit ihm allein heraus, und der Abgleich folgt beiden. Ein Ansprechpartner wechselt nicht mehr zwischen einem Lieferanten und einem Kunden oder Objekt, weil ein Gerät mit nur einem der beiden Rechte von dem Wechsel nichts erführe. Warum: Bis jetzt sah eine Rolle mit „Kunden ansehen“ die Ansprechpartner von Lieferanten, die sie selbst nicht sehen darf, und eine Rolle, die nur die Lieferanten pflegt, sah deren Ansprechpartner nicht (opengewerk#883). Für die mitgelieferten Rollen ändert sich nichts.
@@ -194,6 +202,17 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Das Änderungsprotokoll eines Lieferanten und eines Artikels sagt unter der Überschrift, was es mitnimmt (#557):
+  „mit Ansprechpartnern, Aufschlag und Metallpreisen“ und „mit Verkaufspreisen, Aufschlag und Bezugsquellen samt
+  Einkaufspreisen und Metall“. Warum: Die Änderungen dieser Teile standen schon in der Liste, nur sagte die Seite
+  nicht, warum unter einem Lieferanten die Änderung an einer Person steht. Ein Test hält jeden Datensatz mit Knopf
+  und Teilen gegen diese Sätze. Die älteren Sätze nennen jetzt ebenfalls alles, was ihr Protokoll mitnimmt: beim
+  Kunden die Tags, beim Objekt Geräte, Tags und Zugänge, bei der Anlage Mängel und Etiketten, beim Auftrag Mängel und
+  das Verlangen auf vorzeitigen Beginn, beim Beleg Belehrungen und Herkunft.
+- Der Knopf „Änderungen“ an einem Mangel zeigt den Mangel mit seinen Schritten statt des ganzen Protokolls (#967).
+  Warum: Der Mangel fehlte seit #311 in der Liste der Datensätze mit Knopf, und die Seite schränkte auf nichts ein.
+  Ein Test hält jetzt jeden Knopf „Änderungen“ des Büros gegen diese Liste. Aus dem Protokoll führt „Zum Mangel“
+  zurück zu ihm, wie zu jedem anderen Datensatz mit Knopf.
 - Viele protokollierte Änderungen in einer Transaktion brauchen je Änderung etwa gleich lange (#953). Bisher
   schrieb jede Änderung die Zählerzeile des Abgleichs und die Kettenzeile des Änderungsprotokolls neu und fand beide
   über ihren Schlüssel wieder, vorbei an jeder Fassung, die die Transaktion von ihnen schon geschrieben hatte. Jetzt
