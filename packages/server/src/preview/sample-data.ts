@@ -2818,6 +2818,9 @@ async function plantAppliances(
         manufacturer: 'Stiebel Eltron',
         model: 'CK 20',
         cordLengthMilli: 1_800,
+        // As the boards of opengewerk#816 show it.
+        cordCrossSectionMilli: 1_500,
+        heatingPowerWatts: 2_000,
       }),
     ],
     [
@@ -2827,6 +2830,7 @@ async function plantAppliances(
         manufacturer: 'Melitta',
         model: 'Look IV',
         cordLengthMilli: 1_200,
+        heatingPowerWatts: 1_400,
       }),
     ],
     [
@@ -2844,6 +2848,7 @@ async function plantAppliances(
       appliance('006', 'Kabeltrommel 50 m', 'I', 'Garage', {
         manufacturer: 'as-Schwabe',
         cordLengthMilli: 50_000,
+        cordCrossSectionMilli: 2_500,
       }),
     ],
     [

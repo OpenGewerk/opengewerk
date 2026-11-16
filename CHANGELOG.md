@@ -9,6 +9,17 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Hinzugefügt
 
+- Die Prüfung eines Geräts nach DGUV Vorschrift 3 kennt Geräte mit Heizelementen und Anschlussleitungen über 1,5 mm²
+  (#816, Migration 0147, Paket Elektro 0.12.0, Fassung 3 des Formulars). Am Gerät stehen, beide freiwillig, die
+  Heizleistung in kW und der Querschnitt der Anschlussleitung in mm², im Büro und auf der Baustelle. Ein Gerät der
+  Schutzklasse I mit Heizelementen wird beim Isolationswiderstand gegen 0,3 MΩ gemessen; über 3,5 kW urteilt der
+  Schutzleiterstrom, der dann 1 mA je kW betragen darf, höchstens 10 mA. Eine Leitung über 1,5 mm² mit Länge wird
+  gegen ihren berechneten Widerstand gemessen, Länge durch Leitfähigkeit von Kupfer und Querschnitt, zuzüglich 0,1 Ω
+  für den Übergang. Ohne Angabe bleibt es bei den strengeren Werten wie bisher. Ein unterschriebenes Protokoll hält
+  die beiden Angaben mit fest (#954); eines, das vorher unterschrieben wurde, behält, womit es unterschrieben wurde.
+  Die Werte stehen im Regelpaket mit Fundstelle und gehen zur fachkundigen Abnahme in #31. Warum: Ein Heizlüfter mit
+  0,5 MΩ stand bisher als außerhalb des Grenzwerts im Protokoll, obwohl er in Ordnung ist. Das Fundament kennt dafür
+  die Einheit `square_micrometres`.
 - Ein Gerät des Verzeichnisses hat Dateien wie eine Anlage, und die Prüfung nach DGUV Vorschrift 3 hat in Fassung 2
   ihres Formulars ein Foto (#817, Migration 0143, Paket Elektro 0.11.0). Auf der Baustelle nimmt der Monteur im
   Ergebnis der Prüfung ein „Foto zum Mangel“ auf, auch ohne Netz; es liegt bei den Dateien des Geräts und lässt sich
