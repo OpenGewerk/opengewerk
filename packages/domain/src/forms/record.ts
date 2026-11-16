@@ -36,6 +36,12 @@ export interface FormRecord extends Synced {
   readonly status: FormRecordStatus
   /** The values as JSON text, read with `readFormValues`. */
   readonly values: string
+  /**
+   * What the limits of a signed test of an appliance are worked out from, as
+   * they stood at the signature (opengewerk#954): JSON text, read with
+   * `readApplianceFacts`. Null for a draft and for every other protocol.
+   */
+  readonly applianceFacts: string | null
 }
 
 /**

@@ -32,6 +32,7 @@ import {
   limitVerdict,
   type MeasurementField,
   measurementUnitSign,
+  readApplianceFacts,
   type NumberField,
   partialDueCondition,
   partialTestSentence,
@@ -1307,7 +1308,12 @@ export function useProtocolDraft(record: RecordState): ProtocolDraft {
     [record, signedAt, named],
   )
   const photos = usePhotos(installationId, applianceId ?? '', text(record, 'jobId'), signed)
-  const appliance = applianceFactsOf(useRecord('appliances', applianceId ?? undefined))
+  const current = applianceFactsOf(useRecord('appliances', applianceId ?? undefined))
+  // A signed test keeps the facts it was signed with (opengewerk#954), one
+  // signed here before the server answered those it was sent with; a draft
+  // follows the appliance.
+  const appliance =
+    (isSigned(record) ? readApplianceFacts(record['applianceFacts']) : null) ?? current
   const editable = !isSigned(record)
   // Read and written again, so that two texts of the same values compare
   // equal whoever wrote them.

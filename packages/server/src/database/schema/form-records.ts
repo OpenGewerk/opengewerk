@@ -55,6 +55,15 @@ export const formRecords = pgTable(
     performedOn: date('performed_on').notNull(),
     status: formRecordStatus('status').notNull().default('draft'),
     values: text('values').notNull().default('{}'),
+    /**
+     * What the limits of a signed test of an appliance are worked out from
+     * (opengewerk#954), as they stood at the signature: JSON text read by
+     * `readApplianceFacts`. The device sends what it judged with, and the sync
+     * refuses the signature where they are no longer the appliance's; the
+     * trigger of migration 0146 writes the appliance's own facts at the
+     * signature, whatever was sent.
+     */
+    applianceFacts: text('appliance_facts'),
     ...timestamps,
     ...syncColumns,
   },
@@ -87,6 +96,12 @@ export const formRecords = pgTable(
     check(
       'form_records_values_bounded',
       sql`char_length(${table.values}) <= ${sql.raw(String(longestFormValues))}`,
+    ),
+    check(
+      'form_records_appliance_facts_signed',
+      sql`${table.applianceFacts} is null
+        or (${table.status} = 'signed' and ${table.applianceId} is not null
+          and char_length(${table.applianceFacts}) <= 1000)`,
     ),
     index('form_records_installation_idx').on(table.tenantId, table.installationId),
     index('form_records_appliance_idx').on(table.tenantId, table.applianceId),

@@ -161,6 +161,16 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Ein unterschriebenes Prüfprotokoll eines Geräts rechnet jetzt mit den Angaben, mit denen es unterschrieben wurde,
+  auf dem Bildschirm und im PDF (#954). Warum: Die Grenzwerte der Geräteprüfung hängen an der Schutzklasse und der
+  Länge der Anschlussleitung, und beide wurden bei jedem Aufruf neu vom Gerät gelesen. Wer danach eine Angabe am Gerät
+  berichtigte, änderte Grenzwerte und Urteil eines Nachweises, den niemand angefasst hatte. Jetzt hält das Protokoll
+  beim Unterschreiben die Angaben fest (Migration 0146). Hat das Büro sie geändert, während das Gerät offline war,
+  lehnt der Server die Unterschrift als Konflikt ab; das Protokoll bleibt ein Entwurf mit den neuen Grenzwerten und
+  wird noch einmal unterschrieben. Ein Entwurf folgt weiter dem Gerät. Protokolle, die vor dem Update unterschrieben
+  wurden, bekommen die Angaben, die ihr Gerät beim Update hat; was davor am Gerät geändert wurde, ist nicht mehr
+  bekannt. Eine Fassung der Anwendung von vor dem Update schickt keine Angaben mit; der Server liest sie dann beim
+  Unterschreiben vom Gerät, ohne zu vergleichen.
 - Der Abgleich ordnet die Änderungen eines Geräts jetzt nach der Reihenfolge, in der sie eingegeben wurden, und nicht
   mehr nach der Uhr des Geräts (#950, #955). Warum: Wurde die Uhr zurückgestellt, gingen zwei Änderungen, die zugleich
   warteten, in umgekehrter Reihenfolge hinaus, und die letzte Eingabe ging verloren. Die Anzeige ordnete auch, was der

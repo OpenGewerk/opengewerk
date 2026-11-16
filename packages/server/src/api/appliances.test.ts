@@ -430,6 +430,267 @@ describe('the test of an appliance after DGUV Vorschrift 3', () => {
   })
 })
 
+/**
+ * A signed test keeps the facts its limits were worked out from
+ * (opengewerk#954): the database writes them at the signature, the sync
+ * refuses a signature judged with facts the appliance no longer has, and the
+ * protocol prints them whatever becomes of the appliance. A draft follows it.
+ */
+describe('the facts a test of an appliance is signed with', () => {
+  async function factsOf(id: string): Promise<unknown> {
+    const { rows } = await admin.query<{ appliance_facts: string | null }>(
+      'select appliance_facts from form_records where id = $1',
+      [id],
+    )
+    const facts = rows[0]?.appliance_facts ?? null
+
+    return facts === null ? null : JSON.parse(facts)
+  }
+
+  async function statusOf(id: string): Promise<string | undefined> {
+    const { rows } = await admin.query<{ status: string }>(
+      'select status from form_records where id = $1',
+      [id],
+    )
+
+    return rows[0]?.status
+  }
+
+  async function printed(id: string): Promise<string> {
+    await http()
+      .get(`/form-records/${id}/pdf`)
+      .set('x-test-identity', as(north.id, 'office'))
+      .buffer(true)
+      .parse(binary)
+      .expect(200)
+
+    return jobs.at(-1)?.html ?? ''
+  }
+
+  /** Signs a draft as a device of this version does, with the facts it judged with. */
+  function signedWith(id: string, before: string, after: string, facts: string) {
+    return changed('form_records', id, {
+      status: { from: 'draft', to: 'signed' },
+      values: { from: before, to: after },
+      applianceFacts: { from: null, to: facts },
+    })
+  }
+
+  const shortened = () => ({ cordLengthMilli: { from: 25_000, to: 2_000 } })
+
+  it('prints a signed test with them, whatever the appliance becomes, and a draft with the appliance', async () => {
+    const appliance = newId<'appliance'>()
+    const id = newId<'form-record'>()
+    const draft = newId<'form-record'>()
+    const technician = as(north.id, 'technician')
+    const before = complete({ protective_conductor: 650 })
+
+    // Signed by a device of an older version, which sends none.
+    await push(app, technician, [
+      anAppliance(appliance),
+      aTest(id, { applianceId: appliance }, before),
+      signed(id, before, complete({ protective_conductor: 650, tester_signature: signature })),
+      aTest(draft, { applianceId: appliance }, before),
+    ])
+
+    expect(await factsOf(id)).toEqual({ protectionClass: 'I', cordLengthMilli: 25_000 })
+    expect(await factsOf(draft)).toBeNull()
+
+    // The lead corrected in the office afterwards.
+    await push(app, as(north.id, 'office'), [changed('appliances', appliance, shortened())])
+
+    const page = await printed(id)
+
+    expect(page).toContain('002 Verlängerungsleitung 25 m, Schutzklasse I, Anschlussleitung 25 m')
+    expect(page).toContain('0,65 Ω <span class="outside">außerhalb des Grenzwerts</span>')
+    expect(page).toContain('höchstens 0,60 Ω; DGUV Information 203-070')
+
+    const draftPage = await printed(draft)
+
+    expect(draftPage).toContain('Schutzklasse I, Anschlussleitung 2 m')
+    expect(draftPage).toContain('höchstens 0,30 Ω; DGUV Information 203-070')
+  })
+
+  it('refuses a signature as a conflict where the appliance no longer has the facts it was judged with', async () => {
+    const appliance = newId<'appliance'>()
+    const id = newId<'form-record'>()
+    const other = newId<'form-record'>()
+    const technician = as(north.id, 'technician')
+    const before = complete({ protective_conductor: 650 })
+    const after = complete({ protective_conductor: 650, tester_signature: signature })
+
+    await push(app, technician, [
+      anAppliance(appliance),
+      aTest(id, { applianceId: appliance }, before),
+      aTest(other, { applianceId: appliance }, before),
+    ])
+    // Corrected in the office while the device was offline.
+    await push(app, as(north.id, 'office'), [changed('appliances', appliance, shortened())])
+
+    const judged = JSON.stringify({ protectionClass: 'I', cordLengthMilli: 25_000 })
+    const stale = await push(app, technician, [signedWith(id, before, after, judged)])
+
+    expect(
+      stale.receipts.map((receipt) => [receipt.outcome, receipt.reason, receipt.fields]),
+    ).toEqual([['conflict', 'changed_elsewhere', ['applianceFacts']]])
+    expect(await statusOf(id)).toBe('draft')
+    expect(await factsOf(id)).toBeNull()
+
+    const now = JSON.stringify({ protectionClass: 'I', cordLengthMilli: 2_000 })
+    const fresh = await push(app, technician, [signedWith(id, before, after, now)])
+
+    expect(fresh.receipts.map((receipt) => receipt.outcome)).toEqual(['applied'])
+    expect(await factsOf(id)).toEqual({ protectionClass: 'I', cordLengthMilli: 2_000 })
+
+    const broken = await push(
+      app,
+      technician,
+      [signedWith(other, before, after, '{"protectionClass":"IV"}')],
+      400,
+    )
+
+    expect(broken.message).toBe(
+      'Die Angaben des Geräts sind keine, aus denen ein Grenzwert entsteht.',
+    )
+    expect(await statusOf(other)).toBe('draft')
+  })
+
+  it('sees a change of the appliance that is still open, once it is through', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const id = newId<'form-record'>()
+    const before = complete({ protective_conductor: 650 })
+    const after = complete({ protective_conductor: 650, tester_signature: signature })
+
+    await push(app, technician, [
+      anAppliance(appliance),
+      aTest(id, { applianceId: appliance }, before),
+    ])
+
+    const changing = await admin.connect()
+    let signing: ReturnType<typeof push> = Promise.resolve({ receipts: [] })
+
+    try {
+      // The office shortens the lead and has not committed yet.
+      await changing.query('begin')
+      await changing.query("select set_config('app.tenant_id', $1, true)", [north.id])
+      await changing.query("select set_config('app.user_id', 'lena', true)")
+      await changing.query('update appliances set cord_length_milli = 2000 where id = $1', [
+        appliance,
+      ])
+
+      signing = push(app, technician, [
+        signedWith(
+          id,
+          before,
+          after,
+          JSON.stringify({ protectionClass: 'I', cordLengthMilli: 25_000 }),
+        ),
+      ])
+      await waitingFor(admin, changing, signing)
+      await changing.query('commit')
+
+      const { receipts } = await signing
+
+      expect(receipts.map(({ outcome, reason }) => [outcome, reason])).toEqual([
+        ['conflict', 'changed_elsewhere'],
+      ])
+      expect(await statusOf(id)).toBe('draft')
+    } finally {
+      await changing.query('rollback').catch(() => undefined)
+      await signing.catch(() => undefined)
+      changing.release()
+    }
+  })
+
+  it('are asked of the appliance the draft hangs on once a writer that moved it is through', async () => {
+    const technician = as(north.id, 'technician')
+    const appliance = newId<'appliance'>()
+    const other = newId<'appliance'>()
+    const id = newId<'form-record'>()
+    const before = complete({ protective_conductor: 650 })
+    const after = complete({ protective_conductor: 650, tester_signature: signature })
+
+    await push(app, technician, [
+      anAppliance(appliance),
+      anAppliance(other, { inventoryNumber: '097', cordLengthMilli: 2_000 }),
+      aTest(id, { applianceId: appliance }, before),
+    ])
+
+    const moving = await admin.connect()
+    let signing: ReturnType<typeof push> = Promise.resolve({ receipts: [] })
+
+    try {
+      // The office hangs the draft on the other appliance and has not committed yet.
+      await moving.query('begin')
+      await moving.query("select set_config('app.tenant_id', $1, true)", [north.id])
+      await moving.query("select set_config('app.user_id', 'lena', true)")
+      await moving.query('update form_records set appliance_id = $1 where id = $2', [other, id])
+
+      signing = push(app, technician, [
+        signedWith(
+          id,
+          before,
+          after,
+          JSON.stringify({ protectionClass: 'I', cordLengthMilli: 25_000 }),
+        ),
+      ])
+      await waitingFor(admin, moving, signing)
+      await moving.query('commit')
+
+      const { receipts } = await signing
+
+      expect(receipts.map(({ outcome, reason }) => [outcome, reason])).toEqual([
+        ['conflict', 'changed_elsewhere'],
+      ])
+      expect(await statusOf(id)).toBe('draft')
+      expect(await factsOf(id)).toBeNull()
+    } finally {
+      await moving.query('rollback').catch(() => undefined)
+      await signing.catch(() => undefined)
+      moving.release()
+    }
+  })
+
+  it('are written by the database alone: none on a draft, and the appliance’s at the signature', async () => {
+    const appliance = newId<'appliance'>()
+    const id = newId<'form-record'>()
+    const written = '{"protectionClass":"III","cordLengthMilli":null}'
+
+    await push(app, as(north.id, 'technician'), [
+      anAppliance(appliance),
+      aTest(id, { applianceId: appliance }),
+    ])
+
+    await admin.query('update form_records set appliance_facts = $2 where id = $1', [id, written])
+
+    expect(await factsOf(id)).toBeNull()
+
+    await admin.query(
+      `update form_records set status = 'signed', appliance_facts = $2 where id = $1`,
+      [id, written],
+    )
+
+    expect(await factsOf(id)).toEqual({ protectionClass: 'I', cordLengthMilli: 25_000 })
+
+    await admin.query(`update appliances set protection_class = 'II' where id = $1`, [appliance])
+
+    expect(await factsOf(id)).toEqual({ protectionClass: 'I', cordLengthMilli: 25_000 })
+
+    // A signed protocol changed past the lock of 0043 keeps what it was signed
+    // with, unless the change names them, as the erasure of a site does.
+    await admin.query(
+      `begin;
+       alter table form_records disable trigger form_records_stay_signed;
+       update form_records set values = '{}' where id = '${id}';
+       alter table form_records enable trigger form_records_stay_signed;
+       commit;`,
+    )
+
+    expect(await factsOf(id)).toEqual({ protectionClass: 'I', cordLengthMilli: 25_000 })
+  })
+})
+
 describe('the report of a site after DGUV Vorschrift 3', () => {
   it('lists every appliance with its last signed test, the untested ones too', async () => {
     // A site of its own, so that the appliances of the other tests stay out.

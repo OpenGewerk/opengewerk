@@ -12,7 +12,7 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -338,6 +338,172 @@ describe('the appliances of a site on site (#303)', () => {
       await screen.findByText('Die Länge der Anschlussleitung ist eine Zahl in Metern, etwa 1,5.'),
     ).toBeTruthy()
     expect(client.list('appliances')).toHaveLength(2)
+  })
+})
+
+/**
+ * A signed test keeps the facts its limits were worked out from
+ * (opengewerk#954), and a device sends those it judged with when it signs.
+ */
+describe('the facts a test of an appliance is signed with', () => {
+  /** Two strokes on the pad, as in the report on site. */
+  function signOn(pad: Element): void {
+    Object.assign(pad, {
+      getBoundingClientRect: () => ({
+        left: 0,
+        top: 0,
+        width: 500,
+        height: 200,
+        right: 500,
+        bottom: 200,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }),
+      setPointerCapture: () => {},
+    })
+
+    fireEvent.pointerDown(pad, { pointerId: 1, clientX: 50, clientY: 150 })
+    fireEvent.pointerMove(pad, { pointerId: 1, clientX: 120, clientY: 60 })
+    fireEvent.pointerUp(pad, { pointerId: 1, clientX: 120, clientY: 60 })
+  }
+
+  it('judge a signed test, whatever the appliance became since', async () => {
+    const [lead, drill] = rows()['appliances'] ?? []
+    const [last] = rows()['form_records'] ?? []
+
+    // The lead was shortened after the test; at 2 m, 0,52 Ω would be too much.
+    await mount('/auftraege/j-1/pruefprotokolle/p-1', {
+      appliances: [{ ...lead, cordLengthMilli: 2_000 } as RecordState, drill as RecordState],
+      form_records: [
+        {
+          ...last,
+          applianceFacts: JSON.stringify({ protectionClass: 'I', cordLengthMilli: 25_000 }),
+        } as RecordState,
+      ],
+    })
+
+    expect(await screen.findByText(/^Innerhalb des Grenzwerts, höchstens 0,60 Ω\./)).toBeTruthy()
+  })
+
+  it('are sent with the signature, as the device judged with them', async () => {
+    const user = userEvent.setup()
+    const { tester_signature: _signature, ...unsigned } = lastYear
+    const { client } = await mount('/auftraege/j-1/pruefprotokolle/p-6', {
+      form_records: [
+        ...(rows()['form_records'] ?? []),
+        {
+          id: 'p-6',
+          definitionKey: 'dguv-v3',
+          definitionVersion: 1,
+          installationId: null,
+          applianceId: 'a-2',
+          jobId: 'j-1',
+          performedOn: today(),
+          status: 'draft',
+          values: JSON.stringify(unsigned),
+        },
+      ],
+    })
+
+    await user.click(await screen.findByRole('button', { name: 'Unterschreiben' }))
+    signOn(screen.getByRole('img', { name: 'Unterschriftsfeld' }))
+    await user.click(screen.getByRole('button', { name: 'Unterschreiben' }))
+    await client.synchronise()
+
+    const signed = Object.fromEntries(
+      (server.operations().at(-1)?.patches ?? []).map((patch) => [patch.field, patch.to]),
+    )
+
+    expect(signed['status']).toBe('signed')
+    expect(JSON.parse(String(signed['applianceFacts']))).toEqual({
+      protectionClass: 'I',
+      cordLengthMilli: 25_000,
+    })
+  })
+
+  it('stop a signature where they changed while it was open, which shows no limits', async () => {
+    const user = userEvent.setup()
+    const { tester_signature: _signature, ...unsigned } = lastYear
+    const [lead] = rows()['appliances'] ?? []
+    const { client } = await mount('/auftraege/j-1/pruefprotokolle/p-6', {
+      form_records: [
+        ...(rows()['form_records'] ?? []),
+        {
+          id: 'p-6',
+          definitionKey: 'dguv-v3',
+          definitionVersion: 1,
+          installationId: null,
+          applianceId: 'a-2',
+          jobId: 'j-1',
+          performedOn: today(),
+          status: 'draft',
+          values: JSON.stringify(unsigned),
+        },
+      ],
+    })
+
+    await user.click(await screen.findByRole('button', { name: 'Unterschreiben' }))
+    // The office shortens the lead while the tester signs.
+    server.put('appliances', { ...lead, cordLengthMilli: 2_000 } as RecordState)
+    await client.synchronise()
+    signOn(screen.getByRole('img', { name: 'Unterschriftsfeld' }))
+    await user.click(screen.getByRole('button', { name: 'Unterschreiben' }))
+
+    expect(
+      await screen.findByText(
+        'Die Angaben des Geräts haben sich geändert. Bitte die Messwerte mit den neuen Grenzwerten prüfen und dann unterschreiben.',
+      ),
+    ).toBeTruthy()
+
+    await client.synchronise()
+
+    expect(server.row('form_records', 'p-6')?.['status']).toBe('draft')
+    expect(
+      server
+        .operations()
+        .some((operation) => operation.patches.some((patch) => patch.field === 'status')),
+    ).toBe(false)
+  })
+
+  it('stop a signature where the appliance is not on this device, which judged with no limits', async () => {
+    const user = userEvent.setup()
+    const { tester_signature: _signature, ...unsigned } = lastYear
+    const { client } = await mount('/auftraege/j-1/pruefprotokolle/p-7', {
+      form_records: [
+        ...(rows()['form_records'] ?? []),
+        {
+          id: 'p-7',
+          definitionKey: 'dguv-v3',
+          definitionVersion: 1,
+          installationId: null,
+          // An appliance this device was never sent.
+          applianceId: 'a-9',
+          jobId: 'j-1',
+          performedOn: today(),
+          status: 'draft',
+          values: JSON.stringify(unsigned),
+        },
+      ],
+    })
+
+    await user.click(await screen.findByRole('button', { name: 'Unterschreiben' }))
+    signOn(screen.getByRole('img', { name: 'Unterschriftsfeld' }))
+    await user.click(screen.getByRole('button', { name: 'Unterschreiben' }))
+
+    expect(
+      await screen.findByText(
+        'Das Gerät dieses Protokolls fehlt hier noch. Mit Verbindung holt der Abgleich es, dann lässt sich unterschreiben.',
+      ),
+    ).toBeTruthy()
+
+    await client.synchronise()
+
+    expect(
+      server
+        .operations()
+        .some((operation) => operation.patches.some((patch) => patch.field === 'status')),
+    ).toBe(false)
   })
 })
 

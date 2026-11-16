@@ -8,8 +8,11 @@ import {
   applianceLabel,
   applianceProblems,
   applianceSubject,
+  applianceFactsText,
   cordLengthText,
   isApplianceFacts,
+  readApplianceFacts,
+  sameApplianceFacts,
 } from './appliance.js'
 
 describe('an appliance of the register (#303)', () => {
@@ -56,6 +59,26 @@ describe('an appliance of the register (#303)', () => {
     expect(isApplianceFacts({ protectionClass: 'I', cordLengthMilli: -1 })).toBe(false)
     // A circuit is not an appliance.
     expect(isApplianceFacts({ tripCharacteristic: 'b', ratedCurrentMilli: 16_000 })).toBe(false)
+  })
+
+  it('keeps the facts a protocol was signed with as text, and reads back only such facts (opengewerk#954)', () => {
+    const facts = { protectionClass: 'I', cordLengthMilli: 25_000 } as const
+
+    expect(readApplianceFacts(applianceFactsText(facts))).toEqual(facts)
+    // As the database writes them for a protocol signed by an older version.
+    expect(readApplianceFacts('{"cordLengthMilli": null, "protectionClass": "II"}')).toEqual({
+      protectionClass: 'II',
+      cordLengthMilli: null,
+    })
+    expect(readApplianceFacts('{"protectionClass": "IV", "cordLengthMilli": null}')).toBeNull()
+    expect(readApplianceFacts('{"protectionClass": "I"}')).toBeNull()
+    expect(readApplianceFacts('kein JSON')).toBeNull()
+    expect(readApplianceFacts(null)).toBeNull()
+    expect(sameApplianceFacts(facts, { protectionClass: 'I', cordLengthMilli: 25_000 })).toBe(true)
+    expect(sameApplianceFacts(facts, { protectionClass: 'II', cordLengthMilli: 25_000 })).toBe(
+      false,
+    )
+    expect(sameApplianceFacts(facts, { protectionClass: 'I', cordLengthMilli: null })).toBe(false)
   })
 })
 

@@ -235,4 +235,5 @@ export const syncFieldNames: Readonly<Record<string, string>> = {
   definitionVersion: 'Fassung des Formulars',
   performedOn: 'Geprüft am',
   values: 'Eingetragene Werte',
+  applianceFacts: 'Angaben des Geräts beim Unterschreiben',
 }

@@ -1,5 +1,6 @@
 import {
   type ApplianceFacts,
+  applianceFactsText,
   type BlockCircuit,
   type BlockField,
   circuitBlocks,
@@ -20,6 +21,7 @@ import {
   measurementUnitSign,
   type RecordState,
   type RuleLimitKind,
+  sameApplianceFacts,
   sealingField,
   type SignatureField,
   signerNameProblem,
@@ -408,6 +410,7 @@ function DraftProtocol({
     return (
       <SigningStep
         record={record}
+        appliance={protocol.appliance}
         onBack={() => {
           setSigning(false)
         }}
@@ -1215,9 +1218,12 @@ function DefectPhoto({ record, jobId }: { readonly record: RecordState; readonly
  */
 function SigningStep({
   record,
+  appliance,
   onBack,
 }: {
   readonly record: RecordState
+  /** What the limits of the test of an appliance were worked out from, sent with the signature (opengewerk#954). */
+  readonly appliance: ApplianceFacts | null
   readonly onBack: () => void
 }) {
   const client = useSync()
@@ -1233,6 +1239,14 @@ function SigningStep({
   const [trouble, setTrouble] = useState<string | null>(null)
   const [working, setWorking] = useState(false)
   const formId = useId()
+  // What the limits were worked out from when the signing opened. The step
+  // shows no measured value, so facts that change while it is open are facts
+  // the tester has not seen the limits of (opengewerk#954).
+  const [judged] = useState(appliance)
+  const unchanged =
+    judged === null
+      ? appliance === null
+      : appliance !== null && sameApplianceFacts(judged, appliance)
 
   async function sign(event: FormEvent) {
     event.preventDefault()
@@ -1269,6 +1283,25 @@ function SigningStep({
       return
     }
 
+    // A test of an appliance this device does not hold was judged with no
+    // limits; the server would keep facts the tester never saw the limits of.
+    // One that came in while the step was open counts as changed, below.
+    if (text(record, 'applianceId') !== '' && appliance === null) {
+      setTrouble(
+        'Das Gerät dieses Protokolls fehlt hier noch. Mit Verbindung holt der Abgleich es, dann lässt sich unterschreiben.',
+      )
+
+      return
+    }
+
+    if (!unchanged) {
+      setTrouble(
+        'Die Angaben des Geräts haben sich geändert. Bitte die Messwerte mit den neuen Grenzwerten prüfen und dann unterschreiben.',
+      )
+
+      return
+    }
+
     setTrouble(null)
     setWorking(true)
 
@@ -1276,6 +1309,9 @@ function SigningStep({
       const signedAt = new Date().toISOString()
       const signed = await client.update('form_records', String(record['id']), {
         status: 'signed',
+        // Asked against the appliance: the server refuses the signature where
+        // they are no longer its facts, and keeps the appliance's own.
+        ...(judged ? { applianceFacts: applianceFactsText(judged) } : {}),
         values: formValuesText({
           ...values,
           ...Object.fromEntries(

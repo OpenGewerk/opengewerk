@@ -14,6 +14,7 @@ import {
   applianceSubject,
   type FormRecordStatus,
   type IsoDate,
+  readApplianceFacts,
   readFormValues,
   shippedRules,
   warrantyTerms,
@@ -137,6 +138,14 @@ export class FormRecordsController {
         const [tenant] = await tx.select({ name: tenants.name }).from(tenants)
         const companyName = letterhead?.companyName ?? null
         const values = readFormValues(record.values) ?? {}
+        // A signed test is worked out of the facts it was signed with
+        // (opengewerk#954), a draft out of the appliance as it is now.
+        const facts = appliance
+          ? ((record.status === 'signed' ? readApplianceFacts(record.applianceFacts) : null) ?? {
+              protectionClass: appliance.protectionClass,
+              cordLengthMilli: appliance.cordLengthMilli,
+            })
+          : null
         return {
           source: await protocolPhotoSource(tx, identity, record, definition, values),
           definition,
@@ -149,17 +158,12 @@ export class FormRecordsController {
           },
           installation:
             installation?.designation ??
-            (appliance
-              ? applianceSubject(appliance)
+            (appliance && facts
+              ? applianceSubject({ ...appliance, ...facts })
               : job
                 ? [job.designation, job.number].filter(present).join(', ')
                 : ''),
-          appliance: appliance
-            ? {
-                protectionClass: appliance.protectionClass,
-                cordLengthMilli: appliance.cordLengthMilli,
-              }
-            : null,
+          appliance: facts,
           site: site
             ? [site.designation, ...addressLines(site, 'DE')].filter(present).join(', ')
             : '',
