@@ -5,7 +5,7 @@ import { SyncScreen } from '@opengewerk/platform-web/office'
 import { ConflictScreen } from '@opengewerk/platform-web/site'
 import { RequestRefused, SyncProvider, openLocalStore } from '@opengewerk/platform-web/sync'
 import type { DirectWriter, PullResult, SyncTransport } from '@opengewerk/platform-web/sync'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 
@@ -189,11 +189,13 @@ describe('the conflict screen', () => {
 
     // Deciding a conflict is not a back door. The decision leaves through the
     // outbox like any other change, so it passes the same rules and lands in
-    // the same audit log.
-    expect(server.sent.at(-1)?.[0]?.patches).toEqual([
-      { field: 'designation', from: 'Zähler prüfen', to: 'Zählerwechsel' },
-    ])
-    expect(server.resolved).toEqual(['k-1'])
+    // the same audit log. The click sends it a moment later (opengewerk#972).
+    await waitFor(() => {
+      expect(server.resolved).toEqual(['k-1'])
+      expect(server.sent.at(-1)?.[0]?.patches).toEqual([
+        { field: 'designation', from: 'Zähler prüfen', to: 'Zählerwechsel' },
+      ])
+    })
   })
 
   it('keeps the server version when that is what somebody decides', async () => {
@@ -213,8 +215,12 @@ describe('the conflict screen', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Stand im System behalten' }))
 
+    // Nothing sent once the decision is through, not merely before it is
+    // (opengewerk#972).
+    await waitFor(() => {
+      expect(server.resolved).toEqual(['k-1'])
+    })
     expect(server.sent).toEqual([])
-    expect(server.resolved).toEqual(['k-1'])
   })
 
   /**
@@ -256,9 +262,13 @@ describe('the conflict screen', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Verstanden' }))
 
+    // Nothing sent once the decision is through, not merely before it is
+    // (opengewerk#972).
+    await waitFor(() => {
+      expect(server.resolved).toEqual(['k-1'])
+    })
     expect(server.sent).toEqual([])
     expect(server.patched).toEqual([])
-    expect(server.resolved).toEqual(['k-1'])
   })
 
   /**

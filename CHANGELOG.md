@@ -202,8 +202,14 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
-- Zwei Tests der Prüfprotokolle warten auf die Operation, die ein Klick schreibt, bevor sie sie lesen (#972). Warum:
-  Der Klick schreibt sie einen Takt später in den Ausgang, und unter der Last der CI war beim Lesen noch keine da.
+- Tests der Oberfläche warten auf das, was ein Klick sendet, bevor sie es lesen (#972): zwei der Prüfprotokolle,
+  drei des Bildschirms der Konflikte und einer der Leiste des Abgleichs. Warum: Der Klick sendet einen Takt später,
+  und unter der Last der CI war beim Lesen noch nichts da. Die Tests, die festhalten, dass nichts gesendet wird,
+  waren dadurch immer grün; sie prüfen jetzt erst, wenn die Entscheidung durch ist.
+- Der Test des Tors, der das Konto wechselt, merkt sich das nächste Konto auch für den Browser (#973). Warum: Ohne
+  Netz beantwortet die Seite die Frage, wer angemeldet ist, aus dem Gemerkten, und eine erneute Frage nach dem
+  Wechsel brachte sie zum ersten Konto zurück; der Test war nur grün, wenn er das kurze Fenster dazwischen traf, und
+  wurde auf `main` trotz #962 wieder rot.
 - Das Änderungsprotokoll eines Lieferanten und eines Artikels sagt unter der Überschrift, was es mitnimmt (#557):
   „mit Ansprechpartnern, Aufschlag und Metallpreisen“ und „mit Verkaufspreisen, Aufschlag und Bezugsquellen samt
   Einkaufspreisen und Metall“. Warum: Die Änderungen dieser Teile standen schon in der Liste, nur sagte die Seite
