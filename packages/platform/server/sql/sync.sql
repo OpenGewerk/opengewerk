@@ -44,21 +44,21 @@
 CREATE FUNCTION "counter_hint"(kind text, tenant uuid) RETURNS text
 	LANGUAGE sql
 	STABLE
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 	SELECT current_setting('opengewerk_' || kind || '.t' || replace(tenant::text, '-', ''), true);
 $$;--> statement-breakpoint
 CREATE FUNCTION "keep_counter_hint"(kind text, tenant uuid, hint text) RETURNS void
 	LANGUAGE sql
 	VOLATILE
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 	SELECT set_config('opengewerk_' || kind || '.t' || replace(tenant::text, '-', ''), hint, true);
 $$;--> statement-breakpoint
 CREATE FUNCTION "counter_address"(kind text, tenant uuid) RETURNS tid
 	LANGUAGE plpgsql
 	STABLE
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	parts text[] := regexp_match(public.counter_hint(kind, tenant), '^\((\d{1,10}),(\d{1,5})\)$');
@@ -80,7 +80,7 @@ $$;--> statement-breakpoint
 -- run as the owner of the tables do.
 CREATE FUNCTION "lock_sync_counter"(tenant uuid) RETURNS void
 	LANGUAGE plpgsql
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 	SET enable_seqscan = off
 	SET enable_indexscan = off
 	SET enable_bitmapscan = off
@@ -271,7 +271,7 @@ GRANT EXECUTE ON FUNCTION "next_sync_sequence"(uuid) TO "opengewerk_app";--> sta
 -- that guards a fixed record sees the row as the caller sent it.
 CREATE FUNCTION "stamp_sync_columns"() RETURNS trigger
 	LANGUAGE plpgsql
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
 	new.updated_at := now();

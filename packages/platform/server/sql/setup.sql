@@ -23,7 +23,7 @@ CREATE FUNCTION "instance_is_empty"() RETURNS boolean
 	LANGUAGE sql
 	STABLE
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 	SELECT NOT EXISTS (SELECT 1 FROM public.tenants)
 	   AND NOT EXISTS (SELECT 1 FROM public.auth_users)
@@ -46,7 +46,7 @@ $$;--> statement-breakpoint
 CREATE FUNCTION "create_first_tenant"(company text) RETURNS uuid
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	created uuid;
@@ -97,7 +97,7 @@ CREATE FUNCTION "invitation_for"(hash text)
 	LANGUAGE sql
 	STABLE
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 	SELECT i.id, i.tenant_id, t.name, i.email, i.name, i.roles,
 	       i.expires_at, i.redeemed_at, i.revoked_at
@@ -116,7 +116,7 @@ CREATE FUNCTION "every_tenant"() RETURNS SETOF uuid
 	LANGUAGE sql
 	STABLE
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 	SELECT id FROM public.tenants ORDER BY id
 $$;--> statement-breakpoint
@@ -133,7 +133,7 @@ CREATE FUNCTION "files_held"(candidates text[]) RETURNS SETOF text
 	LANGUAGE sql
 	STABLE
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 	SELECT DISTINCT f.sha256 FROM public.files f WHERE f.sha256 = ANY (candidates)
 $$;--> statement-breakpoint
@@ -148,7 +148,7 @@ $$;--> statement-breakpoint
 -- owed, as the owner, and one that takes a role back is its own decision.
 CREATE FUNCTION "tenant_role_stays_whole"() RETURNS trigger
 	LANGUAGE plpgsql
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
 	IF current_user <> 'opengewerk_app' THEN
@@ -194,7 +194,7 @@ $$;--> statement-breakpoint
 -- none itself.
 CREATE FUNCTION "session_fits_its_credentials"() RETURNS trigger
 	LANGUAGE plpgsql
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	standing integer;

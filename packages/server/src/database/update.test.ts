@@ -3296,6 +3296,20 @@ describe('an instance whose cluster lets every role create in public', () => {
 
     expect(await open()).toEqual({ creates: false, executes: false })
 
+    // And every function, the application's own among them, searches the
+    // temporary schema last, where a type of another role would otherwise
+    // stand in for one it declares.
+    const { rows: paths } = await admin.query<{ signature: string; path: string }>(
+      `select p.oid::regprocedure::text as signature, s as path
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+         cross join lateral unnest(p.proconfig) s
+        where n.nspname = 'public' and s like 'search_path=%'`,
+    )
+
+    expect(paths.length).toBeGreaterThan(90)
+    expect(paths.filter((row) => !row.path.endsWith('pg_temp'))).toEqual([])
+
     await revertMigration(admin, '0150_definer_triggers_closed')
 
     expect(await open()).toEqual({ creates: false, executes: true })

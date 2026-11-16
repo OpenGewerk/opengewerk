@@ -40,7 +40,7 @@ CREATE TRIGGER "instance_changes_stay_on_truncate"
 CREATE FUNCTION "record_instance_change"() RETURNS trigger
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	before_row jsonb := '{}'::jsonb;
@@ -118,7 +118,7 @@ SELECT set_config('app.reason', '', true);--> statement-breakpoint
 CREATE FUNCTION "create_tenant"(company text) RETURNS uuid
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	created uuid;
@@ -156,7 +156,7 @@ CREATE FUNCTION "tenants_with_leads"()
 	LANGUAGE sql
 	STABLE
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 	SELECT t.id, t.name, t.created_at,
 	       coalesce((SELECT array_agg(m.user_id ORDER BY m.created_at) FROM public.memberships m
