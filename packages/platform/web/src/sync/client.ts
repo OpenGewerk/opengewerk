@@ -1215,6 +1215,9 @@ export class SyncClient {
 
     const done = new Set<OperationId>()
     const applied = new Set<OperationId>()
+    // Taken in a transmission whose answer did not come back: the server
+    // applied them then, before anything it applies now.
+    const earlier = new Set<OperationId>()
 
     for (const receipt of receipts) {
       // Every outcome empties the slot, a conflict included. The server has
@@ -1225,6 +1228,10 @@ export class SyncClient {
 
       if (receipt.outcome === 'applied') {
         applied.add(receipt.operationId)
+
+        if (receipt.reason === 'already_seen') {
+          earlier.add(receipt.operationId)
+        }
       }
     }
 
@@ -1232,8 +1239,14 @@ export class SyncClient {
     // What landed stays laid over the rows until the pull brings them. What
     // did not land is not shown at all: a conflict is on its own list, and a
     // skipped operation changed nothing.
-    // In the order they went, which is the order the server stamped them in.
-    const landed = sent.filter((operation) => applied.has(operation.id))
+    // In the order the server stamped them in: what it had taken before, then
+    // what it took now, each in the order it went. Two answers lost in a row
+    // with the clock put back between them leave the first group out of
+    // order; which of them the server took first, it does not say.
+    const landed = [
+      ...sent.filter((operation) => earlier.has(operation.id)),
+      ...sent.filter((operation) => applied.has(operation.id) && !earlier.has(operation.id)),
+    ]
 
     for (const operation of landed) {
       const row = this.records.get(operation.entity)?.get(operation.recordId)
@@ -1869,9 +1882,9 @@ export class SyncClient {
 
   /**
    * Every operation the device lays over the rows of the server, in the order
-   * the server applies them (opengewerk#950): what it took in the order it
-   * went (`pushPart`), what waits after it in the order of the outbox, the
-   * order it goes in (opengewerk#939). One order for the projection,
+   * the server applies them (opengewerk#950): what it took in the order
+   * `pushPart` lays it out, what waits after it in the order of the outbox,
+   * the order it goes in (opengewerk#939). One order for the projection,
    * `binned` and `isRecordedAfter`; the clock of the device does not reorder
    * what has gone.
    */

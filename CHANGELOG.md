@@ -166,8 +166,11 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   die der Server schon angenommen hatte, nach der Uhr des Geräts. Eine später gesendete Änderung mit früherer Zeit kam
   dann zuerst, eine Löschung ließ die Datei wieder als vorhanden erscheinen, und eine Änderung zeigte den Wert von
   vorher. Jetzt legen Anzeige, Papierkorb und die Frage nach der Reihenfolge aus #937 die Änderungen in derselben
-  Reihenfolge an: was der Server angenommen hat, in der Reihenfolge der Übertragung, dahinter, was wartet, in der
-  Reihenfolge des Ausgangs.
+  Reihenfolge an: was der Server angenommen hat, in der Reihenfolge, in der er es angewandt hat, dahinter, was wartet,
+  in der Reihenfolge des Ausgangs. Ging die Antwort auf eine Übertragung verloren, kommt, was der Server damals schon
+  angewandt hatte, vor das, was er beim nächsten Mal angewandt hat. Gingen zwei Antworten nacheinander verloren und
+  wurde die Uhr zwischen ihnen zurückgestellt, kann die Anzeige bis zum nächsten vollständigen Abruf noch abweichen,
+  weil der Server nicht meldet, in welcher Übertragung er was angewandt hat.
 - Zieht eine Anlage oder ein Gerät auf das Objekt eines Auftrags um, kommen ihre Dateien, Protokolle und was sonst an
   ihr hängt jetzt auch auf ein Gerät, das schon abgeglichen hat (#938). Warum: Der Bereich eines Geräts änderte seinen
   Wert nur mit den Aufträgen, und was an der Anlage hing, lag mit seinen Änderungen hinter dem Stand des Geräts. Jetzt
@@ -184,7 +187,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Schwärzt eine Löschung oder der Inhaber einen Wert im Protokoll, ruft jedes Gerät eines Monteurs einmal neu ab, denn
   den Umzug dahinter fände der Bereich danach nicht mehr. Zwei Teilindizes auf dem Protokoll der Änderungen (Migration
   0145) halten das schnell, ohne sie läse jeder Abruf das ganze Protokoll. Beim Update baut die Migration sie auf, und
-  so lange warten Änderungen auf das Protokoll, bei zwei Millionen Einträgen in den Messungen eine halbe bis zwei
+  so lange warten Änderungen auf das Protokoll, bei zwei Millionen Einträgen in den bisherigen Messungen wenige
   Sekunden, je nach Rechner und Bestand. Nach dem Update ruft jedes Gerät eines Monteurs einmal neu ab, wenn im Betrieb
   schon einmal ein Wert geschwärzt wurde, sonst jedes, in dessen Bereich früher etwas weg- oder hineingezogen ist.
 - Ein unterschriebenes Protokoll zeigt in der Anwendung jetzt dasselbe Foto wie sein PDF, auch wenn die Datei nach der

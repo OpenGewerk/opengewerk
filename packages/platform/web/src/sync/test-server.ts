@@ -33,6 +33,8 @@ export class TestServer implements SyncTransport, DirectWriter {
   private readonly tables = new Map<string, Map<string, Row>>()
   private changed = new Map<string, Set<string>>()
   private cursor = 1
+  /** Every operation applied, as the server keeps its receipts. */
+  private readonly taken = new Set<string>()
 
   put(entity: string, row: Row): void {
     const table = this.tables.get(entity) ?? new Map<string, Row>()
@@ -77,15 +79,22 @@ export class TestServer implements SyncTransport, DirectWriter {
     this.sent.push([...operations])
     this.log.push(`push ${operations.map((operation) => operation.entity).join(',')}`)
 
+    // As the server does: what it has taken once it does not apply again, and
+    // answers with the receipt it gave.
+    const seen = new Set(this.taken)
+
     for (const operation of operations) {
-      this.apply(operation)
+      if (!seen.has(operation.id)) {
+        this.apply(operation)
+        this.taken.add(operation.id)
+      }
     }
 
     return Promise.resolve(
       operations.map((operation): OperationReceipt => ({
         operationId: operation.id,
         outcome: 'applied',
-        reason: null,
+        reason: seen.has(operation.id) ? 'already_seen' : null,
         fields: [],
       })),
     )

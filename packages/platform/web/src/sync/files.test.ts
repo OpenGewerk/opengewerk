@@ -499,6 +499,58 @@ describe('a file made on the device', () => {
     }
   })
 
+  it.each(['update', 'remove'] as const)(
+    'lays what the server took before an answer was lost ahead of what it took after, with the clock put back (opengewerk#950, %s)',
+    async (kind) => {
+      const client = await start()
+      const made = await client.create('notes', { title: 'Vorher' })
+
+      if (made.outcome !== 'queued') {
+        throw new Error('The note was refused on the device.')
+      }
+
+      await client.synchronise()
+
+      // The server takes the change, and its answer does not come back.
+      const push = server.push.bind(server)
+
+      server.push = (deviceId, operations) =>
+        push(deviceId, operations).then(() => Promise.reject(new TypeError('Failed to fetch')))
+      await client.update('notes', made.id, { title: 'X' })
+      await client.synchronise().catch(() => undefined)
+
+      server.push = push
+      server.pull = () => Promise.reject(new TypeError('Failed to fetch'))
+      vi.useFakeTimers({ toFake: ['Date'] })
+
+      try {
+        vi.setSystemTime(new Date(Date.now() - 60 * 60 * 1000))
+
+        if (kind === 'update') {
+          await client.update('notes', made.id, { title: 'Y' })
+        } else {
+          await client.remove('notes', made.id)
+        }
+
+        await client.synchronise().catch(() => undefined)
+
+        expect(client.status().pending).toBe(0)
+
+        if (kind === 'update') {
+          expect(server.row('notes', made.id)?.['title']).toBe('Y')
+          expect(client.get('notes', made.id)?.['title']).toBe('Y')
+        } else {
+          expect(server.row('notes', made.id)?.['deletedAt']).not.toBeNull()
+          expect(client.get('notes', made.id)).toBeNull()
+          expect(client.list('notes').map((row) => row['id'])).not.toContain(made.id)
+          expect(client.binned('notes').map((row) => row['id'])).toContain(made.id)
+        }
+      } finally {
+        vi.useRealTimers()
+      }
+    },
+  )
+
   it('keeps the order a transmission went in once the server took it (opengewerk#937)', async () => {
     const client = await start()
     const push = server.push.bind(server)
