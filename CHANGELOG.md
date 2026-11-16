@@ -182,6 +182,17 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Das Änderungsprotokoll eines Lieferanten und eines Artikels sagt unter der Überschrift, was es mitnimmt (#557):
+  „mit Ansprechpartnern, Aufschlag und Metallpreisen“ und „mit Verkaufspreisen, Aufschlag und Bezugsquellen samt
+  Einkaufspreisen und Metall“. Warum: Die Änderungen dieser Teile standen schon in der Liste, nur sagte die Seite
+  nicht, warum unter einem Lieferanten die Änderung an einer Person steht. Ein Test hält jeden Datensatz mit Knopf
+  und Teilen gegen diese Sätze. Die älteren Sätze nennen jetzt ebenfalls alles, was ihr Protokoll mitnimmt: beim
+  Kunden die Tags, beim Objekt Geräte, Tags und Zugänge, bei der Anlage Mängel und Etiketten, beim Auftrag Mängel und
+  das Verlangen auf vorzeitigen Beginn, beim Beleg Belehrungen und Herkunft.
+- Der Knopf „Änderungen“ an einem Mangel zeigt den Mangel mit seinen Schritten statt des ganzen Protokolls (#967).
+  Warum: Der Mangel fehlte seit #311 in der Liste der Datensätze mit Knopf, und die Seite schränkte auf nichts ein.
+  Ein Test hält jetzt jeden Knopf „Änderungen“ des Büros gegen diese Liste. Aus dem Protokoll führt „Zum Mangel“
+  zurück zu ihm, wie zu jedem anderen Datensatz mit Knopf.
 - Viele protokollierte Änderungen in einer Transaktion brauchen je Änderung etwa gleich lange (#953). Bisher
   schrieb jede Änderung die Zählerzeile des Abgleichs und die Kettenzeile des Änderungsprotokolls neu und fand beide
   über ihren Schlüssel wieder, vorbei an jeder Fassung, die die Transaktion von ihnen schon geschrieben hatte. Jetzt

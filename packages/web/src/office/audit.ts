@@ -52,6 +52,8 @@ const screens: Words = {
   funding_programs: '/foerderprogramme/',
   maintenance_contracts: '/wartungsvertraege/',
   prospects: '/leads/',
+  // A defect opened from its log (#967).
+  defects: '/maengel/',
 }
 
 /** The label of the link to a record, "Zum Kunden". */
@@ -73,6 +75,7 @@ const links: Words = {
   funding_programs: 'Zum Förderprogramm',
   maintenance_contracts: 'Zum Wartungsvertrag',
   prospects: 'Zum Lead',
+  defects: 'Zum Mangel',
 }
 
 /** What happened to a document where one word says it. */
@@ -109,10 +112,13 @@ export const auditScreenWords: AuditScreenWords = {
   },
   linkWords: (table) => links[table] ?? null,
   partsWords: {
-    customers: 'mit seinen Ansprechpartnern',
-    sites: 'mit seinen Ansprechpartnern',
-    installations: 'mit ihrer Struktur',
-    jobs: 'mit Notizen und Einteilung',
-    documents: 'mit Positionen, Unterschrift und Zahlungen',
+    customers: 'mit Ansprechpartnern und Tags',
+    sites: 'mit Ansprechpartnern, Geräten, Tags und Zugängen',
+    installations: 'mit Struktur, Mängeln und Etiketten',
+    jobs: 'mit Notizen, Einteilung, Mängeln und Verlangen auf vorzeitigen Beginn',
+    documents: 'mit Positionen, Unterschrift, Belehrungen, Herkunft und Zahlungen',
+    defects: 'mit seinen Schritten',
+    articles: 'mit Verkaufspreisen, Aufschlag und Bezugsquellen samt Einkaufspreisen und Metall',
+    suppliers: 'mit Ansprechpartnern, Aufschlag und Metallpreisen',
   },
 }
