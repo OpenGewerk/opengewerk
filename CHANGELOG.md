@@ -167,6 +167,19 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   nimmt der Bereich die Anlagen und Geräte, die er erreicht und die schon einmal umgezogen sind, mit ihrem letzten
   Umzug aus dem Protokoll der Änderungen in seinen Wert; ein anderer Wert lässt das Gerät neu abrufen, wie bei einem
   neuen Auftrag. Ein neu angelegtes Gerät ändert ihn nicht, an ihm hängt noch nichts, das hinter dem Stand liegt.
+- Wechselt ein Auftrag seinen Kunden, sein Objekt oder seine Anlage, oder zieht ein Wechselrichter, ein Verteiler, ein
+  Kreis, ein String, ein Beleg oder eine Datei auf etwas, das ein Gerät eines Monteurs hält, kommt jetzt auch, was
+  daran hängt, auf ein Gerät, das schon abgeglichen hat (#946, #947). Ebenso lässt das Gerät jetzt los, was von dem
+  wegzieht, was es hält: eine Anlage oder ein Gerät, das vom Objekt eines Auftrags wegzieht, eine Aufgabe, die jemand
+  anderem übergeben wird, eine Datei, die an etwas anderes kommt. Warum: Der Bereich eines Geräts nahm seit #938 nur
+  die Umzüge der Anlagen und Geräte in seinen Wert, die er danach noch erreicht. Jetzt nimmt er jeden Schlüssel, dem er
+  folgt, in beide Richtungen: den Umzug von etwas, das er erreicht, und den Umzug weg von etwas, das er erreicht.
+  Schwärzt eine Löschung oder der Inhaber einen Wert im Protokoll, ruft jedes Gerät eines Monteurs einmal neu ab, denn
+  den Umzug dahinter fände der Bereich danach nicht mehr. Zwei Teilindizes auf dem Protokoll der Änderungen (Migration
+  0145) halten das schnell, ohne sie läse jeder Abruf das ganze Protokoll. Beim Update baut die Migration sie auf, und
+  so lange warten Änderungen auf das Protokoll, bei zwei Millionen Einträgen weniger als eine Sekunde. Nach dem Update
+  ruft jedes Gerät eines Monteurs einmal neu ab, wenn im Betrieb schon einmal ein Wert geschwärzt wurde, sonst jedes,
+  in dessen Bereich früher etwas weg- oder hineingezogen ist.
 - Ein unterschriebenes Protokoll zeigt in der Anwendung jetzt dasselbe Foto wie sein PDF, auch wenn die Datei nach der
   Unterschrift aus den Akten entfernt wurde; eine Datei, die schon vor der Unterschrift entfernt war, zeigt es nicht
   (#937). Dafür gibt der Server die Fassung einer solchen Datei weiter heraus, solange ein unterschriebenes Protokoll

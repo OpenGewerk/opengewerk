@@ -111,6 +111,10 @@ describe('the foundation in this database', () => {
         'attachments.attachments_job_idx',
         'attachments.attachments_defect_idx',
         'attachments.attachments_appliance_idx',
+        // The moves of what hangs on a job and the redactions, which the
+        // scope of a device asks the log for (opengewerk#946).
+        'audit_entries.audit_entries_moves_idx',
+        'audit_entries.audit_entries_redactions_idx',
       ],
       triggers: [
         'attachments.attachments_defect_at_its_place',

@@ -49,76 +49,285 @@ export async function deviceScope(
      order by j.id`)
   const jobIds = rows.map((row) => row.id)
   const openJobIds = rows.filter((row) => row.open).map((row) => row.id)
-  const moved = await movesInto(tx, jobIds)
+  const moved = await movesOf(tx, jobIds, userId)
+  const redacted = await lastRedaction(tx)
 
   return {
     userId,
     jobIds,
-    // Nothing added while nothing moved, so that the value stays what
-    // devices hold today.
-    value: `jobs:${fingerprintOf(jobIds)}${moved.length === 0 ? '' : `:moved:${fingerprintOf(moved)}`}`,
+    // Nothing added while nothing moved or was blacked out, so that the value
+    // stays what devices hold today.
+    value: [
+      `jobs:${fingerprintOf(jobIds)}`,
+      moved.length === 0 ? '' : `:moved:${fingerprintOf(moved)}`,
+      redacted === null ? '' : `:redacted:${redacted}`,
+    ].join(''),
     openJobIds,
   }
 }
 
 /**
- * The installations and appliances the jobs reach that have changed their
- * site, each with its last move (opengewerk#938). One that moves onto the site
- * of a job brings what hangs on it, its files, protocols and boards, whose
- * changes lie behind the cursor of a device that held the site before; a
- * different list makes the device drop what it holds and ask from the start,
- * as a new job does. Each one by itself, so that one moving away while another
- * moves in changes the list too. One created there is not on it: what hangs
- * on it is new as well. Read in the log of changes, through
- * `audit_entries_record_idx`.
+ * The place in the log of the last redaction, or null while there was none.
+ * A deletion blacks out the old value of a move with the rest of what it
+ * erases (ADR 0013), and so can the person who leads the business by hand;
+ * `movesOf` then no longer finds where the record came from, and a device
+ * that held it and did not ask in between would get back the value it knows.
+ * Each redaction stands in the log itself, under the counter every logged
+ * change takes in the order it commits, so that the last one only grows.
+ * Asked by the field alone and not by what it says: the side of a
+ * redaction can itself be blacked out, and the last one would fall back.
+ * This counts the redactions of a value of after as well, which costs a
+ * device a fetch more and nothing else. The value changes once for every
+ * device when values are blacked out, and the question costs one step down
+ * the partial index `audit_entries_redactions_idx` of migration 0145, however
+ * long the history of deletions is.
  */
-async function movesInto(tx: TenantTransaction, jobIds: readonly string[]): Promise<string[]> {
-  if (jobIds.length === 0) {
-    return []
-  }
+async function lastRedaction(tx: TenantTransaction): Promise<number | null> {
+  const { rows } = await tx.execute<{ last: string | null }>(sql`
+    select max(a.sequence)::text as last from audit_entries a
+     where a.table_name = 'audit_redactions' and a.field = 'side'`)
+  const last = rows[0]?.last ?? null
 
-  const { installations, appliances } = placesOf(jobIds)
-  // Two parts rather than one condition with `or`, which PostgreSQL would
-  // answer by reading the whole log on every pull.
-  const { rows } = await tx.execute<{ moved: string }>(sql`
-    select m.record_id::text || '@' || max(m.sequence)::text as moved
-      from (select a.record_id, a.sequence
-              from audit_entries a
-             where a.table_name = 'installations'
-               and a.field = 'site_id'
-               and a.operation = 'update'
-               and a.record_id in ${installations}
-            union all
-            select a.record_id, a.sequence
-              from audit_entries a
-             where a.table_name = 'appliances'
-               and a.field = 'site_id'
-               and a.operation = 'update'
-               and a.record_id in ${appliances}) m
-     group by m.record_id
-     order by 1`)
+  return last === null ? null : Number(last)
+}
+
+/**
+ * A key whose change moves a record between the parts of the business that
+ * devices hold (opengewerk#938, #946, #947): the field, the records the key
+ * points to that a device holds (`within`), none for a job, whose keys decide
+ * what the device holds rather than whether it holds the job, and for a
+ * record that something else is narrowed through, the records of its table
+ * the device holds now (`held`). Any other record arrives with its own
+ * change once it moves in.
+ */
+interface MovingKey {
+  readonly table: string
+  readonly field: string
+  readonly within?: SQL
+  readonly held?: SQL
+}
+
+/**
+ * Every key `narrowedTo` follows from a job, its customer, site, installation
+ * or person to a record, in the order it follows them. Each of their names is
+ * in the partial index `audit_entries_moves_idx` of migration 0145, which
+ * `movesOf` reads them through.
+ */
+function movingKeys(places: Places, userId: string): readonly MovingKey[] {
+  const { jobs, customers, sites, installations, appliances, boards, circuits } = places
+  const { inverters, strings, documents, defects, appointments, attachments } = places
+  const person = sql`(select ${userId}::text)`
+  const key = (table: string, field: string, within?: SQL, held?: SQL): MovingKey => ({
+    table,
+    field,
+    ...(within === undefined ? {} : { within }),
+    ...(held === undefined ? {} : { held }),
+  })
+
+  return [
+    key('jobs', 'customer_id', undefined, jobs),
+    key('jobs', 'site_id', undefined, jobs),
+    key('jobs', 'installation_id', undefined, jobs),
+    key('job_assignments', 'job_id', jobs),
+    key('job_notes', 'job_id', jobs),
+    key('early_start_requests', 'job_id', jobs),
+    key('appointments', 'job_id', jobs, appointments),
+    key('appointment_people', 'appointment_id', appointments),
+    key('defects', 'job_id', jobs, defects),
+    key('defects', 'installation_id', installations, defects),
+    key('defect_steps', 'defect_id', defects),
+    key('on_call_shifts', 'user_id', person),
+    key('customer_tags', 'customer_id', customers),
+    key('contacts', 'customer_id', customers),
+    key('contacts', 'site_id', sites),
+    // The people of a supplier travel whole and stay with it: the route
+    // refuses to move one to a customer or site.
+    key('site_tags', 'site_id', sites),
+    key('installations', 'site_id', sites, installations),
+    key('appliances', 'site_id', sites, appliances),
+    key('installation_labels', 'installation_id', installations),
+    key('distribution_boards', 'installation_id', installations, boards),
+    key('board_sections', 'distribution_board_id', boards),
+    key('circuits', 'distribution_board_id', boards, circuits),
+    key('equipment', 'circuit_id', circuits),
+    key('inverters', 'installation_id', installations, inverters),
+    key('pv_strings', 'inverter_id', inverters, strings),
+    key('pv_modules', 'pv_string_id', strings),
+    key('documents', 'job_id', jobs, documents),
+    key('document_lines', 'document_id', documents),
+    key('document_signatures', 'document_id', documents),
+    key('document_sources', 'document_id', documents),
+    key('tasks', 'job_id', jobs),
+    key('tasks', 'customer_id', customers),
+    key('tasks', 'site_id', sites),
+    key('tasks', 'assignee_user_id', person),
+    key('attachments', 'job_id', jobs, attachments),
+    key('attachments', 'customer_id', customers, attachments),
+    key('attachments', 'site_id', sites, attachments),
+    key('attachments', 'installation_id', installations, attachments),
+    key('attachments', 'appliance_id', appliances, attachments),
+    key('attachment_versions', 'attachment_id', attachments),
+    key('form_records', 'installation_id', installations),
+    key('form_records', 'appliance_id', appliances),
+    key('form_records', 'job_id', jobs),
+  ]
+}
+
+/** Names written into the text of a query, each once. */
+function quoted(names: readonly string[]): string {
+  return [...new Set(names)].map((name) => `'${name}'`).join(', ')
+}
+
+/** The fields of `movingKeys` read by where they came from, for the test of the index. */
+export function fieldsMovedAway(): readonly string[] {
+  const keys = movingKeys(placesOf([]), '').filter((key) => key.within !== undefined)
+
+  return [...new Set(keys.map((key) => key.field))].sort()
+}
+
+/**
+ * The records that moved into or out of what the jobs and the person reach,
+ * each with its last move: the value of the scope changes with this list, and
+ * a device that finds it changed drops what it holds and asks from the start,
+ * as for a new job.
+ *
+ * Into: a record the device holds now whose key changed, a job included,
+ * brings what hangs on it, whose changes lie behind the cursor of the device
+ * (opengewerk#938, #946, #947). Out of: a record whose key pointed at
+ * something the device holds and no longer does is left out of every pull
+ * from then on, and the device would keep it, with what hangs on it (#946).
+ * Each one by itself, so that one moving away while another moves in changes
+ * the list too. One created there is not on it: what hangs on it is new as
+ * well. Read in the log of changes, the first through
+ * `audit_entries_record_idx`, the second through `audit_entries_moves_idx`.
+ */
+async function movesOf(
+  tx: TenantTransaction,
+  jobIds: readonly string[],
+  userId: string,
+): Promise<string[]> {
+  const { rows } = await tx.execute<{ moved: string }>(movesQuery(jobIds, userId))
 
   return rows.map((row) => row.moved)
 }
 
-/** The sites, installations and appliances the jobs reach, as `narrowedTo` asks them. */
-function placesOf(jobIds: readonly string[]): {
+/** The question `movesOf` asks, on its own for the test of its plan. */
+export function movesQuery(jobIds: readonly string[], userId: string): SQL {
+  const keys = movingKeys(placesOf(jobIds), userId)
+  // One part per table and direction rather than one condition with `or`,
+  // which PostgreSQL would answer by reading the whole log on every pull. The
+  // names are written into the text, not passed as parameters, so that the
+  // planner sees the partial index fit. The old values a part looks for go
+  // as one array the planner works out first: compared with a list of
+  // `id::text` instead, the comparison went through `uuid_out`, which is not
+  // leakproof, and under the policy of the log PostgreSQL then read every
+  // move of the key in the business and compared afterwards.
+  const into = new Map<string, { readonly fields: string[]; readonly held: SQL }>()
+
+  for (const { table, field, held } of keys) {
+    if (held !== undefined) {
+      const known = into.get(table)
+
+      if (known === undefined) {
+        into.set(table, { fields: [field], held })
+      } else {
+        known.fields.push(field)
+      }
+    }
+  }
+
+  const parts = [
+    ...[...into].map(([table, { fields, held }]) => {
+      const names = quoted(fields)
+
+      return sql`select a.record_id, a.sequence from audit_entries a
+        where ${sql.raw(`a.table_name = '${table}' and a.field in (${names})`)}
+          and a.operation = 'update' and a.record_id in ${held}`
+    }),
+    ...keys.flatMap(({ table, field, within }) =>
+      within === undefined
+        ? []
+        : [
+            sql`select a.record_id, a.sequence from audit_entries a
+              where ${sql.raw(`a.table_name = '${table}' and a.field = '${field}'`)}
+                and a.operation = 'update'
+                and a.old_value = any(array(select id::text from ${within} w(id)))`,
+          ],
+    ),
+  ]
+
+  return sql`
+    select m.record_id::text || '@' || max(m.sequence)::text as moved
+      from (${sql.join(parts, sql` union all `)}) m
+     group by m.record_id
+     order by 1`
+}
+
+/**
+ * A list of ids as one parameter. Each id as a parameter of its own, as
+ * `idArray` passes them, put a person on 830 jobs past the 65 535 parameters
+ * of one statement once `movesOf` asks for each key what the jobs reach.
+ */
+function idsParameter(ids: readonly string[]): SQL {
+  return sql`${sql.param([...ids])}::uuid[]`
+}
+
+/** What the jobs reach, as `narrowedTo` asks it. */
+interface Places {
   readonly ids: SQL
+  readonly jobs: SQL
+  readonly customers: SQL
   readonly sites: SQL
   readonly installations: SQL
   readonly appliances: SQL
-} {
-  const ids = sql`array[${sql.join(
-    jobIds.map((id) => sql`${id}`),
-    sql`, `,
-  )}]::uuid[]`
+  readonly boards: SQL
+  readonly circuits: SQL
+  readonly inverters: SQL
+  readonly strings: SQL
+  readonly documents: SQL
+  readonly defects: SQL
+  readonly appointments: SQL
+  readonly attachments: SQL
+}
+
+function placesOf(jobIds: readonly string[]): Places {
+  const ids = idsParameter(jobIds)
+  const jobs = sql`(select id from jobs where id = any(${ids}))`
+  const customers = sql`(select customer_id from jobs where id = any(${ids}))`
   const sites = sql`(select site_id from jobs where id = any(${ids}) and site_id is not null)`
   const installations = sql`(select i.id from installations i
     where i.id in (select installation_id from jobs where id = any(${ids}) and installation_id is not null)
        or i.site_id in ${sites})`
   const appliances = sql`(select id from appliances where site_id in ${sites})`
+  const boards = sql`(select id from distribution_boards where installation_id in ${installations})`
+  const circuits = sql`(select id from circuits where distribution_board_id in ${boards})`
+  const inverters = sql`(select id from inverters where installation_id in ${installations})`
+  const strings = sql`(select id from pv_strings where inverter_id in ${inverters})`
+  const documents = sql`(select id from documents where job_id = any(${ids}))`
+  const defects = sql`(select id from defects
+    where job_id in ${jobs} or installation_id in ${installations})`
+  const appointments = sql`(select id from appointments where job_id = any(${ids}))`
+  const attachments = sql`(select id from attachments
+    where job_id = any(${ids}) or customer_id in ${customers}
+       or site_id in ${sites} or installation_id in ${installations}
+       or appliance_id in ${appliances})`
 
-  return { ids, sites, installations, appliances }
+  return {
+    ids,
+    jobs,
+    customers,
+    sites,
+    installations,
+    appliances,
+    boards,
+    circuits,
+    inverters,
+    strings,
+    documents,
+    defects,
+    appointments,
+    attachments,
+  }
 }
 
 /**
@@ -262,18 +471,9 @@ export function narrowedTo(scope: DeviceScope, entity: string): SQL | undefined 
     return undefined
   }
 
-  const { ids, sites, installations, appliances } = placesOf(scope.jobIds)
-  const jobs = sql`(select id from jobs where id = any(${ids}))`
-  const customers = sql`(select customer_id from jobs where id = any(${ids}))`
-  const boards = sql`(select id from distribution_boards where installation_id in ${installations})`
-  const circuits = sql`(select id from circuits where distribution_board_id in ${boards})`
-  const inverters = sql`(select id from inverters where installation_id in ${installations})`
-  const strings = sql`(select id from pv_strings where inverter_id in ${inverters})`
-  const documents = sql`(select id from documents where job_id = any(${ids}))`
-  const attachments = sql`(select id from attachments
-    where job_id = any(${ids}) or customer_id in ${customers}
-       or site_id in ${sites} or installation_id in ${installations}
-       or appliance_id in ${appliances})`
+  const places = placesOf(scope.jobIds)
+  const { jobs, customers, sites, installations, appliances, boards, circuits } = places
+  const { inverters, strings, documents, defects, appointments, attachments } = places
 
   const table = sql.identifier(entity)
   const column = (name: string) => sql`${table}.${sql.identifier(name)}`
@@ -293,13 +493,12 @@ export function narrowedTo(scope: DeviceScope, entity: string): SQL | undefined 
     // (#290): "Meine Termine" without a network, and the colleagues of an
     // appointment beside them.
     appointments: sql`${column('job_id')} in ${jobs}`,
-    appointment_people: sql`${column('appointment_id')} in (select id from appointments where job_id = any(${ids}))`,
+    appointment_people: sql`${column('appointment_id')} in ${appointments}`,
     job_notes: sql`${column('job_id')} in ${jobs}`,
     // The defects of its jobs and of the installations it holds (#311), with
     // their steps: recorded and taken on site without a network.
     defects: sql`(${column('job_id')} in ${jobs} or ${column('installation_id')} in ${installations})`,
-    defect_steps: sql`${column('defect_id')} in (select id from defects
-      where job_id in ${jobs} or installation_id in ${installations})`,
+    defect_steps: sql`${column('defect_id')} in ${defects}`,
     // The requests for an early start of its jobs (#292), signed at the door.
     early_start_requests: sql`${column('job_id')} in ${jobs}`,
     // The times of the on-call plan of its own person (#293), which decide
@@ -457,10 +656,7 @@ export function restrictedOut(restricted: RestrictedOnDevices, entity: string): 
     return undefined
   }
 
-  const ids = sql`array[${sql.join(
-    restricted.customerIds.map((id) => sql`${id}`),
-    sql`, `,
-  )}]::uuid[]`
+  const ids = idsParameter(restricted.customerIds)
   const jobs = sql`(select id from jobs where customer_id = any(${ids}))`
   const sites = sql`(select id from sites where customer_id = any(${ids}))`
   const installations = sql`(select id from installations where site_id in ${sites})`
