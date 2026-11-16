@@ -339,6 +339,9 @@ function onTheWire(operation: Operation) {
     baseVersion: operation.baseVersion,
     patches: operation.patches,
     recordedAt: operation.recordedAt.toISOString(),
+    // The place in the outbox, which the server applies a transmission by
+    // (opengewerk#955); none for an operation queued before there were places.
+    ...(operation.place === undefined ? {} : { place: operation.place }),
   }
 }
 

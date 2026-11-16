@@ -1,4 +1,9 @@
-import { workingAsHeader } from '@opengewerk/platform-domain'
+import {
+  type DeviceId,
+  type Operation,
+  type OperationId,
+  workingAsHeader,
+} from '@opengewerk/platform-domain'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -55,6 +60,52 @@ describe('an answer of the server', () => {
     await expect(request('/roles/own-1', { method: 'DELETE' })).rejects.toBeInstanceOf(
       RequestRefused,
     )
+  })
+})
+
+/**
+ * The server applies a transmission in the order of the outbox, by the place
+ * each operation has there (opengewerk#955), and so the place has to reach
+ * it. The fake servers of the other tests take the operations as objects and
+ * never saw that it did not.
+ */
+describe('a transmission of the outbox', () => {
+  it('carries the place of each operation to the server, and none for one queued before there were places', async () => {
+    const bodies: unknown[] = []
+
+    vi.stubGlobal('fetch', (_path: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)))
+
+      return Promise.resolve(
+        new Response('{"receipts":[]}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+    })
+
+    const operation = (id: string, place?: number): Operation => ({
+      id: id as OperationId,
+      entity: 'notes',
+      recordId: 'n-1',
+      kind: 'update',
+      baseVersion: 1,
+      patches: [{ field: 'text', from: 'Vorher', to: id }],
+      recordedAt: new Date('2026-11-16T12:00:00.000Z'),
+      deviceId: 'device-1' as DeviceId,
+      ...(place === undefined ? {} : { place }),
+    })
+
+    await httpTransport.push('device-1', [operation('A'), operation('B', 0), operation('C', 1)])
+
+    const sent = (bodies[0] as { operations: Record<string, unknown>[] }).operations
+
+    expect(sent.map((wire) => [wire['id'], wire['place']])).toEqual([
+      ['A', undefined],
+      ['B', 0],
+      ['C', 1],
+    ])
+    expect('place' in (sent[0] ?? {})).toBe(false)
   })
 })
 

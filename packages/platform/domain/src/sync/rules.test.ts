@@ -118,6 +118,32 @@ describe('the outbox', () => {
     expect(inOutboxOrder([one, two]).map((entry) => entry.id)).toEqual(['aaa', 'zzz'])
     expect(inOutboxOrder([two, one]).map((entry) => entry.id)).toEqual(['aaa', 'zzz'])
   })
+
+  it('goes by the place in the outbox before the clock, and puts what has none first (opengewerk#955)', () => {
+    // Queued second, with the clock put back an hour in between.
+    const first = operation({
+      id: 'first' as OperationId,
+      place: 3,
+      recordedAt: new Date('2026-10-02T12:00:00Z'),
+    })
+    const second = operation({
+      id: 'second' as OperationId,
+      place: 4,
+      recordedAt: new Date('2026-10-02T11:00:00Z'),
+    })
+    // Queued before there was a place, later by the clock than both.
+    const before = operation({
+      id: 'before' as OperationId,
+      recordedAt: new Date('2026-10-02T13:00:00Z'),
+    })
+
+    expect(inOutboxOrder([second, first]).map((entry) => entry.id)).toEqual(['first', 'second'])
+    expect(inOutboxOrder([second, before, first]).map((entry) => entry.id)).toEqual([
+      'before',
+      'first',
+      'second',
+    ])
+  })
 })
 
 describe('the rules of an application', () => {

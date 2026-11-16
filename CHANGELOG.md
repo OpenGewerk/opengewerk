@@ -161,6 +161,27 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Der Abgleich ordnet die Änderungen eines Geräts jetzt nach der Reihenfolge, in der sie eingegeben wurden, und nicht
+  mehr nach der Uhr des Geräts (#950, #955). Warum: Wurde die Uhr zurückgestellt, gingen zwei Änderungen, die zugleich
+  warteten, in umgekehrter Reihenfolge hinaus, und die letzte Eingabe ging verloren. Die Anzeige ordnete auch, was der
+  Server schon angenommen hatte, nach der Uhr: Eine Löschung ließ die Datei wieder als vorhanden erscheinen, und eine
+  Änderung zeigte den Wert von vorher, bis ein Abruf durchkam. Jetzt bekommt jede Änderung beim Speichern eine Stelle
+  im Ausgang des Geräts, auch über mehrere Tabs hinweg, und nach ihr sendet das Gerät und wendet der Server an.
+  Anzeige, Papierkorb und die Frage nach der Reihenfolge aus #937 legen die Änderungen in dieser einen Reihenfolge an,
+  auch nach einer verlorenen Antwort des Servers. Was vor dem Update schon wartete, hat keine Stelle und geht wie
+  bisher nach der Uhr hinaus, vor allem, was danach gespeichert wird.
+- Ein Datensatz, der auf einem Gerät angelegt wurde, zeigt die Felder, die der Server vergibt, sobald seine Zeile
+  zurück ist (#956). Warum: Bis ein Abruf ganz durchkam, legte das Gerät die Anlage über die Zeile des Servers und
+  zeigte nur, was es selbst gesendet hatte; scheiterte ein späterer Teil des Abrufs, fehlten etwa die Nummer und der
+  Stand der Zeile, bis der nächste ganz durchkam.
+- Eine Änderung, die der Server angenommen hat, bleibt auf dem Gerät sichtbar, bis eine Zeile zurück ist, die sie
+  enthält (#959). Warum: Das Gerät hielt jede Zeile für eine solche, die neuer war als die beim Senden. Hatte ein
+  anderer Tab eine Zeile von vor der Annahme gelesen und legte sie danach in den Speicher, zeigte das Gerät deren
+  Wert statt der eigenen Eingabe, und nichts deutete auf eine offene Änderung hin. Jetzt nennt der Server in jeder
+  Quittung die Version, die der Datensatz mit der Änderung hat, und das Gerät vergleicht mit ihr.
+- Hört ein Abruf an der Grenze seiner Seiten auf, zeigt das Gerät weiter, was der Server schon angenommen hat (#960).
+  Warum: Nach jedem Abruf ließ das Gerät los, was es über die Zeilen legte, auch wenn der Abruf noch nicht alle Zeilen
+  gebracht hatte; bis zum nächsten Abgleich zeigte es dann den Wert von vorher.
 - Zieht eine Anlage oder ein Gerät auf das Objekt eines Auftrags um, kommen ihre Dateien, Protokolle und was sonst an
   ihr hängt jetzt auch auf ein Gerät, das schon abgeglichen hat (#938). Warum: Der Bereich eines Geräts änderte seinen
   Wert nur mit den Aufträgen, und was an der Anlage hing, lag mit seinen Änderungen hinter dem Stand des Geräts. Jetzt
@@ -177,9 +198,9 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Schwärzt eine Löschung oder der Inhaber einen Wert im Protokoll, ruft jedes Gerät eines Monteurs einmal neu ab, denn
   den Umzug dahinter fände der Bereich danach nicht mehr. Zwei Teilindizes auf dem Protokoll der Änderungen (Migration
   0145) halten das schnell, ohne sie läse jeder Abruf das ganze Protokoll. Beim Update baut die Migration sie auf, und
-  so lange warten Änderungen auf das Protokoll, bei zwei Millionen Einträgen weniger als eine Sekunde. Nach dem Update
-  ruft jedes Gerät eines Monteurs einmal neu ab, wenn im Betrieb schon einmal ein Wert geschwärzt wurde, sonst jedes,
-  in dessen Bereich früher etwas weg- oder hineingezogen ist.
+  so lange warten Änderungen auf das Protokoll, bei zwei Millionen Einträgen in den bisherigen Messungen wenige
+  Sekunden, je nach Rechner und Bestand. Nach dem Update ruft jedes Gerät eines Monteurs einmal neu ab, wenn im Betrieb
+  schon einmal ein Wert geschwärzt wurde, sonst jedes, in dessen Bereich früher etwas weg- oder hineingezogen ist.
 - Ein unterschriebenes Protokoll zeigt in der Anwendung jetzt dasselbe Foto wie sein PDF, auch wenn die Datei nach der
   Unterschrift aus den Akten entfernt wurde; eine Datei, die schon vor der Unterschrift entfernt war, zeigt es nicht
   (#937). Dafür gibt der Server die Fassung einer solchen Datei weiter heraus, solange ein unterschriebenes Protokoll
