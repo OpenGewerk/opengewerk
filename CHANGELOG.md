@@ -244,7 +244,10 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   zweimal. Ein Abruf liest bis zur letzten festgeschriebenen Nummer und braucht keine lückenlose Folge. Eine
   Sequenz unter dem Namen eines Mandanten nimmt der Zähler nur, wenn sie dem Eigentümer der Tabellen gehört, sonst
   bricht er ab: In einem Cluster, der von einer Fassung vor PostgreSQL 15 kam, darf jede Rolle in `public` anlegen.
-  Die Haustechnik braucht beim Anheben des Submoduls eine Migration wie 0149.
+  Aus demselben Grund löst in seinen Funktionen nichts auf etwas auf, das eine andere Rolle in `public` oder in
+  ihrem temporären Schema angelegt hat: `format` und `pg_class` stehen mit ihrem Schema, `pg_temp` kommt zuletzt,
+  und die Zahl der Nummern geht als `bigint` hinein, sodass keine Überladung besser passt. Die Haustechnik braucht
+  beim Anheben des Submoduls eine Migration wie 0149.
 - Ein Test des Tors, der unter der Last der CI manchmal rot wurde, wartet auf den Namen des nächsten Kontos (#962).
   Warum: Er fragte im selben Takt, in dem die Bildschirme des alten Kontos gingen, und die Seite nennt das neue
   einen Takt später; die Reihenfolge, um die es geht, hält eine eigene Zusicherung.

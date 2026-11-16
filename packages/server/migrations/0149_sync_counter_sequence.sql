@@ -11,11 +11,11 @@
 ALTER TABLE "sync_sequences" ADD COLUMN "opened_in" "xid8";--> statement-breakpoint
 CREATE FUNCTION "take_sync_numbers"(tenant uuid, amount bigint) RETURNS bigint
 	LANGUAGE plpgsql
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 	SET enable_seqscan = off
 AS $$
 DECLARE
-	counter text := format('%I.%I', 'public', 'sync_counter_t' || replace(tenant::text, '-', ''));
+	counter text := pg_catalog.format('%I.%I', 'public', 'sync_counter_t' || replace(tenant::text, '-', ''));
 	opened xid8;
 	committed bigint;
 	first bigint;
@@ -41,13 +41,13 @@ BEGIN
 	SELECT next_value INTO committed FROM public.sync_sequences WHERE tenant_id = tenant FOR NO KEY UPDATE;
 
 	IF to_regclass(counter) IS NULL THEN
-		EXECUTE format('CREATE SEQUENCE %s AS bigint MINVALUE 0', counter);
+		EXECUTE pg_catalog.format('CREATE SEQUENCE %s AS bigint MINVALUE 0', counter);
 	ELSIF NOT EXISTS (
 		SELECT 1
-		  FROM pg_class c
+		  FROM pg_catalog.pg_class c
 		 WHERE c.oid = to_regclass(counter)
 		   AND c.relkind = 'S'
-		   AND c.relowner = (SELECT t.relowner FROM pg_class t WHERE t.oid = 'public.sync_sequences'::regclass)
+		   AND c.relowner = (SELECT t.relowner FROM pg_catalog.pg_class t WHERE t.oid = 'public.sync_sequences'::regclass)
 	) THEN
 		RAISE EXCEPTION 'Der Zähler des Abgleichs eines Mandanten ist keine Sequenz des Eigentümers der Tabellen: %', counter;
 	END IF;
@@ -69,12 +69,12 @@ REVOKE EXECUTE ON FUNCTION "take_sync_numbers"(uuid, bigint) FROM PUBLIC;--> sta
 CREATE FUNCTION "close_sync_counter"() RETURNS trigger
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 	SET enable_seqscan = off
 AS $$
 BEGIN
 	UPDATE public.sync_sequences
-	   SET next_value = currval(format('%I.%I', 'public', 'sync_counter_t' || replace(new.tenant_id::text, '-', ''))::regclass),
+	   SET next_value = currval(pg_catalog.format('%I.%I', 'public', 'sync_counter_t' || replace(new.tenant_id::text, '-', ''))::regclass),
 	       opened_in = NULL,
 	       updated_at = now()
 	 WHERE tenant_id = new.tenant_id AND opened_in = pg_current_xact_id();
@@ -89,16 +89,16 @@ CREATE CONSTRAINT TRIGGER "sync_counter_closes" AFTER UPDATE ON "sync_sequences"
 CREATE OR REPLACE FUNCTION "next_sync_sequence"(tenant uuid) RETURNS bigint
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
-	RETURN public.take_sync_numbers(tenant, 1);
+	RETURN public.take_sync_numbers(tenant, 1::bigint);
 END;
 $$;--> statement-breakpoint
 CREATE OR REPLACE FUNCTION "reserve_sync_sequences"(amount integer) RETURNS bigint
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	tenant uuid := nullif(current_setting('app.tenant_id', true), '')::uuid;
@@ -110,6 +110,6 @@ BEGIN
 	-- From the sequence of the tenant, as every other number: the block follows
 	-- the numbers the transaction has taken so far, and the numbers after it
 	-- follow the block.
-	RETURN public.take_sync_numbers(tenant, amount);
+	RETURN public.take_sync_numbers(tenant, amount::bigint);
 END;
 $$;
