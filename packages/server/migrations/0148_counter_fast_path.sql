@@ -28,10 +28,12 @@ CREATE FUNCTION "counter_address"(kind text, tenant uuid) RETURNS tid
 	SET search_path = pg_catalog, public
 AS $$
 DECLARE
-	held text := public.counter_hint(kind, tenant);
+	parts text[] := regexp_match(public.counter_hint(kind, tenant), '^\((\d{1,10}),(\d{1,5})\)$');
 BEGIN
-	IF held ~ '^\(\d{1,10},\d{1,5}\)$' THEN
-		RETURN held::tid;
+	-- Within the range of a `tid` as well, so that a made-up address finds
+	-- nothing rather than failing the cast.
+	IF parts IS NOT NULL AND parts[1]::bigint <= 4294967295 AND parts[2]::integer <= 65535 THEN
+		RETURN ('(' || parts[1] || ',' || parts[2] || ')')::tid;
 	END IF;
 
 	RETURN NULL;
@@ -141,10 +143,14 @@ CREATE FUNCTION "close_audit_chain"() RETURNS trigger
 	LANGUAGE plpgsql
 	SECURITY DEFINER
 	SET search_path = pg_catalog, public
+	SET enable_seqscan = off
+	SET enable_bitmapscan = off
+	SET enable_sort = off
 AS $$
 DECLARE
 	chain record;
-	head record;
+	place bigint;
+	previous text;
 BEGIN
 	SELECT c.next_sequence, c.head_hash, c.ctid AS address INTO chain
 	  FROM public.audit_chains c
@@ -154,10 +160,19 @@ BEGIN
 		RETURN NULL;
 	END IF;
 
-	head := public.audit_chain_head(new.tenant_id, chain.next_sequence, chain.head_hash);
+	SELECT e.sequence + 1, e.hash INTO place, previous
+	  FROM public.audit_entries e
+	 WHERE e.tenant_id = new.tenant_id AND e.sequence >= chain.next_sequence
+	 ORDER BY e.sequence DESC
+	 LIMIT 1;
+
+	IF NOT FOUND THEN
+		place := chain.next_sequence;
+		previous := chain.head_hash;
+	END IF;
 
 	UPDATE public.audit_chains
-	   SET next_sequence = head.place, head_hash = head.previous, opened_in = NULL, updated_at = now()
+	   SET next_sequence = place, head_hash = previous, opened_in = NULL, updated_at = now()
 	 WHERE ctid = chain.address AND tenant_id = new.tenant_id;
 
 	RETURN NULL;

@@ -59,10 +59,12 @@ CREATE FUNCTION "counter_address"(kind text, tenant uuid) RETURNS tid
 	SET search_path = pg_catalog, public
 AS $$
 DECLARE
-	held text := public.counter_hint(kind, tenant);
+	parts text[] := regexp_match(public.counter_hint(kind, tenant), '^\((\d{1,10}),(\d{1,5})\)$');
 BEGIN
-	IF held ~ '^\(\d{1,10},\d{1,5}\)$' THEN
-		RETURN held::tid;
+	-- Within the range of a `tid` as well, so that a made-up address finds
+	-- nothing rather than failing the cast.
+	IF parts IS NOT NULL AND parts[1]::bigint <= 4294967295 AND parts[2]::integer <= 65535 THEN
+		RETURN ('(' || parts[1] || ',' || parts[2] || ')')::tid;
 	END IF;
 
 	RETURN NULL;

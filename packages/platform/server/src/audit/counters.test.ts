@@ -208,6 +208,46 @@ describe('many logged changes in one transaction', () => {
     expect(numbers.map((row) => Number(row.change_sequence))).toEqual([1, 2, 3])
   })
 
+  it('write the last entry as the head at the commit, whatever the hint says by then', async () => {
+    for (const hint of ['opened', 'an earlier entry']) {
+      const before = await chainOf(north.id)
+
+      await inTenant(north.id, async (tx) => {
+        await shelves(tx, north.id, 3, hint)
+
+        if (hint === 'opened') {
+          await setHint(tx, 'audit_head', north.id, 'opened')
+        } else {
+          const { rows } = await tx.execute<{ id: string }>(sql`
+            select id from audit_entries
+             where tenant_id = ${north.id}::uuid
+               and sequence = ${Number(before?.next_sequence ?? 1)}`)
+
+          await setHint(tx, 'audit_head', north.id, String(rows[0]?.id))
+        }
+      })
+
+      await expectHeadAtTheLastEntry(north.id)
+    }
+
+    // And the next change finds its place free.
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Danach'))
+
+    await expectHeadAtTheLastEntry(north.id)
+  })
+
+  it('go by the key when a hint names an address no row can have', async () => {
+    await inTenant(north.id, async (tx) => {
+      await shelves(tx, north.id, 1)
+      await setHint(tx, 'sync', north.id, '(1,99999)')
+      await setHint(tx, 'audit', north.id, '(9999999999,1)')
+      await shelves(tx, north.id, 2, 'Danach')
+    })
+
+    await expectHeadAtTheLastEntry(north.id)
+    expect((await counterOf(north.id))?.next_value).toBe('3')
+  })
+
   it('answer a hint below the head of the chain with the head itself', async () => {
     await inTenant(north.id, (tx) => shelves(tx, north.id, 3))
 

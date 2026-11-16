@@ -257,11 +257,18 @@ $$;--> statement-breakpoint
 -- at the next one, past every version it had written. Now the first change of
 -- a transaction opens the chain (`opened_in`) once its entries are written,
 -- every further one takes the head from its own entries (`audit_chain_head`),
--- and this trigger writes it to the row before the transaction commits. It is deferred to the end and
--- fires once for the opening; it clears `opened_in`, so that a change after a
--- firing brought forward (`SET CONSTRAINTS ... IMMEDIATE`) opens the chain
--- again. A transaction that rolls back takes the opening, its entries and the
+-- and this trigger writes it to the row before the transaction commits. It is
+-- deferred to the end and fires once for the opening; it clears `opened_in`,
+-- so that a change after a firing brought forward (`SET CONSTRAINTS ...
+-- IMMEDIATE`) opens the chain again. A transaction that rolls back takes the opening, its entries and the
 -- waiting trigger with it, a savepoint that is rolled back the part it holds.
+--
+-- The head it writes is the highest entry above the head of the row, found
+-- through the place and not through the hint of `audit_chain_head`. No entry
+-- follows it in the transaction, so that the constraint on the place could no
+-- longer stop a hint that names an earlier entry or says `opened` after the
+-- last change: the row would name a stale head, and the next change of the
+-- tenant would take a place that is taken.
 --
 -- SECURITY DEFINER because it fires at the commit of whoever changed
 -- something, who may not write the chain. A chain that is gone by then, with
@@ -275,10 +282,14 @@ CREATE FUNCTION "close_audit_chain"() RETURNS trigger
 	LANGUAGE plpgsql
 	SECURITY DEFINER
 	SET search_path = pg_catalog, public
+	SET enable_seqscan = off
+	SET enable_bitmapscan = off
+	SET enable_sort = off
 AS $$
 DECLARE
 	chain record;
-	head record;
+	place bigint;
+	previous text;
 BEGIN
 	SELECT c.next_sequence, c.head_hash, c.ctid AS address INTO chain
 	  FROM public.audit_chains c
@@ -288,10 +299,19 @@ BEGIN
 		RETURN NULL;
 	END IF;
 
-	head := public.audit_chain_head(new.tenant_id, chain.next_sequence, chain.head_hash);
+	SELECT e.sequence + 1, e.hash INTO place, previous
+	  FROM public.audit_entries e
+	 WHERE e.tenant_id = new.tenant_id AND e.sequence >= chain.next_sequence
+	 ORDER BY e.sequence DESC
+	 LIMIT 1;
+
+	IF NOT FOUND THEN
+		place := chain.next_sequence;
+		previous := chain.head_hash;
+	END IF;
 
 	UPDATE public.audit_chains
-	   SET next_sequence = head.place, head_hash = head.previous, opened_in = NULL, updated_at = now()
+	   SET next_sequence = place, head_hash = previous, opened_in = NULL, updated_at = now()
 	 WHERE ctid = chain.address AND tenant_id = new.tenant_id;
 
 	RETURN NULL;
