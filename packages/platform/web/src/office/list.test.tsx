@@ -261,9 +261,10 @@ describe('the pages of a list whose size changes between them', () => {
     const pages = paged([6, 6, 10, 6, 7, 10, 6, 9], { from: 34 }, 'back')
 
     for (let page = 1; page < pages.length; page += 1) {
-      expect(pages[page]?.at(-1)).toBeGreaterThanOrEqual((pages[page - 1]?.[0] ?? 0) - 1)
+      expect(pages[page]?.at(-1)).toBe((pages[page - 1]?.[0] ?? 0) - 1)
     }
-    expect(new Set(pages.flat())).toEqual(new Set(Array.from({ length: 40 }, (_, row) => row)))
+    // Every row once: the first page is shorter rather than show rows again.
+    expect(pages.flat().sort((a, b) => a - b)).toEqual(Array.from({ length: 40 }, (_, row) => row))
   })
 
   it('falls back onto the last rows when a filter took the row a page was held at', () => {
@@ -273,7 +274,12 @@ describe('the pages of a list whose size changes between them', () => {
       back: { to: 6 },
       next: { from: 16 },
     })
-    expect(pageFrom(40, { to: 6 }, 10)).toMatchObject({ first: 0, back: null })
+    expect(pageFrom(40, { to: 6 }, 10)).toEqual({
+      first: 0,
+      end: 6,
+      back: null,
+      next: { from: 6 },
+    })
     expect(pageFrom(5, { from: 16 }, 10)).toEqual({ first: 0, end: 5, back: null, next: null })
     expect(pageFrom(25, { from: 30 }, 10)).toMatchObject({ first: 15, end: 25, next: null })
   })

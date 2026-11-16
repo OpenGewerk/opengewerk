@@ -202,6 +202,8 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Zwei Tests der Prüfprotokolle warten auf die Operation, die ein Klick schreibt, bevor sie sie lesen (#972). Warum:
+  Der Klick schreibt sie einen Takt später in den Ausgang, und unter der Last der CI war beim Lesen noch keine da.
 - Das Änderungsprotokoll eines Lieferanten und eines Artikels sagt unter der Überschrift, was es mitnimmt (#557):
   „mit Ansprechpartnern, Aufschlag und Metallpreisen“ und „mit Verkaufspreisen, Aufschlag und Bezugsquellen samt
   Einkaufspreisen und Metall“. Warum: Die Änderungen dieser Teile standen schon in der Liste, nur sagte die Seite

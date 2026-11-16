@@ -266,8 +266,10 @@ export type PageAnchor = { readonly from: number } | { readonly to: number }
  * began further on than the last one ended and the rows between were never
  * shown (CodeRabbit on opengewerk#969). Forward a page is held from the row
  * where the shown one ends, back up to the row where it begins, so that the
- * pages meet in both directions whatever the size is now. A row the rows no
- * longer reach, after a filter took some away, falls back onto the last ones.
+ * pages meet in both directions whatever the size is now. Back at the start,
+ * the first page is shorter rather than show rows of the page it came from
+ * again (CodeRabbit on opengewerk#969). A row the rows no longer reach, after a
+ * filter took some away, falls back onto the last ones.
  */
 export function pageFrom(
   total: number,
@@ -286,7 +288,7 @@ export function pageFrom(
       : anchor.from < total
         ? Math.max(anchor.from, 0)
         : Math.max(0, total - step)
-  const end = Math.min(total, first + step)
+  const end = 'to' in anchor ? Math.min(anchor.to, total) : Math.min(total, first + step)
 
   return {
     first,
