@@ -154,8 +154,10 @@ async function hollberg(): Promise<Fixture> {
        values ('${north}', '${cabinet}', '${labelCode()}');
      insert into installation_labels (tenant_id, installation_id, code, blocked_at)
        values ('${north}', '${cabinet}', '${labelCode()}', '2016-01-01');
-     insert into appliances (id, tenant_id, site_id, designation, protection_class, location, notes)
-       values ('${appliance}', '${north}', '${site}', 'Bohrmaschine ${family}', 'II', 'Werkraum ${family}', 'Von ${family} geliehen');
+     insert into appliances (id, tenant_id, site_id, designation, protection_class, location, notes,
+         cord_length_milli, cord_cross_section_milli, heating_power_watts)
+       values ('${appliance}', '${north}', '${site}', 'Bohrmaschine ${family}', 'II', 'Werkraum ${family}', 'Von ${family} geliehen',
+         3000, 1500, 800);
      insert into jobs (id, tenant_id, customer_id, site_id, installation_id, kind, status, designation, created_at)
        values ('${job}', '${north}', '${customer}', '${site}', '${cabinet}', 'project', 'completed', 'Umbau ${family}', '2013-01-10');
      insert into form_records (tenant_id, definition_key, definition_version, installation_id, performed_on, status, "values")
@@ -643,6 +645,16 @@ describe('deleting a site (#848)', () => {
         )
       ).rows,
     ).toEqual([{ consumer: null, rated_current_milli: null, cable_cross_section_milli: null }])
+    // And those of an appliance, its lead and heating power (opengewerk#816) included.
+    expect(
+      (
+        await admin.query(
+          'select cord_length_milli, cord_cross_section_milli, heating_power_watts from appliances',
+        )
+      ).rows,
+    ).toEqual([
+      { cord_length_milli: null, cord_cross_section_milli: null, heating_power_watts: null },
+    ])
     // The facts the test of the appliance was signed with as well (opengewerk#954).
     expect((await admin.query(`select "values", appliance_facts from form_records`)).rows).toEqual([
       { values: '{}', appliance_facts: null },
