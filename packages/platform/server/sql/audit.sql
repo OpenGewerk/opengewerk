@@ -684,7 +684,7 @@ BEGIN
 	RAISE EXCEPTION 'Das Audit-Log wird nur ergänzt. Ein Eintrag wird weder geändert noch gelöscht.'
 		USING ERRCODE = 'OG002';
 END;
-$$ LANGUAGE plpgsql;--> statement-breakpoint
+$$ LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
 
 CREATE TRIGGER "audit_entries_stay"
 	BEFORE UPDATE OR DELETE ON "audit_entries"

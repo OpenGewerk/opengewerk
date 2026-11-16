@@ -119,4 +119,16 @@ ALTER FUNCTION "tenants_with_leads"() SET search_path = pg_catalog, public, pg_t
 ALTER FUNCTION "time_entry_stays_as_written"() SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
 ALTER FUNCTION "time_entry_year"(p_entry uuid) SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
 ALTER FUNCTION "verify_audit_chain"(tenant uuid) SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
-ALTER FUNCTION "version_takes_its_files"() SET search_path = pg_catalog, public, pg_temp;
+ALTER FUNCTION "version_takes_its_files"() SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
+-- And those that set none so far get one as well: they take the path of
+-- whoever fires them otherwise, with the temporary schema searched first.
+ALTER FUNCTION "audit_entry_stays"() SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
+ALTER FUNCTION "instance_change_stays"() SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
+ALTER FUNCTION "book_delivered_material"() SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
+ALTER FUNCTION "book_material_of"(uuid) SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
+ALTER FUNCTION "book_report_material"() SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
+ALTER FUNCTION "cancellation_only_from_its_invoice"() SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
+ALTER FUNCTION "document_line_stays_fixed"() SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
+ALTER FUNCTION "document_lines_within_count"() SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
+ALTER FUNCTION "document_stays_fixed"() SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
+ALTER FUNCTION "sign_document"() SET search_path = pg_catalog, public, pg_temp;

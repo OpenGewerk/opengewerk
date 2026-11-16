@@ -20,7 +20,7 @@ BEGIN
 	RAISE EXCEPTION 'Das Protokoll der Instanz wird nur ergänzt. Ein Eintrag wird weder geändert noch gelöscht.'
 		USING ERRCODE = 'OG002';
 END;
-$$ LANGUAGE plpgsql;--> statement-breakpoint
+$$ LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
 
 CREATE TRIGGER "instance_changes_stay"
 	BEFORE UPDATE OR DELETE ON "instance_changes"

@@ -3296,21 +3296,22 @@ describe('an instance whose cluster lets every role create in public', () => {
 
     expect(await open()).toEqual({ creates: false, executes: false })
 
-    // And every function that sets a search path, the application's own among
-    // them, searches the temporary schema last, where a type of another role
-    // would otherwise stand in for one it declares; every function that runs
-    // as the owner sets one. A function that runs as its caller and sets none
-    // takes the path of whoever calls it, within one of the owner that one.
-    const { rows: paths } = await admin.query<{ signature: string; path: string }>(
-      `select p.oid::regprocedure::text as signature, s as path
+    // And every function, the application's own among them, sets a search
+    // path and searches the temporary schema last, where a type of another
+    // role would otherwise stand in for one it declares; the functions of
+    // extensions keep their own.
+    const { rows: paths } = await admin.query<{ signature: string; path: string | null }>(
+      `select p.oid::regprocedure::text as signature,
+              (select s from unnest(p.proconfig) s where s like 'search_path=%') as path
          from pg_proc p
          join pg_namespace n on n.oid = p.pronamespace
-         cross join lateral unnest(p.proconfig) s
-        where n.nspname = 'public' and s like 'search_path=%'`,
+        where n.nspname = 'public'
+          and not exists (select 1 from pg_depend d
+                           where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')`,
     )
 
     expect(paths.length).toBeGreaterThan(90)
-    expect(paths.filter((row) => !row.path.endsWith('pg_temp'))).toEqual([])
+    expect(paths.filter((row) => !row.path?.endsWith('pg_temp'))).toEqual([])
 
     const { rows: unset } = await admin.query<{ signature: string }>(
       `select p.oid::regprocedure::text as signature

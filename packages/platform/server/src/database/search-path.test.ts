@@ -35,18 +35,23 @@ afterAll(async () => {
 })
 
 describe('the search path of the functions of the foundation', () => {
-  it('ends with the temporary schema wherever a function sets one', async () => {
-    const { rows } = await admin.query<{ signature: string; path: string }>(
-      `select p.oid::regprocedure::text as signature, substr(s, length('search_path=') + 1) as path
+  it('is set by every function of the foundation, and ends with the temporary schema', async () => {
+    const { rows } = await admin.query<{ signature: string; path: string | null }>(
+      `select p.oid::regprocedure::text as signature,
+              (select substr(s, length('search_path=') + 1) from unnest(p.proconfig) s
+                where s like 'search_path=%') as path
          from pg_proc p
          join pg_namespace n on n.oid = p.pronamespace
-         cross join lateral unnest(p.proconfig) s
-        where n.nspname = 'public' and s like 'search_path=%'
+        where n.nspname = 'public'
+          and not exists (select 1 from pg_depend d
+                           where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')
         order by 1`,
     )
 
     expect(rows.length).toBeGreaterThan(30)
-    expect(rows.filter((row) => !/(^|,\s*)pg_temp$/.test(row.path))).toEqual([])
+    expect(rows.filter((row) => row.path === null || !/(^|,\s*)pg_temp$/.test(row.path))).toEqual(
+      [],
+    )
   })
 
   it('sets one for every function that runs as the owner of the tables', async () => {
