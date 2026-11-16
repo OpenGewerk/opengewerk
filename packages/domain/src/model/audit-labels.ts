@@ -228,6 +228,8 @@ export const auditTables: Readonly<Record<string, AuditTableWords>> = {
       mobility: 'Art',
       location: 'Standort',
       cord_length_milli: 'Länge der Anschlussleitung',
+      cord_cross_section_milli: 'Querschnitt der Anschlussleitung',
+      heating_power_watts: 'Heizleistung',
     },
   },
   installations: {

@@ -82,15 +82,24 @@ export function applianceName(appliance: RecordState): string {
   return number === '' ? designation : `${number} ${designation}`
 }
 
-/** "005 Kaffeemaschine, Schutzklasse I, Anschlussleitung 1,2 m", as the head of a protocol. */
+/**
+ * "005 Kaffeemaschine, Schutzklasse I, Anschlussleitung 1,2 m, Heizleistung
+ * 1,4 kW", as the head of a protocol.
+ */
 export function applianceHeading(appliance: RecordState): string {
-  const length = appliance['cordLengthMilli']
+  const count = (key: string) => {
+    const value = appliance[key]
+
+    return typeof value === 'number' ? value : null
+  }
 
   return applianceSubject({
     inventoryNumber: maybeText(appliance, 'inventoryNumber'),
     designation: text(appliance, 'designation'),
     protectionClass: text(appliance, 'protectionClass') as 'I' | 'II' | 'III',
-    cordLengthMilli: typeof length === 'number' ? length : null,
+    cordLengthMilli: count('cordLengthMilli'),
+    cordCrossSectionMilli: count('cordCrossSectionMilli'),
+    heatingPowerWatts: count('heatingPowerWatts'),
   })
 }
 
@@ -210,14 +219,39 @@ export const applianceFields: readonly FormField[] = [
     numeric: true,
     hint: 'Nach ihr richtet sich bei Schutzklasse I der Grenzwert des Schutzleiterwiderstands. Ohne Länge gilt der für bis zu 5 m.',
   },
+  // What the limits of a lead over 1,5 mm² and of heating elements count with (opengewerk#816).
+  {
+    name: 'cordCrossSection',
+    label: 'Querschnitt der Anschlussleitung in mm²',
+    numeric: true,
+    hint: 'Über 1,5 mm² gilt beim Schutzleiterwiderstand der berechnete Widerstand der Leitung. Ohne Angabe gilt der für 1,5 mm².',
+  },
+  {
+    name: 'heatingPower',
+    label: 'Heizleistung in kW',
+    numeric: true,
+    hint: 'Nur bei Geräten mit Heizelementen. Nach ihr richten sich die Grenzwerte von Isolationswiderstand und Schutzleiterstrom.',
+  },
   { name: 'notes', label: 'Notizen', kind: 'textarea' },
 ]
 
-/** An appliance as the form shows it: the length of its lead in metres. */
+/**
+ * An appliance as the form shows it: the length of its lead in metres, its
+ * cross-section in square millimetres and the heating power in kilowatts.
+ */
 export function applianceFormRecord(appliance: RecordState): RecordState {
-  const length = appliance['cordLengthMilli']
+  const shown = (key: string) => {
+    const value = appliance[key]
 
-  return { ...appliance, cordLength: typeof length === 'number' ? amount(length) : '' }
+    return typeof value === 'number' ? amount(value) : ''
+  }
+
+  return {
+    ...appliance,
+    cordLength: shown('cordLengthMilli'),
+    cordCrossSection: shown('cordCrossSectionMilli'),
+    heatingPower: shown('heatingPowerWatts'),
+  }
 }
 
 /** The length of the lead as typed, in millimetres; null for nothing typed, undefined for what is no figure. */
@@ -231,15 +265,29 @@ export function cordLengthOf(typed: string | undefined): number | null | undefin
 
 /** What is wrong with what the form holds, as the form says it, or null. */
 export function applianceFormProblem(values: Record<string, string>): string | null {
+  // Square millimetres and kilowatts are typed as the metres of the lead are,
+  // and kept in thousandths as well: thousandths of a mm², and watts.
   const length = cordLengthOf(values['cordLength'])
+  const crossSection = cordLengthOf(values['cordCrossSection'])
+  const heating = cordLengthOf(values['heatingPower'])
 
   if (length === undefined) {
     return 'Die Länge der Anschlussleitung ist eine Zahl in Metern, etwa 1,5.'
   }
 
+  if (crossSection === undefined) {
+    return 'Der Querschnitt der Anschlussleitung ist eine Zahl in mm², etwa 2,5.'
+  }
+
+  if (heating === undefined) {
+    return 'Die Heizleistung ist eine Zahl in kW, etwa 2,4.'
+  }
+
   const problems = applianceProblems({
     designation: values['designation'] ?? '',
     cordLengthMilli: length,
+    cordCrossSectionMilli: crossSection,
+    heatingPowerWatts: heating,
   })
 
   return Object.values(problems)[0] ?? null
@@ -257,6 +305,8 @@ export function asAppliance(values: Record<string, string>) {
     protectionClass: values['protectionClass'] ?? 'I',
     mobility: values['mobility'] ?? 'portable',
     cordLengthMilli: cordLengthOf(values['cordLength']) ?? null,
+    cordCrossSectionMilli: cordLengthOf(values['cordCrossSection']) ?? null,
+    heatingPowerWatts: cordLengthOf(values['heatingPower']) ?? null,
     notes: asTextOrNull(values['notes']),
   }
 }

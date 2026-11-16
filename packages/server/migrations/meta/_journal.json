@@ -1030,6 +1030,13 @@
       "when": 1794820629538,
       "tag": "0146_signed_appliance_facts",
       "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "7",
+      "when": 1794825588960,
+      "tag": "0147_appliance_heating",
+      "breakpoints": true
     }
   ]
 }

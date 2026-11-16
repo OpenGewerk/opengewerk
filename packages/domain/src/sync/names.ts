@@ -118,6 +118,8 @@ export const syncFieldNames: Readonly<Record<string, string>> = {
   protectionClass: 'Schutzklasse',
   mobility: 'Ortsveränderlich oder ortsfest',
   cordLengthMilli: 'Länge der Anschlussleitung',
+  cordCrossSectionMilli: 'Querschnitt der Anschlussleitung',
+  heatingPowerWatts: 'Heizleistung',
   documentId: 'Beleg',
   number: 'Nummer',
   quantityMilli: 'Menge',

@@ -2091,7 +2091,9 @@ describe('the rollback of the register of appliances', () => {
     )
     // The files of an appliance (0143, #817) hang on the table, the trigger of
     // 0144 on their column, and the facts of a signed test (0146, #954) on the
-    // appliance of a protocol; a rollback takes back the later migrations first.
+    // appliance of a protocol, with heating power and cross-section since 0147
+    // (#816); a rollback takes back the later migrations first.
+    await revertMigration(admin, '0147_appliance_heating')
     await revertMigration(admin, '0146_signed_appliance_facts')
     await revertMigration(admin, '0144_signed_photos_stay')
     await revertMigration(admin, '0143_appliance_files')
@@ -2260,7 +2262,14 @@ describe('the facts of the tests signed before 0146', () => {
     await expect(revertMigration(admin, '0146_signed_appliance_facts')).rejects.toThrow(
       'Die Rücknahme von 0146 löscht keine Nachweise',
     )
-    expect(await facts()).toEqual({ [signed]: { protectionClass: 'II', cordLengthMilli: null } })
+    expect(await facts()).toEqual({
+      [signed]: {
+        protectionClass: 'II',
+        cordLengthMilli: null,
+        cordCrossSectionMilli: null,
+        heatingPowerWatts: null,
+      },
+    })
     expect(await forced('form_records')).toBe(true)
 
     // Taken out by hand, as the sentence says, the rollback goes through.
@@ -2268,10 +2277,114 @@ describe('the facts of the tests signed before 0146', () => {
       `begin; set local session_replication_role = replica;
        delete from form_records; commit;`,
     )
+    await revertMigration(admin, '0147_appliance_heating')
     await revertMigration(admin, '0146_signed_appliance_facts')
 
     expect(await columnNames(admin, 'form_records')).not.toContain('appliance_facts')
     expect(await forced('form_records')).toBe(true)
+  })
+})
+
+/**
+ * The heating power of an appliance and the cross-section of its lead (0147,
+ * opengewerk#816). A test signed before keeps the facts it was signed with,
+ * a test signed after names the two as well. The rollback deletes none of
+ * them and stops while an appliance holds one.
+ */
+describe('the heating power and the cross-section of the lead from 0147', () => {
+  const before = () =>
+    readMigrationIndex().findIndex((entry) => entry.tag === '0147_appliance_heating')
+  const customer = newId<'customer'>()
+  const site = newId<'site'>()
+  const appliance = newId<'appliance'>()
+
+  async function factsOf(id: string): Promise<unknown> {
+    const { rows } = await admin.query<{ appliance_facts: string | null }>(
+      'select appliance_facts from form_records where id = $1',
+      [id],
+    )
+    const facts = rows[0]?.appliance_facts ?? null
+
+    return facts === null ? null : JSON.parse(facts)
+  }
+
+  async function signedTest(): Promise<string> {
+    const id = newId<'form-record'>()
+
+    await admin.query(
+      `insert into form_records (id, tenant_id, definition_key, definition_version, appliance_id, performed_on, status)
+       values ($1, $2, 'dguv-v3', 1, $3, '2026-11-16', 'signed')`,
+      [id, tenant.id, appliance],
+    )
+
+    return id
+  }
+
+  async function anInstallation(migrations: string): Promise<void> {
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), migrations)
+    await admin.query('insert into tenants (id, name) values ($1, $2)', [tenant.id, tenant.name])
+    await admin.query(
+      "insert into customers (id, tenant_id, kind, name) values ($1, $2, 'business', 'Hausverwaltung Süd GmbH')",
+      [customer, tenant.id],
+    )
+    await admin.query(
+      "insert into sites (id, tenant_id, customer_id, designation) values ($1, $2, $3, 'Rheinstraße 12')",
+      [site, tenant.id, customer],
+    )
+    await admin.query(
+      `insert into appliances (id, tenant_id, site_id, designation, protection_class, cord_length_milli)
+       values ($1, $2, $3, 'Heizlüfter', 'I', 1800)`,
+      [appliance, tenant.id, site],
+    )
+  }
+
+  it('leave a test signed before as it was signed, and are named in one signed after', async () => {
+    expect(before()).toBeGreaterThan(0)
+
+    await anInstallation(releaseFolder(before()))
+
+    const earlier = await signedTest()
+
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+    await admin.query(
+      'update appliances set heating_power_watts = 2000, cord_cross_section_milli = 1500 where id = $1',
+      [appliance],
+    )
+
+    const later = await signedTest()
+
+    expect(await factsOf(earlier)).toEqual({ protectionClass: 'I', cordLengthMilli: 1800 })
+    expect(await factsOf(later)).toEqual({
+      protectionClass: 'I',
+      cordLengthMilli: 1800,
+      cordCrossSectionMilli: 1500,
+      heatingPowerWatts: 2000,
+    })
+  })
+
+  it('stay at a rollback, which stops while an appliance holds one', async () => {
+    await anInstallation(migrationsFolder)
+    await admin.query('update appliances set heating_power_watts = 2000 where id = $1', [appliance])
+
+    await expect(revertMigration(admin, '0147_appliance_heating')).rejects.toThrow(
+      'Die Rücknahme von 0147 löscht keine Angaben',
+    )
+    expect(
+      (await admin.query('select heating_power_watts from appliances where id = $1', [appliance]))
+        .rows,
+    ).toEqual([{ heating_power_watts: 2000 }])
+
+    // Taken out by hand, as the sentence says, the rollback goes through, and
+    // a test signed afterwards names what the version before knew.
+    await admin.query('update appliances set heating_power_watts = null where id = $1', [appliance])
+    await revertMigration(admin, '0147_appliance_heating')
+
+    expect(await columnNames(admin, 'appliances')).not.toContain('heating_power_watts')
+    expect(await factsOf(await signedTest())).toEqual({
+      protectionClass: 'I',
+      cordLengthMilli: 1800,
+    })
   })
 })
 

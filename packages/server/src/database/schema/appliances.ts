@@ -50,6 +50,10 @@ export const appliances = pgTable(
     mobility: applianceMobility('mobility').notNull().default('portable'),
     location: text('location'),
     cordLengthMilli: integer('cord_length_milli'),
+    // What the limits of an appliance with heating elements and of a lead over
+    // 1.5 mm² are worked out from (opengewerk#816).
+    cordCrossSectionMilli: integer('cord_cross_section_milli'),
+    heatingPowerWatts: integer('heating_power_watts'),
     notes: text('notes'),
     ...timestamps,
     ...syncColumns,
@@ -66,6 +70,14 @@ export const appliances = pgTable(
     check(
       'appliances_cord_length',
       sql`${table.cordLengthMilli} is null or ${table.cordLengthMilli} between 1 and 1000000`,
+    ),
+    check(
+      'appliances_cord_cross_section',
+      sql`${table.cordCrossSectionMilli} is null or ${table.cordCrossSectionMilli} between 1 and 1000000`,
+    ),
+    check(
+      'appliances_heating_power',
+      sql`${table.heatingPowerWatts} is null or ${table.heatingPowerWatts} between 1 and 1000000`,
     ),
     unique('appliances_tenant_id_key').on(table.tenantId, table.id),
     index('appliances_site_idx').on(table.tenantId, table.siteId),
