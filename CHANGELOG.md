@@ -239,8 +239,17 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Löschungen nach dem Löschkonzept vergeben viele Nummern in einer Transaktion. Die Nummern kommen weiter in der
   Reihenfolge der Commits, und eine Transaktion, die zurückrollt, hinterlässt keine Lücke. Eine Lücke entsteht neu
   nur innerhalb einer Transaktion: Nummern unter einem Savepoint, der zurückgerollt wird, vergibt sie nicht noch
-  einmal; ein Abruf liest bis zur letzten festgeschriebenen Nummer und braucht keine lückenlose Folge. Die
-  Haustechnik braucht beim Anheben des Submoduls eine Migration wie 0149.
+  einmal. Nimmt der Savepoint auch das Öffnen des Zählers zurück, beginnt sie wieder bei der letzten
+  festgeschriebenen Nummer und vergibt die zurückgerollten neu; in keiner festgeschriebenen Zeile steht eine davon
+  zweimal. Ein Abruf liest bis zur letzten festgeschriebenen Nummer und braucht keine lückenlose Folge. Eine
+  Sequenz unter dem Namen eines Mandanten nimmt der Zähler nur, wenn sie dem Eigentümer der Tabellen gehört, sonst
+  bricht er ab: In einem Cluster, der von einer Fassung vor PostgreSQL 15 kam, darf jede Rolle in `public` anlegen.
+  Aus demselben Grund löst in seinen Funktionen nichts auf etwas auf, das eine andere Rolle in `public` oder in
+  ihrem temporären Schema angelegt hat: Sie suchen nur in `pg_catalog` und zuletzt in `pg_temp`, nennen alles aus
+  `public` mit seinem Schema, vergleichen Kennungen als `oid` und geben die Zahl der Nummern als `bigint` weiter,
+  sodass keine Überladung und kein Operator aus `public` besser passt; ihre Rücknahme schreibt Funktionen, Tabellen
+  des Katalogs und `LIKE` ebenso mit Schema. Die Haustechnik braucht beim Anheben des Submoduls eine Migration wie
+  0149.
 - Ein Test des Tors, der unter der Last der CI manchmal rot wurde, wartet auf den Namen des nächsten Kontos (#962).
   Warum: Er fragte im selben Takt, in dem die Bildschirme des alten Kontos gingen, und die Seite nennt das neue
   einen Takt später; die Reihenfolge, um die es geht, hält eine eigene Zusicherung.

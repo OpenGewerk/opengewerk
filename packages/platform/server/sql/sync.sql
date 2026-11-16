@@ -127,8 +127,18 @@ $$;--> statement-breakpoint
 --
 -- The sequences stand in public under the name of their tenant
 -- (`sync_counter_t<id>`) and belong to the owner of the tables. The application
--- role has no right on them and may create nothing in public: it can neither
--- make one in advance under the name of a tenant nor move one.
+-- role has no right on them. That it may create nothing in public is the
+-- default since PostgreSQL 15 and not something this block can rely on: a
+-- cluster upgraded from an older version still lets every role. So the counter
+-- takes a relation of that name only if it is a sequence of the owner of the
+-- tables, and refuses otherwise, rather than count with one the application
+-- made in advance and could move (security review on opengewerk#974). For the
+-- same reason nothing in these functions may resolve to what another role
+-- made in public or in its temporary schema: they search pg_catalog and, last,
+-- pg_temp, which is never searched for a function or an operator; whatever
+-- they use of public is named with its schema, compared as the types
+-- pg_catalog has an operator for, and the amount is passed as the bigint the
+-- function takes, so that no overload is a closer match.
 
 -- Takes the next numbers of a tenant from its sequence and returns the first.
 -- The first call of a transaction locks the row, sets the sequence to the last
@@ -139,11 +149,11 @@ $$;--> statement-breakpoint
 -- of the tables call it, and whoever calls it sets the sequence.
 CREATE FUNCTION "take_sync_numbers"(tenant uuid, amount bigint) RETURNS bigint
 	LANGUAGE plpgsql
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, pg_temp
 	SET enable_seqscan = off
 AS $$
 DECLARE
-	counter text := format('%I.%I', 'public', 'sync_counter_t' || replace(tenant::text, '-', ''));
+	counter text := pg_catalog.format('%I.%I', 'public', 'sync_counter_t' || replace(tenant::text, '-', ''));
 	opened xid8;
 	committed bigint;
 	first bigint;
@@ -169,7 +179,15 @@ BEGIN
 	SELECT next_value INTO committed FROM public.sync_sequences WHERE tenant_id = tenant FOR NO KEY UPDATE;
 
 	IF to_regclass(counter) IS NULL THEN
-		EXECUTE format('CREATE SEQUENCE %s AS bigint MINVALUE 0', counter);
+		EXECUTE pg_catalog.format('CREATE SEQUENCE %s AS bigint MINVALUE 0', counter);
+	ELSIF NOT EXISTS (
+		SELECT 1
+		  FROM pg_catalog.pg_class c
+		 WHERE c.oid = to_regclass(counter)::oid
+		   AND c.relkind = 'S'
+		   AND c.relowner = (SELECT t.relowner FROM pg_catalog.pg_class t WHERE t.oid = 'public.sync_sequences'::regclass::oid)
+	) THEN
+		RAISE EXCEPTION 'Der Zähler des Abgleichs eines Mandanten ist keine Sequenz des Eigentümers der Tabellen: %', counter;
 	END IF;
 
 	PERFORM setval(counter::regclass, committed, true);
@@ -201,12 +219,12 @@ REVOKE EXECUTE ON FUNCTION "take_sync_numbers"(uuid, bigint) FROM PUBLIC;--> sta
 CREATE FUNCTION "close_sync_counter"() RETURNS trigger
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, pg_temp
 	SET enable_seqscan = off
 AS $$
 BEGIN
 	UPDATE public.sync_sequences
-	   SET next_value = currval(format('%I.%I', 'public', 'sync_counter_t' || replace(new.tenant_id::text, '-', ''))::regclass),
+	   SET next_value = currval(pg_catalog.format('%I.%I', 'public', 'sync_counter_t' || replace(new.tenant_id::text, '-', ''))::regclass),
 	       opened_in = NULL,
 	       updated_at = now()
 	 WHERE tenant_id = new.tenant_id AND opened_in = pg_current_xact_id();
@@ -229,10 +247,10 @@ CREATE CONSTRAINT TRIGGER "sync_counter_closes" AFTER UPDATE ON "sync_sequences"
 CREATE FUNCTION "next_sync_sequence"(tenant uuid) RETURNS bigint
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, pg_temp
 AS $$
 BEGIN
-	RETURN public.take_sync_numbers(tenant, 1);
+	RETURN public.take_sync_numbers(tenant, 1::bigint);
 END;
 $$;--> statement-breakpoint
 
