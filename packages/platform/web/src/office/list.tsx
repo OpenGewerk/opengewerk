@@ -208,6 +208,14 @@ const chrome = { pager: 45, head: 33, below: 18 }
  * while a list is empty, finds nothing or is drawn as cards, and an effect
  * hung on a ref ran once, when the list came: a list whose rows arrived after
  * it stayed at the fallback for good (opengewerk-haustechnik#31).
+ *
+ * Measured from the lowest row of the page and not from its first. Which rows
+ * a page shows depends on its size, and the first of them on the size as well
+ * when the page is held up to a row: a tall first row made the page shorter,
+ * a shorter page began with a low row and grew again, and the two chased each
+ * other (opengewerk#971). The lowest row can only be lower on a longer page,
+ * which holds more rows, and only higher on a shorter one, so the size settles.
+ * A page with taller rows among low ones runs a little past the window.
  */
 function useRowsThatFit(element: HTMLElement | null, fallback: number): number {
   const [rows, setRows] = useState(fallback)
@@ -219,7 +227,11 @@ function useRowsThatFit(element: HTMLElement | null, fallback: number): number {
 
     const measure = () => {
       const top = element.getBoundingClientRect().top
-      const row = element.querySelector('tbody tr')?.getBoundingClientRect().height ?? assumedRow
+      const heights = Array.from(
+        element.querySelectorAll('tbody tr'),
+        (tr) => tr.getBoundingClientRect().height,
+      ).filter((height) => height > 0)
+      const row = heights.length > 0 ? Math.min(...heights) : assumedRow
       const room = window.innerHeight - top - chrome.head - chrome.pager - chrome.below
 
       setRows(Math.max(6, Math.floor(room / Math.max(row, 20))))
@@ -248,8 +260,9 @@ export type PageAnchor = { readonly from: number } | { readonly to: number }
  * where the pages before and after it are held, or null where there is none.
  *
  * Held at a row and not as a number of the page. The size of a page is
- * measured from the height of a row and changes when a taller row comes to the
- * top, a tag in two lines, say; counted as page times size, the next page then
+ * measured from the height of its rows and changes with the window, or when
+ * a page holds only taller rows, tags in two lines, say; counted as page times
+ * size, the next page then
  * began further on than the last one ended and the rows between were never
  * shown (CodeRabbit on opengewerk#969). Forward a page is held from the row
  * where the shown one ends, back up to the row where it begins, so that the

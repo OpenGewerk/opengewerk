@@ -166,8 +166,10 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   einer Seite misst die Liste an der Höhe einer Zeile, und ein Tag in zwei Zeilen macht eine Zeile höher. Änderte
   sich die Größe zwischen zwei Seiten, begann die nächste weiter hinten, als die letzte endete, und die Einträge
   dazwischen erschienen nie (CodeRabbit an #969). Als Karten ohne Seiten zeigt eine Liste immer alle Einträge ab dem
-  ersten, auch nach dem Blättern in einem breiteren Fenster. Das gilt für jede Liste des Fundaments, auch in der
-  Haustechnik.
+  ersten, auch nach dem Blättern in einem breiteren Fenster. Gemessen wird jetzt an der niedrigsten Zeile der Seite
+  statt an der ersten (#971): Eine hohe Zeile oben machte die Seite kürzer, die kürzere begann mit einer niedrigen
+  und wurde wieder länger, und so konnte die Größe hin und her springen. Eine Seite mit einigen hohen Zeilen reicht
+  dafür etwas über das Fenster hinaus. Das gilt für jede Liste des Fundaments, auch in der Haustechnik.
 - Transaktionen eines Betriebs und der Instanz laufen ausdrücklich mit `READ COMMITTED`, nicht mit der Voreinstellung des Datenbankservers. Warum: Mehrere Prüfungen nehmen erst eine Sperre und lesen danach, was sie prüfen (Abwesenheiten einer Person, Aufdecken eines Zugangscodes, Zähler der Zugangsdaten); unter einer strengeren Voreinstellung hätten sie einen Stand von vor dem Warten gelesen.
 - Die Tests des Servers, die einen Wettlauf erzwingen, halten ihre Abfrage über eine gemeinsame Hilfsfunktion an, die den Datenbank-Client bei Testende in jedem Fall wiederherstellt. Warum: Fünf Tests hielten sie mit je einer eigenen Kopie derselben Konstruktion an, und wurde die Abfrage nie erreicht, blieb der überschriebene Client nach dem Timeout für die übrigen Tests der Datei stehen.
 - Die Ansprechpartner eines Lieferanten hängen am Recht „Lieferanten ansehen“ statt an „Kunden ansehen“: Die Liste aller Kontakte zeigt sie nur noch mit diesem Recht, die neue Route `GET /suppliers/:id/contacts` gibt sie mit ihm allein heraus, und der Abgleich folgt beiden. Ein Ansprechpartner wechselt nicht mehr zwischen einem Lieferanten und einem Kunden oder Objekt, weil ein Gerät mit nur einem der beiden Rechte von dem Wechsel nichts erführe. Warum: Bis jetzt sah eine Rolle mit „Kunden ansehen“ die Ansprechpartner von Lieferanten, die sie selbst nicht sehen darf, und eine Rolle, die nur die Lieferanten pflegt, sah deren Ansprechpartner nicht (opengewerk#883). Für die mitgelieferten Rollen ändert sich nichts.

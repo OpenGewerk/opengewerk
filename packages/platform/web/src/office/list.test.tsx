@@ -665,6 +665,28 @@ describe('the page of a list', () => {
     expect(names()).toHaveLength(8)
   })
 
+  /**
+   * Measured from the first row, a tall one at the top made the page shorter,
+   * and the shorter page, held up to a row, began with a low one and grew
+   * again (opengewerk#971). The lowest row of the page does not move with it.
+   */
+  it('is measured from its lowest row, not from a tall one at the top', async () => {
+    windowHolding(8)
+
+    const measured = vi.mocked(HTMLElement.prototype.getBoundingClientRect)
+    const low = measured.getMockImplementation()
+
+    measured.mockImplementation(function (this: HTMLElement) {
+      const rect = low?.call(this) as DOMRect
+      const tallOnTop = this.tagName === 'TR' && this.parentElement?.firstElementChild === this
+
+      return { ...rect, height: tallOnTop ? 60 : rect.height }
+    })
+    await shown()
+
+    expect(await screen.findByText('1 bis 8 von 30')).toBeTruthy()
+  })
+
   it('is never shorter than six rows, however short the window', async () => {
     windowHolding(2)
     await shown()
