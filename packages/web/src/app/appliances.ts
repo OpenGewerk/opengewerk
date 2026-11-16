@@ -230,7 +230,7 @@ export const applianceFields: readonly FormField[] = [
     name: 'heatingPower',
     label: 'Heizleistung in kW',
     numeric: true,
-    hint: 'Nur bei Geräten mit Heizelementen. Nach ihr richten sich die Grenzwerte von Isolationswiderstand und Schutzleiterstrom.',
+    hint: 'Nur bei Geräten mit Heizelementen. Nach ihr richten sich bei Schutzklasse I die Grenzwerte von Isolationswiderstand und Schutzleiterstrom.',
   },
   { name: 'notes', label: 'Notizen', kind: 'textarea' },
 ]
