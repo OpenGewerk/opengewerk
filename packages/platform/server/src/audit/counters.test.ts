@@ -558,9 +558,13 @@ describe('the numbers of the sync', () => {
 
   it('run nothing the application made in public as the owner, and take no table of its own for the catalogue', async () => {
     // Where the application may create in public: an overload that is a closer
-    // match than the counter's own, an overload of format, and a temporary
-    // pg_class that lets its own sequence pass as the owner's (security review
-    // on opengewerk#974).
+    // match than the counter's own, an overload of format, an operator for
+    // the comparison of a sequence with its owner, and a temporary pg_class
+    // that lets its own sequence pass as the owner's (security reviews on
+    // opengewerk#974). A number is committed first, so that the sequence is
+    // there and its owner is asked.
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Vorher'))
+
     const client = await admin.connect()
     const ranAs = async () =>
       (
@@ -586,31 +590,38 @@ describe('the numbers of the sync', () => {
       await client.query(`
         create function public.format(a text, b text, c text) returns text
           language sql as $$ select pg_catalog.format(a, b, c) || substr(set_config('probe.ran_as', current_user, true), 1, 0) $$`)
+      await client.query(`
+        create function public.equal_probe(a oid, b regclass) returns boolean
+          language plpgsql as $$ begin perform set_config('probe.ran_as', current_user, true); return a = b::oid; end $$`)
+      await client.query(
+        'create operator public.= (leftarg = oid, rightarg = regclass, function = public.equal_probe)',
+      )
 
       const { rows: numbers } = await client.query<{ number: string }>(
         'select next_sync_sequence($1) as number',
         [north.id],
       )
 
-      expect(numbers[0]?.number).toBe('1')
+      expect(numbers[0]?.number).toBe('2')
       expect(await ranAs()).toBeFalsy()
 
+      // South has no sequence yet, so that the application can make one first.
       await client.query('rollback')
       await client.query('begin')
       await client.query(`grant create on schema public to "${applicationRoleName}"`)
       await client.query(`set local role "${applicationRoleName}"`)
-      await client.query(`create sequence public.${sequenceOf(north.id)} as bigint minvalue 0`)
-      await client.query(`grant all on sequence public.${sequenceOf(north.id)} to ${owner}`)
+      await client.query(`create sequence public.${sequenceOf(south.id)} as bigint minvalue 0`)
+      await client.query(`grant all on sequence public.${sequenceOf(south.id)} to ${owner}`)
       await client.query('create temporary table pg_class (oid oid, relkind "char", relowner oid)')
       await client.query(
         `insert into pg_temp.pg_class values
            (to_regclass($1)::oid, 'S', $2::oid),
            ('public.sync_sequences'::regclass::oid, 'r', $2::oid)`,
-        [`public.${sequenceOf(north.id)}`, rows[0]?.owner_oid],
+        [`public.${sequenceOf(south.id)}`, rows[0]?.owner_oid],
       )
       await client.query(`grant select on pg_temp.pg_class to ${owner}`)
 
-      await expect(client.query('select next_sync_sequence($1)', [north.id])).rejects.toMatchObject(
+      await expect(client.query('select next_sync_sequence($1)', [south.id])).rejects.toMatchObject(
         { code: 'P0001' },
       )
     } finally {

@@ -21,7 +21,7 @@ DROP FUNCTION IF EXISTS "stamp_sync_columns"();--> statement-breakpoint
 DROP FUNCTION IF EXISTS "next_sync_sequence"(uuid);--> statement-breakpoint
 DO $$
 BEGIN
-	IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'sync_counter_closes') THEN
+	IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgname = 'sync_counter_closes') THEN
 		SET CONSTRAINTS "sync_counter_closes" IMMEDIATE;
 	END IF;
 END
@@ -35,11 +35,11 @@ DECLARE
 BEGIN
 	FOR counter IN
 		SELECT c.relname
-		  FROM pg_class c
-		  JOIN pg_namespace n ON n.oid = c.relnamespace
-		 WHERE n.nspname = 'public' AND c.relkind = 'S' AND c.relname LIKE 'sync\_counter\_t%'
+		  FROM pg_catalog.pg_class c
+		  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public' AND c.relkind = 'S' AND c.relname OPERATOR(pg_catalog.~~) 'sync\_counter\_t%'
 	LOOP
-		EXECUTE format('DROP SEQUENCE IF EXISTS %I.%I', 'public', counter);
+		EXECUTE pg_catalog.format('DROP SEQUENCE IF EXISTS %I.%I', 'public', counter);
 	END LOOP;
 END
 $$;--> statement-breakpoint

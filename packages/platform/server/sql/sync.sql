@@ -134,9 +134,11 @@ $$;--> statement-breakpoint
 -- tables, and refuses otherwise, rather than count with one the application
 -- made in advance and could move (security review on opengewerk#974). For the
 -- same reason nothing in these functions may resolve to what another role
--- made in public or in its temporary schema: `format` and `pg_class` are named
--- with their schema, `pg_temp` is searched last, and the amount is passed as
--- the bigint the function takes, so that no overload is a closer match.
+-- made in public or in its temporary schema: they search pg_catalog and, last,
+-- pg_temp, which is never searched for a function or an operator; whatever
+-- they use of public is named with its schema, compared as the types
+-- pg_catalog has an operator for, and the amount is passed as the bigint the
+-- function takes, so that no overload is a closer match.
 
 -- Takes the next numbers of a tenant from its sequence and returns the first.
 -- The first call of a transaction locks the row, sets the sequence to the last
@@ -147,7 +149,7 @@ $$;--> statement-breakpoint
 -- of the tables call it, and whoever calls it sets the sequence.
 CREATE FUNCTION "take_sync_numbers"(tenant uuid, amount bigint) RETURNS bigint
 	LANGUAGE plpgsql
-	SET search_path = pg_catalog, public, pg_temp
+	SET search_path = pg_catalog, pg_temp
 	SET enable_seqscan = off
 AS $$
 DECLARE
@@ -181,9 +183,9 @@ BEGIN
 	ELSIF NOT EXISTS (
 		SELECT 1
 		  FROM pg_catalog.pg_class c
-		 WHERE c.oid = to_regclass(counter)
+		 WHERE c.oid = to_regclass(counter)::oid
 		   AND c.relkind = 'S'
-		   AND c.relowner = (SELECT t.relowner FROM pg_catalog.pg_class t WHERE t.oid = 'public.sync_sequences'::regclass)
+		   AND c.relowner = (SELECT t.relowner FROM pg_catalog.pg_class t WHERE t.oid = 'public.sync_sequences'::regclass::oid)
 	) THEN
 		RAISE EXCEPTION 'Der Zähler des Abgleichs eines Mandanten ist keine Sequenz des Eigentümers der Tabellen: %', counter;
 	END IF;
@@ -217,7 +219,7 @@ REVOKE EXECUTE ON FUNCTION "take_sync_numbers"(uuid, bigint) FROM PUBLIC;--> sta
 CREATE FUNCTION "close_sync_counter"() RETURNS trigger
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public, pg_temp
+	SET search_path = pg_catalog, pg_temp
 	SET enable_seqscan = off
 AS $$
 BEGIN
@@ -241,7 +243,7 @@ CREATE CONSTRAINT TRIGGER "sync_counter_closes" AFTER UPDATE ON "sync_sequences"
 CREATE FUNCTION "next_sync_sequence"(tenant uuid) RETURNS bigint
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public, pg_temp
+	SET search_path = pg_catalog, pg_temp
 AS $$
 BEGIN
 	RETURN public.take_sync_numbers(tenant, 1::bigint);

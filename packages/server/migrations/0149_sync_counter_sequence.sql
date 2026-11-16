@@ -11,7 +11,7 @@
 ALTER TABLE "sync_sequences" ADD COLUMN "opened_in" "xid8";--> statement-breakpoint
 CREATE FUNCTION "take_sync_numbers"(tenant uuid, amount bigint) RETURNS bigint
 	LANGUAGE plpgsql
-	SET search_path = pg_catalog, public, pg_temp
+	SET search_path = pg_catalog, pg_temp
 	SET enable_seqscan = off
 AS $$
 DECLARE
@@ -45,9 +45,9 @@ BEGIN
 	ELSIF NOT EXISTS (
 		SELECT 1
 		  FROM pg_catalog.pg_class c
-		 WHERE c.oid = to_regclass(counter)
+		 WHERE c.oid = to_regclass(counter)::oid
 		   AND c.relkind = 'S'
-		   AND c.relowner = (SELECT t.relowner FROM pg_catalog.pg_class t WHERE t.oid = 'public.sync_sequences'::regclass)
+		   AND c.relowner = (SELECT t.relowner FROM pg_catalog.pg_class t WHERE t.oid = 'public.sync_sequences'::regclass::oid)
 	) THEN
 		RAISE EXCEPTION 'Der Zähler des Abgleichs eines Mandanten ist keine Sequenz des Eigentümers der Tabellen: %', counter;
 	END IF;
@@ -69,7 +69,7 @@ REVOKE EXECUTE ON FUNCTION "take_sync_numbers"(uuid, bigint) FROM PUBLIC;--> sta
 CREATE FUNCTION "close_sync_counter"() RETURNS trigger
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public, pg_temp
+	SET search_path = pg_catalog, pg_temp
 	SET enable_seqscan = off
 AS $$
 BEGIN
@@ -89,7 +89,7 @@ CREATE CONSTRAINT TRIGGER "sync_counter_closes" AFTER UPDATE ON "sync_sequences"
 CREATE OR REPLACE FUNCTION "next_sync_sequence"(tenant uuid) RETURNS bigint
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public, pg_temp
+	SET search_path = pg_catalog, pg_temp
 AS $$
 BEGIN
 	RETURN public.take_sync_numbers(tenant, 1::bigint);
@@ -98,7 +98,7 @@ $$;--> statement-breakpoint
 CREATE OR REPLACE FUNCTION "reserve_sync_sequences"(amount integer) RETURNS bigint
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public, pg_temp
+	SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
 	tenant uuid := nullif(current_setting('app.tenant_id', true), '')::uuid;
