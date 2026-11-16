@@ -1283,6 +1283,17 @@ function SigningStep({
       return
     }
 
+    // A test of an appliance this device does not hold was judged with no
+    // limits; the server would keep facts the tester never saw the limits of.
+    // One that came in while the step was open counts as changed, below.
+    if (text(record, 'applianceId') !== '' && appliance === null) {
+      setTrouble(
+        'Das Gerät dieses Protokolls fehlt hier noch. Mit Verbindung holt der Abgleich es, dann lässt sich unterschreiben.',
+      )
+
+      return
+    }
+
     if (!unchanged) {
       setTrouble(
         'Die Angaben des Geräts haben sich geändert. Bitte die Messwerte mit den neuen Grenzwerten prüfen und dann unterschreiben.',

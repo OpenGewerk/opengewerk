@@ -465,6 +465,46 @@ describe('the facts a test of an appliance is signed with', () => {
         .some((operation) => operation.patches.some((patch) => patch.field === 'status')),
     ).toBe(false)
   })
+
+  it('stop a signature where the appliance is not on this device, which judged with no limits', async () => {
+    const user = userEvent.setup()
+    const { tester_signature: _signature, ...unsigned } = lastYear
+    const { client } = await mount('/auftraege/j-1/pruefprotokolle/p-7', {
+      form_records: [
+        ...(rows()['form_records'] ?? []),
+        {
+          id: 'p-7',
+          definitionKey: 'dguv-v3',
+          definitionVersion: 1,
+          installationId: null,
+          // An appliance this device was never sent.
+          applianceId: 'a-9',
+          jobId: 'j-1',
+          performedOn: today(),
+          status: 'draft',
+          values: JSON.stringify(unsigned),
+        },
+      ],
+    })
+
+    await user.click(await screen.findByRole('button', { name: 'Unterschreiben' }))
+    signOn(screen.getByRole('img', { name: 'Unterschriftsfeld' }))
+    await user.click(screen.getByRole('button', { name: 'Unterschreiben' }))
+
+    expect(
+      await screen.findByText(
+        'Das Gerät dieses Protokolls fehlt hier noch. Mit Verbindung holt der Abgleich es, dann lässt sich unterschreiben.',
+      ),
+    ).toBeTruthy()
+
+    await client.synchronise()
+
+    expect(
+      server
+        .operations()
+        .some((operation) => operation.patches.some((patch) => patch.field === 'status')),
+    ).toBe(false)
+  })
 })
 
 describe('a photo of what is wrong with an appliance (#817)', () => {
