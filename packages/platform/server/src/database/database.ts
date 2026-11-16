@@ -451,9 +451,9 @@ export class Database {
    * table the application put there in advance would run or be read with the
    * owner's rights. PostgreSQL 15 took that right from every role; a cluster
    * upgraded from an older version still grants it. And it may own no
-   * function, operator or type there: taking the right back leaves what it made
-   * while it had it, and that would still be found (security review on
-   * opengewerk#975).
+   * function, operator or type there, itself or through a role it belongs to:
+   * taking the right back leaves what it made while it had it, and that would
+   * still be found (security review and CodeRabbit on opengewerk#975).
    *
    * Asked once at the start, after `isReachable`; the answer is a sentence for
    * whoever set up the database.
@@ -475,11 +475,11 @@ export class Database {
                        where n.nspname = 'public' and c.relowner = r.oid) as owns,
               has_schema_privilege(r.oid, 'public', 'CREATE') as creates,
               exists (select 1 from pg_proc p
-                       where p.pronamespace = 'public'::regnamespace and p.proowner = r.oid)
+                       where p.pronamespace = 'public'::regnamespace and pg_has_role(r.oid, p.proowner, 'MEMBER'))
               or exists (select 1 from pg_operator o
-                          where o.oprnamespace = 'public'::regnamespace and o.oprowner = r.oid)
+                          where o.oprnamespace = 'public'::regnamespace and pg_has_role(r.oid, o.oprowner, 'MEMBER'))
               or exists (select 1 from pg_type t
-                          where t.typnamespace = 'public'::regnamespace and t.typowner = r.oid) as places
+                          where t.typnamespace = 'public'::regnamespace and pg_has_role(r.oid, t.typowner, 'MEMBER')) as places
          from pg_roles r
         where r.rolname = current_user`,
       [migrationRole],

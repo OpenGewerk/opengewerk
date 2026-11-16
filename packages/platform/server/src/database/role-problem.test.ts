@@ -20,6 +20,7 @@ const roles = {
   bypass: 'role_problem_bypass',
   member: 'role_problem_member',
   owner: 'role_problem_owner',
+  lender: 'role_problem_lender',
 } as const
 
 let pool: Pool
@@ -64,6 +65,7 @@ beforeAll(async () => {
     `create role "${roles.member}" login password '${password}' in role "${migrationRole}"`,
   )
   await pool.query(`create role "${roles.owner}" login password '${password}'`)
+  await pool.query(`create role "${roles.lender}" nologin`)
   await pool.query('create table public.role_problem_probe (id integer)')
   await pool.query(`alter table public.role_problem_probe owner to "${roles.owner}"`)
 })
@@ -129,6 +131,27 @@ describe('the role an application connects as (#685)', () => {
         `"${roles.plain}", und dieser Rolle gehören Funktionen, Operatoren oder Typen`,
       )
     } finally {
+      await pool.query('drop function public.role_problem_planted()')
+    }
+
+    expect(await problemOf(roles.plain)).toBeNull()
+  })
+
+  it('is refused when a role it belongs to owns a function in public', async () => {
+    // A member may do with an object what its owner may (CodeRabbit on
+    // opengewerk#975).
+    await pool.query(
+      "create function public.role_problem_planted() returns integer language sql as 'select 1'",
+    )
+    await pool.query(`alter function public.role_problem_planted() owner to "${roles.lender}"`)
+    await pool.query(`grant "${roles.lender}" to "${roles.plain}"`)
+
+    try {
+      expect(await problemOf(roles.plain)).toContain(
+        `"${roles.plain}", und dieser Rolle gehören Funktionen, Operatoren oder Typen`,
+      )
+    } finally {
+      await pool.query(`revoke "${roles.lender}" from "${roles.plain}"`)
       await pool.query('drop function public.role_problem_planted()')
     }
 
