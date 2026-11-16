@@ -24,6 +24,8 @@
 -- version of the row it had written itself, which no vacuum may remove while
 -- the transaction runs. The thousandth change walked a thousand versions, and
 -- 152 000 changes in one transaction had not ended after nine minutes.
+-- The counter has taken its numbers from a sequence since opengewerk#965
+-- (below); the address still serves its lock and the chain of the log.
 --
 -- So the address (`ctid`) of the version a transaction wrote or locked last is
 -- kept in a setting of the transaction, one per kind and tenant, and the next
@@ -104,44 +106,129 @@ BEGIN
 END;
 $$;--> statement-breakpoint
 
--- The counter. SECURITY DEFINER because the application role has no business
--- writing here and does not have the grant for it; the number is handed out,
--- not asked for.
+-- The numbers of a transaction (opengewerk#965). Moved at every number, the
+-- counter row still got a version per number: found again through its address
+-- since opengewerk#953, but every version that no longer fit on the page of
+-- the one before went into the key as well, and the check that the key is
+-- unique walked past every earlier version of the transaction. Twenty thousand
+-- numbers in one transaction took nearly eleven times as long as two thousand.
 --
--- ON CONFLICT DO UPDATE rather than DO NOTHING, for the same reason as in the
--- audit chain: DO NOTHING would let a second transaction fall through without
--- seeing the row the first one has not committed yet. From the second number
--- of a transaction on, the row is moved through the address it holds
--- (`counter_address`).
-CREATE FUNCTION "next_sync_sequence"(tenant uuid) RETURNS bigint
+-- So the numbers come from a sequence, one per tenant, which counts without
+-- versions. The row stays what orders the transactions of a tenant and what a
+-- pull reads up to (`next_value`, the last number committed). The first number
+-- of a transaction locks the row, sets the sequence to the last number
+-- committed and marks the row as open (`opened_in`): a transaction that
+-- rolled back leaves no gap, and a sequence that is missing or behind, in a
+-- restored instance or for a tenant made again, hands out no number twice.
+-- Before the commit `close_sync_counter` writes the last number to the row,
+-- once. A sequence is not rolled back, which is why it is set at every opening
+-- and trusted for no longer than one transaction; a number given out under a
+-- savepoint that is rolled back is simply not used again.
+--
+-- The sequences have a schema of their own, which the application role cannot
+-- look into: it could neither make one in advance under the name of a tenant
+-- nor move one.
+CREATE SCHEMA "sync_counters";--> statement-breakpoint
+
+-- Takes the next numbers of a tenant from its sequence and returns the first.
+-- The first call of a transaction locks the row, sets the sequence to the last
+-- number committed and only marks the row as open once the numbers are taken:
+-- a close brought forward (`SET CONSTRAINTS ... IMMEDIATE`) fires at the end of
+-- that statement, and the numbers are in it then. Not SECURITY DEFINER and
+-- closed to every role but the owner: only the functions that run as the owner
+-- of the tables call it, and whoever calls it sets the sequence.
+CREATE FUNCTION "take_sync_numbers"(tenant uuid, amount bigint) RETURNS bigint
+	LANGUAGE plpgsql
+	SET search_path = pg_catalog, public
+	SET enable_seqscan = off
+AS $$
+DECLARE
+	counter text := format('%I.%I', 'sync_counters', 't' || replace(tenant::text, '-', ''));
+	opened xid8;
+	committed bigint;
+	first bigint;
+BEGIN
+	SELECT opened_in INTO opened FROM public.sync_sequences WHERE tenant_id = tenant;
+
+	IF opened IS NOT DISTINCT FROM pg_current_xact_id() THEN
+		first := nextval(counter::regclass);
+
+		IF amount > 1 THEN
+			PERFORM setval(counter::regclass, first + amount - 1, true);
+		END IF;
+
+		RETURN first;
+	END IF;
+
+	-- On first use the row is made with no number handed out yet, so that the
+	-- first is still 1. The lock waits for whoever has the counter open and
+	-- then reads the last number that one committed.
+	INSERT INTO public.sync_sequences (tenant_id, next_value) VALUES (tenant, 0)
+	ON CONFLICT (tenant_id) DO NOTHING;
+
+	SELECT next_value INTO committed FROM public.sync_sequences WHERE tenant_id = tenant FOR NO KEY UPDATE;
+
+	IF to_regclass(counter) IS NULL THEN
+		EXECUTE format('CREATE SEQUENCE %s AS bigint MINVALUE 0', counter);
+	END IF;
+
+	PERFORM setval(counter::regclass, committed, true);
+	first := nextval(counter::regclass);
+
+	IF amount > 1 THEN
+		PERFORM setval(counter::regclass, first + amount - 1, true);
+	END IF;
+
+	UPDATE public.sync_sequences SET opened_in = pg_current_xact_id(), updated_at = now()
+	 WHERE tenant_id = tenant;
+
+	RETURN first;
+END;
+$$;--> statement-breakpoint
+REVOKE EXECUTE ON FUNCTION "take_sync_numbers"(uuid, bigint) FROM PUBLIC;--> statement-breakpoint
+
+-- Writes the last number of a transaction to the row of its tenant, once,
+-- before the commit, and clears `opened_in`, so that a number after a firing
+-- brought forward (`SET CONSTRAINTS ... IMMEDIATE`) opens the counter again
+-- and goes on from there. A transaction that rolls back takes the opening and
+-- the waiting trigger with it. SECURITY DEFINER because it fires at the commit
+-- of whoever changed something, who may not write the counter.
+--
+-- A migration that alters `sync_sequences` in the same transaction as changes
+-- that travel before it fails on the waiting trigger ("pending trigger
+-- events"); `SET CONSTRAINTS "sync_counter_closes" IMMEDIATE` before it writes
+-- the number first.
+CREATE FUNCTION "close_sync_counter"() RETURNS trigger
 	LANGUAGE plpgsql
 	SECURITY DEFINER
 	SET search_path = pg_catalog, public
 	SET enable_seqscan = off
-	SET enable_indexscan = off
-	SET enable_bitmapscan = off
 AS $$
-DECLARE
-	address tid := public.counter_address('sync', tenant);
-	assigned bigint;
 BEGIN
-	IF address IS NOT NULL THEN
-		UPDATE public.sync_sequences SET next_value = next_value + 1, updated_at = now()
-		 WHERE ctid = address AND tenant_id = tenant
-		RETURNING next_value, ctid INTO assigned, address;
-	END IF;
+	UPDATE public.sync_sequences
+	   SET next_value = currval(format('%I.%I', 'sync_counters', 't' || replace(new.tenant_id::text, '-', ''))::regclass),
+	       opened_in = NULL,
+	       updated_at = now()
+	 WHERE tenant_id = new.tenant_id AND opened_in = pg_current_xact_id();
 
-	IF address IS NULL THEN
-		INSERT INTO public.sync_sequences (tenant_id)
-		VALUES (tenant)
-		ON CONFLICT (tenant_id) DO UPDATE SET next_value = sync_sequences.next_value + 1,
-			updated_at = now()
-		RETURNING next_value, ctid INTO assigned, address;
-	END IF;
+	RETURN NULL;
+END;
+$$;--> statement-breakpoint
+CREATE CONSTRAINT TRIGGER "sync_counter_closes" AFTER UPDATE ON "sync_sequences"
+	DEFERRABLE INITIALLY DEFERRED
+	FOR EACH ROW WHEN (new.opened_in IS NOT NULL AND new.opened_in IS DISTINCT FROM old.opened_in)
+	EXECUTE FUNCTION "close_sync_counter"();--> statement-breakpoint
 
-	PERFORM public.keep_counter_hint('sync', tenant, address::text);
-
-	RETURN assigned;
+-- The counter. SECURITY DEFINER because the application role has no business
+-- writing here and does not have the grant for it; the number is handed out,
+-- not asked for.
+CREATE FUNCTION "next_sync_sequence"(tenant uuid) RETURNS bigint
+	LANGUAGE plpgsql
+	SECURITY DEFINER
+	SET search_path = pg_catalog, public
+AS $$
+BEGIN
+	RETURN public.take_sync_numbers(tenant, 1);
 END;
 $$;--> statement-breakpoint
 

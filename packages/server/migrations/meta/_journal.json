@@ -1044,6 +1044,13 @@
       "when": 1794835052350,
       "tag": "0148_counter_fast_path",
       "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1794854561274,
+      "tag": "0149_sync_counter_sequence",
+      "breakpoints": true
     }
   ]
 }

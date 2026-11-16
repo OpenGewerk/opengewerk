@@ -228,9 +228,16 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   schreibt ihn einmal, vor dem Commit (Spalte `audit_chains.opened_in`, Migration 0148). Gemessen in einer
   Testdatenbank: 2000 geänderte Geräte in 0,35 s, 20 000 in 3,8 s; vorher brauchten 8000 schon 17 s. Warum:
   Migrationen, Importe und Löschungen nach dem Löschkonzept schreiben viel in einer Transaktion, und 152 000
-  Änderungen waren nach neun Minuten nicht durch. Eine Einschränkung bleibt: Der Zähler des Abgleichs bekommt weiter
-  eine Fassung je Änderung, und jenseits von 100 000 Änderungen in einer Transaktion wird jede weitere dadurch wieder
-  etwas langsamer, weit weniger als vorher.
+  Änderungen waren nach neun Minuten nicht durch. Den Rest beim Zähler des Abgleichs behebt #965, der nächste Eintrag.
+- Der Zähler des Abgleichs braucht für jede Nummer gleich lange, auch in sehr großen Transaktionen (#965). Seine
+  Zeile bekam je Nummer eine neue Fassung, und mit jeder vollen Seite prüfte sein eindeutiger Schlüssel alle früheren
+  Fassungen der Transaktion; die Zeit je Nummer stieg von 15 µs bei den ersten 100 000 auf 120 µs bei 1,5 Millionen.
+  Jetzt kommen die Nummern aus einer Sequenz je Mandant (Schema `sync_counters`, `take_sync_numbers`): Die erste
+  Nummer einer Transaktion setzt sie auf die letzte festgeschriebene, und `close_sync_counter` schreibt die letzte
+  einmal vor dem Commit in die Zeile (Spalte `sync_sequences.opened_in`, Migration 0149). Auf der Testdatenbank
+  15 bis 17 µs je Nummer über 1,5 Millionen, vorher 74 bis 92 µs und steigend. Warum: Importe, Migrationen und
+  Löschungen nach dem Löschkonzept vergeben viele Nummern in einer Transaktion. Die Nummern bleiben lückenlos und in
+  der Reihenfolge der Commits; die Haustechnik braucht beim Anheben des Submoduls eine Migration wie 0149.
 - Ein Test des Tors, der unter der Last der CI manchmal rot wurde, wartet auf den Namen des nächsten Kontos (#962).
   Warum: Er fragte im selben Takt, in dem die Bildschirme des alten Kontos gingen, und die Seite nennt das neue
   einen Takt später; die Reihenfolge, um die es geht, hält eine eigene Zusicherung.

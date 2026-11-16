@@ -492,6 +492,9 @@ export function testDatabase(options: TestDatabaseOptions): TestDatabase {
   async function resetSchema(pool: Pool, database: string = testDatabaseUrl()): Promise<void> {
     await pool.query('drop schema if exists public cascade')
     await pool.query('drop schema if exists drizzle cascade')
+    // The sequences of the counter of the sync, one per tenant, which the
+    // block `sync.sql` keeps out of reach of the application (opengewerk#965).
+    await pool.query('drop schema if exists sync_counters cascade')
 
     if (history && history.schema !== 'drizzle' && history.schema !== 'public') {
       await pool.query(`drop schema if exists "${history.schema}" cascade`)

@@ -119,6 +119,7 @@ describe('the foundation, built from its building blocks alone', () => {
       'audit_value_digest',
       'audit_witness',
       'close_audit_chain',
+      'close_sync_counter',
       'counter_address',
       'counter_hint',
       'create_first_tenant',
@@ -142,6 +143,7 @@ describe('the foundation, built from its building blocks alone', () => {
       'record_instance_change',
       'session_fits_its_credentials',
       'stamp_sync_columns',
+      'take_sync_numbers',
       'tenant_role_stays_whole',
       'tenants_with_leads',
       'verify_audit_chain',
@@ -284,7 +286,7 @@ describe('the foundation, built from its building blocks alone', () => {
     const reading = await readDefinerFunctions(admin, { 'long_gone()': 'of an earlier day' })
 
     expect(reading.unexplained).toEqual(Object.keys(foundationDefinerFunctions).sort())
-    expect(reading.unexplained).toHaveLength(15)
+    expect(reading.unexplained).toHaveLength(16)
     expect(reading.stale).toEqual(['long_gone()'])
   })
 

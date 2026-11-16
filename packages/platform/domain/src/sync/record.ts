@@ -103,6 +103,12 @@ export interface SyncConflict {
 export interface SyncSequence {
   readonly tenantId: TenantId
   readonly nextValue: number
+  /**
+   * The transaction that has the counter open (opengewerk#965). It takes its
+   * numbers without moving this row at each one and writes the last of them
+   * here once, before it commits; between transactions it is empty.
+   */
+  readonly openedIn: string | null
   readonly createdAt: Date
   readonly updatedAt: Date
 }

@@ -19,6 +19,17 @@ END
 $$;--> statement-breakpoint
 DROP FUNCTION IF EXISTS "stamp_sync_columns"();--> statement-breakpoint
 DROP FUNCTION IF EXISTS "next_sync_sequence"(uuid);--> statement-breakpoint
+DO $$
+BEGIN
+	IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'sync_counter_closes') THEN
+		SET CONSTRAINTS "sync_counter_closes" IMMEDIATE;
+	END IF;
+END
+$$;--> statement-breakpoint
+DROP TRIGGER IF EXISTS "sync_counter_closes" ON "sync_sequences";--> statement-breakpoint
+DROP FUNCTION IF EXISTS "close_sync_counter"();--> statement-breakpoint
+DROP FUNCTION IF EXISTS "take_sync_numbers"(uuid, bigint);--> statement-breakpoint
+DROP SCHEMA IF EXISTS "sync_counters" CASCADE;--> statement-breakpoint
 DROP FUNCTION IF EXISTS "lock_sync_counter"(uuid);--> statement-breakpoint
 DROP FUNCTION IF EXISTS "counter_address"(text, uuid);--> statement-breakpoint
 DROP FUNCTION IF EXISTS "keep_counter_hint"(text, uuid, text);--> statement-breakpoint

@@ -335,3 +335,185 @@ describe('many logged changes in one transaction', () => {
     expect(Number((await counterOf(north.id))?.next_value)).toBe(before + 20_000)
   }, 180_000)
 })
+
+/**
+ * The numbers of the sync come from a sequence of the tenant (opengewerk#965).
+ * The row of the counter is opened by the first number of a transaction and
+ * written once, before the commit; the sequence is set to the last number
+ * committed at every opening, and is the owner's alone.
+ */
+describe('the numbers of the sync', () => {
+  const sequenceOf = (tenantId: TenantId) => `sync_counters.t${tenantId.replaceAll('-', '')}`
+
+  async function numbersOf(tenantId: TenantId, label?: string) {
+    const { rows } = await admin.query<{ change_sequence: string }>(
+      `select change_sequence from shelves
+        where tenant_id = $1 and ($2::text is null or label like $2 || '%')
+        order by change_sequence`,
+      [tenantId, label ?? null],
+    )
+
+    return rows.map((row) => Number(row.change_sequence))
+  }
+
+  async function openedOf(tenantId: TenantId) {
+    const { rows } = await admin.query<{ next_value: string; opened_in: string | null }>(
+      'select next_value, opened_in from sync_sequences where tenant_id = $1',
+      [tenantId],
+    )
+
+    return rows[0]
+  }
+
+  it('move the row of the counter once for all the numbers of a transaction', async () => {
+    const moved = await inTenant(north.id, async (tx) => {
+      await shelves(tx, north.id, 300)
+
+      const { rows } = await tx.execute<{ moved: string }>(sql`
+        select n_tup_upd as moved
+          from pg_stat_xact_user_tables where relname = 'sync_sequences'`)
+
+      return Number(rows[0]?.moved)
+    })
+
+    // The opening; the closing comes at the commit.
+    expect(moved).toBe(1)
+    expect(await numbersOf(north.id)).toEqual(Array.from({ length: 300 }, (_, i) => i + 1))
+    expect(await openedOf(north.id)).toEqual({ next_value: '300', opened_in: null })
+  })
+
+  it('go on from the last number committed, whatever a transaction that rolled back took', async () => {
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 3, 'Vorher'))
+
+    await expect(
+      inTenant(north.id, async (tx) => {
+        await shelves(tx, north.id, 2, 'Zurück')
+        throw new Error('rolled back')
+      }),
+    ).rejects.toThrow('rolled back')
+
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Danach'))
+
+    expect(await numbersOf(north.id)).toEqual([1, 2, 3, 4])
+    expect(await openedOf(north.id)).toEqual({ next_value: '4', opened_in: null })
+  })
+
+  it('hand out no number twice when the sequence of the tenant is behind or gone', async () => {
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 3, 'Vorher'))
+
+    // Behind, as after a restore that took the rows from a later state.
+    await admin.query('select setval($1::regclass, 1)', [sequenceOf(north.id)])
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Hinterher'))
+
+    // Gone altogether.
+    await admin.query(`drop sequence ${sequenceOf(north.id)}`)
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Neu'))
+
+    expect(await numbersOf(north.id)).toEqual([1, 2, 3, 4, 5])
+    expect(await openedOf(north.id)).toEqual({ next_value: '5', opened_in: null })
+  })
+
+  it('open the counter again after its number was written early', async () => {
+    await inTenant(north.id, async (tx) => {
+      await shelves(tx, north.id, 3)
+      await tx.execute(sql`set constraints all immediate`)
+      await shelves(tx, north.id, 3, 'Danach')
+    })
+
+    expect(await numbersOf(north.id)).toEqual([1, 2, 3, 4, 5, 6])
+    expect(await openedOf(north.id)).toEqual({ next_value: '6', opened_in: null })
+  })
+
+  it('take back an opening with its savepoint, and nothing of a number before it', async () => {
+    await inTenant(north.id, async (tx) => {
+      // The opening itself under a savepoint that is rolled back.
+      await tx.execute(sql`savepoint first`)
+      await shelves(tx, north.id, 2, 'Zurück')
+      await tx.execute(sql`rollback to savepoint first`)
+      await shelves(tx, north.id, 2, 'Erste')
+
+      // Numbers under a savepoint after the opening.
+      await tx.execute(sql`savepoint later`)
+      await shelves(tx, north.id, 2, 'Zurück')
+      await tx.execute(sql`rollback to savepoint later`)
+      await shelves(tx, north.id, 1, 'Zweite')
+    })
+
+    expect(await numbersOf(north.id, 'Erste')).toEqual([1, 2])
+
+    const [last] = await numbersOf(north.id, 'Zweite')
+
+    // Above the numbers under the second savepoint, which are not used again.
+    expect(last).toBe(5)
+    expect(await openedOf(north.id)).toEqual({ next_value: '5', opened_in: null })
+  })
+
+  it.each([
+    ['a number', (tx: TenantTransaction) => shelves(tx, north.id, 1, 'Erste')],
+    // The lock alone, as whoever names a file takes it (opengewerk#911): the
+    // row is locked and not changed, and nothing but the lock holds the
+    // second back.
+    [
+      'the lock alone',
+      (tx: TenantTransaction) => tx.execute(sql`select file_naming_lock(${north.id}::uuid)`),
+    ],
+  ])(
+    'number two transactions of a tenant in the order they commit, the first holding %s',
+    async (_start, start) => {
+      let release = () => {}
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let opened = () => {}
+      const isOpen = new Promise<void>((resolve) => {
+        opened = resolve
+      })
+
+      // A counter that is there and committed, so that it is the lock on its
+      // row that holds the second back, and not the row the first is making.
+      await inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Vorher'))
+
+      const first = inTenant(north.id, async (tx) => {
+        await start(tx)
+        opened()
+        await held
+        await shelves(tx, north.id, 2, 'Erste')
+      })
+
+      await isOpen
+
+      const second = inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Zweite'))
+
+      // The second waits for the counter the first has open.
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      expect(await numbersOf(north.id)).toEqual([1])
+      release()
+      await Promise.all([first, second])
+
+      const firsts = await numbersOf(north.id, 'Erste')
+
+      // Every number of the first below the one of the second, none twice.
+      expect(firsts).toEqual(Array.from({ length: firsts.length }, (_, i) => i + 2))
+      expect(await numbersOf(north.id, 'Zweite')).toEqual([firsts.length + 2])
+    },
+  )
+
+  it('leave the sequence of a tenant and its opening to the owner of the tables', async () => {
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 1))
+
+    for (const statement of [
+      sql`select nextval(${sequenceOf(north.id)}::regclass)`,
+      sql`select setval(${sequenceOf(north.id)}::regclass, 1)`,
+      sql`select take_sync_numbers(${north.id}::uuid, 1)`,
+      sql`create sequence sync_counters.t00000000000000000000000000000000`,
+    ]) {
+      await expect(inTenant(north.id, (tx) => tx.execute(statement))).rejects.toMatchObject({
+        cause: { code: '42501' },
+      })
+    }
+
+    await inTenant(north.id, (tx) => shelves(tx, north.id, 1, 'Danach'))
+
+    expect(await numbersOf(north.id)).toEqual([1, 2])
+  })
+})
