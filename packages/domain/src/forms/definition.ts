@@ -65,6 +65,7 @@ export interface TradeFormTerms {
     | 'rcd_trip_current'
     | 'appliance_insulation'
     | 'appliance_protective_conductor'
+    | 'appliance_protective_conductor_current'
   readonly kind: (typeof tradeFieldKinds)[number]
 }
 

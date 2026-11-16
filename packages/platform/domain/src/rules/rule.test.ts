@@ -181,6 +181,7 @@ describe('a set of rules with scopes', () => {
         'milliohms',
         'microamperes',
         'millimetres',
+        'square_micrometres',
       ]),
     )
   })

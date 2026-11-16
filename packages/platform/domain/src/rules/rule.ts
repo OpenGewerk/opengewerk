@@ -44,6 +44,11 @@ import type { IsoDate } from '../model/identifier.js'
  * of at most 0.3 ohms is 300 milliohms, a touch current of at most 0.5
  * milliamperes is 500 microamperes, and the lead it counts the resistance by
  * is 5 metres, 5000 millimetres, the unit the length of a cable is kept in.
+ *
+ * Square micrometres came with the leads of more than 1.5 mm² (opengewerk#816),
+ * whose resistance is worked out of their cross-section: 1.5 mm² is 1,500,000
+ * square micrometres, the smallest unit of area in which the cross-sections
+ * of a cable are whole numbers.
  */
 export const ruleUnits = [
   'basis_points',
@@ -69,6 +74,7 @@ export const ruleUnits = [
   'milliohms',
   'microamperes',
   'millimetres',
+  'square_micrometres',
 ] as const
 
 export type RuleUnit = (typeof ruleUnits)[number]

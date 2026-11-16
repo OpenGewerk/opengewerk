@@ -15,6 +15,7 @@ import vde0100600v3 from '../formulare/vde-0100-600.v3.json' with { type: 'json'
 import vde0105100v1 from '../formulare/vde-0105-100.v1.json' with { type: 'json' }
 import dguvV3v1 from '../formulare/dguv-v3.v1.json' with { type: 'json' }
 import dguvV3v2 from '../formulare/dguv-v3.v2.json' with { type: 'json' }
+import dguvV3v3 from '../formulare/dguv-v3.v3.json' with { type: 'json' }
 import vdeArN4105v1 from '../formulare/vde-ar-n-4105.v1.json' with { type: 'json' }
 import iec624461v1 from '../formulare/iec-62446-1.v1.json' with { type: 'json' }
 import vde0100722v1 from '../formulare/vde-0100-722.v1.json' with { type: 'json' }
@@ -79,6 +80,7 @@ export const elektroForms: readonly FormDefinition[] = [
   vde0105100v1 as FormDefinition,
   dguvV3v1 as FormDefinition,
   dguvV3v2 as FormDefinition,
+  dguvV3v3 as FormDefinition,
   vdeArN4105v1 as FormDefinition,
   iec624461v1 as FormDefinition,
   vde0100722v1 as FormDefinition,

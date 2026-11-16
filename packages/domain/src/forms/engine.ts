@@ -6,7 +6,11 @@ import {
 } from '@opengewerk/platform-domain'
 
 import type { TradeFormTerms } from './definition.js'
-import { applianceInsulation, applianceProtectiveConductor } from './appliance-limits.js'
+import {
+  applianceInsulation,
+  applianceProtectiveConductor,
+  applianceProtectiveConductorCurrent,
+} from './appliance-limits.js'
 import { pvStringList } from './pv-strings.js'
 import { formUnits } from './units.js'
 
@@ -48,6 +52,7 @@ export const tradeForms = formEngine<TradeFormTerms>({
     rcd_trip_current: residualTripCurrent,
     appliance_insulation: applianceInsulation,
     appliance_protective_conductor: applianceProtectiveConductor,
+    appliance_protective_conductor_current: applianceProtectiveConductorCurrent,
   },
   kinds: tradeFieldKinds,
   blockKeys: { id: 'circuitId', item: 'circuit' },
