@@ -205,7 +205,12 @@ export interface LocalStore {
 
   /** What waits to be sent: of the person the store is open for, or all of it without one. */
   readOutbox(): Promise<readonly Operation[]>
-  queue(operation: Operation): Promise<void>
+  /**
+   * Keeps an operation to send, at the next place of the outbox, and hands it
+   * back with it (opengewerk#955). The place is counted in the store, in the
+   * transaction that keeps the operation, so two tabs never give the same one.
+   */
+  queue(operation: Operation): Promise<Operation>
   dequeue(ids: readonly OperationId[]): Promise<void>
 
   readConflicts(): Promise<readonly SyncConflict[]>
@@ -279,6 +284,11 @@ const metaStore = 'meta'
 
 /** The account whose pulls the records of a store hold. */
 const ownerKey = 'records-owner'
+/**
+ * The next place of the outbox (opengewerk#955). Of nobody, so that letting a
+ * person go keeps it, and cleared only with the outbox.
+ */
+export const placeKey = 'outbox-place'
 
 /** Where the sync client is in the changes of the server. */
 export const cursorKey = 'cursor'
@@ -1396,11 +1406,18 @@ export async function openLocalStore(
     },
 
     async queue(operation) {
-      const transaction = transact([outboxStore], 'readwrite')
+      const transaction = transact([outboxStore, metaStore], 'readwrite')
+      const meta = transaction.objectStore(metaStore)
+      const row = await promised<MetaRow | undefined>(meta.get(placeKey))
+      const next = typeof row?.value === 'number' ? row.value : 0
+      const queued = { ...operation, place: next }
 
-      transaction.objectStore(outboxStore).put(toStored(operation, owner))
+      meta.put({ key: placeKey, value: next + 1 } satisfies MetaRow)
+      transaction.objectStore(outboxStore).put(toStored(queued, owner))
 
       await finished(transaction)
+
+      return queued
     },
 
     async dequeue(ids) {

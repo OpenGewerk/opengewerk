@@ -365,6 +365,11 @@ function parseOperation(entry: unknown, index: number, deviceId: string): Operat
   }
 
   const baseVersion = fields['baseVersion']
+  const place = fields['place']
+
+  if (place !== undefined && !(Number.isSafeInteger(place) && Number(place) >= 0)) {
+    throw new BadRequestException(`${at}: place ist keine Stelle im Postausgang.`)
+  }
 
   return {
     id: id as OperationId,
@@ -388,6 +393,7 @@ function parseOperation(entry: unknown, index: number, deviceId: string): Operat
     }),
     recordedAt: recorded,
     deviceId,
+    ...(place === undefined ? {} : { place: Number(place) }),
   }
 }
 

@@ -45,6 +45,14 @@ export interface OperationReceipt {
   readonly outcome: OperationOutcome
   readonly reason: string | null
   readonly fields: readonly string[]
+  /**
+   * For an operation applied, the version its record has with it
+   * (opengewerk#959): a row of that version or a later one holds it, an older
+   * one does not, whenever a device read it. For one seen before, the version
+   * the record has now, which holds it as well. Absent for every other
+   * outcome, and from a server of an older version.
+   */
+  readonly version?: number
 }
 
 /**

@@ -1,5 +1,4 @@
 import type { Operation, RecordState, SyncRules } from '@opengewerk/platform-domain'
-import { inOutboxOrder } from '@opengewerk/platform-domain'
 
 /** The key a record has in the outbox index. */
 export function recordKey(entity: string, id: string): string {
@@ -25,6 +24,13 @@ export function recordKey(entity: string, id: string): string {
 export function project(
   /** What the server last said, or null when it has never heard of this one. */
   server: RecordState | null,
+  /**
+   * In the order they apply, as the client lays them (opengewerk#950): what
+   * the server took in the order it went, then what waits in the order of the
+   * outbox. Sorted here by the clock of the device, a change sent after
+   * another with the clock put back in between would come first, and the
+   * record would show what the server no longer holds.
+   */
   pending: readonly Operation[],
   /** Minted on the device, so a record that has never been sent still has one. */
   recordId: string,
@@ -33,7 +39,7 @@ export function project(
 ): RecordState | null {
   let current = server
 
-  for (const operation of inOutboxOrder(pending)) {
+  for (const operation of pending) {
     if (operation.kind === 'delete') {
       current = null
       continue

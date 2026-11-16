@@ -190,6 +190,7 @@ interface Sent {
   readonly baseVersion: number | null
   readonly patches: { field: string; from: SyncValue; to: SyncValue }[]
   readonly recordedAt: string
+  readonly place?: number
 }
 
 function operation(over: {
@@ -328,6 +329,131 @@ describe('sending an outbox', () => {
     )
 
     expect(note).toMatchObject({ id: noteId, text: 'Zähler ablesen', deviceId: 'probe-phone' })
+  })
+
+  it('applies a transmission in the order of its outbox, whatever the clock of the device said (opengewerk#955)', async () => {
+    const noteId = newId<'note'>()
+
+    await push(olga(), [
+      operation({ entity: 'notes', recordId: noteId, patches: [{ field: 'text', to: 'Vorher' }] }),
+    ]).expect(201)
+
+    const at = (minutes: number) => new Date(Date.now() + minutes * 60 * 1000).toISOString()
+    // Queued one after the other, with the clock put back an hour in between,
+    // and sent the other way round.
+    const first = {
+      ...operation({
+        entity: 'notes',
+        recordId: noteId,
+        kind: 'update',
+        patches: [{ field: 'text', from: 'Vorher', to: 'A' }],
+      }),
+      recordedAt: at(0),
+      place: 7,
+    }
+    const second = {
+      ...operation({
+        entity: 'notes',
+        recordId: noteId,
+        kind: 'update',
+        patches: [{ field: 'text', from: 'A', to: 'B' }],
+      }),
+      recordedAt: at(-60),
+      place: 8,
+    }
+    const answer = await push(olga(), [second, first]).expect(201)
+
+    expect(
+      (answer.body as { receipts: { outcome: string }[] }).receipts.map(
+        (receipt) => receipt.outcome,
+      ),
+    ).toEqual(['applied', 'applied'])
+
+    const [note] = await database.forTenant(
+      { tenantId: north.id, userId: 'olga', reason: 'probe' },
+      (tx) =>
+        tx
+          .select()
+          .from(notes)
+          .where(eq(notes.id, noteId as never)),
+    )
+
+    expect(note?.text).toBe('B')
+  })
+
+  it('names in each receipt the version its record has with the operation, and for one seen before the version it has now (opengewerk#959)', async () => {
+    const noteId = newId<'note'>()
+    const receipts = async (operations: readonly Sent[]) =>
+      (
+        (await push(olga(), operations).expect(201)).body as {
+          receipts: { reason: string | null; version?: number }[]
+        }
+      ).receipts.map((receipt) => [receipt.reason, receipt.version])
+    const made = operation({
+      entity: 'notes',
+      recordId: noteId,
+      patches: [{ field: 'text', to: 'Vorher' }],
+    })
+    const changed = operation({
+      entity: 'notes',
+      recordId: noteId,
+      kind: 'update',
+      patches: [{ field: 'text', from: 'Vorher', to: 'A' }],
+    })
+
+    expect(await receipts([made, changed])).toEqual([
+      [null, 1],
+      [null, 2],
+    ])
+
+    // Changed again since, and the answer to the first transmission was lost.
+    await receipts([
+      operation({
+        entity: 'notes',
+        recordId: noteId,
+        kind: 'update',
+        patches: [{ field: 'text', from: 'A', to: 'B' }],
+      }),
+    ])
+
+    expect(await receipts([made, changed])).toEqual([
+      ['already_seen', 3],
+      ['already_seen', 3],
+    ])
+
+    // Sent again naming another record, it is still the record it was applied to.
+    const other = operation({ entity: 'notes', patches: [{ field: 'text', to: 'Andere' }] })
+
+    expect(await receipts([other])).toEqual([[null, 1]])
+    expect(await receipts([{ ...changed, recordId: other.recordId }])).toEqual([
+      ['already_seen', 3],
+    ])
+    // A conflict changed nothing and names no version.
+    expect(
+      await receipts([
+        operation({
+          entity: 'notes',
+          recordId: noteId,
+          kind: 'update',
+          patches: [{ field: 'text', from: 'Vorher', to: 'C' }],
+        }),
+      ]),
+    ).toEqual([['changed_elsewhere', undefined]])
+  })
+
+  it('refuses a place in the outbox that is not a whole number from zero (opengewerk#955)', async () => {
+    for (const place of [-1, 1.5, '3']) {
+      const answer = await push(olga(), [
+        {
+          ...operation({ entity: 'notes', patches: [{ field: 'text', to: 'x' }] }),
+          place,
+        } as never,
+      ]).expect(400)
+
+      expect(answer.body).toMatchObject({
+        message: 'Vorgang 1: place ist keine Stelle im Postausgang.',
+      })
+    }
   })
 
   it('takes the device from the transmission, not from an operation in it', async () => {

@@ -26,6 +26,7 @@ import {
   entitiesKey,
   type LocalStore,
   narrowedKey,
+  placeKey,
   settledKey,
   type StoredFile,
   StoreTakenOver,
@@ -235,6 +236,7 @@ const bookkeeping: readonly string[] = [
   checkedKey,
   checkedForKey,
   adoptedKey,
+  placeKey,
 ]
 
 /**
@@ -381,11 +383,13 @@ export class SyncClient {
    */
   private settling: readonly Operation[] = []
   /**
-   * For each settling operation, the version its row had on this device when
-   * the server took it (opengewerk#937): only a row newer than that one can
-   * carry it. Null where the device had no row of the server yet.
+   * For each settling operation, the version its record has with it, as the
+   * receipt of the server says (opengewerk#959): a row of that version or a
+   * later one carries it. Null where the receipt says none, from a server of
+   * an older version; such an operation is carried by no row until a pull
+   * goes through.
    */
-  private settledFrom = new Map<OperationId, number | null>()
+  private settledAt = new Map<OperationId, number | null>()
   /** What is laid over the server's rows: what settles, then what waits. */
   private laid: ReadonlyMap<string, Operation[]> = new Map()
   private readonly listeners = new Set<() => void>()
@@ -653,7 +657,7 @@ export class SyncClient {
     const rows: RecordState[] = []
 
     for (const [id, server] of this.records.get(entity) ?? []) {
-      const pending = this.laid.get(recordKey(entity, id)) ?? []
+      const pending = this.laidOver(server, recordKey(entity, id))
       const laid = project(server, pending, id, this.rules.policyFor)
 
       if (laid && !sameValue(laid['deletedAt'], null)) {
@@ -676,11 +680,10 @@ export class SyncClient {
         continue
       }
 
-      const ordered = inOutboxOrder(pending)
-      const removal = ordered.findIndex((operation) => operation.kind === 'delete')
+      const removal = pending.findIndex((operation) => operation.kind === 'delete')
 
       if (removal > 0) {
-        const before = project(null, ordered.slice(0, removal), head.recordId, this.rules.policyFor)
+        const before = project(null, pending.slice(0, removal), head.recordId, this.rules.policyFor)
 
         if (before) {
           rows.push(before)
@@ -709,7 +712,7 @@ export class SyncClient {
     }
 
     const server = this.records.get(entity)?.get(id) ?? null
-    const laid = project(server, this.laid.get(key) ?? [], id, this.rules.policyFor)
+    const laid = project(server, this.laidOver(server, key), id, this.rules.policyFor)
 
     // A row marked deleted is kept in the store, because a repeated create has
     // to find it. It is not a row any screen shows.
@@ -747,19 +750,36 @@ export class SyncClient {
     const server = this.records.get(entity)?.get(id)
     const pulled = typeof server?.['version'] === 'number' ? server['version'] : null
 
-    // A pull that brought the row back after the server took the change ends
-    // it, even where a later page of the same pull failed. A row of an earlier
-    // change does not: it came back before this one landed. Where the device
-    // had no row of the server yet (a create), any row it sends back ends it.
-    return this.settling.some((operation) => {
-      if (operation.entity !== entity || operation.recordId !== id) {
-        return false
-      }
+    // A pull that brought the row with the change in it ends it, even where a
+    // later page of the same pull failed. An older row does not, whenever it
+    // came: another tab may have read it before the server took the change
+    // and laid it into the store afterwards (opengewerk#959).
+    return this.settling.some(
+      (operation) =>
+        operation.entity === entity &&
+        operation.recordId === id &&
+        !this.carries(pulled, operation),
+    )
+  }
 
-      const from = this.settledFrom.get(operation.id) ?? null
+  /**
+   * Whether the row of the server on this device holds an operation the
+   * server took already (opengewerk#956): a row of at least the version the
+   * receipt named (opengewerk#959). Laid over it once more, a record made here
+   * would show only what the device sent and none of what the server put in,
+   * and a change the value it had before somebody else's.
+   */
+  private carries(pulled: number | null, operation: Operation): boolean {
+    const at = this.settledAt.get(operation.id) ?? null
 
-      return !(pulled !== null && (from === null || pulled > from))
-    })
+    return at !== null && pulled !== null && pulled >= at
+  }
+
+  /** What is laid over the row of the server: all of `laid` but what it carries. */
+  private laidOver(server: RecordState | null, key: string): readonly Operation[] {
+    const pulled = typeof server?.['version'] === 'number' ? server['version'] : null
+
+    return (this.laid.get(key) ?? []).filter((operation) => !this.carries(pulled, operation))
   }
 
   /**
@@ -778,7 +798,7 @@ export class SyncClient {
     otherId: string,
     kind?: OperationKind,
   ): boolean {
-    const ordered = [...this.settling, ...inOutboxOrder(this.outbox)]
+    const ordered = this.inLaidOrder()
     let last = -1
     let first = -1
 
@@ -958,8 +978,9 @@ export class SyncClient {
       return { outcome: 'queued', id }
     }
 
-    await this.store.queue(operation)
-    this.outbox = [...this.outbox, operation]
+    const queued = await this.store.queue(operation)
+
+    this.outbox = [...this.outbox, queued]
     this.regroup()
     this.publish({ pending: this.outbox.length })
 
@@ -1099,12 +1120,16 @@ export class SyncClient {
         sending()
       }
 
-      this.outdated = await this.pullChanges()
+      const pulled = await this.pullChanges()
 
-      // Everything that settled is in the rows now, as the server holds it.
-      if (this.settling.length > 0) {
+      this.outdated = pulled.outdated
+
+      // Everything that settled is in the rows now, as the server holds it,
+      // once the pull got to the end. One that stopped at the limit of its
+      // pages may not have brought them yet (opengewerk#960).
+      if (pulled.complete && this.settling.length > 0) {
         this.settling = []
-        this.settledFrom.clear()
+        this.settledAt.clear()
         this.regroup()
       }
       await this.refreshConflicts()
@@ -1215,7 +1240,8 @@ export class SyncClient {
     }
 
     const done = new Set<OperationId>()
-    const applied = new Set<OperationId>()
+    // What was applied, with the version its record has with it (opengewerk#959).
+    const applied = new Map<OperationId, number | null>()
 
     for (const receipt of receipts) {
       // Every outcome empties the slot, a conflict included. The server has
@@ -1225,7 +1251,10 @@ export class SyncClient {
       done.add(receipt.operationId)
 
       if (receipt.outcome === 'applied') {
-        applied.add(receipt.operationId)
+        applied.set(
+          receipt.operationId,
+          typeof receipt.version === 'number' ? receipt.version : null,
+        )
       }
     }
 
@@ -1233,16 +1262,16 @@ export class SyncClient {
     // What landed stays laid over the rows until the pull brings them. What
     // did not land is not shown at all: a conflict is on its own list, and a
     // skipped operation changed nothing.
-    // In the order they went, which is the order the server stamped them in.
+    // In the order they went, which is the order the server applied them in
+    // (opengewerk#950): a transmission goes and is applied in the order of the
+    // outbox, by the place each operation has there (opengewerk#955), and one
+    // the server took in a transmission whose answer was lost has a place
+    // before everything queued after it, so it goes again ahead of that, in
+    // this part or in one before.
     const landed = sent.filter((operation) => applied.has(operation.id))
 
     for (const operation of landed) {
-      const row = this.records.get(operation.entity)?.get(operation.recordId)
-
-      this.settledFrom.set(
-        operation.id,
-        typeof row?.['version'] === 'number' ? row['version'] : null,
-      )
+      this.settledAt.set(operation.id, applied.get(operation.id) ?? null)
     }
 
     this.settling = [...this.settling, ...landed]
@@ -1310,11 +1339,12 @@ export class SyncClient {
   /**
    * Pulls what changed since the cursor, page by page, until the server has
    * nothing more, and writes each page down with the cursor it ends at while
-   * the store still stands where it began (opengewerk#899). True where a tab
-   * of a newer build pulls for the store and this one pulled into its memory
-   * alone.
+   * the store still stands where it began (opengewerk#899). `outdated` where a
+   * tab of a newer build pulls for the store and this one pulled into its
+   * memory alone; `complete` where the pull got to the end, and not to the
+   * limit of its pages (opengewerk#960).
    */
-  private async pullChanges(): Promise<boolean> {
+  private async pullChanges(): Promise<{ outdated: boolean; complete: boolean }> {
     let guard = 0
     let outdated = false
 
@@ -1374,7 +1404,7 @@ export class SyncClient {
 
       if (written === 'fewerKinds' || written === 'unchecked' || written === 'moved') {
         if ((guard += 1) > 100) {
-          return outdated
+          return { outdated, complete: false }
         }
 
         continue
@@ -1399,8 +1429,12 @@ export class SyncClient {
       // `hasMore` means the server stopped at its limit. Asking again is the
       // whole point; the counter is there so a server that always says yes
       // cannot spin this for ever.
-      if (!answer.hasMore || (guard += 1) > 100) {
-        return outdated
+      if (!answer.hasMore) {
+        return { outdated, complete: true }
+      }
+
+      if ((guard += 1) > 100) {
+        return { outdated, complete: false }
       }
     }
   }
@@ -1865,7 +1899,19 @@ export class SyncClient {
   /** The two views of the queue, after it changed. */
   private regroup(): void {
     this.pending = byRecord(this.outbox)
-    this.laid = byRecord([...this.settling, ...this.outbox])
+    this.laid = byRecord(this.inLaidOrder())
+  }
+
+  /**
+   * Every operation the device lays over the rows of the server, in the order
+   * the server applies them (opengewerk#950): what it took in the order
+   * `pushPart` lays it out, what waits after it in the order of the outbox,
+   * the order it goes in (opengewerk#939). One order for the projection,
+   * `binned` and `isRecordedAfter`; the clock of the device does not reorder
+   * what has gone.
+   */
+  private inLaidOrder(): readonly Operation[] {
+    return [...this.settling, ...inOutboxOrder(this.outbox)]
   }
 
   private decideState(): SyncState {

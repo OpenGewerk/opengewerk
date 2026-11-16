@@ -1,4 +1,9 @@
-import type { Operation, OperationReceipt, RecordState } from '@opengewerk/platform-domain'
+import {
+  inOutboxOrder,
+  type Operation,
+  type OperationReceipt,
+  type RecordState,
+} from '@opengewerk/platform-domain'
 
 import type { DirectWriter } from './client.js'
 import type { PullResult, SyncTransport } from './transport.js'
@@ -33,6 +38,8 @@ export class TestServer implements SyncTransport, DirectWriter {
   private readonly tables = new Map<string, Map<string, Row>>()
   private changed = new Map<string, Set<string>>()
   private cursor = 1
+  /** Every operation applied, as the server keeps its receipts. */
+  private readonly taken = new Set<string>()
 
   put(entity: string, row: Row): void {
     const table = this.tables.get(entity) ?? new Map<string, Row>()
@@ -77,16 +84,31 @@ export class TestServer implements SyncTransport, DirectWriter {
     this.sent.push([...operations])
     this.log.push(`push ${operations.map((operation) => operation.entity).join(',')}`)
 
-    for (const operation of operations) {
-      this.apply(operation)
+    // As the server does: what it has taken once it does not apply again, and
+    // answers with the receipt it gave. It applies a transmission in the order
+    // of the outbox, whatever order it came in. Each receipt names the version
+    // its record has with it, one seen before the version it has now
+    // (opengewerk#959).
+    const seen = new Set(this.taken)
+    const versions = new Map<string, number>()
+    const versionOf = (operation: Operation) =>
+      Number(this.row(operation.entity, operation.recordId)?.['version'] ?? 0)
+
+    for (const operation of inOutboxOrder(operations)) {
+      if (!seen.has(operation.id)) {
+        this.apply(operation)
+        this.taken.add(operation.id)
+        versions.set(operation.id, versionOf(operation))
+      }
     }
 
     return Promise.resolve(
       operations.map((operation): OperationReceipt => ({
         operationId: operation.id,
         outcome: 'applied',
-        reason: null,
+        reason: seen.has(operation.id) ? 'already_seen' : null,
         fields: [],
+        version: versions.get(operation.id) ?? versionOf(operation),
       })),
     )
   }
