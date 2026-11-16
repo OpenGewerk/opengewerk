@@ -7,7 +7,7 @@ import type { OperationId } from '@opengewerk/platform-domain'
 import { probePolicies } from '@opengewerk/platform-domain/testing'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SyncClient } from './client.js'
+import { mostTransmittedOperations, SyncClient } from './client.js'
 import { openLocalStore } from './store.js'
 import { TestServer } from './test-server.js'
 import { RequestRefused } from './transport.js'
@@ -550,6 +550,91 @@ describe('a file made on the device', () => {
       }
     },
   )
+
+  it('lays what went in the order the server took it, with two answers lost in a row and the clock put back (opengewerk#950)', async () => {
+    const client = await start()
+    const made = await client.create('notes', { title: 'Vorher' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    await client.synchronise()
+
+    const push = server.push.bind(server)
+    const lost: typeof server.push = (deviceId, operations) =>
+      push(deviceId, operations).then(() => Promise.reject(new TypeError('Failed to fetch')))
+
+    server.push = lost
+    await client.update('notes', made.id, { title: 'X' })
+    await client.synchronise().catch(() => undefined)
+
+    server.pull = () => Promise.reject(new TypeError('Failed to fetch'))
+    vi.useFakeTimers({ toFake: ['Date'] })
+
+    try {
+      vi.setSystemTime(new Date(Date.now() - 60 * 60 * 1000))
+      // Goes ahead of the change before it and is taken; the answer is lost again.
+      await client.update('notes', made.id, { title: 'Y' })
+      await client.synchronise().catch(() => undefined)
+
+      server.push = push
+      await client.synchronise().catch(() => undefined)
+
+      expect(client.status().pending).toBe(0)
+      expect(server.row('notes', made.id)?.['title']).toBe('Y')
+      expect(client.get('notes', made.id)?.['title']).toBe('Y')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('lays what the server took before an answer was lost ahead of what a part before it took (opengewerk#950)', async () => {
+    const client = await start()
+    const made = await client.create('notes', { title: 'Vorher' })
+
+    if (made.outcome !== 'queued') {
+      throw new Error('The note was refused on the device.')
+    }
+
+    await client.synchronise()
+
+    const push = server.push.bind(server)
+
+    server.push = (deviceId, operations) =>
+      push(deviceId, operations).then(() => Promise.reject(new TypeError('Failed to fetch')))
+    await client.update('notes', made.id, { title: 'X' })
+    await client.synchronise().catch(() => undefined)
+
+    server.push = () => Promise.reject(new TypeError('Failed to fetch'))
+    server.pull = () => Promise.reject(new TypeError('Failed to fetch'))
+    vi.useFakeTimers({ toFake: ['Date'] })
+
+    try {
+      const now = Date.now()
+
+      // By the clock the change goes first, with as many notes behind it as
+      // fill the first part; the change taken before goes again in the second.
+      vi.setSystemTime(new Date(now - 2 * 60 * 60 * 1000))
+      await client.update('notes', made.id, { title: 'Y' })
+      vi.setSystemTime(new Date(now - 60 * 60 * 1000))
+
+      for (let note = 1; note < mostTransmittedOperations; note += 1) {
+        await client.create('notes', { title: `Notiz ${String(note)}` })
+      }
+
+      server.push = push
+      await client.synchronise().catch(() => undefined)
+
+      expect(server.sent.at(-2)).toHaveLength(mostTransmittedOperations)
+      expect(server.sent.at(-1)?.map((operation) => operation.patches[0]?.to)).toEqual(['X'])
+      expect(client.status().pending).toBe(0)
+      expect(server.row('notes', made.id)?.['title']).toBe('Y')
+      expect(client.get('notes', made.id)?.['title']).toBe('Y')
+    } finally {
+      vi.useRealTimers()
+    }
+  }, 60_000)
 
   it('keeps the order a transmission went in once the server took it (opengewerk#937)', async () => {
     const client = await start()

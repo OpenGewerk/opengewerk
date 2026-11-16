@@ -167,10 +167,10 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   dann zuerst, eine Löschung ließ die Datei wieder als vorhanden erscheinen, und eine Änderung zeigte den Wert von
   vorher. Jetzt legen Anzeige, Papierkorb und die Frage nach der Reihenfolge aus #937 die Änderungen in derselben
   Reihenfolge an: was der Server angenommen hat, in der Reihenfolge, in der er es angewandt hat, dahinter, was wartet,
-  in der Reihenfolge des Ausgangs. Ging die Antwort auf eine Übertragung verloren, kommt, was der Server damals schon
-  angewandt hatte, vor das, was er beim nächsten Mal angewandt hat. Gingen zwei Antworten nacheinander verloren und
-  wurde die Uhr zwischen ihnen zurückgestellt, kann die Anzeige bis zum nächsten vollständigen Abruf noch abweichen,
-  weil der Server nicht meldet, in welcher Übertragung er was angewandt hat.
+  in der Reihenfolge des Ausgangs. Dafür nennt der Server in jeder Quittung, wann er eine Operation angenommen hat, und
+  bei einer, die nach einer verlorenen Antwort noch einmal kommt, den Zeitpunkt vom ersten Mal. Schicken zwei Tabs
+  desselben Browsers zugleich verschiedene Änderungen am selben Datensatz, kann die Anzeige bis zum nächsten
+  vollständigen Abruf noch abweichen, weil der Zeitpunkt der Beginn einer Übertragung ist.
 - Zieht eine Anlage oder ein Gerät auf das Objekt eines Auftrags um, kommen ihre Dateien, Protokolle und was sonst an
   ihr hängt jetzt auch auf ein Gerät, das schon abgeglichen hat (#938). Warum: Der Bereich eines Geräts änderte seinen
   Wert nur mit den Aufträgen, und was an der Anlage hing, lag mit seinen Änderungen hinter dem Stand des Geräts. Jetzt

@@ -386,6 +386,11 @@ export class SyncClient {
    * carry it. Null where the device had no row of the server yet.
    */
   private settledFrom = new Map<OperationId, number | null>()
+  /**
+   * For each settling operation, when the server took it, as its receipt said
+   * (opengewerk#950): the order `inTakenOrder` lays them in.
+   */
+  private takenAt = new Map<OperationId, number>()
   /** What is laid over the server's rows: what settles, then what waits. */
   private laid: ReadonlyMap<string, Operation[]> = new Map()
   private readonly listeners = new Set<() => void>()
@@ -1104,6 +1109,7 @@ export class SyncClient {
       if (this.settling.length > 0) {
         this.settling = []
         this.settledFrom.clear()
+        this.takenAt.clear()
         this.regroup()
       }
       await this.refreshConflicts()
@@ -1215,9 +1221,6 @@ export class SyncClient {
 
     const done = new Set<OperationId>()
     const applied = new Set<OperationId>()
-    // Taken in a transmission whose answer did not come back: the server
-    // applied them then, before anything it applies now.
-    const earlier = new Set<OperationId>()
 
     for (const receipt of receipts) {
       // Every outcome empties the slot, a conflict included. The server has
@@ -1229,8 +1232,8 @@ export class SyncClient {
       if (receipt.outcome === 'applied') {
         applied.add(receipt.operationId)
 
-        if (receipt.reason === 'already_seen') {
-          earlier.add(receipt.operationId)
+        if (typeof receipt.takenAt === 'number' && Number.isFinite(receipt.takenAt)) {
+          this.takenAt.set(receipt.operationId, receipt.takenAt)
         }
       }
     }
@@ -1239,14 +1242,11 @@ export class SyncClient {
     // What landed stays laid over the rows until the pull brings them. What
     // did not land is not shown at all: a conflict is on its own list, and a
     // skipped operation changed nothing.
-    // In the order the server stamped them in: what it had taken before, then
-    // what it took now, each in the order it went. Two answers lost in a row
-    // with the clock put back between them leave the first group out of
-    // order; which of them the server took first, it does not say.
-    const landed = [
-      ...sent.filter((operation) => earlier.has(operation.id)),
-      ...sent.filter((operation) => applied.has(operation.id) && !earlier.has(operation.id)),
-    ]
+    // Laid in the order the server applied them, which its receipts say
+    // (`inTakenOrder`): an operation it had taken in a transmission whose
+    // answer was lost comes back with the moment of that one, and goes ahead
+    // of what it took since, in this part or in one before.
+    const landed = sent.filter((operation) => applied.has(operation.id))
 
     for (const operation of landed) {
       const row = this.records.get(operation.entity)?.get(operation.recordId)
@@ -1257,7 +1257,7 @@ export class SyncClient {
       )
     }
 
-    this.settling = [...this.settling, ...landed]
+    this.settling = this.inTakenOrder([...this.settling, ...landed])
     this.outbox = this.outbox.filter((operation) => !done.has(operation.id))
     this.regroup()
     this.publish({ pending: this.outbox.length })
@@ -1878,6 +1878,28 @@ export class SyncClient {
   private regroup(): void {
     this.pending = byRecord(this.outbox)
     this.laid = byRecord(this.inLaidOrder())
+  }
+
+  /**
+   * What has gone, in the order the server applied it (opengewerk#950): by
+   * the transaction it was taken in, and within one in the order of the
+   * outbox, as the server applies a transmission. As it stands where a
+   * receipt said nothing of when, which a server of an older version does not.
+   */
+  private inTakenOrder(operations: readonly Operation[]): Operation[] {
+    const times = operations.map((operation) => this.takenAt.get(operation.id))
+
+    if (times.some((time) => time === undefined)) {
+      return [...operations]
+    }
+
+    const position = new Map(inOutboxOrder(operations).map((operation, at) => [operation.id, at]))
+
+    return [...operations].sort(
+      (left, right) =>
+        (this.takenAt.get(left.id) ?? 0) - (this.takenAt.get(right.id) ?? 0) ||
+        (position.get(left.id) ?? 0) - (position.get(right.id) ?? 0),
+    )
   }
 
   /**

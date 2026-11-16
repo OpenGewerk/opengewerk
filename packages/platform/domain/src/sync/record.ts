@@ -45,6 +45,15 @@ export interface OperationReceipt {
   readonly outcome: OperationOutcome
   readonly reason: string | null
   readonly fields: readonly string[]
+  /**
+   * When the server took the operation, in microseconds since 1970: the start
+   * of the transaction it was written down in, the same for every operation
+   * of one transmission, and on a second transmission the moment of the
+   * first (opengewerk#950). Within one transaction the server applies in the
+   * order of the outbox (`inOutboxOrder`), so the two together say the order
+   * it applied them in. Absent from a server of an older version.
+   */
+  readonly takenAt?: number
 }
 
 /**
