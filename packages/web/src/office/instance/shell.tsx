@@ -1,11 +1,12 @@
 import { InstanceFrame } from '@opengewerk/platform-web/instance'
 import type { InstanceEntry } from '@opengewerk/platform-web/instance'
-import { History, House, Settings, Shield, ShieldCheck } from 'lucide-react'
+import { File as FileIcon, History, House, Settings, Shield, ShieldCheck } from 'lucide-react'
 
 /**
  * The screens of the area of the instance (#188), `INSTANCE_NAV` of the
  * canvas, by this application's words: the businesses on it, part B of the
- * measures, and the operators for whoever runs it.
+ * measures, the operators for whoever runs it, and the legal texts of the
+ * instance (#619).
  */
 const navigation: readonly InstanceEntry[] = [
   { to: '/instanz', label: 'Betriebe', icon: House },
@@ -13,6 +14,7 @@ const navigation: readonly InstanceEntry[] = [
   // Part B of the measures and the subprocessors (#319).
   { to: '/instanz/massnahmen', label: 'Maßnahmen', icon: ShieldCheck },
   { to: '/instanz/betreiber', label: 'Betreiber', icon: Shield },
+  { to: '/instanz/rechtstexte', label: 'Rechtstexte', icon: FileIcon },
   { to: '/instanz/protokoll', label: 'Protokoll', icon: History },
 ]
 

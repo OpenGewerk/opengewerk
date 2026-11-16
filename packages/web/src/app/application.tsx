@@ -139,7 +139,7 @@ export const application: InterfaceApplication = {
     },
     legal: {
       keptBy:
-        'Den Text pflegen die Betreiber der Instanz in ihrem Bereich. Er steht nicht im Quelltext der Anwendung.',
+        'Den Text pflegen die Betreiber der Instanz unter „Instanz verwalten“, „Rechtstexte“. Er steht nicht im Quelltext der Anwendung.',
       missing: 'Diesen Text haben die Betreiber der Instanz noch nicht hinterlegt.',
     },
   },

@@ -9,6 +9,10 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Hinzugefügt
 
+- Wer die Instanz betreibt, pflegt Impressum und Datenschutzhinweise der Instanz unter „Instanz verwalten“,
+  „Rechtstexte“ (#619). Der Bildschirm kommt aus dem Fundament, die Handwerkersoftware bindet ihn in die Navigation
+  ihres Bereichs der Instanz; die Seite unter /rechtliches nennt diesen Weg. Warum: Bisher konnte auf einer Instanz der
+  Handwerkersoftware niemand ein Impressum hinterlegen, und der Fuß der Anmeldung zeigte keinen Link dazu.
 - Die Prüfung eines Geräts nach DGUV Vorschrift 3 kennt Geräte mit Heizelementen und Anschlussleitungen über 1,5 mm²
   (#816, Migration 0147, Paket Elektro 0.12.0, Fassung 3 des Formulars). Am Gerät stehen, beide freiwillig, die
   Heizleistung in kW und der Querschnitt der Anschlussleitung in mm², im Büro und auf der Baustelle. Ein Gerät der
