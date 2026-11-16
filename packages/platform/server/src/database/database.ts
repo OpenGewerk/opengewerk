@@ -450,7 +450,10 @@ export class Database {
    * the owner of the tables look there for what they call, and an overload or a
    * table the application put there in advance would run or be read with the
    * owner's rights. PostgreSQL 15 took that right from every role; a cluster
-   * upgraded from an older version still grants it.
+   * upgraded from an older version still grants it. And it may own no
+   * function, operator or type there: taking the right back leaves what it made
+   * while it had it, and that would still be found (security review on
+   * opengewerk#975).
    *
    * Asked once at the start, after `isReachable`; the answer is a sentence for
    * whoever set up the database.
@@ -463,13 +466,20 @@ export class Database {
       member: boolean
       owns: boolean
       creates: boolean
+      places: boolean
     }>(
       `select r.rolname as name, r.rolsuper as superuser, r.rolbypassrls as bypass,
               coalesce((select pg_has_role(r.oid, o.oid, 'MEMBER') from pg_roles o where o.rolname = $1),
                        false) as member,
               exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
                        where n.nspname = 'public' and c.relowner = r.oid) as owns,
-              has_schema_privilege(r.oid, 'public', 'CREATE') as creates
+              has_schema_privilege(r.oid, 'public', 'CREATE') as creates,
+              exists (select 1 from pg_proc p
+                       where p.pronamespace = 'public'::regnamespace and p.proowner = r.oid)
+              or exists (select 1 from pg_operator o
+                          where o.oprnamespace = 'public'::regnamespace and o.oprowner = r.oid)
+              or exists (select 1 from pg_type t
+                          where t.typnamespace = 'public'::regnamespace and t.typowner = r.oid) as places
          from pg_roles r
         where r.rolname = current_user`,
       [migrationRole],
@@ -519,6 +529,15 @@ export class Database {
         `was sie aufrufen; was diese Rolle vorher anlegt, liefe mit diesen Rechten. Ein Cluster, ` +
         `der von einer Fassung vor PostgreSQL 15 kam, erlaubt das jeder Rolle. Abhilfe als ` +
         `Eigentümer des Schemas: REVOKE CREATE ON SCHEMA public FROM PUBLIC.`
+      )
+    }
+
+    if (role.places) {
+      return (
+        `Die Anwendung verbindet sich als "${role.name}", und dieser Rolle gehören Funktionen, ` +
+        `Operatoren oder Typen im Schema "public". Dort suchen die Funktionen, die mit den Rechten ` +
+        `von "${migrationRole}" laufen, was sie aufrufen, und fänden sie. Abhilfe: diese Objekte ` +
+        `prüfen und löschen. Sie "${migrationRole}" zu übertragen genügt nicht, dann liefen sie weiter.`
       )
     }
 

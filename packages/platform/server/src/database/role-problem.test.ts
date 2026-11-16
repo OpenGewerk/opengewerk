@@ -45,6 +45,7 @@ async function problemOf(role: string): Promise<string | null> {
 /** Roles live in the cluster and outlast the schema, so they go by hand. */
 async function dropRoles(): Promise<void> {
   await pool.query('drop table if exists public.role_problem_probe')
+  await pool.query('drop function if exists public.role_problem_planted()')
 
   for (const role of Object.values(roles)) {
     await pool.query(`drop role if exists "${role}"`)
@@ -110,6 +111,25 @@ describe('the role an application connects as (#685)', () => {
       )
     } finally {
       await pool.query('revoke create on schema public from public')
+    }
+
+    expect(await problemOf(roles.plain)).toBeNull()
+  })
+
+  it('is refused when it owns a function in public, made while it still could', async () => {
+    // Taking the right back leaves what was made with it, and the owner's
+    // functions would still find it (opengewerk#975).
+    await pool.query(
+      "create function public.role_problem_planted() returns integer language sql as 'select 1'",
+    )
+    await pool.query(`alter function public.role_problem_planted() owner to "${roles.plain}"`)
+
+    try {
+      expect(await problemOf(roles.plain)).toContain(
+        `"${roles.plain}", und dieser Rolle gehören Funktionen, Operatoren oder Typen`,
+      )
+    } finally {
+      await pool.query('drop function public.role_problem_planted()')
     }
 
     expect(await problemOf(roles.plain)).toBeNull()
