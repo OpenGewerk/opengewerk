@@ -81,15 +81,25 @@ export function SiteFrame({
   const [slot, setSlot] = useState<HTMLElement | null>(null)
   // The bar at the foot of a form, see `SiteActionBar`.
   const [actionSlot, setActionSlot] = useState<HTMLElement | null>(null)
-  const [menuOpen, setMenuOpen] = useState(false)
-  const openMenu = useCallback(() => {
-    setMenuOpen(true)
-  }, [])
-  const closeMenu = useCallback(() => {
-    setMenuOpen(false)
-  }, [])
   const places = usePlaces(tabs, conflicts)
   const path = useRouterState({ select: (state) => state.location.pathname })
+  // The menu stands open on the screen it was opened on: a row of it that
+  // leads to another screen closes it on the way there, and coming back to
+  // that screen leaves it closed. Put right while rendering, as React has it
+  // for state that follows a value, and not in an effect.
+  const [menuAt, setMenuAt] = useState<string | null>(null)
+
+  if (menuAt !== null && menuAt !== path) {
+    setMenuAt(null)
+  }
+
+  const menuOpen = menuAt === path
+  const openMenu = useCallback(() => {
+    setMenuAt(path)
+  }, [path])
+  const closeMenu = useCallback(() => {
+    setMenuAt(null)
+  }, [])
   // The heading of a screen below the tabs stands in the header above the
   // content, so the frame is what is asked for it.
   const frame = useRef<HTMLDivElement>(null)

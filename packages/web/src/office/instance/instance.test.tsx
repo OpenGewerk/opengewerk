@@ -207,6 +207,7 @@ describe('the area of the instance in this application', () => {
       ['Betreiber', '/instanz/betreiber'],
       ['Rechtstexte', '/instanz/rechtstexte'],
       ['Protokoll', '/instanz/protokoll'],
+      ['Handbuch', '/instanz/handbuch'],
       ['Zurück zum Büro', '/'],
     ])
     expect(within(nav).getByRole('link', { name: 'Betriebe' }).getAttribute('aria-current')).toBe(

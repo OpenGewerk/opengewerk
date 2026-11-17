@@ -11,7 +11,7 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import { useContext } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -388,5 +388,54 @@ describe('the strip for a backup that is behind', () => {
     await new Promise((resolve) => setTimeout(resolve, 50))
 
     expect(screen.queryByText(/gesichert/)).toBeNull()
+  })
+})
+
+describe('the help of a page of the office (#269)', () => {
+  async function openHelp(): Promise<HTMLElement> {
+    await sidebar()
+    within(screen.getByRole('banner'))
+      .getByRole('button', { name: 'Hilfe zu dieser Seite' })
+      .click()
+
+    return screen.findByRole('complementary', { name: 'Hilfe' })
+  }
+
+  it('opens beside the page with its own text and the steps of its main flow', async () => {
+    await mount('/')
+
+    const help = await openHelp()
+
+    expect(await within(help).findByRole('heading', { name: 'Kunden' })).toBeTruthy()
+    expect(within(help).getByText(/„Neuer Kunde“ anlegen/)).toBeTruthy()
+  })
+
+  it('reads the text of the customers at a customer, which it lends them', async () => {
+    await mount('/kunden/k-1')
+
+    const help = await openHelp()
+
+    expect(await within(help).findByRole('heading', { name: 'Kunden' })).toBeTruthy()
+  })
+
+  it('leads on to the quick guides, and to the manual only for whoever runs the instance', async () => {
+    await mount('/auftraege')
+
+    let help = await openHelp()
+
+    await within(help).findByRole('heading', { name: 'Aufträge' })
+    expect(within(help).getByRole('link', { name: 'Kurzanleitungen' }).getAttribute('href')).toBe(
+      '/hilfe',
+    )
+    expect(within(help).queryByRole('link', { name: 'Handbuch öffnen' })).toBeNull()
+
+    cleanup()
+    answers.set('/instance/access', { operator: true, secondFactor: true })
+    await mount('/auftraege')
+    help = await openHelp()
+
+    expect(
+      (await within(help).findByRole('link', { name: 'Handbuch öffnen' })).getAttribute('href'),
+    ).toBe('/instanz/handbuch')
   })
 })

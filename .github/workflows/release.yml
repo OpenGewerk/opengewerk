@@ -294,7 +294,7 @@ jobs:
           - `ghcr.io/opengewerk/opengewerk:{version}` (`{os.environ["APP_DIGEST"]}`)
           - `ghcr.io/opengewerk/backup:{version}` (`{os.environ["BACKUP_DIGEST"]}`)
           {mirror}
-          Gebraucht werden Docker und Docker Compose ab 2.22. Beide Abbilder sind ohne Schlüssel über Sigstore signiert. Prüfen:
+          Gebraucht werden Docker Engine ab 28.3.3 und Docker Compose ab 2.22. Beide Abbilder sind ohne Schlüssel über Sigstore signiert. Prüfen:
 
           ```bash
           cosign verify ghcr.io/opengewerk/opengewerk:{version} \\

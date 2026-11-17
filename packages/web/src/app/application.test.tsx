@@ -113,7 +113,8 @@ describe('the gate of this application', () => {
       'OpenGewerk' +
         'Kunde, Objekt, Anlage, Auftrag, Beleg. Ein Datenmodell statt sechs Programme.' +
         'Diese Instanz läuft auf Ihrem eigenen Server. Die Daten verlassen ihn nicht, und niemand außer Ihnen kann sie abschalten.' +
-        'AGPL-3.0',
+        'AGPL-3.0' +
+        'Hilfe',
     )
   })
 

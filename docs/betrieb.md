@@ -17,8 +17,8 @@ unter [Releases](https://github.com/OpenGewerk/opengewerk/releases). Entpackt un
 demselben Befehl gestartet, baut eine solche Installation nichts, sondern holt
 die Abbilder ihrer Fassung aus `ghcr.io/opengewerk`. Die Fassung steht in
 `docker/compose.yaml` an jedem Abbild, und so nimmt jeder `docker
-compose`-Befehl weiter unten dieselbe. Gebraucht werden Docker und Docker
-Compose ab 2.22. Ein Checkout des Repositorys hat an derselben Stelle `source`
+compose`-Befehl weiter unten dieselbe. Gebraucht werden Docker Engine ab 28.3.3
+und Docker Compose ab 2.22. Ein Checkout des Repositorys hat an derselben Stelle `source`
 und baut die Abbilder aus dem Quelltext, für Entwicklung und Vorschau. Wer im
 Checkout lieber eine veröffentlichte Fassung betreibt, trägt sie in der `.env`
 als `OPENGEWERK_VERSION` ein.
@@ -626,8 +626,38 @@ docker compose -f docker/compose.yaml logs backup-schedule
 ## Zurückspielen
 
 ```bash
-docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh latest
+docker compose -f docker/compose.yaml stop app backup-schedule \
+  && docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh latest \
+  && sh docker/start.sh
 ```
+
+Die Anwendung ist dabei angehalten, damit niemand etwas einträgt, das das
+Zurückspielen gleich wieder überschreibt, und die nächtliche Sicherung auch:
+Sie legte sonst womöglich ein halb zurückgespieltes Archiv als neuestes ab, das
+ein späteres `latest` nähme. `start.sh` startet beide wieder. Läuft die
+Anwendung doch, sperrt `restore.sh` sie für die Dauer aus. Jeder Schritt läuft
+nur, wenn der davor gelang: Ließ sich die Anwendung nicht anhalten, wird nichts
+zurückgespielt, und bricht `restore.sh` ab, kann die Datenbank schon ersetzt und
+der Dateispeicher zum Teil ersetzt sein (siehe unten). Dann bleibt die
+Anwendung angehalten, bis die Ursache behoben und die Sicherung noch einmal
+zurückgespielt ist. Gestartet wird sie mit `start.sh` wie nach einem Update:
+Stammt die Sicherung von einer älteren Fassung, laufen zuerst die Migrationen,
+und fehlt der Container noch, etwa auf einer neuen Maschine, legt es ihn an.
+
+**Eine verschlüsselte Sicherung** braucht den privaten Schlüssel, und der liegt
+nicht auf dieser Maschine (siehe „Verschlüsselung und Aufbewahrung“). Er wird
+nur für diesen einen Lauf hineingereicht, als Datei, die nur root lesen kann:
+
+```bash
+docker compose -f docker/compose.yaml stop app backup-schedule \
+  && docker compose -f docker/compose.yaml --profile backup run --rm \
+    -v /root/age-schluessel.txt:/run/age-schluessel:ro \
+    -e BACKUP_AGE_IDENTITY=/run/age-schluessel \
+    backup restore.sh latest \
+  && sh docker/start.sh
+```
+
+Danach gehört die Datei wieder von der Maschine.
 
 **Zuerst die Herkunft.** Das Ziel liegt in der Regel auf einer anderen Maschine,
 und wer dort schreiben kann, kann ein Archiv neben die anderen legen. Ein
@@ -645,13 +675,32 @@ Kopie ist verschlüsselt, wenn das Archiv es ist, und braucht so viel Platz wie
 das Archiv.
 
 **Auf einer neuen Maschine** fehlt das Verzeichnis, es lag mit dem Volume
-`backup-status` auf der alten. Dort spielt
+`backup-status` auf der alten. Dort kommt zuerst die `docker/.env` der alten
+Instanz an ihren Platz, vor jedem Start: Mit einer neuen ließen sich zweite
+Faktoren und gespeicherte Passwörter nicht mehr öffnen, weil `SESSION_SECRET`
+ein anderes wäre, und die Passwörter der Datenbank passten nicht zu dem, was
+der erste Start anlegt. `setup.sh` lässt eine vorhandene `.env` stehen und
+ergänzt nur, was fehlt. Ebenso vor dem ersten Start muss das Archiv dort
+liegen, wohin `BACKUP_TARGET` zeigt: Ein Ziel auf einer anderen Maschine wird
+zuerst eingehängt, und wer mit der Vorgabe, dem Volume `backups`, gesichert und
+die Archive von Hand kopiert hat, legt die Kopien in ein Verzeichnis und trägt
+dessen absoluten Pfad als `BACKUP_TARGET` ein. Das Volume der neuen Maschine ist
+leer, und `restore.sh` sucht ein Archiv nur dort. Dann startet die Instanz einmal leer, damit es den
+Dateispeicher gibt und er dem Benutzer der Anwendung gehört: `restore.sh` gibt
+den zurückgespielten Dateien den Eigentümer dieses Ordners, und legte erst die
+Sicherung das Volume an, gehörte er root. Danach spielt
 
 ```bash
-docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh --skip-origin-check <archiv>
+sh docker/start.sh \
+  && docker compose -f docker/compose.yaml stop app backup-schedule \
+  && docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh --skip-origin-check <archiv> \
+  && sh docker/start.sh
 ```
 
-das Archiv trotzdem zurück, mit allen Prüfungen, die danach kommen. Der Schalter
+das Archiv trotzdem zurück, mit allen Prüfungen, die danach kommen. Ist es
+verschlüsselt, kommen die beiden Angaben für den Schlüssel aus dem Beispiel
+oben (`-v /root/age-schluessel.txt:/run/age-schluessel:ro` und
+`-e BACKUP_AGE_IDENTITY=/run/age-schluessel`) auch hier hinter `run --rm`. Der Schalter
 heißt, was er tut: die Herkunft prüft dann nur noch, wer ihn tippt. Also ein
 Archiv mit seinem Namen nennen, dessen Zeit und Größe zu den eigenen Sicherungen
 passen, statt `latest`, und den Schalter nur setzen, wo das Verzeichnis wirklich
@@ -765,7 +814,7 @@ Die Zeile mit `age1…` ist der öffentliche Schlüssel und gehört als
 `BACKUP_AGE_RECIPIENT` in die `.env`. Die Zeile mit `AGE-SECRET-KEY-…` gehört
 woanders hin, nicht auf diese Maschine: ein Schlüssel, der neben dem Archiv
 liegt, schützt vor nichts. Zum Zurückspielen wird er für genau diesen einen
-Lauf hineingereicht.
+Lauf hineingereicht, wie unter „Zurückspielen“ gezeigt.
 
 Ohne gesetzten Empfänger läuft die Sicherung trotzdem, gibt aber eine Warnung
 aus. Sie enthält Kundendaten, Belege und das Audit-Log.
@@ -871,11 +920,22 @@ geht es in dieser Reihenfolge: zuerst die neue Fassung anhalten,
 docker compose -f docker/compose.yaml stop app backup-schedule
 ```
 
-dann die Sicherung von vor dem Update zurückspielen, wie unter
-"Zurückspielen" beschrieben, und zwar noch mit der neuen Fassung, denn bis
-0.8.0 spielt `restore.sh` nicht in eine Datenbank zurück, die weiter ist als
-die Sicherung. Danach das Paket der alten Fassung an dieselbe Stelle
-entpacken. Das Zurückspielen lässt die Anwendung dabei ausgesperrt, bis die
+dann die Sicherung von vor dem Update zurückspielen, mit ihrem Namen und noch
+mit der neuen Fassung, denn bis 0.8.0 spielt `restore.sh` nicht in eine
+Datenbank zurück, die weiter ist als die Sicherung:
+
+```bash
+docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh <archiv>
+```
+
+Anders als unter "Zurückspielen" folgt hier noch kein `start.sh`: Das der
+neuen Fassung brächte die Datenbank mit ihren Migrationen gleich wieder auf
+den neuen Stand, und die alte Fassung lehnte sie danach ab. Eine verschlüsselte
+Sicherung bekommt ihren Schlüssel wie dort. Nur wenn `restore.sh` ohne Fehler
+durchlief, geht es weiter: Scheitert es, bleibt die Anwendung angehalten, und
+war die Datenbank schon ersetzt, auch ausgesperrt, bis die Ursache behoben und
+die Sicherung noch einmal zurückgespielt ist; weder das alte Paket noch der
+Befehl unten kommen vorher. Danach das Paket der alten Fassung an dieselbe Stelle entpacken. Das Zurückspielen lässt die Anwendung dabei ausgesperrt, bis die
 Migrationen gelaufen sind, und erst das `start.sh` einer Fassung nach 0.8.0
 gibt sie dann frei. Geht es zurück auf 0.8.0 oder früher, gibt man die
 Anmeldung deshalb vor dem Start von Hand zurück, und zwar erst, wenn die neue
@@ -919,7 +979,9 @@ Organisation.
 
 Vor die Anwendung gehört ein Reverse Proxy mit TLS. Sie lauscht absichtlich nur
 auf `127.0.0.1`: eine Anwendung, die Rechnungen führt, steht nicht
-unverschlüsselt im Netz. Zwei Vorlagen liegen unter `docker/proxy/`, auch im
+unverschlüsselt im Netz. Das hält Docker erst ab Engine 28.3.3: Davor erreichen
+Rechner im selben Netzsegment auch einen Port auf `127.0.0.1`, und 28.2.0 bis
+28.3.2 öffnen ihn nach einem Neuladen von firewalld wieder (CVE-2025-54388). Zwei Vorlagen liegen unter `docker/proxy/`, auch im
 Installationspaket: [`apache.conf`](../docker/proxy/apache.conf) für Apache 2.4
 und [`nginx.conf`](../docker/proxy/nginx.conf) für nginx. Jede ist für sich
 vollständig, mit der Weiterleitung von HTTP auf HTTPS, dem Zertifikat unter dem

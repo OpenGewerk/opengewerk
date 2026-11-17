@@ -1,6 +1,6 @@
 import { legalTextKinds, type LegalTexts } from '@opengewerk/platform-domain'
 import clsx from 'clsx'
-import { Lock, LockOpen } from 'lucide-react'
+import { ExternalLink, Lock, LockOpen } from 'lucide-react'
 import { createContext, useContext, useId } from 'react'
 import type { ReactNode } from 'react'
 
@@ -124,8 +124,6 @@ function Brand() {
         <p className="text-[24px] leading-[1.4] font-medium">{application.claim}</p>
         <p className="mt-5 text-[16px] leading-[1.55] text-gate-text">{application.hosting}</p>
       </div>
-      {/* The board drew a way to the help as well. There is none before
-          phase 2, and a link into nothing would be worse than none (#259). */}
       <GateFoot onSlate className="border-t border-gate-line pt-5 text-[13px] text-gate-faint" />
     </aside>
   )
@@ -134,9 +132,13 @@ function Brand() {
 /** The names of the legal texts in the foot, shorter than the headings of their page. */
 const footLabels = { imprint: 'Impressum', privacy: 'Datenschutz' } as const
 
+/** The way to the help outside the instance, after the legal texts. */
+const footHelp = 'Hilfe'
+
 /**
- * The foot of every step before working: the licence and the version, and the
- * legal texts of the instance (opengewerk-haustechnik#129). A link only for a
+ * The foot of every step before working: the licence and the version, the
+ * legal texts of the instance (opengewerk-haustechnik#129) and, where the
+ * application names one, the way to its help outside the instance. A link only for a
  * text that is kept: one into an empty page would be worse than none. They
  * lead to the page of the texts, which `Boot` shows by its address, before
  * anybody is asked who they are.
@@ -172,6 +174,22 @@ export function GateFoot({
             {footLabels[kind]}
           </a>
         ) : null,
+      )}
+      {application.help === undefined ? null : (
+        // Outside the instance, as the application names it: before signing
+        // in nothing of the application is loaded, its texts included.
+        <a
+          href={application.help}
+          target="_blank"
+          rel="noreferrer"
+          className={clsx(
+            'inline-flex items-center gap-1 underline underline-offset-2',
+            onSlate ? 'text-gate-text' : 'text-copper-text',
+          )}
+        >
+          {footHelp}
+          <ExternalLink size={12} strokeWidth={2.2} aria-hidden="true" className="shrink-0" />
+        </a>
       )}
     </footer>
   )

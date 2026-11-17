@@ -155,7 +155,11 @@ export function HelpDrawer({
         </button>
       </div>
 
-      {text.isPending ? (
+      {text.isError ? (
+        <p className="text-[13px] leading-[1.55] text-ink-muted">
+          Der Hilfetext ließ sich nicht laden. Lade die Seite neu.
+        </p>
+      ) : text.isPending ? (
         <p className="text-[13px] text-ink-muted">Wird geladen.</p>
       ) : markdown === null ? (
         <p className="text-[13px] leading-[1.55] text-ink-muted">

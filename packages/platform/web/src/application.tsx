@@ -40,6 +40,13 @@ export interface InterfaceApplication {
   readonly hosting: string
   /** The licence it is under, at the foot of the gate. */
   readonly licence: string
+  /**
+   * Where its help stands outside the instance, as an address, linked at the
+   * foot of the gate after the legal texts: before signing in nothing of the
+   * application is loaded, its texts included. Without it the foot has no
+   * such link.
+   */
+  readonly help?: string
   /** How long the name of a tenant may be, as the server takes it. */
   readonly tenantNameMaxLength: number
   /**

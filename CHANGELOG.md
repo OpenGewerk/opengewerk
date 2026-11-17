@@ -7,6 +7,24 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ## [Unreleased]
 
+### Hinzugefügt
+
+- Die Hilfe im Büro und auf der Baustelle (#269), nach Abschnitt 8 der Feature-Gliederung v2.81 und den Tafeln aus Version
+  168 des Canvas: Das Fragezeichen in der Kopfleiste öffnet neben jeder Seite des Büros ihren Text: wofür sie da ist
+  und, wo sie einen Ablauf hat, seine Schritte; auf einem schmalen Bildschirm steht „Hilfe zu dieser Seite“ im Menü. Unter „Hilfe“ stehen
+  die Kurzanleitungen zu Angebot, Regiebericht und Rechnung, Plantafel und Prüfprotokoll, eine Suche über die Texte
+  des Büros, die Kurzanleitungen und die Versionshinweise, und „Was ist neu“ mit den Versionshinweisen in der Sprache eines Betriebs. Auf der Baustelle führt das Menü zur Hilfe,
+  mit einem Text je Bildschirm und denselben Kurzanleitungen. Wer die Instanz betreibt, findet im Bereich der Instanz
+  das Handbuch mit Installation, Update, Sicherung und weiteren Betrieben. Die Texte kommen mit der Anwendung und sind
+  ohne Netz da; der Fuß der Anmeldung führt zur Hilfe auf opengewerk.de, weil vor der Anmeldung nichts von der
+  Anwendung geladen ist. Ein Test hält fest, dass jede Seite des Büros einen Text hat. Warum: Wer neu in OpenGewerk
+  arbeitet, soll an der Stelle nachlesen können, an der die Frage aufkommt, auch im Keller ohne Netz.
+
+### Geändert
+
+- Das Security-Review steht auf `fa57df6` von OpenGewerk/.github und wechselt jetzt auch beim Ausgabenlimit eines Arbeitsbereichs auf das zweite Konto (OpenGewerk/.github#62). Warum: Die Meldung dazu lautet seit dem 17.11.2026 anders, das Review erkannte sie nicht und endete am Pull Request ohne Bericht.
+- Gebraucht wird jetzt Docker Engine ab 28.3.3, so steht es in README, `docs/betrieb.md`, Handbuch und auf der Release-Seite. Warum: Ältere Fassungen lassen Rechner im selben Netz an Ports, die nur auf `127.0.0.1` veröffentlicht sind, und 28.2.0 bis 28.3.2 öffnen sie nach einem Neuladen von firewalld wieder (CVE-2025-54388); OpenGewerk steht dort hinter einem Proxy mit TLS. Prüfen wird das `start.sh` mit #985.
+
 ### Behoben
 
 - Eine Sicherung einer älteren Fassung geht in eine Datenbank einer neueren zurück, und ein gescheitertes

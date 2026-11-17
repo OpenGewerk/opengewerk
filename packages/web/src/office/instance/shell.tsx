@@ -1,6 +1,14 @@
 import { InstanceFrame } from '@opengewerk/platform-web/instance'
 import type { InstanceEntry } from '@opengewerk/platform-web/instance'
-import { File as FileIcon, History, House, Settings, Shield, ShieldCheck } from 'lucide-react'
+import {
+  BookOpen,
+  File as FileIcon,
+  History,
+  House,
+  Settings,
+  Shield,
+  ShieldCheck,
+} from 'lucide-react'
 
 /**
  * The screens of the area of the instance (#188), `INSTANCE_NAV` of the
@@ -16,6 +24,8 @@ const navigation: readonly InstanceEntry[] = [
   { to: '/instanz/betreiber', label: 'Betreiber', icon: Shield },
   { to: '/instanz/rechtstexte', label: 'Rechtstexte', icon: FileIcon },
   { to: '/instanz/protokoll', label: 'Protokoll', icon: History },
+  // The manual for running the instance (#269).
+  { to: '/instanz/handbuch', label: 'Handbuch', icon: BookOpen },
 ]
 
 /**

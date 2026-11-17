@@ -239,6 +239,18 @@ describe('the help while somebody moves on', () => {
     expect(within(drawer).getByRole('heading', { level: 2, name: 'Hilfe' })).toBeTruthy()
   })
 
+  it('says that a text failed to load, and not that there is none', async () => {
+    await frame({ help: source({ textAt: () => Promise.reject(new Error('Kein Netz.')) }) })
+    await userEvent.click(await questionMark())
+
+    const drawer = screen.getByRole('complementary', { name: 'Hilfe' })
+
+    expect(
+      await within(drawer).findByText('Der Hilfetext ließ sich nicht laden. Lade die Seite neu.'),
+    ).toBeTruthy()
+    expect(within(drawer).queryByText('Zu dieser Seite gibt es noch keinen Hilfetext.')).toBeNull()
+  })
+
   it('shows the text without a network, where the application ships it', async () => {
     // A query waits for a network unless told that it needs none, and the
     // text of a page would never arrive in a cellar.

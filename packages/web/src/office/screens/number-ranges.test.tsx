@@ -113,7 +113,9 @@ describe('the number ranges', () => {
 
     expect(invoiceRow.textContent).toContain('RE-{year}-{number:4}')
     expect(invoiceRow.textContent).toContain('RE-2026-0014')
-    expect(invoiceRow.textContent).toContain('lückenlos')
+    expect(invoiceRow.textContent).toContain(
+      'gemeinsam fortlaufend, und jede Nummer gibt es nur einmal',
+    )
 
     await waitFor(() => {
       expect(within(invoiceRow).queryByRole('button')).toBeNull()

@@ -63,6 +63,9 @@ export const application: InterfaceApplication = {
   hosting:
     'Diese Instanz läuft auf Ihrem eigenen Server. Die Daten verlassen ihn nicht, und niemand außer Ihnen kann sie abschalten.',
   licence: 'AGPL-3.0',
+  // The quick guides and the manual on the website, from the same texts as in
+  // the application (#269).
+  help: 'https://opengewerk.de/hilfe/',
   tenantNameMaxLength: businessNameMaxLength,
   tenantNameProblem: businessNameProblem,
   // The office has them and hands them in itself; see above.

@@ -3,6 +3,7 @@ import { SiteFrame, SitePush } from '@opengewerk/platform-web/site'
 import type { SiteTab } from '@opengewerk/platform-web/site'
 import { Calendar, Clock, ScanLine } from 'lucide-react'
 
+import { HelpMenuRow } from './help-row.js'
 import { StopwatchBar } from './screens/time.js'
 
 /**
@@ -28,5 +29,17 @@ const tabs: readonly SiteTab[] = [
 export function SiteShell() {
   usePushRefresh('site')
 
-  return <SiteFrame tabs={tabs} underHeader={<StopwatchBar />} menu={<SitePush entry="site" />} />
+  return (
+    <SiteFrame
+      tabs={tabs}
+      underHeader={<StopwatchBar />}
+      menu={
+        <>
+          <SitePush entry="site" />
+          {/* The help is read without a network, for everybody who holds a device (#269). */}
+          <HelpMenuRow />
+        </>
+      }
+    />
+  )
 }

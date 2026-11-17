@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { Button } from '../components/button.js'
 import { Field } from '../components/field.js'
-import { InProbe } from '../probe-application.js'
+import { InProbe, probeApplication } from '../probe-application.js'
 import { Gate, InstanceLegalTexts, InstanceVersion } from './frame.js'
 
 /**
@@ -123,6 +123,38 @@ describe('the gate before sign in', () => {
     rerender(withTexts(null))
 
     expect(screen.queryAllByRole('link')).toEqual([])
+  })
+
+  it('links the help of the application after the legal texts, where it names one, and nothing without', () => {
+    const { rerender } = render(
+      <InProbe application={probeApplication({ help: 'https://example.org/hilfe/' })}>
+        <InstanceLegalTexts.Provider value={{ imprint: 'Probewerk GmbH', privacy: null }}>
+          <Gate title="Anmelden">Inhalt</Gate>
+        </InstanceLegalTexts.Provider>
+      </InProbe>,
+    )
+
+    // At a desk under the brand and on a phone under the card, after the legal texts.
+    const links = screen.getAllByRole('link', { name: 'Hilfe' })
+
+    expect(links.map((link) => link.getAttribute('href'))).toEqual([
+      'https://example.org/hilfe/',
+      'https://example.org/hilfe/',
+    ])
+    expect(links.map((link) => link.getAttribute('rel'))).toEqual(['noreferrer', 'noreferrer'])
+    for (const foot of screen.getAllByRole('contentinfo')) {
+      expect(foot.textContent).toMatch(/Impressum.*Hilfe$/)
+    }
+
+    rerender(
+      <InProbe>
+        <InstanceLegalTexts.Provider value={null}>
+          <Gate title="Anmelden">Inhalt</Gate>
+        </InstanceLegalTexts.Provider>
+      </InProbe>,
+    )
+
+    expect(screen.queryByRole('link', { name: 'Hilfe' })).toBeNull()
   })
 
   it('shows what a step puts over its card, after the address and before the card', () => {

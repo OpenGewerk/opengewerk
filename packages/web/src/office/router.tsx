@@ -36,6 +36,8 @@ import {
  */
 const screens = {
   account: () => import('./screens/account.js'),
+  help: () => import('./screens/help.js'),
+  manual: () => import('./instance/manual.js'),
   articles: () => import('./screens/articles.js'),
   deadlineSettings: () => import('./screens/deadline-settings.js'),
   deadlines: () => import('./screens/deadlines.js'),
@@ -83,6 +85,11 @@ const screens = {
 }
 
 const AccountScreen = lazyRouteComponent(screens.account, 'AccountScreen')
+const HelpScreen = lazyRouteComponent(screens.help, 'HelpScreen')
+const GuideScreen = lazyRouteComponent(screens.help, 'GuideScreen')
+const NewsScreen = lazyRouteComponent(screens.help, 'NewsScreen')
+const ManualScreen = lazyRouteComponent(screens.manual, 'ManualScreen')
+const ManualChapterScreen = lazyRouteComponent(screens.manual, 'ManualChapterScreen')
 const ArticleListScreen = lazyRouteComponent(screens.articles, 'ArticleListScreen')
 const ArticleScreen = lazyRouteComponent(screens.articles, 'ArticleScreen')
 const EditArticleScreen = lazyRouteComponent(screens.articles, 'EditArticleScreen')
@@ -232,6 +239,13 @@ const instanceRoutes = [
     component: InstanceLegalTextsScreen,
   }),
   createRoute({ getParentRoute: () => instance, path: '/protokoll', component: InstanceLogScreen }),
+  // The manual for whoever runs the instance (#269).
+  createRoute({ getParentRoute: () => instance, path: '/handbuch', component: ManualScreen }),
+  createRoute({
+    getParentRoute: () => instance,
+    path: '/handbuch/$chapter',
+    component: ManualChapterScreen,
+  }),
 ]
 
 const routes = [
@@ -472,6 +486,12 @@ const routes = [
   }),
   createRoute({ getParentRoute: () => office, path: '/konflikte', component: SyncScreen }),
   createRoute({ getParentRoute: () => office, path: '/konto', component: AccountScreen }),
+  // The help (#269): the quick guides, the notes on each version and a search
+  // through both and the texts of the office; the help of a single page stands
+  // beside it.
+  createRoute({ getParentRoute: () => office, path: '/hilfe', component: HelpScreen }),
+  createRoute({ getParentRoute: () => office, path: '/hilfe/neu', component: NewsScreen }),
+  createRoute({ getParentRoute: () => office, path: '/hilfe/$guide', component: GuideScreen }),
   createRoute({ getParentRoute: () => office, path: '/einstellungen', component: SettingsScreen }),
   createRoute({
     getParentRoute: () => office,
