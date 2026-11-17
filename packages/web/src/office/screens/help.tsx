@@ -233,15 +233,21 @@ export function HelpScreen() {
             </Panel>
             <NoteBox>{helpWords.perPage}</NoteBox>
           </div>
-          {!present(news) || newest === undefined ? null : (
+          {present(news) && newest === undefined ? null : (
             <div className="w-[360px] shrink-0 max-lg:w-full">
               <Panel title={helpWords.news}>
-                <div className="flex flex-col gap-2.5">
-                  <Version version={newest} text={news.get(newest) ?? ''} only={3} />
-                  <Link to={newsPlace} className={`${cardLink} relative self-start text-[13px]`}>
-                    {helpWords.allNews}
-                  </Link>
-                </div>
+                {!present(news) || newest === undefined ? (
+                  // While the notes are on their way, or once they failed, the
+                  // column says so instead of being left out without a word.
+                  <Empty>{absence(helpWords.loading, news)}</Empty>
+                ) : (
+                  <div className="flex flex-col gap-2.5">
+                    <Version version={newest} text={news.get(newest) ?? ''} only={3} />
+                    <Link to={newsPlace} className={`${cardLink} relative self-start text-[13px]`}>
+                      {helpWords.allNews}
+                    </Link>
+                  </div>
+                )}
               </Panel>
             </div>
           )}
