@@ -147,7 +147,10 @@ function Hits({ query }: { readonly query: string }) {
     <Panel title={helpWords.hits(hits.length, words)}>
       <ul className="flex flex-col">
         {hits.map((hit) => (
-          <li key={`${hit.kind} ${hit.key}`} className="border-b border-row py-2.5 last:border-b-0">
+          <li
+            key={`${hit.kind} ${hit.key}`}
+            className="relative border-b border-row py-2.5 last:border-b-0"
+          >
             <div className="flex flex-wrap items-baseline gap-2">
               <Link to={hitAddress(hit)} className={`${cardLink} text-[14px] font-semibold`}>
                 {hitTitle(hit)}
@@ -227,7 +230,7 @@ export function HelpScreen() {
               <Panel title={helpWords.news}>
                 <div className="flex flex-col gap-2.5">
                   <Version version={newest} text={news.get(newest) ?? ''} only={3} />
-                  <Link to={newsPlace} className={`${cardLink} text-[13px]`}>
+                  <Link to={newsPlace} className={`${cardLink} relative self-start text-[13px]`}>
                     {helpWords.allNews}
                   </Link>
                 </div>
