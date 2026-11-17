@@ -342,13 +342,15 @@ BEGIN
 		EXECUTE pg_catalog.format('DROP %s IF EXISTS %s CASCADE', item.kind, item.name);
 	END LOOP;
 
+	-- Enums, domains and ranges. Not multiranges: one goes with its range and
+	-- cannot go on its own, and dropped first it would stop the restore.
 	FOR item IN
 		SELECT pg_catalog.quote_ident(n.nspname) || '.' || pg_catalog.quote_ident(t.typname) AS name,
 		       CASE t.typtype WHEN 'd' THEN 'DOMAIN' ELSE 'TYPE' END AS kind
 		  FROM pg_catalog.pg_type t
 		  JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
 		 WHERE n.nspname = 'public'
-		   AND t.typtype IN ('e', 'd', 'r', 'm')
+		   AND t.typtype IN ('e', 'd', 'r')
 		   AND t.typowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
 	LOOP
 		EXECUTE pg_catalog.format('DROP %s IF EXISTS %s CASCADE', item.kind, item.name);
