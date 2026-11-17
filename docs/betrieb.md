@@ -627,13 +627,15 @@ docker compose -f docker/compose.yaml logs backup-schedule
 
 ```bash
 docker compose -f docker/compose.yaml stop app
-docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh latest
-docker compose -f docker/compose.yaml start app
+docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh latest   && docker compose -f docker/compose.yaml start app
 ```
 
 Die Anwendung ist dabei angehalten, damit niemand etwas einträgt, das das
 Zurückspielen gleich wieder überschreibt. Läuft sie doch, sperrt `restore.sh`
-sie für die Dauer aus.
+sie für die Dauer aus. Gestartet wird sie nur, wenn `restore.sh` ohne Fehler
+durchlief: Bricht es ab, können Datenbank und Dateispeicher schon zum Teil
+ersetzt sein. Dann bleibt die Anwendung angehalten, bis die Ursache behoben und
+die Sicherung noch einmal zurückgespielt ist.
 
 **Zuerst die Herkunft.** Das Ziel liegt in der Regel auf einer anderen Maschine,
 und wer dort schreiben kann, kann ein Archiv neben die anderen legen. Ein

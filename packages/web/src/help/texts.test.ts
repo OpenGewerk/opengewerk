@@ -1,7 +1,7 @@
 import { markdownProblems, markdownTitle, readMarkdown } from '@opengewerk/platform-web'
 import { describe, expect, it } from 'vitest'
 
-import { lenders, officeHelpKey } from '../office/help.js'
+import { helpKeyOf, lenders, officeHelpKey } from '../office/help.js'
 import { guideTexts } from './guide-texts.js'
 import { manualTexts } from './manual-texts.js'
 import { newsTexts } from './news-texts.js'
@@ -90,8 +90,8 @@ describe('the texts of the help', () => {
   })
 
   it('lend only texts there are, to addresses the office has', () => {
-    for (const { root, key } of lenders) {
-      expect(officeTexts.has(key), key).toBe(true)
+    for (const { root, from } of lenders) {
+      expect(officeTexts.has(helpKeyOf(from)), from).toBe(true)
       expect(
         officePaths().some((path) => path === root || path.startsWith(`${root}/`)),
         root,

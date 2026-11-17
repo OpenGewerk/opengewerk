@@ -44,7 +44,7 @@ export const guideOrder = [
   'angebot',
   'regiebericht-zur-rechnung',
   'plantafel',
-  'pruefprotokoll',
+  'protokoll',
 ] as const
 
 /** The chapters of the manual, in the order somebody who sets up an instance needs them. */

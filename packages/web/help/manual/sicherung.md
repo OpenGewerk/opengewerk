@@ -8,7 +8,7 @@ Die Befehle laufen im Ordner der Installation, etwa `/opt/opengewerk`.
 
 - Sichern: `docker compose -f docker/compose.yaml --profile backup run --rm backup backup.sh`
 - Prüfen, ob die letzte Sicherung vollständig ist: `docker compose -f docker/compose.yaml --profile backup run --rm backup verify.sh latest`
-- Zurückspielen: zuerst die Anwendung anhalten, `docker compose -f docker/compose.yaml stop app`, dann `docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh latest`, danach die Anwendung wieder starten, `docker compose -f docker/compose.yaml start app`.
+- Zurückspielen: zuerst die Anwendung anhalten, `docker compose -f docker/compose.yaml stop app`, dann `docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh latest`, und erst wenn das ohne Fehler durchlief, die Anwendung wieder starten, `docker compose -f docker/compose.yaml start app`. Bricht `restore.sh` ab, bleibt die Anwendung angehalten: Datenbank und Dateispeicher können dann schon zum Teil ersetzt sein. Behebe die Ursache und spiel die Sicherung noch einmal zurück.
 
 Nach dem Zurückspielen gilt der Stand der Sicherung. Was danach eingetragen wurde, ist weg; solange die Anwendung angehalten ist, kann auch niemand etwas eintragen, das dabei verloren geht.
 

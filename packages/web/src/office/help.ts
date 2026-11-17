@@ -27,19 +27,20 @@ export function helpKeyOf(address: string): string {
 /**
  * Places that keep their records at an address of their own lend them their
  * text, as the customers at `/` do for `/kunden/…`; an entry of the
- * navigation names the same in its `also`.
+ * navigation names the same in its `also`. Each names the page whose text it
+ * lends by its address.
  */
-export const lenders: readonly { readonly root: string; readonly key: string }[] = [
-  { root: '/kunden', key: 'index' },
-  { root: '/geraete', key: 'objekte' },
-  { root: '/verteiler', key: 'anlagen' },
-  { root: '/stromkreise', key: 'anlagen' },
-  { root: '/wechselrichter', key: 'anlagen' },
-  { root: '/strings', key: 'anlagen' },
-  { root: '/a', key: 'anlagen' },
-  { root: '/pruefprotokolle', key: 'anlagen' },
-  { root: '/maengel', key: 'auftraege' },
-  { root: '/leads', key: 'vertrieb' },
+export const lenders: readonly { readonly root: string; readonly from: string }[] = [
+  { root: '/kunden', from: '/' },
+  { root: '/geraete', from: '/objekte' },
+  { root: '/verteiler', from: '/anlagen' },
+  { root: '/stromkreise', from: '/anlagen' },
+  { root: '/wechselrichter', from: '/anlagen' },
+  { root: '/strings', from: '/anlagen' },
+  { root: '/a', from: '/anlagen' },
+  { root: '/pruefprotokolle', from: '/anlagen' },
+  { root: '/maengel', from: '/auftraege' },
+  { root: '/leads', from: '/vertrieb' },
 ]
 
 /**
@@ -66,7 +67,9 @@ export function officeHelpKey(pathname: string, has: (key: string) => boolean): 
 
   const lender = lenders.find(({ root }) => path === root || path.startsWith(`${root}/`))
 
-  return lender !== undefined && has(lender.key) ? lender.key : null
+  const key = lender === undefined ? null : helpKeyOf(lender.from)
+
+  return key !== null && has(key) ? key : null
 }
 
 const guides: HelpLink = { to: helpPlace, label: 'Kurzanleitungen', icon: List }
