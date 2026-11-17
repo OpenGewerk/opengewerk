@@ -7,7 +7,7 @@ Die Instanz sichert jede Nacht die Datenbank und den Dateispeicher, ohne dass je
 Die Befehle laufen als root im Ordner der Installation, etwa `/opt/opengewerk`; als anderer Benutzer wirst du vorher mit `sudo -i` zu root.
 
 - Sichern: `docker compose -f docker/compose.yaml --profile backup run --rm backup backup.sh`
-- Prüfen, ob die letzte Sicherung vollständig ist: `docker compose -f docker/compose.yaml --profile backup run --rm backup verify.sh latest`
+- Prüfen, ob das Protokoll der laufenden Instanz noch zu dem passt, was die letzte Sicherung gesehen hat, ob es also niemand nachträglich umgeschrieben hat: `docker compose -f docker/compose.yaml --profile backup run --rm backup verify.sh latest`. Dabei wird nichts zurückgespielt; ob sich eine Sicherung zurückspielen lässt, zeigt nur ein Zurückspielen.
 - Zurückspielen: zuerst die Anwendung anhalten, `docker compose -f docker/compose.yaml stop app`, dann `docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh latest`, und erst wenn beides ohne Fehler durchlief, mit `sh docker/start.sh` starten. Das führt wie nach einem Update die Migrationen aus, falls die Sicherung von einer älteren Fassung stammt. Verbinde die drei Befehle mit `&&`, dann läuft keiner, wenn der davor scheitert. Bricht `restore.sh` ab, bleibt die Anwendung angehalten: Datenbank und Dateispeicher können dann schon zum Teil ersetzt sein. Behebe die Ursache und spiel die Sicherung noch einmal zurück.
 
 Nach dem Zurückspielen gilt der Stand der Sicherung. Was danach eingetragen wurde, ist weg; solange die Anwendung angehalten ist, kann auch niemand etwas eintragen, das dabei verloren geht.
