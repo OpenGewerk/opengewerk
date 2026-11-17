@@ -626,13 +626,15 @@ docker compose -f docker/compose.yaml logs backup-schedule
 ## Zurückspielen
 
 ```bash
-docker compose -f docker/compose.yaml stop app \
+docker compose -f docker/compose.yaml stop app backup-schedule \
   && docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh latest \
   && sh docker/start.sh
 ```
 
 Die Anwendung ist dabei angehalten, damit niemand etwas einträgt, das das
-Zurückspielen gleich wieder überschreibt. Läuft sie doch, sperrt `restore.sh`
+Zurückspielen gleich wieder überschreibt, und die nächtliche Sicherung auch:
+Sie legte sonst womöglich ein halb zurückgespieltes Archiv als neuestes ab, das
+ein späteres `latest` nähme. `start.sh` startet beide wieder. Läuft sie doch, sperrt `restore.sh`
 sie für die Dauer aus. Jeder Schritt läuft nur, wenn der davor gelang: Ließ sich
 die Anwendung nicht anhalten, wird nichts zurückgespielt, und bricht
 `restore.sh` ab, können Datenbank und Dateispeicher schon zum Teil ersetzt
@@ -641,6 +643,19 @@ Sicherung noch einmal zurückgespielt ist. Gestartet wird sie mit `start.sh`
 wie nach einem Update: Stammt die Sicherung von einer älteren Fassung, laufen
 zuerst die Migrationen, und fehlt der Container noch, etwa auf einer neuen
 Maschine, legt es ihn an.
+
+**Eine verschlüsselte Sicherung** braucht den privaten Schlüssel, und der liegt
+nicht auf dieser Maschine (siehe „Verschlüsselung und Aufbewahrung“). Er wird
+nur für diesen einen Lauf hineingereicht, als Datei, die nur root lesen kann:
+
+```bash
+docker compose -f docker/compose.yaml --profile backup run --rm \
+  -v /root/age-schluessel.txt:/run/age-schluessel:ro \
+  -e BACKUP_AGE_IDENTITY=/run/age-schluessel \
+  backup restore.sh latest
+```
+
+Danach gehört die Datei wieder von der Maschine.
 
 **Zuerst die Herkunft.** Das Ziel liegt in der Regel auf einer anderen Maschine,
 und wer dort schreiben kann, kann ein Archiv neben die anderen legen. Ein
@@ -658,10 +673,14 @@ Kopie ist verschlüsselt, wenn das Archiv es ist, und braucht so viel Platz wie
 das Archiv.
 
 **Auf einer neuen Maschine** fehlt das Verzeichnis, es lag mit dem Volume
-`backup-status` auf der alten. Dort spielt
+`backup-status` auf der alten. Dort startet die Instanz zuerst einmal leer,
+damit es den Dateispeicher gibt und er dem Benutzer der Anwendung gehört:
+`restore.sh` gibt den zurückgespielten Dateien den Eigentümer dieses Ordners,
+und legte erst die Sicherung das Volume an, gehörte er root. Danach spielt
 
 ```bash
-docker compose -f docker/compose.yaml stop app \
+sh docker/start.sh
+docker compose -f docker/compose.yaml stop app backup-schedule \
   && docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh --skip-origin-check <archiv> \
   && sh docker/start.sh
 ```
@@ -745,7 +764,7 @@ Die Zeile mit `age1…` ist der öffentliche Schlüssel und gehört als
 `BACKUP_AGE_RECIPIENT` in die `.env`. Die Zeile mit `AGE-SECRET-KEY-…` gehört
 woanders hin, nicht auf diese Maschine: ein Schlüssel, der neben dem Archiv
 liegt, schützt vor nichts. Zum Zurückspielen wird er für genau diesen einen
-Lauf hineingereicht.
+Lauf hineingereicht, wie unter „Zurückspielen“ gezeigt.
 
 Ohne gesetzten Empfänger läuft die Sicherung trotzdem, gibt aber eine Warnung
 aus. Sie enthält Kundendaten, Belege und das Audit-Log.

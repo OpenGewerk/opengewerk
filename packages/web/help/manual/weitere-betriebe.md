@@ -1,6 +1,6 @@
 # Weitere Betriebe
 
-Auf einer Instanz können mehrere Betriebe arbeiten, getrennt wie zwei fremde. Wer die Instanz betreibt, sieht von einem Betrieb nur, was er zum Betreiben braucht: den Namen, den Tag der Anlage, die Inhaber mit E-Mail, offene Einladungen für Inhaber, die Zahl der Zugänge und wie viel Speicher der Betrieb belegt.
+Auf einer Instanz können mehrere Betriebe arbeiten, getrennt wie zwei fremde. Wer die Instanz betreibt, sieht von einem Betrieb nur, was er zum Betreiben braucht: den Namen, den Tag der Anlage, die Inhaber mit E-Mail, offene Einladungen für Inhaber, die Zahl der Zugänge und wie viel Speicher der Betrieb belegt. Das gilt für die Oberfläche: Wer den Server oder die Datenbank in der Hand hat, kommt an alle Daten jedes Betriebs, wie bei jeder Anwendung, die jemand selbst betreibt. Ein Betrieb vertraut also dem, der seine Instanz betreibt.
 
 ## Schritt für Schritt
 
