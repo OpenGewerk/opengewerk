@@ -243,7 +243,7 @@ Was noch fehlt: Skonto und ein Zahlungsziel je Kunde, die Zahlungsbedingungen au
 
 **Die Mitteilung zur Gewährleistung ist eine Seite, keine Belehrung aus Worten.** Seit dem 27.09.2026 bekommt ein Verbraucher vor einem Vertrag über Waren die harmonisierte Mitteilung zur gesetzlichen Gewährleistung nach Anhang I der Durchführungsverordnung (EU) 2025/1960 (#431). Sie steht unter den Belehrungen, ist aber die Seite, die die Kommission veröffentlicht, und nichts daran darf sich ändern: der Betrieb wählt, zu welchen Belegen sie vorgeschlagen wird, nicht, was sie sagt, und unter "Einstellungen" zeigt die Karte die Seite als Bild (`GET /settings/instructions/graphics/:name`). Pflicht ist sie an jedem Angebot an einen Verbraucher, an dem "Lieferung von Waren mit Montage" gewählt ist und das ab dem 27.09.2026 datiert; einem Kostenvoranschlag wird sie nicht vorgeschlagen. Im PDF steht sie als letzte Seite, ohne Briefkopf und Fußzeile: die Vorlage lässt dort eine leere Seite, die nach dem Rendern gegen die amtliche getauscht wird, und die Datei liegt mit Quelle, Nutzungsbedingungen und Prüfsumme unter `packages/server/assets/legal`. Eingefroren wird sie mit ihrem Namen in Fassung 12 von `DocumentContent`.
 
-Was noch fehlt: die Widerrufsfunktion nach § 356a BGB, die zum Kundenportal in Phase 5 gehört, beim Notdienst das Festhalten, dass der Kunde die dringende Reparatur ausdrücklich verlangt hat (Phase 2), und die Belehrung zum Verbraucherbauvertrag nach § 650l BGB (Phase 4).
+Was noch fehlt: die Widerrufsfunktion nach § 356a BGB, die zum Kundenportal in Phase 5 gehört, und die Belehrung zum Verbraucherbauvertrag nach § 650l BGB (Phase 4).
 
 ## E-Rechnung
 
