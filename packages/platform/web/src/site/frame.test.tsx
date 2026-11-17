@@ -347,6 +347,30 @@ describe('the menu on site', () => {
     expect(screen.getByRole('dialog', { name: 'Menü' })).toBeTruthy()
   })
 
+  it('closes when a row of it leads to another screen', async () => {
+    const { router } = await frame({
+      menu: (
+        <button
+          type="button"
+          onClick={() =>
+            void router.navigate({ to: '/regale/$shelfId', params: { shelfId: 's-1' } })
+          }
+        >
+          Zum Regal
+        </button>
+      ),
+    })
+
+    const sheet = await opened()
+
+    await userEvent.click(within(sheet).getByRole('button', { name: 'Zum Regal' }))
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/regale/s-1')
+    })
+    expect(screen.queryByRole('dialog', { name: 'Menü' })).toBeNull()
+  })
+
   it('shows what the application adds for this device, before the way to the office', async () => {
     await frame({ menu: <button type="button">Etiketten drucken</button> })
 

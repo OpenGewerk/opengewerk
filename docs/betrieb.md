@@ -626,17 +626,21 @@ docker compose -f docker/compose.yaml logs backup-schedule
 ## Zurückspielen
 
 ```bash
-docker compose -f docker/compose.yaml stop app
-docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh latest \
-  && docker compose -f docker/compose.yaml start app
+docker compose -f docker/compose.yaml stop app \
+  && docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh latest \
+  && sh docker/start.sh
 ```
 
 Die Anwendung ist dabei angehalten, damit niemand etwas einträgt, das das
 Zurückspielen gleich wieder überschreibt. Läuft sie doch, sperrt `restore.sh`
-sie für die Dauer aus. Gestartet wird sie nur, wenn `restore.sh` ohne Fehler
-durchlief: Bricht es ab, können Datenbank und Dateispeicher schon zum Teil
-ersetzt sein. Dann bleibt die Anwendung angehalten, bis die Ursache behoben und
-die Sicherung noch einmal zurückgespielt ist.
+sie für die Dauer aus. Jeder Schritt läuft nur, wenn der davor gelang: Ließ sich
+die Anwendung nicht anhalten, wird nichts zurückgespielt, und bricht
+`restore.sh` ab, können Datenbank und Dateispeicher schon zum Teil ersetzt
+sein. Dann bleibt die Anwendung angehalten, bis die Ursache behoben und die
+Sicherung noch einmal zurückgespielt ist. Gestartet wird sie mit `start.sh`
+wie nach einem Update: Stammt die Sicherung von einer älteren Fassung, laufen
+zuerst die Migrationen, und fehlt der Container noch, etwa auf einer neuen
+Maschine, legt es ihn an.
 
 **Zuerst die Herkunft.** Das Ziel liegt in der Regel auf einer anderen Maschine,
 und wer dort schreiben kann, kann ein Archiv neben die anderen legen. Ein
@@ -657,9 +661,9 @@ das Archiv.
 `backup-status` auf der alten. Dort spielt
 
 ```bash
-docker compose -f docker/compose.yaml stop app
-docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh --skip-origin-check <archiv> \
-  && docker compose -f docker/compose.yaml start app
+docker compose -f docker/compose.yaml stop app \
+  && docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh --skip-origin-check <archiv> \
+  && sh docker/start.sh
 ```
 
 das Archiv trotzdem zurück, mit allen Prüfungen, die danach kommen. Der Schalter
