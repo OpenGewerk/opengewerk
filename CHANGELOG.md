@@ -7,6 +7,12 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ## [Unreleased]
 
+### Behoben
+
+- Abschnitt 1.2 der Feature-Gliederung nennt das Löschen nach dem Löschkonzept unter den Aktionen der Fristen-Engine
+  (v2.80), und der Kommentar über `deadlineActions` zählt sechs statt vier (#979). Warum: Gebaut ist es seit #317, und
+  das Konzept ist die verbindliche Quelle für den Funktionsumfang.
+
 ## [0.8.0] - 2026-11-17
 
 Die achte Fassung bringt fast den ganzen Rest von Phase 2 und eine lange Reihe von Sicherheitskorrekturen. Neu sind
