@@ -83,9 +83,10 @@ describe('"Hilfe" on site', () => {
       '/hilfe/bildschirm/konflikte',
     ])
 
-    const guides = screen.getByRole('region', { name: siteHelpWords.guides })
+    // The quick guides load on their own, beside the texts of the screens.
+    const guides = await screen.findByRole('region', { name: siteHelpWords.guides })
 
-    expect(within(guides).getAllByRole('link')).toHaveLength(4)
+    expect(await within(guides).findAllByRole('link')).toHaveLength(4)
     expect(screen.getByText(siteHelpWords.offline)).toBeTruthy()
   })
 
