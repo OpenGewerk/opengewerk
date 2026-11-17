@@ -11,8 +11,9 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 - `docs/entwicklung.md` beschreibt den Stand nach 0.8.0, wo sie bisher Erschienenes als kommend oder fehlend nannte
   (#978): die Arten und Aktionen der Fristen-Engine und die Bedingungen der Wiedervorlage, die Protokolle aus
-  Abschnitt 5.1 mit der Frist der nächsten Prüfung, Material aus dem Lager im Regiebericht, die Plantafel, die Mails
-  an Kunden und die Anlässe für Push. Warum: Wer sich in den Code einliest, hielt sonst Gebautes für offen.
+  Abschnitt 5.1 mit der Frist der nächsten Prüfung, die Widerrufsbelehrung am Angebot, Material aus dem Lager im
+  Regiebericht, die Plantafel, die Mails an Kunden und die Anlässe für Push, von denen Termin und Urlaub nur als Push
+  kommen. Warum: Wer sich in den Code einliest, hielt sonst Gebautes für offen.
 
 ## [0.8.0] - 2026-11-17
 
