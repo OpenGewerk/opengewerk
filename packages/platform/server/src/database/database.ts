@@ -453,7 +453,9 @@ export class Database {
    * upgraded from an older version still grants it. Asked through every role
    * it belongs to, as one that it may only SET ROLE to grants it as well, and
    * the owner of the schema counts as having it, since it may give it back to
-   * itself or to every role at any time (CodeRabbit on opengewerk#976). And
+   * itself or to every role at any time (CodeRabbit on opengewerk#976), with a
+   * remedy of its own, since taking the right from every role does not touch
+   * the owner's. And
    * it may own no
    * function, operator or type there, itself or through a role it belongs to:
    * taking the right back leaves what it made while it had it, and that would
@@ -469,6 +471,7 @@ export class Database {
       bypass: boolean
       member: boolean
       owns: boolean
+      ownsSchema: boolean
       creates: boolean
       places: boolean
     }>(
@@ -477,10 +480,11 @@ export class Database {
                        false) as member,
               exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
                        where n.nspname = 'public' and c.relowner = r.oid) as owns,
-              (exists (select 1 from pg_roles x
-                        where pg_has_role(r.oid, x.oid, 'MEMBER')
-                          and has_schema_privilege(x.oid, 'public', 'CREATE'))
-               or pg_has_role(r.oid, (select n.nspowner from pg_namespace n where n.nspname = 'public'), 'MEMBER')) as creates,
+              pg_has_role(r.oid, (select n.nspowner from pg_namespace n where n.nspname = 'public'),
+                          'MEMBER') as "ownsSchema",
+              exists (select 1 from pg_roles x
+                       where pg_has_role(r.oid, x.oid, 'MEMBER')
+                         and has_schema_privilege(x.oid, 'public', 'CREATE')) as creates,
               exists (select 1 from pg_proc p
                        where p.pronamespace = 'public'::regnamespace and pg_has_role(r.oid, p.proowner, 'MEMBER'))
               or exists (select 1 from pg_operator o
@@ -529,6 +533,17 @@ export class Database {
       )
     }
 
+    if (role.ownsSchema) {
+      return (
+        `Die Anwendung verbindet sich als "${role.name}", und diese Rolle ist Eigentümerin des Schemas ` +
+        `"public" oder gehört ihr an, so auch als Eigentümerin der Datenbank. Damit kann sie sich das ` +
+        `Recht, dort anzulegen, jederzeit selbst geben, und was sie anlegt, fänden die Funktionen, die ` +
+        `mit den Rechten von "${migrationRole}" laufen. Abhilfe: das Schema "${migrationRole}" übertragen ` +
+        `(ALTER SCHEMA public OWNER TO ${migrationRole}) oder die Mitgliedschaft aufheben, und die ` +
+        `Anwendung nicht als Eigentümerin der Datenbank verbinden.`
+      )
+    }
+
     if (role.creates) {
       return (
         `Die Anwendung verbindet sich als "${role.name}", und diese Rolle darf im Schema "public" ` +
@@ -542,7 +557,8 @@ export class Database {
 
     if (role.places) {
       return (
-        `Die Anwendung verbindet sich als "${role.name}", und dieser Rolle gehören Funktionen, ` +
+        `Die Anwendung verbindet sich als "${role.name}", und dieser Rolle oder einer Rolle, der sie ` +
+        `angehört, gehören Funktionen, ` +
         `Operatoren oder Typen im Schema "public". Dort suchen die Funktionen, die mit den Rechten ` +
         `von "${migrationRole}" laufen, was sie aufrufen, und fänden sie. Abhilfe: diese Objekte ` +
         `prüfen und löschen. Sie "${migrationRole}" zu übertragen genügt nicht, dann liefen sie weiter.`

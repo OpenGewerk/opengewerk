@@ -133,7 +133,7 @@ describe('the role an application connects as (#685)', () => {
 
     try {
       expect(await problemOf(roles.plain)).toContain(
-        `"${roles.plain}", und dieser Rolle gehören Funktionen, Operatoren oder Typen`,
+        `"${roles.plain}", und dieser Rolle oder einer Rolle, der sie angehört, gehören Funktionen`,
       )
     } finally {
       await pool.query('drop function public.role_problem_planted()')
@@ -153,7 +153,7 @@ describe('the role an application connects as (#685)', () => {
 
     try {
       expect(await problemOf(roles.plain)).toContain(
-        `"${roles.plain}", und dieser Rolle gehören Funktionen, Operatoren oder Typen`,
+        `"${roles.plain}", und dieser Rolle oder einer Rolle, der sie angehört, gehören Funktionen`,
       )
     } finally {
       await pool.query(`revoke "${roles.lender}" from "${roles.plain}"`)
@@ -195,7 +195,7 @@ describe('the role an application connects as (#685)', () => {
 
     try {
       expect(await problemOf(roles.plain)).toContain(
-        `"${roles.plain}", und diese Rolle darf im Schema "public" anlegen`,
+        `"${roles.plain}", und diese Rolle ist Eigentümerin des Schemas "public" oder gehört ihr an`,
       )
     } finally {
       await pool.query(`revoke "${roles.lender}" from "${roles.plain}"`)
