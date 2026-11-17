@@ -379,7 +379,9 @@ describe('a report on site', () => {
     expect(await screen.findByText('2,5 Std.')).toBeTruthy()
     expect(await screen.findByText('2 Stk.')).toBeTruthy()
 
-    await user.click(await screen.findByRole('button', { name: 'Vom Kunden unterschreiben lassen' }))
+    await user.click(
+      await screen.findByRole('button', { name: 'Vom Kunden unterschreiben lassen' }),
+    )
 
     // The page the customer reads stands first: nothing on it can be changed from it.
     const name = await screen.findByLabelText('Name')
