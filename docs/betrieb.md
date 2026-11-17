@@ -865,7 +865,16 @@ geht es in dieser Reihenfolge: die Sicherung von vor dem Update zurückspielen,
 wie unter "Zurückspielen" beschrieben, und zwar noch mit der neuen Fassung,
 denn bis 0.8.0 spielt `restore.sh` nicht in eine Datenbank zurück, die weiter
 ist als die Sicherung. Danach das Paket der alten Fassung an dieselbe Stelle
-entpacken und `sh docker/start.sh`.
+entpacken. Das Zurückspielen lässt die Anwendung dabei ausgesperrt, bis die
+Migrationen gelaufen sind, und erst das `start.sh` einer Fassung nach 0.8.0
+gibt sie dann frei. Geht es zurück auf 0.8.0 oder früher, gibt man die
+Anmeldung deshalb vor dem Start von Hand zurück:
+
+```bash
+docker compose -f docker/compose.yaml exec postgres psql -U postgres -c "alter role opengewerk_app login; comment on role opengewerk_app is null"
+```
+
+Dann `sh docker/start.sh`.
 
 **Releases** (#155). Eine Fassung erscheint mit einem Tag `v0.x.y` auf `main`;
 die erste war 0.1.0 am 24.09.2026. Der Workflow "Release" baut dann Anwendung
