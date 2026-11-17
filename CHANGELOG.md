@@ -7,6 +7,12 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ## [Unreleased]
 
+### Behoben
+
+- Der Test des Regieberichts auf der Baustelle wartet nach jedem Schritt auf das, was der Schritt zeichnet (#982).
+  Warum: Unter der Last der CI suchte er den nächsten Knopf, bevor er da war, und wurde rot, ohne dass sich etwas
+  geändert hatte.
+
 ## [0.8.0] - 2026-11-17
 
 Die achte Fassung bringt fast den ganzen Rest von Phase 2 und eine lange Reihe von Sicherheitskorrekturen. Neu sind
