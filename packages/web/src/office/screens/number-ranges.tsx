@@ -30,7 +30,7 @@ const about: Readonly<
   invoice: {
     title: 'Rechnungen',
     covers:
-      'Alle Rechnungen, Gutschriften und Stornos zählen gemeinsam und lückenlos; jede Nummer ' +
+      'Alle Rechnungen, Gutschriften und Stornos zählen gemeinsam fortlaufend, und jede Nummer ' +
       'gibt es nur einmal, wie § 14 UStG es verlangt.',
     next: 'Beleg',
   },
