@@ -657,10 +657,12 @@ nicht auf dieser Maschine (siehe „Verschlüsselung und Aufbewahrung“). Er wi
 nur für diesen einen Lauf hineingereicht, als Datei, die nur root lesen kann:
 
 ```bash
-docker compose -f docker/compose.yaml --profile backup run --rm \
-  -v /root/age-schluessel.txt:/run/age-schluessel:ro \
-  -e BACKUP_AGE_IDENTITY=/run/age-schluessel \
-  backup restore.sh latest
+docker compose -f docker/compose.yaml stop app backup-schedule \
+  && docker compose -f docker/compose.yaml --profile backup run --rm \
+    -v /root/age-schluessel.txt:/run/age-schluessel:ro \
+    -e BACKUP_AGE_IDENTITY=/run/age-schluessel \
+    backup restore.sh latest \
+  && sh docker/start.sh
 ```
 
 Danach gehört die Datei wieder von der Maschine.
