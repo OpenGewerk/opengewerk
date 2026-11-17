@@ -169,7 +169,7 @@ function Hits({ query }: { readonly query: string }) {
             <p className="mt-0.5 text-[13px] leading-[1.5] text-ink-muted">
               {hit.before}
               {hit.found === '' ? null : (
-                <mark className="rounded-[2px] bg-sunken px-px font-semibold text-ink">
+                <mark className="rounded-[2px] bg-waiting-fill px-px font-semibold text-ink">
                   {hit.found}
                 </mark>
               )}
