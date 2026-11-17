@@ -451,7 +451,9 @@ export class Database {
    * table the application put there in advance would run or be read with the
    * owner's rights. PostgreSQL 15 took that right from every role; a cluster
    * upgraded from an older version still grants it. Asked through every role
-   * it belongs to, as one that it may only SET ROLE to grants it as well. And
+   * it belongs to, as one that it may only SET ROLE to grants it as well, and
+   * the owner of the schema counts as having it, since it may give it back to
+   * itself or to every role at any time (CodeRabbit on opengewerk#976). And
    * it may own no
    * function, operator or type there, itself or through a role it belongs to:
    * taking the right back leaves what it made while it had it, and that would
@@ -475,9 +477,10 @@ export class Database {
                        false) as member,
               exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
                        where n.nspname = 'public' and c.relowner = r.oid) as owns,
-              exists (select 1 from pg_roles x
-                       where pg_has_role(r.oid, x.oid, 'MEMBER')
-                         and has_schema_privilege(x.oid, 'public', 'CREATE')) as creates,
+              (exists (select 1 from pg_roles x
+                        where pg_has_role(r.oid, x.oid, 'MEMBER')
+                          and has_schema_privilege(x.oid, 'public', 'CREATE'))
+               or pg_has_role(r.oid, (select n.nspowner from pg_namespace n where n.nspname = 'public'), 'MEMBER')) as creates,
               exists (select 1 from pg_proc p
                        where p.pronamespace = 'public'::regnamespace and pg_has_role(r.oid, p.proowner, 'MEMBER'))
               or exists (select 1 from pg_operator o

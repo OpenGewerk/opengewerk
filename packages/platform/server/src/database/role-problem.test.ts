@@ -180,4 +180,28 @@ describe('the role an application connects as (#685)', () => {
 
     expect(await problemOf(roles.plain)).toBeNull()
   })
+
+  it('is refused when it belongs to the owner of public, even with the right taken from it', async () => {
+    // The owner may give the right back to itself or to every role at any time
+    // (CodeRabbit on opengewerk#976).
+    const { rows } = await pool.query<{ owner: string }>(
+      "select nspowner::regrole::text as owner from pg_namespace where nspname = 'public'",
+    )
+    const owner = String(rows[0]?.owner)
+
+    await pool.query(`alter schema public owner to "${roles.lender}"`)
+    await pool.query(`revoke create on schema public from "${roles.lender}"`)
+    await pool.query(`grant "${roles.lender}" to "${roles.plain}" with inherit false, set true`)
+
+    try {
+      expect(await problemOf(roles.plain)).toContain(
+        `"${roles.plain}", und diese Rolle darf im Schema "public" anlegen`,
+      )
+    } finally {
+      await pool.query(`revoke "${roles.lender}" from "${roles.plain}"`)
+      await pool.query(`alter schema public owner to ${owner}`)
+    }
+
+    expect(await problemOf(roles.plain)).toBeNull()
+  })
 })
