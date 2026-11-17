@@ -635,22 +635,14 @@ Die Anwendung ist dabei angehalten, damit niemand etwas einträgt, das das
 Zurückspielen gleich wieder überschreibt, und die nächtliche Sicherung auch:
 Sie legte sonst womöglich ein halb zurückgespieltes Archiv als neuestes ab, das
 ein späteres `latest` nähme. `start.sh` startet beide wieder. Läuft die
-Anwendung doch, sperrt `restore.sh` sie für die Dauer aus. Jeder Schritt läuft nur, wenn der davor gelang: Ließ sich
-die Anwendung nicht anhalten, wird nichts zurückgespielt, und bricht
-`restore.sh` ab, können Datenbank und Dateispeicher schon zum Teil ersetzt
-sein. Dann bleibt die Anwendung angehalten, bis die Ursache behoben und die
-Sicherung noch einmal zurückgespielt ist. Gestartet wird sie mit `start.sh`
-wie nach einem Update; fehlt der Container noch, etwa auf einer neuen Maschine,
-legt es ihn an.
-
-**Eine Sicherung geht in dieselbe Fassung zurück, von der sie stammt.** In die
-Datenbank einer neueren Fassung lässt sie sich derzeit nicht zurückspielen:
-`pg_restore` räumt dort nur weg, was im Dump steht, und bricht an dem ab, was
-spätere Migrationen dazugelegt haben. Auf einer neuen Maschine kommt deshalb
-zuerst das Paket der Fassung an seinen Platz, von der die Sicherung stammt; das
-Update auf die neueste folgt nach dem Zurückspielen wie gewohnt. Eine
-Sicherung von vor einem Update lässt sich nach dem Update nicht mehr
-zurückspielen.
+Anwendung doch, sperrt `restore.sh` sie für die Dauer aus. Jeder Schritt läuft
+nur, wenn der davor gelang: Ließ sich die Anwendung nicht anhalten, wird nichts
+zurückgespielt, und bricht `restore.sh` ab, kann die Datenbank schon ersetzt und
+der Dateispeicher zum Teil ersetzt sein (siehe unten). Dann bleibt die
+Anwendung angehalten, bis die Ursache behoben und die Sicherung noch einmal
+zurückgespielt ist. Gestartet wird sie mit `start.sh` wie nach einem Update:
+Stammt die Sicherung von einer älteren Fassung, laufen zuerst die Migrationen,
+und fehlt der Container noch, etwa auf einer neuen Maschine, legt es ihn an.
 
 **Eine verschlüsselte Sicherung** braucht den privaten Schlüssel, und der liegt
 nicht auf dieser Maschine (siehe „Verschlüsselung und Aufbewahrung“). Er wird
