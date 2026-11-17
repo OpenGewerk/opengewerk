@@ -41,9 +41,23 @@ const officeRouter = source(
 
 /** The addresses of the office, as its router names them: every route whose parent is the office. */
 function officePaths(): readonly string[] {
-  return [...officeRouter.matchAll(/getParentRoute: \(\) => office,\s*path: '([^']+)'/g)].map(
-    (match) => match[1] ?? '',
-  )
+  return routesIn(officeRouter, 'office')
+}
+
+/**
+ * The paths of the routes below a parent, each read from its own call of
+ * `createRoute`, whatever order its properties stand in.
+ */
+function routesIn(router: string, parent: string): readonly string[] {
+  return router
+    .split('createRoute(')
+    .slice(1)
+    .filter((call) => new RegExp(String.raw`getParentRoute:\s*\(\)\s*=>\s*${parent}\b`).test(call))
+    .flatMap((call) => {
+      const path = /\bpath:\s*'([^']+)'/.exec(call)?.[1]
+
+      return path === undefined ? [] : [path]
+    })
 }
 
 /** An address with a value for each of its parameters, as a person would open it. */
@@ -87,6 +101,18 @@ describe('the texts of the help', () => {
     expect(paths).toContain('/einstellungen/steuern')
 
     expect(paths.filter((path) => officeHelpKey(opened(path), has) === null)).toEqual([])
+  })
+
+  it('read a route of the office whatever order its properties stand in', () => {
+    const router = [
+      "createRoute({ getParentRoute: () => office, path: '/eins', component: One }),",
+      "createRoute({ getParentRoute: () => office, component: Two, path: '/zwei' }),",
+      "createRoute({\n  component: Three,\n  getParentRoute: () => office,\n  path: '/drei',\n}),",
+      "createRoute({ getParentRoute: () => officeOther, path: '/fremd' }),",
+      "createRoute({ getParentRoute: () => instance, path: '/instanz' }),",
+    ].join('\n')
+
+    expect(routesIn(router, 'office')).toEqual(['/eins', '/zwei', '/drei'])
   })
 
   it('lend only texts there are, to addresses the office has', () => {
