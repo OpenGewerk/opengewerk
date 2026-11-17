@@ -12,6 +12,11 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 - Abschnitt 1.2 der Feature-Gliederung nennt das Löschen nach dem Löschkonzept unter den Aktionen der Fristen-Engine
   (v2.80), und der Kommentar über `deadlineActions` und der Name ihres Tests zählen nicht mehr vier (#979). Warum:
   Gebaut ist es seit #317, und das Konzept ist die verbindliche Quelle für den Funktionsumfang.
+- `docs/entwicklung.md` beschreibt den Stand nach 0.8.0, wo sie bisher Erschienenes als kommend oder fehlend nannte
+  (#978): die Arten und Aktionen der Fristen-Engine und die Bedingungen der Wiedervorlage, die Protokolle aus
+  Abschnitt 5.1 mit der Frist der nächsten Prüfung, die Widerrufsbelehrung am Angebot, Material aus dem Lager im
+  Regiebericht, die Plantafel, die Mails an Kunden und die Anlässe für Push, von denen Termin und Urlaub nur als Push
+  kommen. Warum: Wer sich in den Code einliest, hielt sonst Gebautes für offen.
 
 ## [0.8.0] - 2026-11-17
 
