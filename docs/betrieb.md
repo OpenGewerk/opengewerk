@@ -917,11 +917,19 @@ geht es in dieser Reihenfolge: zuerst die neue Fassung anhalten,
 docker compose -f docker/compose.yaml stop app backup-schedule
 ```
 
-dann die Sicherung von vor dem Update zurückspielen, wie unter
-"Zurückspielen" beschrieben, und zwar noch mit der neuen Fassung, denn bis
-0.8.0 spielt `restore.sh` nicht in eine Datenbank zurück, die weiter ist als
-die Sicherung. Danach das Paket der alten Fassung an dieselbe Stelle
-entpacken. Das Zurückspielen lässt die Anwendung dabei ausgesperrt, bis die
+dann die Sicherung von vor dem Update zurückspielen, mit ihrem Namen und noch
+mit der neuen Fassung, denn bis 0.8.0 spielt `restore.sh` nicht in eine
+Datenbank zurück, die weiter ist als die Sicherung:
+
+```bash
+docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh <archiv>
+```
+
+Anders als unter "Zurückspielen" folgt hier noch kein `start.sh`: Das der
+neuen Fassung brächte die Datenbank mit ihren Migrationen gleich wieder auf
+den neuen Stand, und die alte Fassung lehnte sie danach ab. Eine verschlüsselte
+Sicherung bekommt ihren Schlüssel wie dort. Danach das Paket der alten Fassung
+an dieselbe Stelle entpacken. Das Zurückspielen lässt die Anwendung dabei ausgesperrt, bis die
 Migrationen gelaufen sind, und erst das `start.sh` einer Fassung nach 0.8.0
 gibt sie dann frei. Geht es zurück auf 0.8.0 oder früher, gibt man die
 Anmeldung deshalb vor dem Start von Hand zurück, und zwar erst, wenn die neue
