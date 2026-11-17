@@ -21,6 +21,7 @@ import { SiteShell } from './shell.js'
  */
 const screens = {
   job: () => import('./screens/job.js'),
+  help: () => import('./help.js'),
   boards: () => import('./screens/boards.js'),
   pv: () => import('./screens/pv.js'),
   scanner: () => import('./screens/scanner.js'),
@@ -41,6 +42,9 @@ const screens = {
 }
 
 const SiteJobScreen = lazyRouteComponent(screens.job, 'SiteJobScreen')
+const SiteHelpScreen = lazyRouteComponent(screens.help, 'SiteHelpScreen')
+const SiteScreenHelpScreen = lazyRouteComponent(screens.help, 'SiteScreenHelpScreen')
+const SiteGuideScreen = lazyRouteComponent(screens.help, 'SiteGuideScreen')
 const SiteBoardScreen = lazyRouteComponent(screens.boards, 'SiteBoardScreen')
 const SiteCircuitScreen = lazyRouteComponent(screens.boards, 'SiteCircuitScreen')
 const SiteInverterScreen = lazyRouteComponent(screens.pv, 'SiteInverterScreen')
@@ -231,6 +235,15 @@ const routes = [
     component: SiteTimeEntryScreen,
   }),
   createRoute({ getParentRoute: () => root, path: '/konflikte', component: ConflictScreen }),
+  // The help, from the menu (#269): a text for each screen and the quick
+  // guides, read without a network.
+  createRoute({ getParentRoute: () => root, path: '/hilfe', component: SiteHelpScreen }),
+  createRoute({
+    getParentRoute: () => root,
+    path: '/hilfe/bildschirm/$screen',
+    component: SiteScreenHelpScreen,
+  }),
+  createRoute({ getParentRoute: () => root, path: '/hilfe/$guide', component: SiteGuideScreen }),
 ]
 
 export const siteRouter = createRouter({

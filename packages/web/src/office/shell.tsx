@@ -2,6 +2,7 @@ import { OfficeFrame } from '@opengewerk/platform-web/office'
 import { usePushRefresh } from '@opengewerk/platform-web/session'
 import { useRouterState } from '@tanstack/react-router'
 
+import { useOfficeHelp } from './help.js'
 import { useNavigation } from './navigation.js'
 import { BackupBar } from './screens/backup.js'
 
@@ -24,13 +25,15 @@ function isFocus(path: string): boolean {
  * behind "Menü" on a phone. This application hands in what is its own: the
  * entries of its navigation, which screens are worked in rather than passed
  * through, and the strip for a backup that is behind, which stands with what
- * cannot wait, before the offers, as on the board "Leisten im Büro".
+ * cannot wait, before the offers, as on the board "Leisten im Büro", and
+ * the texts of the help beside each page (#269).
  */
 export function OfficeShell() {
   const focus = isFocus(useRouterState({ select: (state) => state.location.pathname }))
   const navigation = useNavigation()
+  const help = useOfficeHelp()
 
   usePushRefresh('office')
 
-  return <OfficeFrame navigation={navigation} focus={focus} strips={<BackupBar />} />
+  return <OfficeFrame navigation={navigation} focus={focus} strips={<BackupBar />} help={help} />
 }
