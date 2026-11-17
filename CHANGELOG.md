@@ -22,8 +22,8 @@ Der Abschnitt „Sicherheit“ ist diesmal lang. Er schließt die Befunde aus ei
 08.11.2026 und einige, die bei ihrer Behebung dazukamen; welche Fassungen betroffen waren, steht in den Advisories.
 Die Migrationen 0120 bis 0150 laufen beim Start. Vor dem Update sollte jedes Gerät senden, was bei ihm wartet: Eine
 Unterschrift, die noch mit der alten Prüfsumme wartet, kommt danach als Konflikt zurück und muss neu geleistet
-werden. Nach dem Update holt ein Gerät beim ersten Öffnen alles neu und zeigt ohne Netz bis dahin nichts von dem, was es
-vorher vom Server geholt hatte; was bei ihm noch wartet, und eine laufende Stoppuhr bleiben. Wer sich genau während
+werden. Nach dem Update holt jedes Gerät beim ersten Öffnen alles neu, weil seine Ablage aus 0.7.0 noch kein Konto nennt,
+und zeigt ohne Netz bis dahin nichts von dem, was es vorher vom Server geholt hatte; was bei ihm noch wartet, und eine laufende Stoppuhr bleiben. Wer sich genau während
 des Updates angemeldet hat, meldet sich noch einmal an. Wer die Datenbank nicht
 über den mitgelieferten Stapel betreibt: Die Anwendung startet nicht, wenn ihre Rolle im Schema `public` anlegen
 darf oder über eine Mitgliedschaft Superuser oder `BYPASSRLS` erreicht, und die Meldung im Log sagt, was zu ändern
@@ -158,8 +158,8 @@ echten Empfänger (#133).
   Vordruck für den vorzeitigen Beginn, in der Fassung des Betriebs. An der Tür zeigt sie das Gerät, der Kunde
   unterschreibt das Verlangen auf vorzeitigen Beginn wie einen Regiebericht, auch ohne Netz, und bekommt danach alles
   als PDF per E-Mail; der Server nimmt die Unterschrift nur unter der Fassung, die der Kunde gelesen hat. Für einen
-  Auftrag am Telefon nimmt die Bestätigungsmail (#315) sie mit; das Büro kann sie auch vom Auftrag aus schicken
-  oder drucken. Aus dem unterschriebenen Regiebericht legt der Monteur vor Ort den Entwurf der Rechnung
+  Auftrag am Telefon nimmt die Bestätigungsmail (#315) sie mit, wenn der Betrieb die Bestätigung zum Auftragseingang
+  eingeschaltet hat und der Briefkopf vollständig ist; sonst schickt das Büro sie vom Auftrag aus oder druckt sie. Aus dem unterschriebenen Regiebericht legt der Monteur vor Ort den Entwurf der Rechnung
   an, mit den Preisen von heute; festgeschrieben und verschickt wird sie im Büro, und der Bericht bekommt dabei
   zuerst seine Nummer. Warum: Ein Serviceauftrag kommt per Telefon und muss Sekunden später auf einem Bildschirm und
   auf dem Telefon des Monteurs stehen, und ein Verbraucher, der ohne Angebot beauftragt, hat dieselben Rechte wie

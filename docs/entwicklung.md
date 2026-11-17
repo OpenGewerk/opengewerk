@@ -343,7 +343,7 @@ Die Arbeitszeit aus Abschnitt 4.4 der Feature-Gliederung: auf der Baustelle, ohn
 
 **Ein Standort nur mit Einwilligung und nur bei Start und Stopp.** Die Einwilligung gibt und widerruft jede Person unter "Zeiten" für sich selbst (`GET` und `PUT /time/consent`), und jede Antwort ist eine neue Zeile, sodass feststeht, wann sie galt. Ohne sie fragt das Gerät gar nicht erst nach dem Standort, und der Server lässt einen mitgeschickten Standort fallen, wenn die letzte Antwort nein ist; der Eintrag selbst kommt trotzdem an.
 
-Was nicht dazugehört: Zuschläge, Auslöse, Verpflegungsmehraufwand und der Lohnexport kommen in Phase 3, die SOKA-BAU-Meldung später. Überstunden brauchen eine vereinbarte Arbeitszeit je Person, die es noch nicht gibt; sie kommen mit ihr in Phase 2, ausgezahlt oder übertragen mit dem Lohnexport in Phase 3 (#141).
+Was nicht dazugehört: Zuschläge, Auslöse, Verpflegungsmehraufwand und der Lohnexport kommen in Phase 3, die SOKA-BAU-Meldung später. Überstunden zählt seit 0.7.0 das Zeitkonto aus der vereinbarten Arbeitszeit in der Mitarbeiterakte (#287, #289); ausgezahlt oder übertragen werden sie mit dem Lohnexport in Phase 3 (#141).
 
 ## Steuern
 
