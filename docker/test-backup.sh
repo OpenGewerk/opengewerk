@@ -56,10 +56,32 @@ FAKE
 #
 # Each writes down that it was called. A restore that is turned away has to be
 # turned away before the first of them, the one that locks the application out
-# included. pg_restore writes down whom it signs in as, with the password.
+# included. The psql that plays the dump writes down whom it signs in as,
+# with the password; pg_restore only turns the dump into statements.
 cat > "$work/bin/psql" <<'FAKE'
 #!/bin/sh
 printf 'psql %s\n' "$*" >> "$CALLS"
+case " $* " in
+  *" --single-transaction "*) printf 'restore-as %s password=%s\n' "$*" "${PGPASSWORD:-}" >> "$CALLS" ;;
+esac
+# The files it plays are written down as well, in their order, each line with
+# the call that played it and whether that call was one transaction that stops
+# at the first error.
+mode=plain
+case " $* " in
+  *" --single-transaction "*)
+    case " $* " in
+      *" --set ON_ERROR_STOP=1 "*) mode=transaction ;;
+    esac
+    ;;
+esac
+previous=''
+for argument in "$@"; do
+  if [ "$previous" = --file ] && [ "$argument" != - ]; then
+    sed "s/^/file $$ $mode: /" "$argument" >> "$CALLS"
+  fi
+  previous=$argument
+done
 # Without --command, psql reads its statements from stdin, as checked_query
 # hands them over; they are written down with the call.
 case " $* " in
@@ -68,11 +90,41 @@ case " $* " in
 esac
 case "$*" in
   *server_version*) echo 18 ;;
+  *rolcanlogin*) echo "${WAS_LOCKED:-f}" ;;
+  *pg_xact_status*) echo "${XACT_STATUS:-aborted}" ;;
+  *"to_regclass('drizzle.__drizzle_migrations')"*) echo t ;;
+  # How far the migrations had come: before the dump is played and after.
+  *'max(created_at)'*)
+    if grep -q '^restore-as ' "$CALLS"; then
+      echo "${LEVEL_AFTER:-2}"
+    else
+      echo "${LEVEL_BEFORE:-2}"
+    fi
+    ;;
 esac
+# The call that plays the dump fails after the transaction named its number,
+# the way a connection lost after the COMMIT went out looks to psql.
+if [ -n "${PLAY_FAILS:-}" ]; then
+  case " $* " in
+    *" --single-transaction "*)
+      echo 'restore-transaction 42'
+      exit 1
+      ;;
+  esac
+fi
 FAKE
 cat > "$work/bin/pg_restore" <<'FAKE'
 #!/bin/sh
 printf 'pg_restore %s password=%s\n' "$*" "${PGPASSWORD:-}" >> "$CALLS"
+[ -z "${PG_RESTORE_FAILS:-}" ] || exit 1
+# The statements of the dump, into the file it is asked to write.
+previous=''
+for argument in "$@"; do
+  if [ "$previous" = --file ]; then
+    printf -- '-- the statements of the dump\n' > "$argument"
+  fi
+  previous=$argument
+done
 FAKE
 #
 # age as it is, unless a check asks otherwise: AGE_SAW names a file to write
@@ -114,6 +166,11 @@ cat > "$work/bin/tar" <<FAKE
 #!/bin/sh
 if [ -n "\${SWAP_FROM:-}" ] && [ "\$1" = --extract ]; then
   cp "\$SWAP_FROM" "\$SWAP_ONTO"
+fi
+if [ -n "\${STORAGE_FAILS:-}" ] && [ "\$1" = --extract ]; then
+  case "\$*" in
+    *storage.tar*) exit 1 ;;
+  esac
 fi
 if [ -n "\${TAR_FAILS:-}" ] && [ "\$1" = --create ]; then
   case " \$* " in
@@ -451,19 +508,173 @@ check 'Herkunft: auf einer neuen Maschine ohne Verzeichnis nur mit --skip-origin
 
 # 8. The dump is restored by the owner of the tables, with its own password,
 # and not by the superuser under SET ROLE, which a statement in the dump could
-# take back.
+# take back. In one transaction that stops at the first error, after the
+# owner's objects are emptied, and without pg_restore --clean, which stopped
+# at what later migrations added (#988).
 taken env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
-grep '^pg_restore ' "$CALLS" > "$work/restored"
+grep '^restore-as ' "$CALLS" > "$work/restored"
 grep -q -- '--username opengewerk_owner ' "$work/restored"
 grep -q ' password=owner-probe$' "$work/restored"
+grep -q -- '--set ON_ERROR_STOP=1 ' "$work/restored"
+grep '^pg_restore ' "$CALLS" | grep -q -- '--no-owner --file '
+# Emptied first, then the dump, both in the same call and so in its one
+# transaction: emptied in one call and played in another, a dump that fails
+# could not take the emptying back.
+awk '/^file [0-9]+ transaction: DROP SCHEMA IF EXISTS drizzle CASCADE;$/ { emptied = NR; emptying = $2 }
+  /^file [0-9]+ transaction: -- the statements of the dump$/ { played = NR; playing = $2 }
+  END { exit !(emptied && played && emptied < played && emptying == playing) }' "$CALLS" || {
+  echo 'FEHLER: Leeren und Dump laufen nicht nacheinander in derselben Transaktion'
+  grep '^file ' "$CALLS"
+  exit 1
+}
+if grep '^pg_restore ' "$CALLS" | grep -q -e '--clean' -e '--username' -e '--host'; then
+  echo 'FEHLER: pg_restore räumt selbst auf oder meldet sich an'
+  grep '^pg_restore ' "$CALLS"
+  exit 1
+fi
 if grep -q -e '--role' -e '--username postgres' -e 'password=probe$' "$work/restored"; then
-  echo 'FEHLER: pg_restore lief als Superuser'
+  echo 'FEHLER: der Dump lief als Superuser'
   cat "$work/restored"
   exit 1
 fi
+grep -q 'alter role opengewerk_app login' "$CALLS" || {
+  echo 'FEHLER: nach dem Rückspielen bekam die Anwendung ihre Anmeldung nicht zurück'
+  exit 1
+}
+# The command it names to start again works from the folder of the installation
+# (#987): there is no compose.yaml at its root.
+grep -q '^  sh docker/start.sh$' "$work/out" || {
+  echo 'FEHLER: die Meldung am Ende nennt nicht, wie die Anwendung wieder startet'
+  cat "$work/out"
+  exit 1
+}
 refused 'OPENGEWERK_OWNER_PASSWORD fehlt' env -u OPENGEWERK_OWNER_PASSWORD POSTGRES_DB=opengewerk \
   sh "$work/bin/restore.sh" "$ours"
-check 'Rückspielen: pg_restore als Eigentümer der Tabellen, nicht als Superuser'
+check 'Rückspielen: als Eigentümer der Tabellen, in einer Transaktion, nicht als Superuser'
+
+# 8b. A restore that fails after the database is replaced leaves the
+# application locked and says so, because the file store did not come back.
+# One that fails before gives the login back: the database is as it was
+# (#988).
+halfway() {
+  : > "$CALLS"
+  if env POSTGRES_DB=opengewerk "$@" sh "$work/bin/restore.sh" "$ours" > "$work/out" 2>&1; then
+    printf 'FEHLER: lief durch mit %s\n' "$*"
+    cat "$work/out"
+    exit 1
+  fi
+  grep -q 'alter role opengewerk_app nologin' "$CALLS" || {
+    printf 'FEHLER: die Anwendung wurde nicht ausgesperrt: %s\n' "$*"
+    exit 1
+  }
+}
+halfway STORAGE_FAILS=1
+grep -q 'bleibt ausgesperrt' "$work/out" || {
+  echo 'FEHLER: die Meldung sagt nicht, dass die Anwendung ausgesperrt bleibt'
+  cat "$work/out"
+  exit 1
+}
+if grep -q 'alter role opengewerk_app login' "$CALLS"; then
+  echo 'FEHLER: nach einem halben Rückspielen bekam die Anwendung ihre Anmeldung zurück'
+  exit 1
+fi
+halfway PG_RESTORE_FAILS=1
+grep -q 'alter role opengewerk_app login' "$CALLS" || {
+  echo 'FEHLER: vor dem Einspielen gescheitert, und die Anwendung blieb ausgesperrt'
+  exit 1
+}
+if grep -q 'bleibt ausgesperrt' "$work/out"; then
+  echo 'FEHLER: die Meldung nennt eine Sperre, die es nicht gibt'
+  exit 1
+fi
+# Locked by an earlier run that did not go through, the database is the one
+# that run left: a second run that fails before the dump keeps the lock.
+halfway WAS_LOCKED=t PG_RESTORE_FAILS=1
+if grep -q 'alter role opengewerk_app login' "$CALLS"; then
+  echo 'FEHLER: ein zweiter, früh gescheiterter Lauf gab die Sperre des ersten frei'
+  exit 1
+fi
+grep -q 'wie sie es vor diesem Lauf war' "$work/out" || {
+  echo 'FEHLER: die Meldung sagt nicht, warum die Anwendung ausgesperrt bleibt'
+  cat "$work/out"
+  exit 1
+}
+# psql fails while playing: the database is asked how the transaction ended.
+# Committed, or not known, the application stays locked; aborted, it gets its
+# login back.
+halfway PLAY_FAILS=1 XACT_STATUS=committed
+grep -q "pg_xact_status('42'::xid8)" "$CALLS" || {
+  echo 'FEHLER: nach einem Fehler beim Einspielen wurde nicht nach dem Ausgang der Transaktion gefragt'
+  exit 1
+}
+if grep -q 'alter role opengewerk_app login' "$CALLS"; then
+  echo 'FEHLER: nach einer übernommenen Transaktion bekam die Anwendung ihre Anmeldung zurück'
+  exit 1
+fi
+halfway PLAY_FAILS=1 XACT_STATUS='in progress'
+if grep -q 'alter role opengewerk_app login' "$CALLS"; then
+  echo 'FEHLER: bei offenem Ausgang der Transaktion bekam die Anwendung ihre Anmeldung zurück'
+  exit 1
+fi
+halfway PLAY_FAILS=1 XACT_STATUS=aborted
+grep -q 'alter role opengewerk_app login' "$CALLS" || {
+  echo 'FEHLER: nach einer abgebrochenen Transaktion blieb die Anwendung ausgesperrt'
+  exit 1
+}
+check 'Rückspielen: scheitert es nach der Datenbank, bleibt die Anwendung ausgesperrt, davor nicht'
+
+# 8c. A backup from an earlier version than the database it replaces: the
+# restore goes through, and the application stays locked with the note
+# start.sh looks for, until the migrations have run (#988). The same version
+# gives the login back at once, see 8.
+taken env POSTGRES_DB=opengewerk LEVEL_BEFORE=3 LEVEL_AFTER=2 sh "$work/bin/restore.sh" "$ours"
+if grep -q 'alter role opengewerk_app login' "$CALLS"; then
+  echo 'FEHLER: die Anwendung bekam die Anmeldung vor den Migrationen zurück'
+  exit 1
+fi
+grep -q "comment on role opengewerk_app is 'restored, waiting for migrations'" "$CALLS" || {
+  echo 'FEHLER: die Rolle trägt nicht den Vermerk, nach dem start.sh sucht'
+  exit 1
+}
+grep -q 'älteren Fassung' "$work/out" || {
+  echo 'FEHLER: die Meldung sagt nicht, warum die Anwendung ausgesperrt bleibt'
+  cat "$work/out"
+  exit 1
+}
+# The way back to a version up to 0.8.0, whose start.sh knows no note: the
+# running application stopped first, then the login given back.
+awk '/^  docker compose -f docker\/compose.yaml stop app backup-schedule$/ { stopped = NR }
+  /alter role opengewerk_app login; comment on role opengewerk_app is null/ { unlocked = NR }
+  END { exit !(stopped && unlocked && stopped < unlocked) }' "$work/out" || {
+  echo 'FEHLER: die Meldung nennt nicht, wie eine Fassung bis 0.8.0 nach dem Anhalten die Anmeldung zurückbekommt'
+  cat "$work/out"
+  exit 1
+}
+# Locked before the run, by an earlier restore: the database this one
+# replaces may itself be older than the application, so how far its
+# migrations had come proves nothing. Locked with the note as well.
+taken env POSTGRES_DB=opengewerk WAS_LOCKED=t sh "$work/bin/restore.sh" "$ours"
+if grep -q 'alter role opengewerk_app login' "$CALLS"; then
+  echo 'FEHLER: nach einer Sperre von vor dem Lauf kam die Anmeldung vor den Migrationen zurück'
+  exit 1
+fi
+grep -q "comment on role opengewerk_app is 'restored, waiting for migrations'" "$CALLS" || {
+  echo 'FEHLER: nach einer Sperre von vor dem Lauf trägt die Rolle nicht den Vermerk'
+  exit 1
+}
+# A database without any migrations before the run says nothing about the
+# version the application needs either.
+taken env POSTGRES_DB=opengewerk LEVEL_BEFORE=0 sh "$work/bin/restore.sh" "$ours"
+if grep -q 'alter role opengewerk_app login' "$CALLS"; then
+  echo 'FEHLER: nach einer Datenbank ohne Migrationen kam die Anmeldung vor den Migrationen zurück'
+  exit 1
+fi
+grep -q 'keine Migrationen' "$work/out" || {
+  echo 'FEHLER: die Meldung sagt nicht, warum die Anwendung ausgesperrt bleibt'
+  cat "$work/out"
+  exit 1
+}
+check 'Rückspielen: eine ältere Sicherung lässt die Anwendung bis zu den Migrationen ausgesperrt'
 
 # 9. The heads of the chains go into statements of the superuser after the
 # restore, and into those of verify.sh. A line that is no head is turned away

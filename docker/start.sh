@@ -146,6 +146,29 @@ say 'Die Datenbank wird eingerichtet oder auf den neuen Stand gebracht.'
 compose run --rm migrate ||
   fail 'Die Migration ist gescheitert, der Grund steht darüber. Eine laufende Instanz arbeitet unverändert weiter, die Datenbank steht auf dem Stand davor.'
 
+# After a restore of a backup from an earlier version, restore.sh leaves the
+# application locked, with a note on its role, so that it does not work on a
+# schema older than itself (#988). The migrations have run now, and the login
+# comes back. A role without the note stays as it is: one locked by a restore
+# that did not go through waits for the next one.
+unlock_after_restore() {
+  compose exec -T postgres psql --username postgres --dbname postgres --quiet --no-psqlrc \
+    --set ON_ERROR_STOP=1 > /dev/null <<'SQL'
+DO $$
+BEGIN
+  IF pg_catalog.shobj_description(
+    (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'opengewerk_app'), 'pg_authid'
+  ) = 'restored, waiting for migrations' THEN
+    ALTER ROLE opengewerk_app LOGIN;
+    COMMENT ON ROLE opengewerk_app IS NULL;
+  END IF;
+END
+$$;
+SQL
+}
+unlock_after_restore ||
+  fail 'Nach dem Zurückspielen ließ sich der Anwendung die Anmeldung nicht zurückgeben, der Grund steht darüber.'
+
 say "$APPLICATION_NAME startet."
 compose up -d --wait --wait-timeout 300 ||
   fail "$APPLICATION_NAME ist nicht gestartet. Warum, zeigt: docker compose -f docker/compose.yaml logs app"

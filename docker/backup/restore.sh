@@ -214,34 +214,206 @@ lock_application() {
 		  where datname = '${POSTGRES_DB}' and usename = 'opengewerk_app'" >/dev/null
 }
 
-unlock_application() {
+superuser_command() {
 	psql --host "$POSTGRES_HOST" --username postgres --dbname postgres --quiet \
-		--command "alter role opengewerk_app login" >/dev/null
+		--command "$1" >/dev/null
 }
 
-# Whatever happens from here, the application gets its login back. A restore
-# that fails halfway and leaves the role locked would turn one problem into
-# two, and the second one looks like a broken password.
+# Written on the role of the application when a restore went through and the
+# backup is from an earlier version than the database it replaced (#988). The
+# application stays locked then, because it would work on a schema older than
+# itself until the migrations have run; start.sh runs them and gives the login
+# back to a role that carries this note, and only to such a role.
+#
+# The same when the application was locked before the run. The database this
+# run replaced is then one an earlier restore left, and how far its migrations
+# had come says nothing about how far the application needs them. And the same
+# when that database had no migrations at all: then nothing says it either.
+waiting_note='restored, waiting for migrations'
+
+unlock_application() {
+	superuser_command "alter role opengewerk_app login; comment on role opengewerk_app is null"
+}
+
+# Locked before this run starts: by an earlier restore that did not go through,
+# or by one that waits for the migrations.
+was_locked=$(psql --host "$POSTGRES_HOST" --username postgres --dbname postgres --quiet \
+	--tuples-only --no-align \
+	--command "select not rolcanlogin from pg_catalog.pg_roles where rolname = 'opengewerk_app'")
+
+# A restore that fails before the database is replaced leaves it as it was,
+# see below, and the application gets its login back: a role left locked would
+# turn one problem into two, and the second one looks like a broken password.
+# Unless it was locked before this run: then the database it leaves is the one
+# that earlier run left, and the lock stays with it.
+#
+# Once the database is replaced, a failure leaves it next to a file store or a
+# check that did not finish (#988). The application stays locked then, so that
+# nothing works on that state, and the message says so. A second restore gives
+# the login back when it goes through.
+replaced=0
+waiting=0
 unlock_and_cleanup() {
-	unlock_application || true
+	if [ "$1" -eq 0 ]; then
+		[ "$waiting" -eq 1 ] || unlock_application || true
+	elif [ "$replaced" -eq 1 ]; then
+		superuser_command "comment on role opengewerk_app is null" || true
+		echo "" >&2
+		echo "Die Anwendung bleibt ausgesperrt: die Datenbank ist schon zurückgespielt," >&2
+		echo "der Rest nicht. Das Rückspielen noch einmal laufen lassen und danach" >&2
+		echo "starten; der Start gibt der Anwendung die Anmeldung zurück." >&2
+	elif [ "$was_locked" = t ]; then
+		echo "" >&2
+		echo "Die Anwendung bleibt ausgesperrt, wie sie es vor diesem Lauf war: ein" >&2
+		echo "früheres Rückspielen ist nicht durchgelaufen oder wartet auf die Migrationen." >&2
+	else
+		unlock_application || true
+	fi
 	cleanup
 }
-trap unlock_and_cleanup EXIT
+trap 'unlock_and_cleanup "$?"' EXIT
 
 echo "  Anwendung wird für die Dauer des Rückspielens ausgesperrt."
 lock_application
 
 # --- Restore the database --------------------------------------------------
-# --clean --if-exists throws away what is there first. Restoring into a
-# database that still holds rows would mix two states, and the result would
-# look plausible and be wrong.
+# Everything the owner holds goes first, and the dump is played into what is
+# left, all of it in one transaction (#988). Restoring into a database that
+# still holds rows would mix two states, and the result would look plausible
+# and be wrong.
+#
+# Not pg_restore --clean: it throws away only what the dump names. A backup of
+# an earlier version lacks what later migrations added, and that hangs on what
+# the dump does name, an index or a table, so the clean stopped halfway, with
+# part of the schema gone. Emptied here, an older backup lands as it would in a
+# new database, and start.sh migrates it to the running version afterwards.
+#
+# One transaction: a restore that fails anywhere, while emptying or while
+# playing the dump, leaves the database exactly as it was, and not without its
+# policies and triggers.
 #
 # Signed in as the owner, see above, and not as the superuser with SET ROLE:
 # a statement in the dump could take that back with RESET ROLE.
+empty_owned_schema() {
+	cat <<'SQL'
+SELECT 'restore-transaction ' || pg_catalog.pg_current_xact_id();
+DROP SCHEMA IF EXISTS drizzle CASCADE;
+DO $$
+DECLARE
+	item record;
+BEGIN
+	-- Extensions first: their functions and types go with them and cannot go
+	-- on their own.
+	FOR item IN
+		SELECT pg_catalog.quote_ident(e.extname) AS name
+		  FROM pg_catalog.pg_extension e
+		  JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
+		 WHERE n.nspname = 'public' AND e.extowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
+	LOOP
+		EXECUTE pg_catalog.format('DROP EXTENSION IF EXISTS %s CASCADE', item.name);
+	END LOOP;
+
+	FOR item IN
+		SELECT pg_catalog.quote_ident(n.nspname) || '.' || pg_catalog.quote_ident(c.relname) AS name,
+		       CASE c.relkind
+		         WHEN 'r' THEN 'TABLE' WHEN 'p' THEN 'TABLE' WHEN 'f' THEN 'FOREIGN TABLE'
+		         WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED VIEW'
+		         WHEN 'S' THEN 'SEQUENCE' WHEN 'c' THEN 'TYPE'
+		       END AS kind
+		  FROM pg_catalog.pg_class c
+		  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public'
+		   AND c.relkind IN ('r', 'p', 'f', 'v', 'm', 'S', 'c')
+		   AND c.relowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
+		 ORDER BY CASE c.relkind WHEN 'r' THEN 0 WHEN 'p' THEN 0 WHEN 'f' THEN 0 ELSE 1 END
+	LOOP
+		EXECUTE pg_catalog.format('DROP %s IF EXISTS %s CASCADE', item.kind, item.name);
+	END LOOP;
+
+	FOR item IN
+		SELECT pg_catalog.quote_ident(n.nspname) || '.' || pg_catalog.quote_ident(p.proname)
+		         || '(' || pg_catalog.pg_get_function_identity_arguments(p.oid) || ')' AS name,
+		       CASE p.prokind WHEN 'p' THEN 'PROCEDURE' WHEN 'a' THEN 'AGGREGATE' ELSE 'FUNCTION' END AS kind
+		  FROM pg_catalog.pg_proc p
+		  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+		 WHERE n.nspname = 'public'
+		   AND p.proowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
+	LOOP
+		EXECUTE pg_catalog.format('DROP %s IF EXISTS %s CASCADE', item.kind, item.name);
+	END LOOP;
+
+	-- Enums, domains and ranges. Not multiranges: one goes with its range and
+	-- cannot go on its own, and dropped first it would stop the restore.
+	FOR item IN
+		SELECT pg_catalog.quote_ident(n.nspname) || '.' || pg_catalog.quote_ident(t.typname) AS name,
+		       CASE t.typtype WHEN 'd' THEN 'DOMAIN' ELSE 'TYPE' END AS kind
+		  FROM pg_catalog.pg_type t
+		  JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+		 WHERE n.nspname = 'public'
+		   AND t.typtype IN ('e', 'd', 'r')
+		   AND t.typowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
+	LOOP
+		EXECUTE pg_catalog.format('DROP %s IF EXISTS %s CASCADE', item.kind, item.name);
+	END LOOP;
+END
+$$;
+SQL
+}
+
+# How far the migrations had come, the last one's time as drizzle notes it, or
+# 0 without any. Asked as the owner, who also plays the dump: after the restore
+# the table is whatever the archive made it.
+owner_value() {
+	PGPASSWORD="$OPENGEWERK_OWNER_PASSWORD" psql --host "$POSTGRES_HOST" \
+		--username opengewerk_owner --dbname "$POSTGRES_DB" \
+		--no-psqlrc --quiet --tuples-only --no-align --set ON_ERROR_STOP=1 --command "$1"
+}
+migration_level() {
+	level=0
+	if [ "$(owner_value "select to_regclass('drizzle.__drizzle_migrations') is not null")" = t ]; then
+		level=$(owner_value "select coalesce(max(created_at), 0) from drizzle.__drizzle_migrations")
+	fi
+	case "$level" in
+	'' | *[!0-9]*) level=0 ;;
+	esac
+	echo "$level"
+}
+
 echo "  Datenbank wird zurückgespielt."
-PGPASSWORD="$OPENGEWERK_OWNER_PASSWORD" pg_restore --host "$POSTGRES_HOST" \
-	--username opengewerk_owner --dbname "$POSTGRES_DB" \
-	--clean --if-exists --no-owner --exit-on-error "${work}/database.dump"
+level_before=$(migration_level)
+empty_owned_schema >"${work}/empty.sql"
+# Into a file first, not through a pipe: in a pipe only psql's status counts,
+# and a pg_restore that stopped halfway would hand it half a dump, which the
+# transaction would then commit over an emptied schema.
+pg_restore --no-owner --file "${work}/database.sql" "${work}/database.dump"
+#
+# The transaction names its number first. A psql that fails has not always
+# seen it fail: when the connection breaks after the COMMIT went out and
+# before its answer came back, the database may hold the backup already. So
+# the database is asked how the transaction ended, and only one it aborted
+# leaves the database as it was; one it committed, or one whose end nobody
+# can say, counts as replaced.
+if ! PGPASSWORD="$OPENGEWERK_OWNER_PASSWORD" PGOPTIONS="-c client_min_messages=warning" \
+	psql --host "$POSTGRES_HOST" --username opengewerk_owner --dbname "$POSTGRES_DB" \
+	--no-psqlrc --quiet --tuples-only --no-align --single-transaction --set ON_ERROR_STOP=1 \
+	--file "${work}/empty.sql" --file "${work}/database.sql" >"${work}/played.txt"; then
+	transaction=$(sed -n 's/^restore-transaction \([0-9][0-9]*\)$/\1/p' "${work}/played.txt" | head -n 1)
+	# Without its number the transaction never began, and nothing changed.
+	if [ -n "$transaction" ]; then
+		outcome=$(psql --host "$POSTGRES_HOST" --username postgres --dbname postgres --quiet \
+			--tuples-only --no-align \
+			--command "select pg_catalog.pg_xact_status('${transaction}'::xid8)") || outcome=''
+		if [ "$outcome" != aborted ]; then
+			echo "Die Transaktion des Rückspielens ist nicht sicher abgebrochen (${outcome:-unbekannt})." >&2
+			replaced=1
+		fi
+	fi
+	exit 1
+fi
+replaced=1
+# A note an earlier restore left belongs to the database that was there.
+superuser_command "comment on role opengewerk_app is null"
+level_after=$(migration_level)
 
 # --- Restore the file store ------------------------------------------------
 echo "  Dateispeicher wird zurückgespielt."
@@ -329,7 +501,33 @@ fi
 chains=$(wc -l <"${work}/audit-chains.tsv" | tr -d ' ')
 echo "    ${chains} Kette(n) stimmen mit der Sicherung überein."
 
+if [ "$level_before" -eq 0 ] || [ "$level_after" -lt "$level_before" ] || [ "$was_locked" = t ]; then
+	waiting=1
+	superuser_command "comment on role opengewerk_app is '${waiting_note}'"
+fi
+
 echo "Fertig."
-echo "Die Anwendung neu starten, damit sie nicht mit Verbindungen zu einem Stand"
-echo "weiterarbeitet, den es so nicht mehr gibt:"
-echo "  docker compose restart app"
+if [ "$waiting" -eq 1 ]; then
+	if [ "$level_after" -lt "$level_before" ]; then
+		echo "Die Sicherung stammt von einer älteren Fassung als die Datenbank davor."
+		# The way back after an update starts the older version next, and up to
+		# 0.8.0 its start.sh does not know the note.
+		echo "Startet danach eine Fassung bis 0.8.0, gibt ihr Start die Anmeldung nicht"
+		echo "zurück. Dann vorher im Ordner der Installation die laufende Anwendung"
+		echo "anhalten, damit sie nicht auf dem älteren Schema arbeitet, und erst dann"
+		echo "die Anmeldung zurückgeben:"
+		echo "  docker compose -f docker/compose.yaml stop app backup-schedule"
+		echo "  docker compose -f docker/compose.yaml exec postgres psql -U postgres -c \"alter role opengewerk_app login; comment on role opengewerk_app is null\""
+	elif [ "$level_before" -eq 0 ]; then
+		echo "Die Datenbank davor hatte keine Migrationen, welchen Stand die Anwendung"
+		echo "braucht, ist also offen."
+	else
+		echo "Die Anwendung war schon vor diesem Lauf ausgesperrt, von einem früheren"
+		echo "Rückspielen."
+	fi
+	echo "Die Anwendung bleibt ausgesperrt, bis die Migrationen gelaufen sind; das"
+	echo "erledigt der Start, und danach bekommt sie ihre Anmeldung zurück."
+fi
+echo "Jetzt im Ordner der Installation starten, das führt auch die Migrationen aus,"
+echo "wenn die Sicherung von einer älteren Fassung stammt:"
+echo "  sh docker/start.sh"

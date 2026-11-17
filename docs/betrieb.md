@@ -667,6 +667,41 @@ braucht ein Dump dieser Datenbank nicht; der Dienst `backup` bekommt dafür
 `OPENGEWERK_OWNER_PASSWORD` aus der `.env`. Der Superuser sperrt die Anwendung
 aus und liest danach für die Prüfungen alle Mandanten.
 
+**Vor dem Dump wird geleert, und beides läuft in einer Transaktion** (#988). Der
+Lauf verwirft zuerst alles, was dem Eigentümer gehört: das Schema `drizzle` mit
+dem Protokoll der Migrationen, in `public` die Erweiterungen, Tabellen, Sichten,
+Sequenzen, Funktionen und Typen. Der Dump landet dann wie in einer neuen
+Datenbank, auch wenn er von einer älteren Fassung stammt und spätere Migrationen
+Tabellen angelegt haben, die er nicht kennt. Bis dahin räumte
+`pg_restore --clean` auf, und das verwirft nur, was im Dump steht; an einer
+späteren Tabelle, die an einer Tabelle des Dumps hing, brach es ab und ließ ein
+halbes Schema zurück. Den Dump schreibt der Lauf dafür zuerst als SQL in den
+Container, und das braucht dort etwa viermal so viel Platz wie der Dump; fehlt
+er, scheitert der Lauf, bevor er die Datenbank anfasst. Meldet `psql` beim
+Einspielen einen Fehler, fragt der Lauf die Datenbank, wie die Transaktion
+ausging: Bricht die Verbindung nach dem Abschluss ab, aber bevor die Antwort
+ankommt, steht die Sicherung womöglich schon drin. Nur eine Transaktion, die
+sicher abgebrochen ist, gilt als nicht geschehen. Scheitert also eine
+Anweisung, beim Leeren oder beim
+Einspielen, steht die Datenbank da wie vorher, und die Anwendung bekommt ihre
+Anmeldung zurück. Scheitert der Lauf erst danach, am Dateispeicher oder an einer
+der Prüfungen, bleibt sie ausgesperrt, und die Meldung sagt das. Ebenso, wenn
+sie schon vor dem Lauf ausgesperrt war, weil ein früherer nicht durchlief. Ein
+Lauf, der durchgeht, gibt die Anmeldung zurück oder überlässt das dem Start,
+siehe unten; wer den Stand nach einem Fehler trotzdem so nehmen will, gibt sie
+von Hand zurück:
+
+```bash
+docker compose -f docker/compose.yaml exec postgres psql -U postgres -c "alter role opengewerk_app login"
+```
+
+Nach einem Erfolg startet die Instanz im Ordner der Installation mit
+`sh docker/start.sh`. Stammt die Sicherung von einer älteren Fassung als die
+Datenbank davor, hatte diese keine Migrationen, oder war die Anwendung schon vor
+dem Lauf ausgesperrt, bleibt sie auch nach dem Erfolg ausgesperrt, mit einem Vermerk an ihrer Rolle: Sie
+liefe sonst womöglich auf einem Schema, das älter ist als sie. `start.sh` bringt die Datenbank mit den Migrationen auf den Stand der
+Fassung, gibt der Anwendung dann die Anmeldung zurück und startet sie.
+
 Der Lauf sperrt die Anwendung für seine Dauer aus, spielt beide Teile zurück
 und prüft danach drei Dinge, von denen jedes eine Frage beantwortet, die die
 anderen nicht beantworten können:
@@ -829,7 +864,29 @@ Zwei Fälle lehnt der Lauf ab, statt sie stillschweigend zu übergehen:
   Update.
 
 Vor ein Update gehört eine Sicherung, siehe oben. Sie ist auch der Weg zurück,
-wenn eine Migration zwar durchläuft, das Ergebnis aber nicht stimmt.
+wenn eine Migration zwar durchläuft, das Ergebnis aber nicht stimmt. Zurück
+geht es in dieser Reihenfolge: zuerst die neue Fassung anhalten,
+
+```bash
+docker compose -f docker/compose.yaml stop app backup-schedule
+```
+
+dann die Sicherung von vor dem Update zurückspielen, wie unter
+"Zurückspielen" beschrieben, und zwar noch mit der neuen Fassung, denn bis
+0.8.0 spielt `restore.sh` nicht in eine Datenbank zurück, die weiter ist als
+die Sicherung. Danach das Paket der alten Fassung an dieselbe Stelle
+entpacken. Das Zurückspielen lässt die Anwendung dabei ausgesperrt, bis die
+Migrationen gelaufen sind, und erst das `start.sh` einer Fassung nach 0.8.0
+gibt sie dann frei. Geht es zurück auf 0.8.0 oder früher, gibt man die
+Anmeldung deshalb vor dem Start von Hand zurück, und zwar erst, wenn die neue
+Fassung angehalten ist; sonst arbeitet sie bis zum Start auf dem älteren
+Schema:
+
+```bash
+docker compose -f docker/compose.yaml exec postgres psql -U postgres -c "alter role opengewerk_app login; comment on role opengewerk_app is null"
+```
+
+Dann `sh docker/start.sh`.
 
 **Releases** (#155). Eine Fassung erscheint mit einem Tag `v0.x.y` auf `main`;
 die erste war 0.1.0 am 24.09.2026. Der Workflow "Release" baut dann Anwendung
