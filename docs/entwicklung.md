@@ -243,7 +243,7 @@ Was noch fehlt: Skonto und ein Zahlungsziel je Kunde, die Zahlungsbedingungen au
 
 **Die Mitteilung zur Gewährleistung ist eine Seite, keine Belehrung aus Worten.** Seit dem 27.09.2026 bekommt ein Verbraucher vor einem Vertrag über Waren die harmonisierte Mitteilung zur gesetzlichen Gewährleistung nach Anhang I der Durchführungsverordnung (EU) 2025/1960 (#431). Sie steht unter den Belehrungen, ist aber die Seite, die die Kommission veröffentlicht, und nichts daran darf sich ändern: der Betrieb wählt, zu welchen Belegen sie vorgeschlagen wird, nicht, was sie sagt, und unter "Einstellungen" zeigt die Karte die Seite als Bild (`GET /settings/instructions/graphics/:name`). Pflicht ist sie an jedem Angebot an einen Verbraucher, an dem "Lieferung von Waren mit Montage" gewählt ist und das ab dem 27.09.2026 datiert; einem Kostenvoranschlag wird sie nicht vorgeschlagen. Im PDF steht sie als letzte Seite, ohne Briefkopf und Fußzeile: die Vorlage lässt dort eine leere Seite, die nach dem Rendern gegen die amtliche getauscht wird, und die Datei liegt mit Quelle, Nutzungsbedingungen und Prüfsumme unter `packages/server/assets/legal`. Eingefroren wird sie mit ihrem Namen in Fassung 12 von `DocumentContent`.
 
-Was noch fehlt: die Widerrufsfunktion nach § 356a BGB, die zum Kundenportal in Phase 5 gehört, beim Notdienst das Festhalten, dass der Kunde die dringende Reparatur ausdrücklich verlangt hat (Phase 2), und die Belehrung zum Verbraucherbauvertrag nach § 650l BGB (Phase 4).
+Was noch fehlt: die Widerrufsfunktion nach § 356a BGB, die zum Kundenportal in Phase 5 gehört, und die Belehrung zum Verbraucherbauvertrag nach § 650l BGB (Phase 4).
 
 ## E-Rechnung
 
@@ -343,7 +343,7 @@ Die Arbeitszeit aus Abschnitt 4.4 der Feature-Gliederung: auf der Baustelle, ohn
 
 **Ein Standort nur mit Einwilligung und nur bei Start und Stopp.** Die Einwilligung gibt und widerruft jede Person unter "Zeiten" für sich selbst (`GET` und `PUT /time/consent`), und jede Antwort ist eine neue Zeile, sodass feststeht, wann sie galt. Ohne sie fragt das Gerät gar nicht erst nach dem Standort, und der Server lässt einen mitgeschickten Standort fallen, wenn die letzte Antwort nein ist; der Eintrag selbst kommt trotzdem an.
 
-Was nicht dazugehört: Zuschläge, Auslöse, Verpflegungsmehraufwand und der Lohnexport kommen in Phase 3, die SOKA-BAU-Meldung später. Überstunden brauchen eine vereinbarte Arbeitszeit je Person, die es noch nicht gibt; sie kommen mit ihr in Phase 2, ausgezahlt oder übertragen mit dem Lohnexport in Phase 3 (#141).
+Was nicht dazugehört: Zuschläge, Auslöse, Verpflegungsmehraufwand und der Lohnexport kommen in Phase 3, die SOKA-BAU-Meldung später. Überstunden zählt seit 0.7.0 das Zeitkonto aus der vereinbarten Arbeitszeit in der Mitarbeiterakte (#287, #289); ausgezahlt oder übertragen werden sie mit dem Lohnexport in Phase 3 (#141).
 
 ## Steuern
 
