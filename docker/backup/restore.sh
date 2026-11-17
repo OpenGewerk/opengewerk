@@ -219,29 +219,123 @@ unlock_application() {
 		--command "alter role opengewerk_app login" >/dev/null
 }
 
-# Whatever happens from here, the application gets its login back. A restore
-# that fails halfway and leaves the role locked would turn one problem into
-# two, and the second one looks like a broken password.
+# A restore that fails before the database is replaced leaves it as it was,
+# see below, and the application gets its login back: a role left locked would
+# turn one problem into two, and the second one looks like a broken password.
+#
+# Once the database is replaced, a failure leaves it next to a file store or a
+# check that did not finish (#988). The application stays locked then, so that
+# nothing works on that state, and the message says so. A second restore gives
+# the login back when it goes through.
+replaced=0
 unlock_and_cleanup() {
-	unlock_application || true
+	if [ "$1" -ne 0 ] && [ "$replaced" -eq 1 ]; then
+		echo "" >&2
+		echo "Die Anwendung bleibt ausgesperrt: die Datenbank ist schon zurückgespielt," >&2
+		echo "der Rest nicht. Das Rückspielen noch einmal laufen lassen; nach einem" >&2
+		echo "Erfolg gibt es der Anwendung die Anmeldung selbst zurück." >&2
+	else
+		unlock_application || true
+	fi
 	cleanup
 }
-trap unlock_and_cleanup EXIT
+trap 'unlock_and_cleanup "$?"' EXIT
 
 echo "  Anwendung wird für die Dauer des Rückspielens ausgesperrt."
 lock_application
 
 # --- Restore the database --------------------------------------------------
-# --clean --if-exists throws away what is there first. Restoring into a
-# database that still holds rows would mix two states, and the result would
-# look plausible and be wrong.
+# Everything the owner holds goes first, and the dump is played into what is
+# left, all of it in one transaction (#988). Restoring into a database that
+# still holds rows would mix two states, and the result would look plausible
+# and be wrong.
+#
+# Not pg_restore --clean: it throws away only what the dump names. A backup of
+# an earlier version lacks what later migrations added, and that hangs on what
+# the dump does name, an index or a table, so the clean stopped halfway, with
+# part of the schema gone. Emptied here, an older backup lands as it would in a
+# new database, and start.sh migrates it to the running version afterwards.
+#
+# One transaction: a restore that fails anywhere, while emptying or while
+# playing the dump, leaves the database exactly as it was, and not without its
+# policies and triggers.
 #
 # Signed in as the owner, see above, and not as the superuser with SET ROLE:
 # a statement in the dump could take that back with RESET ROLE.
+empty_owned_schema() {
+	cat <<'SQL'
+DROP SCHEMA IF EXISTS drizzle CASCADE;
+DO $$
+DECLARE
+	item record;
+BEGIN
+	-- Extensions first: their functions and types go with them and cannot go
+	-- on their own.
+	FOR item IN
+		SELECT pg_catalog.quote_ident(e.extname) AS name
+		  FROM pg_catalog.pg_extension e
+		  JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
+		 WHERE n.nspname = 'public' AND e.extowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
+	LOOP
+		EXECUTE pg_catalog.format('DROP EXTENSION IF EXISTS %s CASCADE', item.name);
+	END LOOP;
+
+	FOR item IN
+		SELECT pg_catalog.quote_ident(n.nspname) || '.' || pg_catalog.quote_ident(c.relname) AS name,
+		       CASE c.relkind
+		         WHEN 'r' THEN 'TABLE' WHEN 'p' THEN 'TABLE' WHEN 'f' THEN 'FOREIGN TABLE'
+		         WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED VIEW'
+		         WHEN 'S' THEN 'SEQUENCE' WHEN 'c' THEN 'TYPE'
+		       END AS kind
+		  FROM pg_catalog.pg_class c
+		  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'public'
+		   AND c.relkind IN ('r', 'p', 'f', 'v', 'm', 'S', 'c')
+		   AND c.relowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
+		 ORDER BY CASE c.relkind WHEN 'r' THEN 0 WHEN 'p' THEN 0 WHEN 'f' THEN 0 ELSE 1 END
+	LOOP
+		EXECUTE pg_catalog.format('DROP %s IF EXISTS %s CASCADE', item.kind, item.name);
+	END LOOP;
+
+	FOR item IN
+		SELECT pg_catalog.quote_ident(n.nspname) || '.' || pg_catalog.quote_ident(p.proname)
+		         || '(' || pg_catalog.pg_get_function_identity_arguments(p.oid) || ')' AS name,
+		       CASE p.prokind WHEN 'p' THEN 'PROCEDURE' WHEN 'a' THEN 'AGGREGATE' ELSE 'FUNCTION' END AS kind
+		  FROM pg_catalog.pg_proc p
+		  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+		 WHERE n.nspname = 'public'
+		   AND p.proowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
+	LOOP
+		EXECUTE pg_catalog.format('DROP %s IF EXISTS %s CASCADE', item.kind, item.name);
+	END LOOP;
+
+	FOR item IN
+		SELECT pg_catalog.quote_ident(n.nspname) || '.' || pg_catalog.quote_ident(t.typname) AS name,
+		       CASE t.typtype WHEN 'd' THEN 'DOMAIN' ELSE 'TYPE' END AS kind
+		  FROM pg_catalog.pg_type t
+		  JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
+		 WHERE n.nspname = 'public'
+		   AND t.typtype IN ('e', 'd', 'r', 'm')
+		   AND t.typowner = (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = current_user)
+	LOOP
+		EXECUTE pg_catalog.format('DROP %s IF EXISTS %s CASCADE', item.kind, item.name);
+	END LOOP;
+END
+$$;
+SQL
+}
+
 echo "  Datenbank wird zurückgespielt."
-PGPASSWORD="$OPENGEWERK_OWNER_PASSWORD" pg_restore --host "$POSTGRES_HOST" \
-	--username opengewerk_owner --dbname "$POSTGRES_DB" \
-	--clean --if-exists --no-owner --exit-on-error "${work}/database.dump"
+empty_owned_schema >"${work}/empty.sql"
+# Into a file first, not through a pipe: in a pipe only psql's status counts,
+# and a pg_restore that stopped halfway would hand it half a dump, which the
+# transaction would then commit over an emptied schema.
+pg_restore --no-owner --file "${work}/database.sql" "${work}/database.dump"
+PGPASSWORD="$OPENGEWERK_OWNER_PASSWORD" PGOPTIONS="-c client_min_messages=warning" \
+	psql --host "$POSTGRES_HOST" --username opengewerk_owner --dbname "$POSTGRES_DB" \
+	--no-psqlrc --quiet --single-transaction --set ON_ERROR_STOP=1 \
+	--file "${work}/empty.sql" --file "${work}/database.sql" >/dev/null
+replaced=1
 
 # --- Restore the file store ------------------------------------------------
 echo "  Dateispeicher wird zurückgespielt."
@@ -330,6 +424,6 @@ chains=$(wc -l <"${work}/audit-chains.tsv" | tr -d ' ')
 echo "    ${chains} Kette(n) stimmen mit der Sicherung überein."
 
 echo "Fertig."
-echo "Die Anwendung neu starten, damit sie nicht mit Verbindungen zu einem Stand"
-echo "weiterarbeitet, den es so nicht mehr gibt:"
-echo "  docker compose restart app"
+echo "Jetzt im Ordner der Installation starten, das führt auch die Migrationen aus,"
+echo "wenn die Sicherung von einer älteren Fassung stammt:"
+echo "  sh docker/start.sh"

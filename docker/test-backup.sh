@@ -56,10 +56,22 @@ FAKE
 #
 # Each writes down that it was called. A restore that is turned away has to be
 # turned away before the first of them, the one that locks the application out
-# included. pg_restore writes down whom it signs in as, with the password.
+# included. The psql that plays the dump writes down whom it signs in as,
+# with the password; pg_restore only turns the dump into statements.
 cat > "$work/bin/psql" <<'FAKE'
 #!/bin/sh
 printf 'psql %s\n' "$*" >> "$CALLS"
+case " $* " in
+  *" --single-transaction "*) printf 'restore-as %s password=%s\n' "$*" "${PGPASSWORD:-}" >> "$CALLS" ;;
+esac
+# The files it plays are written down as well, in their order.
+previous=''
+for argument in "$@"; do
+  if [ "$previous" = --file ] && [ "$argument" != - ]; then
+    cat "$argument" >> "$CALLS"
+  fi
+  previous=$argument
+done
 # Without --command, psql reads its statements from stdin, as checked_query
 # hands them over; they are written down with the call.
 case " $* " in
@@ -73,6 +85,15 @@ FAKE
 cat > "$work/bin/pg_restore" <<'FAKE'
 #!/bin/sh
 printf 'pg_restore %s password=%s\n' "$*" "${PGPASSWORD:-}" >> "$CALLS"
+[ -z "${PG_RESTORE_FAILS:-}" ] || exit 1
+# The statements of the dump, into the file it is asked to write.
+previous=''
+for argument in "$@"; do
+  if [ "$previous" = --file ]; then
+    printf -- '-- the statements of the dump\n' > "$argument"
+  fi
+  previous=$argument
+done
 FAKE
 #
 # age as it is, unless a check asks otherwise: AGE_SAW names a file to write
@@ -114,6 +135,11 @@ cat > "$work/bin/tar" <<FAKE
 #!/bin/sh
 if [ -n "\${SWAP_FROM:-}" ] && [ "\$1" = --extract ]; then
   cp "\$SWAP_FROM" "\$SWAP_ONTO"
+fi
+if [ -n "\${STORAGE_FAILS:-}" ] && [ "\$1" = --extract ]; then
+  case "\$*" in
+    *storage.tar*) exit 1 ;;
+  esac
 fi
 if [ -n "\${TAR_FAILS:-}" ] && [ "\$1" = --create ]; then
   case " \$* " in
@@ -451,19 +477,79 @@ check 'Herkunft: auf einer neuen Maschine ohne Verzeichnis nur mit --skip-origin
 
 # 8. The dump is restored by the owner of the tables, with its own password,
 # and not by the superuser under SET ROLE, which a statement in the dump could
-# take back.
+# take back. In one transaction that stops at the first error, after the
+# owner's objects are emptied, and without pg_restore --clean, which stopped
+# at what later migrations added (#988).
 taken env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
-grep '^pg_restore ' "$CALLS" > "$work/restored"
+grep '^restore-as ' "$CALLS" > "$work/restored"
 grep -q -- '--username opengewerk_owner ' "$work/restored"
 grep -q ' password=owner-probe$' "$work/restored"
+grep -q -- '--set ON_ERROR_STOP=1 ' "$work/restored"
+grep -q '^DROP SCHEMA IF EXISTS drizzle CASCADE;$' "$CALLS"
+grep '^pg_restore ' "$CALLS" | grep -q -- '--no-owner --file '
+# Emptied first, then the dump, both in the one transaction of the psql.
+awk '/^DROP SCHEMA IF EXISTS drizzle CASCADE;$/ { emptied = NR } /^-- the statements of the dump$/ { played = NR } END { exit !(emptied && played && emptied < played) }' "$CALLS"
+if grep '^pg_restore ' "$CALLS" | grep -q -e '--clean' -e '--username' -e '--host'; then
+  echo 'FEHLER: pg_restore räumt selbst auf oder meldet sich an'
+  grep '^pg_restore ' "$CALLS"
+  exit 1
+fi
 if grep -q -e '--role' -e '--username postgres' -e 'password=probe$' "$work/restored"; then
-  echo 'FEHLER: pg_restore lief als Superuser'
+  echo 'FEHLER: der Dump lief als Superuser'
   cat "$work/restored"
   exit 1
 fi
+grep -q 'alter role opengewerk_app login' "$CALLS" || {
+  echo 'FEHLER: nach dem Rückspielen bekam die Anwendung ihre Anmeldung nicht zurück'
+  exit 1
+}
+# The command it names to start again works from the folder of the installation
+# (#987): there is no compose.yaml at its root.
+grep -q '^  sh docker/start.sh$' "$work/out" || {
+  echo 'FEHLER: die Meldung am Ende nennt nicht, wie die Anwendung wieder startet'
+  cat "$work/out"
+  exit 1
+}
 refused 'OPENGEWERK_OWNER_PASSWORD fehlt' env -u OPENGEWERK_OWNER_PASSWORD POSTGRES_DB=opengewerk \
   sh "$work/bin/restore.sh" "$ours"
-check 'Rückspielen: pg_restore als Eigentümer der Tabellen, nicht als Superuser'
+check 'Rückspielen: als Eigentümer der Tabellen, in einer Transaktion, nicht als Superuser'
+
+# 8b. A restore that fails after the database is replaced leaves the
+# application locked and says so, because the file store did not come back.
+# One that fails before gives the login back: the database is as it was
+# (#988).
+halfway() {
+  : > "$CALLS"
+  if env POSTGRES_DB=opengewerk "$@" sh "$work/bin/restore.sh" "$ours" > "$work/out" 2>&1; then
+    printf 'FEHLER: lief durch mit %s\n' "$*"
+    cat "$work/out"
+    exit 1
+  fi
+  grep -q 'alter role opengewerk_app nologin' "$CALLS" || {
+    printf 'FEHLER: die Anwendung wurde nicht ausgesperrt: %s\n' "$*"
+    exit 1
+  }
+}
+halfway STORAGE_FAILS=1
+grep -q 'bleibt ausgesperrt' "$work/out" || {
+  echo 'FEHLER: die Meldung sagt nicht, dass die Anwendung ausgesperrt bleibt'
+  cat "$work/out"
+  exit 1
+}
+if grep -q 'alter role opengewerk_app login' "$CALLS"; then
+  echo 'FEHLER: nach einem halben Rückspielen bekam die Anwendung ihre Anmeldung zurück'
+  exit 1
+fi
+halfway PG_RESTORE_FAILS=1
+grep -q 'alter role opengewerk_app login' "$CALLS" || {
+  echo 'FEHLER: vor dem Einspielen gescheitert, und die Anwendung blieb ausgesperrt'
+  exit 1
+}
+if grep -q 'bleibt ausgesperrt' "$work/out"; then
+  echo 'FEHLER: die Meldung nennt eine Sperre, die es nicht gibt'
+  exit 1
+fi
+check 'Rückspielen: scheitert es nach der Datenbank, bleibt die Anwendung ausgesperrt, davor nicht'
 
 # 9. The heads of the chains go into statements of the superuser after the
 # restore, and into those of verify.sh. A line that is no head is turned away

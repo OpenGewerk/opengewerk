@@ -9,6 +9,14 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Eine Sicherung einer älteren Fassung geht in eine Datenbank einer neueren zurück, und ein gescheitertes
+  Zurückspielen lässt die Datenbank, wie sie war (#988). Warum: `restore.sh` räumte mit `pg_restore --clean` auf, das
+  nur verwirft, was im Dump steht. Was spätere Migrationen angelegt hatten, blieb stehen, und der Lauf brach mitten im
+  Aufräumen ab, ohne Policies und Auslöser. Jetzt leert er alles, was dem Eigentümer gehört, und spielt den Dump in
+  derselben Transaktion ein; `sh docker/start.sh` migriert danach auf die laufende Fassung. Scheitert der Lauf erst
+  nach der Datenbank, bleibt die Anwendung ausgesperrt, und die Meldung sagt das.
+- Am Ende eines Zurückspielens nennt `restore.sh` `sh docker/start.sh` als nächsten Schritt (#987). Warum: Der
+  Befehl `docker compose restart app` fand im Ordner der Installation keine `compose.yaml` und schlug fehl.
 - Abschnitt 1.2 der Feature-Gliederung nennt das Löschen nach dem Löschkonzept unter den Aktionen der Fristen-Engine
   (v2.80), und der Kommentar über `deadlineActions` und der Name ihres Tests zählen nicht mehr vier (#979). Warum:
   Gebaut ist es seit #317, und das Konzept ist die verbindliche Quelle für den Funktionsumfang.
