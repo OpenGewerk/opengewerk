@@ -78,6 +78,20 @@ grep -q '|compose -f .*compose.yaml run --rm migrate$' "$CALLS"
 absent ' pull'
 check 'Quelltext: Anwendung und Sicherung gebaut, nichts geholt'
 
+# 1b. Between the migration and the start, the application gets its login
+# back if a restore of an older backup left it locked (#988): after the
+# migration, so that it never works on the older schema, and before the
+# start, which would otherwise wait for an application that cannot sign in.
+awk '/\|compose -f .*compose.yaml run --rm migrate$/ { migrated = NR }
+  /\|compose -f .*compose.yaml exec -T postgres psql / { unlocked = NR }
+  /\|compose -f .*compose.yaml up -d --wait/ { started = NR }
+  END { exit !(migrated && unlocked && started && migrated < unlocked && unlocked < started) }' "$CALLS" || {
+  echo 'FEHLER: die Anmeldung nach einem Zurückspielen kommt nicht zwischen Migration und Start zurück'
+  cat "$CALLS"
+  exit 1
+}
+check 'Zurückspielen: die Anmeldung der Anwendung kommt nach der Migration zurück, vor dem Start'
+
 # 2. A release kit: the version in compose.yaml, written there the way the
 # release workflow writes it.
 sed 's/OPENGEWERK_VERSION:-source}/OPENGEWERK_VERSION:-0.3.0}/' "$work/docker/compose.yaml" > "$work/docker/compose.kit"

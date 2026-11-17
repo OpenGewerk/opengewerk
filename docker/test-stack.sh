@@ -764,6 +764,12 @@ restore)
   }
   echo 'Ein gescheitertes Rückspielen lässt die Datenbank, wie sie war.'
 
+  # As if a later migration had run since the backup: one line more in the
+  # record of the migrations. The backup is then from an earlier version than
+  # the database, and the application stays locked until start.sh has run the
+  # migrations (#988).
+  sql "insert into drizzle.__drizzle_migrations (hash, created_at) select 'later', max(created_at) + 1 from drizzle.__drizzle_migrations"
+
   # Through the record of the backups, which the instance kept.
   if ! compose --profile backup run --rm -v "$temp/identity.txt:/key.txt:ro" -e BACKUP_AGE_IDENTITY=/key.txt backup restore.sh latest > "$temp/restore.txt" 2>&1; then
     cat "$temp/restore.txt"
@@ -776,6 +782,16 @@ restore)
   [ "$(value "select to_regclass('public.later_things') is null")" = t ] ||
     fail 'Was eine spätere Migration angelegt hatte, steht nach dem Rückspielen noch.'
   echo 'Zurückgespielt über das, was eine spätere Migration angelegt hatte.'
+
+  [ "$(value "select not rolcanlogin and shobj_description(oid, 'pg_authid') = 'restored, waiting for migrations' from pg_roles where rolname = 'opengewerk_app'")" = t ] ||
+    fail 'Nach dem Rückspielen einer älteren Sicherung durfte sich die Anwendung vor den Migrationen anmelden.'
+  if ! with_address sh "$scripts/start.sh" > "$temp/start-after-restore.txt" 2>&1; then
+    cat "$temp/start-after-restore.txt"
+    fail 'start.sh ist nach dem Rückspielen gescheitert.'
+  fi
+  [ "$(value "select rolcanlogin and shobj_description(oid, 'pg_authid') is null from pg_roles where rolname = 'opengewerk_app'")" = t ] ||
+    fail 'Nach start.sh hat die Anwendung ihre Anmeldung nicht zurück.'
+  echo 'Eine ältere Sicherung: ausgesperrt bis zu den Migrationen, start.sh gibt die Anmeldung zurück.'
   ;;
 
 compare)

@@ -80,6 +80,16 @@ case " $* " in
 esac
 case "$*" in
   *server_version*) echo 18 ;;
+  *rolcanlogin*) echo "${WAS_LOCKED:-f}" ;;
+  *"to_regclass('drizzle.__drizzle_migrations')"*) echo t ;;
+  # How far the migrations had come: before the dump is played and after.
+  *'max(created_at)'*)
+    if grep -q '^restore-as ' "$CALLS"; then
+      echo "${LEVEL_AFTER:-2}"
+    else
+      echo "${LEVEL_BEFORE:-2}"
+    fi
+    ;;
 esac
 FAKE
 cat > "$work/bin/pg_restore" <<'FAKE'
@@ -549,7 +559,39 @@ if grep -q 'bleibt ausgesperrt' "$work/out"; then
   echo 'FEHLER: die Meldung nennt eine Sperre, die es nicht gibt'
   exit 1
 fi
+# Locked by an earlier run that did not go through, the database is the one
+# that run left: a second run that fails before the dump keeps the lock.
+halfway WAS_LOCKED=t PG_RESTORE_FAILS=1
+if grep -q 'alter role opengewerk_app login' "$CALLS"; then
+  echo 'FEHLER: ein zweiter, früh gescheiterter Lauf gab die Sperre des ersten frei'
+  exit 1
+fi
+grep -q 'wie sie es vor diesem Lauf war' "$work/out" || {
+  echo 'FEHLER: die Meldung sagt nicht, warum die Anwendung ausgesperrt bleibt'
+  cat "$work/out"
+  exit 1
+}
 check 'Rückspielen: scheitert es nach der Datenbank, bleibt die Anwendung ausgesperrt, davor nicht'
+
+# 8c. A backup from an earlier version than the database it replaces: the
+# restore goes through, and the application stays locked with the note
+# start.sh looks for, until the migrations have run (#988). The same version
+# gives the login back at once, see 8.
+taken env POSTGRES_DB=opengewerk LEVEL_BEFORE=3 LEVEL_AFTER=2 sh "$work/bin/restore.sh" "$ours"
+if grep -q 'alter role opengewerk_app login' "$CALLS"; then
+  echo 'FEHLER: die Anwendung bekam die Anmeldung vor den Migrationen zurück'
+  exit 1
+fi
+grep -q "comment on role opengewerk_app is 'restored, waiting for migrations'" "$CALLS" || {
+  echo 'FEHLER: die Rolle trägt nicht den Vermerk, nach dem start.sh sucht'
+  exit 1
+}
+grep -q 'älteren Fassung' "$work/out" || {
+  echo 'FEHLER: die Meldung sagt nicht, warum die Anwendung ausgesperrt bleibt'
+  cat "$work/out"
+  exit 1
+}
+check 'Rückspielen: eine ältere Sicherung lässt die Anwendung bis zu den Migrationen ausgesperrt'
 
 # 9. The heads of the chains go into statements of the superuser after the
 # restore, and into those of verify.sh. A line that is no head is turned away

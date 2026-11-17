@@ -214,26 +214,53 @@ lock_application() {
 		  where datname = '${POSTGRES_DB}' and usename = 'opengewerk_app'" >/dev/null
 }
 
-unlock_application() {
+superuser_command() {
 	psql --host "$POSTGRES_HOST" --username postgres --dbname postgres --quiet \
-		--command "alter role opengewerk_app login" >/dev/null
+		--command "$1" >/dev/null
 }
+
+# Written on the role of the application when a restore went through and the
+# backup is from an earlier version than the database it replaced (#988). The
+# application stays locked then, because it would work on a schema older than
+# itself until the migrations have run; start.sh runs them and gives the login
+# back to a role that carries this note, and only to such a role.
+waiting_note='restored, waiting for migrations'
+
+unlock_application() {
+	superuser_command "alter role opengewerk_app login; comment on role opengewerk_app is null"
+}
+
+# Locked before this run starts: by an earlier restore that did not go through,
+# or by one that waits for the migrations.
+was_locked=$(psql --host "$POSTGRES_HOST" --username postgres --dbname postgres --quiet \
+	--tuples-only --no-align \
+	--command "select not rolcanlogin from pg_catalog.pg_roles where rolname = 'opengewerk_app'")
 
 # A restore that fails before the database is replaced leaves it as it was,
 # see below, and the application gets its login back: a role left locked would
 # turn one problem into two, and the second one looks like a broken password.
+# Unless it was locked before this run: then the database it leaves is the one
+# that earlier run left, and the lock stays with it.
 #
 # Once the database is replaced, a failure leaves it next to a file store or a
 # check that did not finish (#988). The application stays locked then, so that
 # nothing works on that state, and the message says so. A second restore gives
 # the login back when it goes through.
 replaced=0
+behind=0
 unlock_and_cleanup() {
-	if [ "$1" -ne 0 ] && [ "$replaced" -eq 1 ]; then
+	if [ "$1" -eq 0 ]; then
+		[ "$behind" -eq 1 ] || unlock_application || true
+	elif [ "$replaced" -eq 1 ]; then
+		superuser_command "comment on role opengewerk_app is null" || true
 		echo "" >&2
 		echo "Die Anwendung bleibt ausgesperrt: die Datenbank ist schon zurückgespielt," >&2
 		echo "der Rest nicht. Das Rückspielen noch einmal laufen lassen; nach einem" >&2
 		echo "Erfolg gibt es der Anwendung die Anmeldung selbst zurück." >&2
+	elif [ "$was_locked" = t ]; then
+		echo "" >&2
+		echo "Die Anwendung bleibt ausgesperrt, wie sie es vor diesem Lauf war: ein" >&2
+		echo "früheres Rückspielen ist nicht durchgelaufen oder wartet auf die Migrationen." >&2
 	else
 		unlock_application || true
 	fi
@@ -325,7 +352,27 @@ $$;
 SQL
 }
 
+# How far the migrations had come, the last one's time as drizzle notes it, or
+# 0 without any. Asked as the owner, who also plays the dump: after the restore
+# the table is whatever the archive made it.
+owner_value() {
+	PGPASSWORD="$OPENGEWERK_OWNER_PASSWORD" psql --host "$POSTGRES_HOST" \
+		--username opengewerk_owner --dbname "$POSTGRES_DB" \
+		--no-psqlrc --quiet --tuples-only --no-align --set ON_ERROR_STOP=1 --command "$1"
+}
+migration_level() {
+	level=0
+	if [ "$(owner_value "select to_regclass('drizzle.__drizzle_migrations') is not null")" = t ]; then
+		level=$(owner_value "select coalesce(max(created_at), 0) from drizzle.__drizzle_migrations")
+	fi
+	case "$level" in
+	'' | *[!0-9]*) level=0 ;;
+	esac
+	echo "$level"
+}
+
 echo "  Datenbank wird zurückgespielt."
+level_before=$(migration_level)
 empty_owned_schema >"${work}/empty.sql"
 # Into a file first, not through a pipe: in a pipe only psql's status counts,
 # and a pg_restore that stopped halfway would hand it half a dump, which the
@@ -336,6 +383,9 @@ PGPASSWORD="$OPENGEWERK_OWNER_PASSWORD" PGOPTIONS="-c client_min_messages=warnin
 	--no-psqlrc --quiet --single-transaction --set ON_ERROR_STOP=1 \
 	--file "${work}/empty.sql" --file "${work}/database.sql" >/dev/null
 replaced=1
+# A note an earlier restore left belongs to the database that was there.
+superuser_command "comment on role opengewerk_app is null"
+level_after=$(migration_level)
 
 # --- Restore the file store ------------------------------------------------
 echo "  Dateispeicher wird zurückgespielt."
@@ -423,7 +473,17 @@ fi
 chains=$(wc -l <"${work}/audit-chains.tsv" | tr -d ' ')
 echo "    ${chains} Kette(n) stimmen mit der Sicherung überein."
 
+if [ "$level_after" -lt "$level_before" ]; then
+	behind=1
+	superuser_command "comment on role opengewerk_app is '${waiting_note}'"
+fi
+
 echo "Fertig."
+if [ "$behind" -eq 1 ]; then
+	echo "Die Sicherung stammt von einer älteren Fassung als die Datenbank davor."
+	echo "Die Anwendung bleibt ausgesperrt, bis die Migrationen gelaufen sind; das"
+	echo "erledigt der Start, und danach bekommt sie ihre Anmeldung zurück."
+fi
 echo "Jetzt im Ordner der Installation starten, das führt auch die Migrationen aus,"
 echo "wenn die Sicherung von einer älteren Fassung stammt:"
 echo "  sh docker/start.sh"
