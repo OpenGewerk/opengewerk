@@ -22,6 +22,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Geändert
 
+- Das Security-Review steht auf `fa57df6` von OpenGewerk/.github und wechselt jetzt auch beim Ausgabenlimit eines Arbeitsbereichs auf das zweite Konto (OpenGewerk/.github#62). Warum: Die Meldung dazu lautet seit dem 17.11.2026 anders, das Review erkannte sie nicht und endete am Pull Request ohne Bericht.
 - Gebraucht wird jetzt Docker Engine ab 28.3.3, so steht es in README, `docs/betrieb.md`, Handbuch und auf der Release-Seite. Warum: Ältere Fassungen lassen Rechner im selben Netz an Ports, die nur auf `127.0.0.1` veröffentlicht sind, und 28.2.0 bis 28.3.2 öffnen sie nach einem Neuladen von firewalld wieder (CVE-2025-54388); OpenGewerk steht dort hinter einem Proxy mit TLS. Prüfen wird das `start.sh` mit #985.
 
 ### Behoben
