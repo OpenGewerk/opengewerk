@@ -1,6 +1,6 @@
 # Update
 
-Vorher sichern, das neue Paket an dieselbe Stelle entpacken und derselbe Befehl wie beim ersten Start. Die Datei `.env` bleibt, wie sie ist. Die Befehle gehen von einer Installation in `/opt/opengewerk` aus.
+Vorher sichern, das neue Paket an dieselbe Stelle entpacken und derselbe Befehl wie beim ersten Start. Die Datei `.env` bleibt, wie sie ist. Die Befehle gehen von einer Installation in `/opt/opengewerk` aus und laufen als root; als anderer Benutzer wirst du vorher mit `sudo -i` zu root.
 
 ## Schritt für Schritt
 

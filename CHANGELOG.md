@@ -20,6 +20,10 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Anwendung geladen ist. Ein Test hält fest, dass jede Seite des Büros einen Text hat. Warum: Wer neu in OpenGewerk
   arbeitet, soll an der Stelle nachlesen können, an der die Frage aufkommt, auch im Keller ohne Netz.
 
+### Geändert
+
+- Gebraucht wird jetzt Docker Engine ab 28.3.3, so steht es in README, `docs/betrieb.md`, Handbuch und auf der Release-Seite. Warum: Ältere Fassungen lassen Rechner im selben Netz an Ports, die nur auf `127.0.0.1` veröffentlicht sind, und 28.2.0 bis 28.3.2 öffnen sie nach einem Neuladen von firewalld wieder (CVE-2025-54388); OpenGewerk steht dort hinter einem Proxy mit TLS. Prüfen wird das `start.sh` mit #985.
+
 ### Behoben
 
 - Abschnitt 1.2 der Feature-Gliederung nennt das Löschen nach dem Löschkonzept unter den Aktionen der Fristen-Engine
