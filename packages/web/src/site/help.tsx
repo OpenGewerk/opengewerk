@@ -45,36 +45,39 @@ export function SiteHelpScreen() {
         <WifiOff size={18} strokeWidth={2} aria-hidden="true" className="mt-0.5 shrink-0" />
         <span>{siteHelpWords.offline}</span>
       </p>
-      {!present(screens) || !present(guides) ? (
-        <SiteText muted>{absence(siteHelpWords.loading, screens, guides)}</SiteText>
-      ) : (
-        <>
-          <Panel title={siteHelpWords.screens}>
-            <SiteRows label={siteHelpWords.screens}>
-              {inOrder(screens, siteHelpOrder).map(({ key, text }) => (
-                <SiteRow
-                  key={key}
-                  to={`/hilfe/bildschirm/${key}`}
-                  title={markdownTitle(text) ?? key}
-                  meta={firstParagraph(text)}
-                />
-              ))}
-            </SiteRows>
-          </Panel>
-          <Panel title={siteHelpWords.guides}>
-            <SiteRows label={siteHelpWords.guides}>
-              {inOrder(guides, guideOrder).map(({ key, text }) => (
-                <SiteRow
-                  key={key}
-                  to={`/hilfe/${key}`}
-                  title={markdownTitle(text) ?? key}
-                  meta={firstParagraph(text)}
-                />
-              ))}
-            </SiteRows>
-          </Panel>
-        </>
-      )}
+      {/* Each part on its own: one that fails leaves the other readable. */}
+      <Panel title={siteHelpWords.screens}>
+        {present(screens) ? (
+          <SiteRows label={siteHelpWords.screens}>
+            {inOrder(screens, siteHelpOrder).map(({ key, text }) => (
+              <SiteRow
+                key={key}
+                to={`/hilfe/bildschirm/${key}`}
+                title={markdownTitle(text) ?? key}
+                meta={firstParagraph(text)}
+              />
+            ))}
+          </SiteRows>
+        ) : (
+          <SiteText muted>{absence(siteHelpWords.loading, screens)}</SiteText>
+        )}
+      </Panel>
+      <Panel title={siteHelpWords.guides}>
+        {present(guides) ? (
+          <SiteRows label={siteHelpWords.guides}>
+            {inOrder(guides, guideOrder).map(({ key, text }) => (
+              <SiteRow
+                key={key}
+                to={`/hilfe/${key}`}
+                title={markdownTitle(text) ?? key}
+                meta={firstParagraph(text)}
+              />
+            ))}
+          </SiteRows>
+        ) : (
+          <SiteText muted>{absence(siteHelpWords.loading, guides)}</SiteText>
+        )}
+      </Panel>
     </SiteScreen>
   )
 }
