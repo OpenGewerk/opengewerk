@@ -693,8 +693,8 @@ docker compose -f docker/compose.yaml exec postgres psql -U postgres -c "alter r
 
 Nach einem Erfolg startet die Instanz im Ordner der Installation mit
 `sh docker/start.sh`. Stammt die Sicherung von einer älteren Fassung als die
-Datenbank davor, oder war die Anwendung schon vor dem Lauf ausgesperrt, bleibt
-sie auch nach dem Erfolg ausgesperrt, mit einem Vermerk an ihrer Rolle: Sie
+Datenbank davor, hatte diese keine Migrationen, oder war die Anwendung schon vor
+dem Lauf ausgesperrt, bleibt sie auch nach dem Erfolg ausgesperrt, mit einem Vermerk an ihrer Rolle: Sie
 liefe sonst womöglich auf einem Schema, das älter ist als sie. `start.sh` bringt die Datenbank mit den Migrationen auf den Stand der
 Fassung, gibt der Anwendung dann die Anmeldung zurück und startet sie.
 

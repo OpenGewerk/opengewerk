@@ -603,6 +603,18 @@ grep -q "comment on role opengewerk_app is 'restored, waiting for migrations'" "
   echo 'FEHLER: nach einer Sperre von vor dem Lauf trägt die Rolle nicht den Vermerk'
   exit 1
 }
+# A database without any migrations before the run says nothing about the
+# version the application needs either.
+taken env POSTGRES_DB=opengewerk LEVEL_BEFORE=0 sh "$work/bin/restore.sh" "$ours"
+if grep -q 'alter role opengewerk_app login' "$CALLS"; then
+  echo 'FEHLER: nach einer Datenbank ohne Migrationen kam die Anmeldung vor den Migrationen zurück'
+  exit 1
+fi
+grep -q 'keine Migrationen' "$work/out" || {
+  echo 'FEHLER: die Meldung sagt nicht, warum die Anwendung ausgesperrt bleibt'
+  cat "$work/out"
+  exit 1
+}
 check 'Rückspielen: eine ältere Sicherung lässt die Anwendung bis zu den Migrationen ausgesperrt'
 
 # 9. The heads of the chains go into statements of the superuser after the

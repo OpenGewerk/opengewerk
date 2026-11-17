@@ -227,7 +227,8 @@ superuser_command() {
 #
 # The same when the application was locked before the run. The database this
 # run replaced is then one an earlier restore left, and how far its migrations
-# had come says nothing about how far the application needs them.
+# had come says nothing about how far the application needs them. And the same
+# when that database had no migrations at all: then nothing says it either.
 waiting_note='restored, waiting for migrations'
 
 unlock_application() {
@@ -477,7 +478,7 @@ fi
 chains=$(wc -l <"${work}/audit-chains.tsv" | tr -d ' ')
 echo "    ${chains} Kette(n) stimmen mit der Sicherung überein."
 
-if [ "$level_after" -lt "$level_before" ] || [ "$was_locked" = t ]; then
+if [ "$level_before" -eq 0 ] || [ "$level_after" -lt "$level_before" ] || [ "$was_locked" = t ]; then
 	waiting=1
 	superuser_command "comment on role opengewerk_app is '${waiting_note}'"
 fi
@@ -486,6 +487,9 @@ echo "Fertig."
 if [ "$waiting" -eq 1 ]; then
 	if [ "$level_after" -lt "$level_before" ]; then
 		echo "Die Sicherung stammt von einer älteren Fassung als die Datenbank davor."
+	elif [ "$level_before" -eq 0 ]; then
+		echo "Die Datenbank davor hatte keine Migrationen, welchen Stand die Anwendung"
+		echo "braucht, ist also offen."
 	else
 		echo "Die Anwendung war schon vor diesem Lauf ausgesperrt, von einem früheren"
 		echo "Rückspielen."
