@@ -16,8 +16,8 @@ import { GuideScreen, HelpScreen, helpWords, NewsScreen } from './help.js'
 
 /**
  * "Hilfe" in the office (#269, the boards "Hilfe", "Hilfe, Suche",
- * "Kurzanleitung" and "Was ist neu"): the quick guides, a search through every
- * text of the help, and what each version brought, newest first. The texts
+ * "Kurzanleitung" and "Was ist neu"): the quick guides, a search through the
+ * texts of the office, the quick guides and the notes on versions, and what each version brought, newest first. The texts
  * are the ones the application ships; what each holds is tested where they
  * are (`help/texts.test.ts`).
  */

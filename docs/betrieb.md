@@ -627,7 +627,8 @@ docker compose -f docker/compose.yaml logs backup-schedule
 
 ```bash
 docker compose -f docker/compose.yaml stop app
-docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh latest   && docker compose -f docker/compose.yaml start app
+docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh latest \
+  && docker compose -f docker/compose.yaml start app
 ```
 
 Die Anwendung ist dabei angehalten, damit niemand etwas einträgt, das das

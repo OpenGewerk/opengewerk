@@ -25,7 +25,7 @@ export const helpWords = {
     'Zu jeder Seite gibt es einen eigenen Text. Das Fragezeichen in der Kopfleiste öffnet ihn neben der Seite, auf einem schmalen Bildschirm steht „Hilfe zu dieser Seite“ im Menü. Die Hilfe liegt in der Anwendung und ist auch ohne Netz da; Kurzanleitungen und Handbuch stehen zusätzlich auf opengewerk.de.',
   hits: (count: number, query: string) =>
     count === 1 ? `1 Treffer für „${query}“` : `${count} Treffer für „${query}“`,
-  nothing: (query: string) => `Zu „${query}“ steht nichts in der Hilfe.`,
+  nothing: (query: string) => `Zu „${query}“ steht nichts in der Hilfe des Büros.`,
   shortQuery: `Ab ${shortestQuery} Buchstaben wird gesucht.`,
   loading: 'Wird geladen.',
   unknownTitle: 'Nicht gefunden',
@@ -183,7 +183,8 @@ function Hits({ query }: { readonly query: string }) {
 }
 
 /**
- * "Hilfe" in the office (#269): a search through every text of the help, the
+ * "Hilfe" in the office (#269): a search through the texts of the office, the
+ * quick guides and the notes on versions, the
  * quick guides to the core flows of section 8 of the concept, each a row that
  * opens its text, and what the newest version brought. The help of a single
  * page stands beside that page, behind the question mark of the header, and

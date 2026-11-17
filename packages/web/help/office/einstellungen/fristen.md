@@ -1,3 +1,3 @@
 # Fristen
 
-Je Art einer Frist: wie lange vorher erinnert wird, wer verantwortlich ist und ob per E-Mail erinnert wird. Ändert sich der Vorlauf, rückt jede offene Frist dieser Art mit.
+Je Art einer Frist: wie lange vorher erinnert wird, wer verantwortlich ist, ob per E-Mail erinnert wird und, wo eine Art das zählt, nach wie vielen Tagen oder Monaten sie fällig wird. Ändert sich der Vorlauf, rückt jede offene Frist dieser Art mit.

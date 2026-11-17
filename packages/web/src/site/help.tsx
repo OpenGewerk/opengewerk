@@ -93,8 +93,8 @@ function HelpText({ texts, name }: { readonly texts: 'site' | 'guides'; readonly
         back={back}
       />
       <SiteScreen>
-        {found === undefined ? (
-          <SiteText muted>{siteHelpWords.loading}</SiteText>
+        {!present(found) ? (
+          <SiteText muted>{absence(siteHelpWords.loading, found)}</SiteText>
         ) : text === undefined ? (
           <SiteText muted>{siteHelpWords.unknown}</SiteText>
         ) : (
