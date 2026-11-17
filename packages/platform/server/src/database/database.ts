@@ -450,7 +450,9 @@ export class Database {
    * the owner of the tables look there for what they call, and an overload or a
    * table the application put there in advance would run or be read with the
    * owner's rights. PostgreSQL 15 took that right from every role; a cluster
-   * upgraded from an older version still grants it. And it may own no
+   * upgraded from an older version still grants it. Asked through every role
+   * it belongs to, as one that it may only SET ROLE to grants it as well. And
+   * it may own no
    * function, operator or type there, itself or through a role it belongs to:
    * taking the right back leaves what it made while it had it, and that would
    * still be found (security review and CodeRabbit on opengewerk#975).
@@ -473,7 +475,9 @@ export class Database {
                        false) as member,
               exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
                        where n.nspname = 'public' and c.relowner = r.oid) as owns,
-              has_schema_privilege(r.oid, 'public', 'CREATE') as creates,
+              exists (select 1 from pg_roles x
+                       where pg_has_role(r.oid, x.oid, 'MEMBER')
+                         and has_schema_privilege(x.oid, 'public', 'CREATE')) as creates,
               exists (select 1 from pg_proc p
                        where p.pronamespace = 'public'::regnamespace and pg_has_role(r.oid, p.proowner, 'MEMBER'))
               or exists (select 1 from pg_operator o
@@ -528,7 +532,8 @@ export class Database {
         `anlegen. Dort suchen die Funktionen, die mit den Rechten von "${migrationRole}" laufen, ` +
         `was sie aufrufen; was diese Rolle vorher anlegt, liefe mit diesen Rechten. Ein Cluster, ` +
         `der von einer Fassung vor PostgreSQL 15 kam, erlaubt das jeder Rolle. Abhilfe als ` +
-        `Eigentümer des Schemas: REVOKE CREATE ON SCHEMA public FROM PUBLIC.`
+        `Eigentümer des Schemas: REVOKE CREATE ON SCHEMA public FROM PUBLIC, und ein Recht, das ` +
+        `diese Rolle oder eine Rolle, der sie angehört, eigens bekommen hat, ebenso zurücknehmen.`
       )
     }
 

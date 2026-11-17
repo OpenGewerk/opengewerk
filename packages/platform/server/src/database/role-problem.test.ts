@@ -21,6 +21,7 @@ const roles = {
   member: 'role_problem_member',
   owner: 'role_problem_owner',
   lender: 'role_problem_lender',
+  creator: 'role_problem_creator',
 } as const
 
 let pool: Pool
@@ -47,6 +48,9 @@ async function problemOf(role: string): Promise<string | null> {
 async function dropRoles(): Promise<void> {
   await pool.query('drop table if exists public.role_problem_probe')
   await pool.query('drop function if exists public.role_problem_planted()')
+  await pool.query(
+    `do $$ begin if exists (select 1 from pg_roles where rolname = '${roles.creator}') then revoke create, usage on schema public from "${roles.creator}"; end if; end $$`,
+  )
 
   for (const role of Object.values(roles)) {
     await pool.query(`drop role if exists "${role}"`)
@@ -66,6 +70,7 @@ beforeAll(async () => {
   )
   await pool.query(`create role "${roles.owner}" login password '${password}'`)
   await pool.query(`create role "${roles.lender}" nologin`)
+  await pool.query(`create role "${roles.creator}" nologin`)
   await pool.query('create table public.role_problem_probe (id integer)')
   await pool.query(`alter table public.role_problem_probe owner to "${roles.owner}"`)
 })
@@ -153,6 +158,24 @@ describe('the role an application connects as (#685)', () => {
     } finally {
       await pool.query(`revoke "${roles.lender}" from "${roles.plain}"`)
       await pool.query('drop function public.role_problem_planted()')
+    }
+
+    expect(await problemOf(roles.plain)).toBeNull()
+  })
+
+  it('is refused when a role it may only SET ROLE to may create in public', async () => {
+    // Without INHERIT the right is not its own, but SET ROLE makes it so in a
+    // moment (security review on opengewerk#975).
+    await pool.query(`grant usage, create on schema public to "${roles.creator}"`)
+    await pool.query(`grant "${roles.creator}" to "${roles.plain}" with inherit false, set true`)
+
+    try {
+      expect(await problemOf(roles.plain)).toContain(
+        `"${roles.plain}", und diese Rolle darf im Schema "public" anlegen`,
+      )
+    } finally {
+      await pool.query(`revoke "${roles.creator}" from "${roles.plain}"`)
+      await pool.query(`revoke usage, create on schema public from "${roles.creator}"`)
     }
 
     expect(await problemOf(roles.plain)).toBeNull()
