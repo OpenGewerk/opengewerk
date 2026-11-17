@@ -678,7 +678,12 @@ Instanz an ihren Platz, vor jedem Start: Mit einer neuen ließen sich zweite
 Faktoren und gespeicherte Passwörter nicht mehr öffnen, weil `SESSION_SECRET`
 ein anderes wäre, und die Passwörter der Datenbank passten nicht zu dem, was
 der erste Start anlegt. `setup.sh` lässt eine vorhandene `.env` stehen und
-ergänzt nur, was fehlt. Dann startet die Instanz einmal leer, damit es den
+ergänzt nur, was fehlt. Ebenso vor dem ersten Start muss das Archiv dort
+liegen, wohin `BACKUP_TARGET` zeigt: Ein Ziel auf einer anderen Maschine wird
+zuerst eingehängt, und wer mit der Vorgabe, dem Volume `backups`, gesichert und
+die Archive von Hand kopiert hat, legt die Kopien in ein Verzeichnis und trägt
+dessen absoluten Pfad als `BACKUP_TARGET` ein. Das Volume der neuen Maschine ist
+leer, und `restore.sh` sucht ein Archiv nur dort. Dann startet die Instanz einmal leer, damit es den
 Dateispeicher gibt und er dem Benutzer der Anwendung gehört: `restore.sh` gibt
 den zurückgespielten Dateien den Eigentümer dieses Ordners, und legte erst die
 Sicherung das Volume an, gehörte er root. Danach spielt
