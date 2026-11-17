@@ -55,8 +55,15 @@ function hitAddress(hit: Hit): string {
 }
 
 /** The title of a page text in the hits: "Einstellungen, Steuern" for `einstellungen/steuern`. */
-function hitTitle(hit: Hit): string {
-  return hit.kind === 'news' ? `${helpWords.version} ${hit.key}` : hit.title
+function hitTitle(hit: Hit, pages: ReadonlyMap<string, string>): string {
+  if (hit.kind === 'news') {
+    return `${helpWords.version} ${hit.key}`
+  }
+
+  const above = hit.kind === 'page' ? hit.key.slice(0, Math.max(0, hit.key.lastIndexOf('/'))) : ''
+  const section = above === '' ? null : markdownTitle(pages.get(above) ?? '')
+
+  return section ? `${section}, ${hit.title}` : hit.title
 }
 
 function GuideRows({ texts }: { readonly texts: ReadonlyMap<string, string> }) {
@@ -153,7 +160,7 @@ function Hits({ query }: { readonly query: string }) {
           >
             <div className="flex flex-wrap items-baseline gap-2">
               <Link to={hitAddress(hit)} className={`${cardLink} text-[14px] font-semibold`}>
-                {hitTitle(hit)}
+                {hitTitle(hit, pages)}
               </Link>
               <span className="font-condensed text-[12px] font-semibold tracking-[1px] text-ink-faint uppercase">
                 {kindLabel[hit.kind]}

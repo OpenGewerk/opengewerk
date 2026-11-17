@@ -656,7 +656,9 @@ das Archiv.
 `backup-status` auf der alten. Dort spielt
 
 ```bash
-docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh --skip-origin-check <archiv>
+docker compose -f docker/compose.yaml stop app
+docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh --skip-origin-check <archiv> \
+  && docker compose -f docker/compose.yaml start app
 ```
 
 das Archiv trotzdem zurück, mit allen Prüfungen, die danach kommen. Der Schalter

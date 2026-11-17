@@ -87,6 +87,19 @@ describe('"Hilfe" in the office', () => {
     expect(links.map((link) => link.getAttribute('href'))).toContain('/wartungsvertraege')
     expect(within(hits).getAllByText('Wartungsvertrag').length).toBeGreaterThan(0)
 
+    // A page below a section carries the title of the section, so that two
+    // pages of the same name stay apart.
+    await user.clear(field)
+    await user.type(field, 'Fristen')
+
+    const deadlines = await screen.findByRole('region', { name: /Treffer für „Fristen“/ })
+    const titles = within(deadlines)
+      .getAllByRole('link')
+      .map((link) => link.textContent)
+
+    expect(titles).toContain('Einstellungen, Fristen')
+    expect(titles).toContain('Fristen')
+
     await user.clear(field)
     await user.type(field, 'Quargelbrot')
 
