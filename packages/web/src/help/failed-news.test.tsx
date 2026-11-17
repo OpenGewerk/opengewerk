@@ -43,6 +43,8 @@ describe('"Hilfe" when only the notes on versions cannot be loaded', () => {
     const notes = await screen.findByRole('region', { name: helpWords.news })
 
     expect(await within(notes).findByText(helpFailed)).toBeTruthy()
-    expect(await screen.findByRole('region', { name: helpWords.guides })).toBeTruthy()
+    const guides = await screen.findByRole('region', { name: helpWords.guides })
+
+    expect((await within(guides).findAllByRole('link')).length).toBeGreaterThan(0)
   })
 })
