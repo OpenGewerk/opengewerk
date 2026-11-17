@@ -9,7 +9,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Hinzugefügt
 
-- Die Hilfe im Büro und auf der Baustelle (#269), nach Abschnitt 8 der Feature-Gliederung und den Tafeln aus Version
+- Die Hilfe im Büro und auf der Baustelle (#269), nach Abschnitt 8 der Feature-Gliederung v2.81 und den Tafeln aus Version
   168 des Canvas: Das Fragezeichen in der Kopfleiste öffnet neben jeder Seite des Büros ihren Text mit den Schritten
   ihres wichtigsten Ablaufs, auf einem schmalen Bildschirm steht „Hilfe zu dieser Seite“ im Menü. Unter „Hilfe“ stehen
   die Kurzanleitungen zu Angebot, Regiebericht und Rechnung, Plantafel und Prüfprotokoll, eine Suche über alle Texte
