@@ -447,7 +447,9 @@ export class Database {
    * of that: a role of any name is asked for what it is. Superuser and BYPASSRLS
    * are asked through every role it belongs to as well: neither is inherited,
    * but SET ROLE takes either on in a moment (security review on
-   * opengewerk#976).
+   * opengewerk#976). Any membership counts, one without SET as well: with
+   * ADMIN OPTION a role grants itself SET for a role with BYPASSRLS (CodeRabbit
+   * on opengewerk#976).
    *
    * Nor may it create in `public` (opengewerk#975). The functions that run as
    * the owner of the tables look there for what they call, and an overload or a
@@ -513,16 +515,16 @@ export class Database {
     if (role.superuser) {
       return (
         `Die Anwendung verbindet sich als "${role.name}", und diese Rolle ist Superuser oder gehört ` +
-        `einem an, zu dem sie wechseln kann. Für einen Superuser gilt keine Zeilensicherheit, die ` +
-        `Mandantentrennung greift nicht. ${expected}`
+        `einem an. Für einen Superuser gilt keine Zeilensicherheit, die Mandantentrennung greift ` +
+        `nicht. ${expected}`
       )
     }
 
     if (role.bypass) {
       return (
         `Die Anwendung verbindet sich als "${role.name}", und diese Rolle hat BYPASSRLS oder gehört ` +
-        `einer Rolle an, die es hat und zu der sie wechseln kann. Damit gilt für sie keine ` +
-        `Zeilensicherheit, die Mandantentrennung greift nicht. ${expected}`
+        `einer Rolle an, die es hat. Für eine solche Rolle gilt keine Zeilensicherheit, die ` +
+        `Mandantentrennung greift nicht. ${expected}`
       )
     }
 
@@ -547,9 +549,9 @@ export class Database {
         `Die Anwendung verbindet sich als "${role.name}", und diese Rolle ist Eigentümerin des Schemas ` +
         `"public" oder gehört ihr an, so auch als Eigentümerin der Datenbank. Damit kann sie sich das ` +
         `Recht, dort anzulegen, jederzeit selbst geben, und was sie anlegt, fänden die Funktionen, die ` +
-        `mit den Rechten von "${migrationRole}" laufen. Abhilfe: das Schema "${migrationRole}" übertragen ` +
-        `(ALTER SCHEMA public OWNER TO ${migrationRole}) oder die Mitgliedschaft aufheben, und die ` +
-        `Anwendung nicht als Eigentümerin der Datenbank verbinden.`
+        `mit den Rechten von "${migrationRole}" laufen. Abhilfe: das Schema "public" an ` +
+        `"${migrationRole}" übertragen (ALTER SCHEMA public OWNER TO ${migrationRole}) oder die ` +
+        `Mitgliedschaft aufheben, und die Anwendung nicht als Eigentümerin der Datenbank verbinden.`
       )
     }
 

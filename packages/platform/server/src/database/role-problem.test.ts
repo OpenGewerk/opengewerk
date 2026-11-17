@@ -119,6 +119,24 @@ describe('the role an application connects as (#685)', () => {
     expect(await problemOf(roles.plain)).toBeNull()
   })
 
+  it('is refused when it holds ADMIN OPTION on a role with BYPASSRLS, even without SET', async () => {
+    // With ADMIN OPTION it grants itself SET for that role and switches to it
+    // (CodeRabbit on opengewerk#976), so a membership of any kind counts.
+    await pool.query(
+      `grant "${roles.skipper}" to "${roles.plain}" with admin true, inherit false, set false`,
+    )
+
+    try {
+      expect(await problemOf(roles.plain)).toContain(
+        `"${roles.plain}", und diese Rolle hat BYPASSRLS oder gehört einer Rolle an`,
+      )
+    } finally {
+      await pool.query(`revoke "${roles.skipper}" from "${roles.plain}"`)
+    }
+
+    expect(await problemOf(roles.plain)).toBeNull()
+  })
+
   it('is refused when it may SET ROLE to a role with BYPASSRLS', async () => {
     await pool.query(`grant "${roles.skipper}" to "${roles.plain}" with inherit false, set true`)
 
@@ -228,9 +246,12 @@ describe('the role an application connects as (#685)', () => {
     await pool.query(`grant "${roles.lender}" to "${roles.plain}" with inherit false, set true`)
 
     try {
-      expect(await problemOf(roles.plain)).toContain(
+      const problem = await problemOf(roles.plain)
+
+      expect(problem).toContain(
         `"${roles.plain}", und diese Rolle ist Eigentümerin des Schemas "public" oder gehört ihr an`,
       )
+      expect(problem).toContain(`Abhilfe: das Schema "public" an "${migrationRole}" übertragen`)
     } finally {
       await pool.query(`revoke "${roles.lender}" from "${roles.plain}"`)
       await pool.query(`alter schema public owner to ${owner}`)
