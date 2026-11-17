@@ -4,6 +4,8 @@ Die Instanz sichert jede Nacht die Datenbank und den Dateispeicher, ohne dass je
 
 ## Von Hand
 
+Die Befehle laufen im Ordner der Installation, etwa `/opt/opengewerk`.
+
 - Sichern: `docker compose -f docker/compose.yaml --profile backup run --rm backup backup.sh`
 - Prüfen, ob die letzte Sicherung vollständig ist: `docker compose -f docker/compose.yaml --profile backup run --rm backup verify.sh latest`
 - Zurückspielen: `docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh latest`

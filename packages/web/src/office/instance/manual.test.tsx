@@ -66,7 +66,7 @@ describe('the manual of the instance', () => {
   it('shows a chapter with its commands as they are typed, and the way back', async () => {
     mount('/instanz/handbuch/update')
 
-    expect(await screen.findByText('sh docker/start.sh')).toBeTruthy()
+    expect(await screen.findByText('cd /opt/opengewerk && sh docker/start.sh')).toBeTruthy()
     expect(screen.getByRole('link', { name: manualWords.back }).getAttribute('href')).toBe(
       '/instanz/handbuch',
     )
