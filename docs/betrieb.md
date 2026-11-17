@@ -673,14 +673,19 @@ Kopie ist verschlüsselt, wenn das Archiv es ist, und braucht so viel Platz wie
 das Archiv.
 
 **Auf einer neuen Maschine** fehlt das Verzeichnis, es lag mit dem Volume
-`backup-status` auf der alten. Dort startet die Instanz zuerst einmal leer,
-damit es den Dateispeicher gibt und er dem Benutzer der Anwendung gehört:
-`restore.sh` gibt den zurückgespielten Dateien den Eigentümer dieses Ordners,
-und legte erst die Sicherung das Volume an, gehörte er root. Danach spielt
+`backup-status` auf der alten. Dort kommt zuerst die `docker/.env` der alten
+Instanz an ihren Platz, vor jedem Start: Mit einer neuen ließen sich zweite
+Faktoren und gespeicherte Passwörter nicht mehr öffnen, weil `SESSION_SECRET`
+ein anderes wäre, und die Passwörter der Datenbank passten nicht zu dem, was
+der erste Start anlegt. `setup.sh` lässt eine vorhandene `.env` stehen und
+ergänzt nur, was fehlt. Dann startet die Instanz einmal leer, damit es den
+Dateispeicher gibt und er dem Benutzer der Anwendung gehört: `restore.sh` gibt
+den zurückgespielten Dateien den Eigentümer dieses Ordners, und legte erst die
+Sicherung das Volume an, gehörte er root. Danach spielt
 
 ```bash
-sh docker/start.sh
-docker compose -f docker/compose.yaml stop app backup-schedule \
+sh docker/start.sh \
+  && docker compose -f docker/compose.yaml stop app backup-schedule \
   && docker compose -f docker/compose.yaml --profile backup run --rm backup restore.sh --skip-origin-check <archiv> \
   && sh docker/start.sh
 ```
