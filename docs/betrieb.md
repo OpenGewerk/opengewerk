@@ -697,7 +697,10 @@ sh docker/start.sh \
   && sh docker/start.sh
 ```
 
-das Archiv trotzdem zurück, mit allen Prüfungen, die danach kommen. Der Schalter
+das Archiv trotzdem zurück, mit allen Prüfungen, die danach kommen. Ist es
+verschlüsselt, kommen die beiden Angaben für den Schlüssel aus dem Beispiel
+oben (`-v /root/age-schluessel.txt:/run/age-schluessel:ro` und
+`-e BACKUP_AGE_IDENTITY=/run/age-schluessel`) auch hier hinter `run --rm`. Der Schalter
 heißt, was er tut: die Herkunft prüft dann nur noch, wer ihn tippt. Also ein
 Archiv mit seinem Namen nennen, dessen Zeit und Größe zu den eigenen Sicherungen
 passen, statt `latest`, und den Schalter nur setzen, wo das Verzeichnis wirklich
@@ -928,8 +931,11 @@ docker compose -f docker/compose.yaml --profile backup run --rm backup restore.s
 Anders als unter "Zurückspielen" folgt hier noch kein `start.sh`: Das der
 neuen Fassung brächte die Datenbank mit ihren Migrationen gleich wieder auf
 den neuen Stand, und die alte Fassung lehnte sie danach ab. Eine verschlüsselte
-Sicherung bekommt ihren Schlüssel wie dort. Danach das Paket der alten Fassung
-an dieselbe Stelle entpacken. Das Zurückspielen lässt die Anwendung dabei ausgesperrt, bis die
+Sicherung bekommt ihren Schlüssel wie dort. Nur wenn `restore.sh` ohne Fehler
+durchlief, geht es weiter: Scheitert es, bleibt die Anwendung angehalten und
+ausgesperrt, bis die Ursache behoben und die Sicherung noch einmal
+zurückgespielt ist, und weder das alte Paket noch der Befehl unten kommen
+vorher. Danach das Paket der alten Fassung an dieselbe Stelle entpacken. Das Zurückspielen lässt die Anwendung dabei ausgesperrt, bis die
 Migrationen gelaufen sind, und erst das `start.sh` einer Fassung nach 0.8.0
 gibt sie dann frei. Geht es zurück auf 0.8.0 oder früher, gibt man die
 Anmeldung deshalb vor dem Start von Hand zurück, und zwar erst, wenn die neue
