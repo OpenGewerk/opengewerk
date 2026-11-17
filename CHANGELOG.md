@@ -9,7 +9,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
-- `docs/entwicklung.md` nennt nicht mehr als kommend, was mit 0.7.0 erschienen ist: die Wiederholungsprüfung als
+- `docs/entwicklung.md` nennt nicht mehr als kommend, was mit 0.7.0 und 0.8.0 erschienen ist: die Wiederholungsprüfung als
   erste Art eines Gewerks in der Fristen-Engine, dazu Gewährleistung und Wartung als Arten, die übrigen Protokolle aus
   Abschnitt 5.1 mit der Frist der nächsten Prüfung, Material aus dem Lager im Regiebericht und die Plantafel, und sie
   nennt die Mails an Kunden aus 0.8.0 (#978). Warum: Wer sich in den Code einliest, hielt sonst Gebautes für offen.
