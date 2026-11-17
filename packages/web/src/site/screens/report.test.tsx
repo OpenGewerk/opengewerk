@@ -366,6 +366,10 @@ describe('a report on site', () => {
     await user.click(screen.getByRole('button', { name: 'Text sichern' }))
 
     // Each step waits for what the one before draws, which takes a moment more under load (#982).
+    // While the text is saved its form is still open and the next button there but disabled.
+    await waitFor(() => {
+      expect(screen.queryByRole('textbox', { name: 'Was gemacht wurde' })).toBeNull()
+    })
     await user.click(await screen.findByRole('button', { name: 'Arbeitszeit eintragen' }))
     await user.type(await screen.findByLabelText('Stunden'), '2,5')
     await user.click(screen.getByRole('button', { name: 'Arbeitszeit sichern' }))
@@ -386,7 +390,9 @@ describe('a report on site', () => {
     // The page the customer reads stands first: nothing on it can be changed from it.
     const name = await screen.findByLabelText('Name')
 
-    expect(screen.queryByRole('button', { name: 'Arbeitszeit eintragen' })).toBeNull()
+    // Once hours are written the button is called "Weitere Arbeitszeit eintragen".
+    expect(screen.queryByRole('button', { name: /Arbeitszeit eintragen$/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Eine Viertelstunde mehr' })).toBeNull()
     expect(screen.queryByRole('button', { name: /entfernen$/ })).toBeNull()
 
     await user.type(name, 'Erika Berg')
@@ -397,7 +403,7 @@ describe('a report on site', () => {
     expect(await screen.findByRole('img', { name: 'Unterschrift von Erika Berg' })).toBeTruthy()
     expect(screen.getByText('Unterschrieben')).toBeTruthy()
     expect(screen.getByText(/Noch nicht übertragen\. Die Unterschrift geht/)).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Arbeitszeit eintragen' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Arbeitszeit eintragen$/ })).toBeNull()
     expect(server.operations()).toEqual([])
 
     // The network comes back.

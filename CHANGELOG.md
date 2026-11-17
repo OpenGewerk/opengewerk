@@ -9,9 +9,11 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
-- Der Test des Regieberichts auf der Baustelle wartet nach jedem Schritt auf das, was der Schritt zeichnet (#982).
-  Warum: Unter der Last der CI suchte er den nächsten Knopf, bevor er da war, und wurde rot, ohne dass sich etwas
-  geändert hatte.
+- Der Test des Regieberichts auf der Baustelle wartet nach jedem Schritt auf das, was der Schritt zeichnet, nach dem
+  Text auch darauf, dass sein Formular zu ist (#982). Warum: Unter der Last der CI suchte er den nächsten Knopf, bevor
+  er da oder frei war, und wurde rot, ohne dass sich etwas geändert hatte. Dazu prüft er auf der Seite für den Kunden
+  auch „Weitere Arbeitszeit eintragen“ und „Eine Viertelstunde mehr“; die Prüfung nannte bisher nur den Knopf, den es
+  nach der ersten Arbeitszeit nicht mehr gibt.
 
 ## [0.8.0] - 2026-11-17
 
