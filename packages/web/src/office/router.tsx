@@ -486,8 +486,9 @@ const routes = [
   }),
   createRoute({ getParentRoute: () => office, path: '/konflikte', component: SyncScreen }),
   createRoute({ getParentRoute: () => office, path: '/konto', component: AccountScreen }),
-  // The help (#269): the quick guides, a search through every text and the
-  // notes on each version; the help of a single page stands beside it.
+  // The help (#269): the quick guides, the notes on each version and a search
+  // through both and the texts of the office; the help of a single page stands
+  // beside it.
   createRoute({ getParentRoute: () => office, path: '/hilfe', component: HelpScreen }),
   createRoute({ getParentRoute: () => office, path: '/hilfe/neu', component: NewsScreen }),
   createRoute({ getParentRoute: () => office, path: '/hilfe/$guide', component: GuideScreen }),

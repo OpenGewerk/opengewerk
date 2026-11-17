@@ -69,7 +69,7 @@ describe('"Hilfe" in the office', () => {
     )
   })
 
-  it('searches every text once there are three letters, and leads to where a hit stands', async () => {
+  it('searches the texts of the office, the quick guides and the notes once there are three letters, and leads to where a hit stands', async () => {
     const user = userEvent.setup()
     mount('/hilfe')
 
