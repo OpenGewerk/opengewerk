@@ -7,7 +7,7 @@ import { useDeferredValue, useState } from 'react'
 import { searchHelp, shortestQuery } from '../../help/search.js'
 import type { Hit } from '../../help/search.js'
 import { firstParagraph, guideOrder, inOrder, newsOrder, sayings } from '../../help/texts.js'
-import { useHelpTexts } from '../../help/use-texts.js'
+import { absence, present, useHelpTexts } from '../../help/use-texts.js'
 import { helpPlace, newsPlace } from '../help.js'
 
 /** What the pages of the help say around their texts. */
@@ -136,8 +136,8 @@ function Hits({ query }: { readonly query: string }) {
   const news = useHelpTexts('news')
   const words = query.trim()
 
-  if (pages === undefined || guides === undefined || news === undefined) {
-    return <Empty>{helpWords.loading}</Empty>
+  if (!present(pages) || !present(guides) || !present(news)) {
+    return <Empty>{absence(helpWords.loading, pages, guides, news)}</Empty>
   }
 
   if (words.length < shortestQuery) {
@@ -194,7 +194,7 @@ export function HelpScreen() {
   const news = useHelpTexts('news')
   const [query, setQuery] = useState('')
   const searching = useDeferredValue(query)
-  const newest = news === undefined ? undefined : newsOrder(news)[0]
+  const newest = present(news) ? newsOrder(news)[0] : undefined
 
   return (
     <Screen>
@@ -224,15 +224,15 @@ export function HelpScreen() {
         <div className="flex items-start gap-4 max-lg:flex-col">
           <div className="flex min-w-0 grow flex-col gap-3.5 max-lg:w-full">
             <Panel title={helpWords.guides}>
-              {guides === undefined ? (
-                <Empty>{helpWords.loading}</Empty>
-              ) : (
+              {present(guides) ? (
                 <GuideRows texts={guides} />
+              ) : (
+                <Empty>{absence(helpWords.loading, guides)}</Empty>
               )}
             </Panel>
             <NoteBox>{helpWords.perPage}</NoteBox>
           </div>
-          {news === undefined || newest === undefined ? null : (
+          {!present(news) || newest === undefined ? null : (
             <div className="w-[360px] shrink-0 max-lg:w-full">
               <Panel title={helpWords.news}>
                 <div className="flex flex-col gap-2.5">
@@ -258,7 +258,7 @@ export function GuideScreen() {
   const texts = useHelpTexts('guides')
   const text = guide === undefined ? undefined : texts?.get(guide)
 
-  if (texts !== undefined && text === undefined) {
+  if (present(texts) && text === undefined) {
     return (
       <Screen>
         <PageHead title={helpWords.unknownTitle} crumbs={[list]} phoneBack={list} />
@@ -276,7 +276,7 @@ export function GuideScreen() {
       />
       <Panel roomy className="max-w-[760px]">
         {text === undefined ? (
-          <Empty>{helpWords.loading}</Empty>
+          <Empty>{absence(helpWords.loading, texts)}</Empty>
         ) : (
           // The head of the screen is the first heading, the sections of
           // the text follow it as the second.
@@ -295,8 +295,8 @@ export function NewsScreen() {
     <Screen>
       <PageHead title={helpWords.news} sub={helpWords.newsSub} crumbs={[list]} phoneBack={list} />
       <Panel roomy className="max-w-[760px]">
-        {news === undefined ? (
-          <Empty>{helpWords.loading}</Empty>
+        {!present(news) ? (
+          <Empty>{absence(helpWords.loading, news)}</Empty>
         ) : (
           <div className="flex flex-col gap-[18px]">
             {newsOrder(news).map((version) => (

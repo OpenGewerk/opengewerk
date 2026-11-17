@@ -5,7 +5,7 @@ import { Link, useParams } from '@tanstack/react-router'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 
 import { firstParagraph, inOrder, manualOrder } from '../../help/texts.js'
-import { useHelpTexts } from '../../help/use-texts.js'
+import { absence, present, useHelpTexts } from '../../help/use-texts.js'
 import { manualPlace } from '../help.js'
 
 /** What the manual says around its chapters. */
@@ -31,8 +31,8 @@ export function ManualScreen() {
   return (
     <InstancePage title={manualWords.title} sub={manualWords.sub}>
       <Panel title={manualWords.chapters}>
-        {texts === undefined ? (
-          <Empty>{manualWords.loading}</Empty>
+        {!present(texts) ? (
+          <Empty>{absence(manualWords.loading, texts)}</Empty>
         ) : (
           <ul className="flex flex-col">
             {inOrder(texts, manualOrder).map(({ key, text }) => (
@@ -92,8 +92,8 @@ export function ManualChapterScreen() {
       actions={<BackToManual />}
     >
       <Panel roomy className="max-w-[760px]">
-        {texts === undefined ? (
-          <Empty>{manualWords.loading}</Empty>
+        {!present(texts) ? (
+          <Empty>{absence(manualWords.loading, texts)}</Empty>
         ) : text === undefined ? (
           <Empty>{manualWords.unknown}</Empty>
         ) : (

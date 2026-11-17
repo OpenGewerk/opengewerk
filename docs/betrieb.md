@@ -17,8 +17,8 @@ unter [Releases](https://github.com/OpenGewerk/opengewerk/releases). Entpackt un
 demselben Befehl gestartet, baut eine solche Installation nichts, sondern holt
 die Abbilder ihrer Fassung aus `ghcr.io/opengewerk`. Die Fassung steht in
 `docker/compose.yaml` an jedem Abbild, und so nimmt jeder `docker
-compose`-Befehl weiter unten dieselbe. Gebraucht werden Docker und Docker
-Compose ab 2.22. Ein Checkout des Repositorys hat an derselben Stelle `source`
+compose`-Befehl weiter unten dieselbe. Gebraucht werden Docker Engine ab 28.3.3
+und Docker Compose ab 2.22. Ein Checkout des Repositorys hat an derselben Stelle `source`
 und baut die Abbilder aus dem Quelltext, für Entwicklung und Vorschau. Wer im
 Checkout lieber eine veröffentlichte Fassung betreibt, trägt sie in der `.env`
 als `OPENGEWERK_VERSION` ein.
@@ -872,7 +872,9 @@ Organisation.
 
 Vor die Anwendung gehört ein Reverse Proxy mit TLS. Sie lauscht absichtlich nur
 auf `127.0.0.1`: eine Anwendung, die Rechnungen führt, steht nicht
-unverschlüsselt im Netz. Zwei Vorlagen liegen unter `docker/proxy/`, auch im
+unverschlüsselt im Netz. Das hält Docker erst ab Engine 28.3.3: Davor erreichen
+Rechner im selben Netzsegment auch einen Port auf `127.0.0.1`, und 28.2.0 bis
+28.3.2 öffnen ihn nach einem Neuladen von firewalld wieder (CVE-2025-54388). Zwei Vorlagen liegen unter `docker/proxy/`, auch im
 Installationspaket: [`apache.conf`](../docker/proxy/apache.conf) für Apache 2.4
 und [`nginx.conf`](../docker/proxy/nginx.conf) für nginx. Jede ist für sich
 vollständig, mit der Weiterleitung von HTTP auf HTTPS, dem Zertifikat unter dem

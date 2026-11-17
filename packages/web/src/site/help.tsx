@@ -12,7 +12,7 @@ import { WifiOff } from 'lucide-react'
 
 import { applicationName } from '../app/name.js'
 import { firstParagraph, guideOrder, inOrder, siteHelpOrder } from '../help/texts.js'
-import { useHelpTexts } from '../help/use-texts.js'
+import { absence, present, useHelpTexts } from '../help/use-texts.js'
 import { siteHelpPlace } from './help-row.js'
 
 /** What the help on site says around its texts. */
@@ -45,8 +45,8 @@ export function SiteHelpScreen() {
         <WifiOff size={18} strokeWidth={2} aria-hidden="true" className="mt-0.5 shrink-0" />
         <span>{siteHelpWords.offline}</span>
       </p>
-      {screens === undefined || guides === undefined ? (
-        <SiteText muted>{siteHelpWords.loading}</SiteText>
+      {!present(screens) || !present(guides) ? (
+        <SiteText muted>{absence(siteHelpWords.loading, screens, guides)}</SiteText>
       ) : (
         <>
           <Panel title={siteHelpWords.screens}>

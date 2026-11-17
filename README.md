@@ -27,7 +27,7 @@ Das Fundament (Phase 0) und das MVP für den Pilotbetrieb (Phase 1) sind gebaut,
 
 ## Schnellstart
 
-Gebraucht werden Docker und Docker Compose ab 2.22. Aus dem entpackten Paket einer [Fassung](https://github.com/OpenGewerk/opengewerk/releases) oder aus einem Checkout des Repositorys, unter Windows in Git Bash:
+Gebraucht werden Docker Engine ab 28.3.3 und Docker Compose ab 2.22. Aus dem entpackten Paket einer [Fassung](https://github.com/OpenGewerk/opengewerk/releases) oder aus einem Checkout des Repositorys, unter Windows in Git Bash:
 
 ```bash
 sh docker/start.sh
