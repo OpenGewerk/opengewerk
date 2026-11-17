@@ -9,7 +9,7 @@
 -- found it.
 CREATE FUNCTION "keep_label_blocked"() RETURNS trigger
 	LANGUAGE plpgsql
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
 	IF old.blocked_at IS NOT NULL AND new.blocked_at IS DISTINCT FROM old.blocked_at THEN

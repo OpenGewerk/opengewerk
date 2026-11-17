@@ -444,7 +444,27 @@ export class Database {
    * (opengewerk/opengewerk#685). Row level security does not apply to a
    * superuser or a role with BYPASSRLS at all, and to the owner of a table only
    * through FORCE, which a member of the owner can switch off. A name says none
-   * of that: a role of any name is asked for what it is.
+   * of that: a role of any name is asked for what it is. Superuser and BYPASSRLS
+   * are asked through every role it belongs to as well: neither is inherited,
+   * but SET ROLE takes either on in a moment (security review on
+   * opengewerk#976). Any membership counts, one without SET as well: with
+   * ADMIN OPTION a role grants itself SET for a role with BYPASSRLS (CodeRabbit
+   * on opengewerk#976).
+   *
+   * Nor may it create in `public` (opengewerk#975). The functions that run as
+   * the owner of the tables look there for what they call, and an overload or a
+   * table the application put there in advance would run or be read with the
+   * owner's rights. PostgreSQL 15 took that right from every role; a cluster
+   * upgraded from an older version still grants it. Asked through every role
+   * it belongs to, as one that it may only SET ROLE to grants it as well, and
+   * the owner of the schema counts as having it, since it may give it back to
+   * itself or to every role at any time (CodeRabbit on opengewerk#976), with a
+   * remedy of its own, since taking the right from every role does not touch
+   * the owner's. And
+   * it may own no
+   * function, operator or type there, itself or through a role it belongs to:
+   * taking the right back leaves what it made while it had it, and that would
+   * still be found (security review and CodeRabbit on opengewerk#975).
    *
    * Asked once at the start, after `isReachable`; the answer is a sentence for
    * whoever set up the database.
@@ -456,12 +476,30 @@ export class Database {
       bypass: boolean
       member: boolean
       owns: boolean
+      ownsSchema: boolean
+      creates: boolean
+      places: boolean
     }>(
-      `select r.rolname as name, r.rolsuper as superuser, r.rolbypassrls as bypass,
+      `select r.rolname as name,
+              exists (select 1 from pg_roles x
+                       where x.rolsuper and pg_has_role(r.oid, x.oid, 'MEMBER')) as superuser,
+              exists (select 1 from pg_roles x
+                       where x.rolbypassrls and pg_has_role(r.oid, x.oid, 'MEMBER')) as bypass,
               coalesce((select pg_has_role(r.oid, o.oid, 'MEMBER') from pg_roles o where o.rolname = $1),
                        false) as member,
               exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
-                       where n.nspname = 'public' and c.relowner = r.oid) as owns
+                       where n.nspname = 'public' and c.relowner = r.oid) as owns,
+              pg_has_role(r.oid, (select n.nspowner from pg_namespace n where n.nspname = 'public'),
+                          'MEMBER') as "ownsSchema",
+              exists (select 1 from pg_roles x
+                       where pg_has_role(r.oid, x.oid, 'MEMBER')
+                         and has_schema_privilege(x.oid, 'public', 'CREATE')) as creates,
+              exists (select 1 from pg_proc p
+                       where p.pronamespace = 'public'::regnamespace and pg_has_role(r.oid, p.proowner, 'MEMBER'))
+              or exists (select 1 from pg_operator o
+                          where o.oprnamespace = 'public'::regnamespace and pg_has_role(r.oid, o.oprowner, 'MEMBER'))
+              or exists (select 1 from pg_type t
+                          where t.typnamespace = 'public'::regnamespace and pg_has_role(r.oid, t.typowner, 'MEMBER')) as places
          from pg_roles r
         where r.rolname = current_user`,
       [migrationRole],
@@ -476,15 +514,17 @@ export class Database {
 
     if (role.superuser) {
       return (
-        `Die Anwendung verbindet sich als "${role.name}", und diese Rolle ist Superuser. Für ` +
-        `einen Superuser gilt keine Zeilensicherheit, die Mandantentrennung greift nicht. ${expected}`
+        `Die Anwendung verbindet sich als "${role.name}", und diese Rolle ist Superuser oder gehört ` +
+        `einem an. Für einen Superuser gilt keine Zeilensicherheit, die Mandantentrennung greift ` +
+        `nicht. ${expected}`
       )
     }
 
     if (role.bypass) {
       return (
-        `Die Anwendung verbindet sich als "${role.name}", und diese Rolle hat BYPASSRLS. Damit ` +
-        `gilt für sie keine Zeilensicherheit, die Mandantentrennung greift nicht. ${expected}`
+        `Die Anwendung verbindet sich als "${role.name}", und diese Rolle hat BYPASSRLS oder gehört ` +
+        `einer Rolle an, die es hat. Für eine solche Rolle gilt keine Zeilensicherheit, die ` +
+        `Mandantentrennung greift nicht. ${expected}`
       )
     }
 
@@ -501,6 +541,38 @@ export class Database {
         `Die Anwendung verbindet sich als "${role.name}", und diese Rolle ist Mitglied von ` +
         `"${migrationRole}", dem die Tabellen gehören. Damit kann sie die Zeilensicherheit ` +
         `abschalten. ${expected}`
+      )
+    }
+
+    if (role.ownsSchema) {
+      return (
+        `Die Anwendung verbindet sich als "${role.name}", und diese Rolle ist Eigentümerin des Schemas ` +
+        `"public" oder gehört ihr an, so auch als Eigentümerin der Datenbank. Damit kann sie sich das ` +
+        `Recht, dort anzulegen, jederzeit selbst geben, und was sie anlegt, fänden die Funktionen, die ` +
+        `mit den Rechten von "${migrationRole}" laufen. Abhilfe: das Schema "public" an ` +
+        `"${migrationRole}" übertragen (ALTER SCHEMA public OWNER TO ${migrationRole}) oder die ` +
+        `Mitgliedschaft aufheben, und die Anwendung nicht als Eigentümerin der Datenbank verbinden.`
+      )
+    }
+
+    if (role.creates) {
+      return (
+        `Die Anwendung verbindet sich als "${role.name}", und diese Rolle darf im Schema "public" ` +
+        `anlegen. Dort suchen die Funktionen, die mit den Rechten von "${migrationRole}" laufen, ` +
+        `was sie aufrufen; was diese Rolle vorher anlegt, liefe mit diesen Rechten. Ein Cluster, ` +
+        `der von einer Fassung vor PostgreSQL 15 kam, erlaubt das jeder Rolle. Abhilfe als ` +
+        `Eigentümer des Schemas: REVOKE CREATE ON SCHEMA public FROM PUBLIC, und ein Recht, das ` +
+        `diese Rolle oder eine Rolle, der sie angehört, eigens bekommen hat, ebenso zurücknehmen.`
+      )
+    }
+
+    if (role.places) {
+      return (
+        `Die Anwendung verbindet sich als "${role.name}", und dieser Rolle oder einer Rolle, der sie ` +
+        `angehört, gehören Funktionen, ` +
+        `Operatoren oder Typen im Schema "public". Dort suchen die Funktionen, die mit den Rechten ` +
+        `von "${migrationRole}" laufen, was sie aufrufen, und fänden sie. Abhilfe: diese Objekte ` +
+        `prüfen und löschen. Sie "${migrationRole}" zu übertragen genügt nicht, dann liefen sie weiter.`
       )
     }
 

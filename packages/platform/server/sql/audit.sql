@@ -39,7 +39,7 @@
 CREATE FUNCTION "audit_value_digest"(value text) RETURNS text
 	LANGUAGE sql
 	IMMUTABLE
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 	SELECT CASE WHEN value IS NULL THEN NULL ELSE encode(sha256(convert_to(value, 'UTF8')), 'hex') END
 $$;--> statement-breakpoint
@@ -50,7 +50,7 @@ $$;--> statement-breakpoint
 CREATE FUNCTION "audit_value_commitment"(nonce text, value text) RETURNS text
 	LANGUAGE sql
 	IMMUTABLE
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 	SELECT CASE WHEN value IS NULL OR nonce IS NULL THEN NULL
 		ELSE encode(sha256(decode(nonce, 'hex') || convert_to(value, 'UTF8')), 'hex') END
@@ -78,7 +78,7 @@ $$;--> statement-breakpoint
 CREATE FUNCTION "audit_fingerprint"(entry public.audit_entries) RETURNS text
 	LANGUAGE sql
 	IMMUTABLE
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 	SET "TimeZone" = 'UTC'
 AS $$
 	SELECT encode(sha256(convert_to(CASE entry.fingerprint_version
@@ -93,7 +93,7 @@ $$;--> statement-breakpoint
 CREATE FUNCTION "audit_witness"(entry public.audit_entries) RETURNS text
 	LANGUAGE sql
 	IMMUTABLE
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 	SET "TimeZone" = 'UTC'
 AS $$
 	SELECT encode(sha256(convert_to((to_jsonb(entry) - 'hash' - 'old_value' - 'new_value')::text, 'UTF8')), 'hex')
@@ -107,7 +107,7 @@ $$;--> statement-breakpoint
 CREATE FUNCTION "audit_entry_problem"(entry public.audit_entries) RETURNS text
 	LANGUAGE plpgsql
 	STABLE
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	kept_witness text;
@@ -164,7 +164,7 @@ $$;--> statement-breakpoint
 -- owner of the tables do.
 CREATE FUNCTION "lock_audit_chain"(tenant uuid, OUT next_sequence bigint, OUT head_hash text, OUT opened_in xid8, OUT address tid)
 	LANGUAGE plpgsql
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 	SET enable_seqscan = off
 	SET enable_indexscan = off
 	SET enable_bitmapscan = off
@@ -213,7 +213,7 @@ $$;--> statement-breakpoint
 CREATE FUNCTION "audit_chain_head"(tenant uuid, committed_place bigint, committed_hash text, OUT place bigint, OUT previous text)
 	LANGUAGE plpgsql
 	STABLE
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 	SET enable_seqscan = off
 	SET enable_bitmapscan = off
 	SET enable_sort = off
@@ -281,7 +281,7 @@ $$;--> statement-breakpoint
 CREATE FUNCTION "close_audit_chain"() RETURNS trigger
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 	SET enable_seqscan = off
 	SET enable_bitmapscan = off
 	SET enable_sort = off
@@ -317,6 +317,10 @@ BEGIN
 	RETURN NULL;
 END;
 $$;--> statement-breakpoint
+-- Closed to every role but the owner (opengewerk#975). A trigger already on a
+-- table fires without the right; hung on a temporary table of its own, a role
+-- that may execute it would have it write as the owner of the tables.
+REVOKE EXECUTE ON FUNCTION "close_audit_chain"() FROM PUBLIC;--> statement-breakpoint
 CREATE CONSTRAINT TRIGGER "audit_chain_closes" AFTER UPDATE ON "audit_chains"
 	DEFERRABLE INITIALLY DEFERRED
 	FOR EACH ROW WHEN (new.opened_in IS NOT NULL AND new.opened_in IS DISTINCT FROM old.opened_in)
@@ -356,7 +360,7 @@ CREATE CONSTRAINT TRIGGER "audit_chain_closes" AFTER UPDATE ON "audit_chains"
 CREATE FUNCTION "record_change"() RETURNS trigger
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	before_row jsonb := '{}'::jsonb;
@@ -468,6 +472,10 @@ BEGIN
 	RETURN NULL;
 END;
 $$;--> statement-breakpoint
+-- Closed to every role but the owner (opengewerk#975). A trigger already on a
+-- table fires without the right; hung on a temporary table of its own, a role
+-- that may execute it would have it write as the owner of the tables.
+REVOKE EXECUTE ON FUNCTION "record_change"() FROM PUBLIC;--> statement-breakpoint
 
 -- Walks a tenant's chain and reports the first place that does not fit. Not
 -- SECURITY DEFINER: run by the application it sees its own tenant and nothing
@@ -479,7 +487,7 @@ CREATE FUNCTION "verify_audit_chain"(tenant uuid)
 	RETURNS TABLE (checked bigint, broken_at bigint, problem text)
 	LANGUAGE plpgsql
 	STABLE
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	entry public.audit_entries;
@@ -543,7 +551,7 @@ $$;--> statement-breakpoint
 CREATE FUNCTION "audit_redaction_checked"() RETURNS trigger
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	entry public.audit_entries;
@@ -605,6 +613,10 @@ BEGIN
 	RETURN new;
 END;
 $$;--> statement-breakpoint
+-- Closed to every role but the owner (opengewerk#975). A trigger already on a
+-- table fires without the right; hung on a temporary table of its own, a role
+-- that may execute it would have it write as the owner of the tables.
+REVOKE EXECUTE ON FUNCTION "audit_redaction_checked"() FROM PUBLIC;--> statement-breakpoint
 
 -- After it is written: the value goes, and an entry of version 1 keeps the
 -- fingerprints of its values. The bolt below lets exactly this change through
@@ -615,7 +627,7 @@ $$;--> statement-breakpoint
 CREATE FUNCTION "audit_redaction_applied"() RETURNS trigger
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
 	PERFORM set_config('app.redacting', new.entry_id::text || ':' || new.side, true);
@@ -635,6 +647,10 @@ BEGIN
 	RETURN NULL;
 END;
 $$;--> statement-breakpoint
+-- Closed to every role but the owner (opengewerk#975). A trigger already on a
+-- table fires without the right; hung on a temporary table of its own, a role
+-- that may execute it would have it write as the owner of the tables.
+REVOKE EXECUTE ON FUNCTION "audit_redaction_applied"() FROM PUBLIC;--> statement-breakpoint
 
 -- And the bolt in front of it. An entry is written once and not touched again,
 -- with the one exception of a redaction under way: the value of the side it
@@ -668,7 +684,7 @@ BEGIN
 	RAISE EXCEPTION 'Das Audit-Log wird nur ergänzt. Ein Eintrag wird weder geändert noch gelöscht.'
 		USING ERRCODE = 'OG002';
 END;
-$$ LANGUAGE plpgsql;--> statement-breakpoint
+$$ LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
 
 CREATE TRIGGER "audit_entries_stay"
 	BEFORE UPDATE OR DELETE ON "audit_entries"

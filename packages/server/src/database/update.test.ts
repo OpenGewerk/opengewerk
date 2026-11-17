@@ -3263,3 +3263,68 @@ describe('the rollback of the record of the processing', () => {
     expect(await tableNames(admin)).not.toContain('processing_record_activities')
   })
 })
+
+/**
+ * A cluster upgraded from before PostgreSQL 15 lets every role create in
+ * public, and what the application put there first would be found by the
+ * functions that run as the owner of the tables; every trigger function of the
+ * foundation that runs as the owner was open to every role as well (#975).
+ * 0150 takes both back. Its rollback opens the functions again and leaves the
+ * schema closed.
+ */
+describe('an instance whose cluster lets every role create in public', () => {
+  const before = () =>
+    readMigrationIndex().findIndex((entry) => entry.tag === '0150_definer_triggers_closed')
+
+  async function open(): Promise<{ creates: boolean; executes: boolean } | undefined> {
+    const { rows } = await admin.query<{ creates: boolean; executes: boolean }>(
+      `select has_schema_privilege('opengewerk_app', 'public', 'CREATE') as creates,
+              has_function_privilege('opengewerk_app', 'public.record_change()', 'EXECUTE') as executes`,
+    )
+
+    return rows[0]
+  }
+
+  it('takes the right to create there and to execute the trigger functions from every role', async () => {
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), releaseFolder(before()))
+    await admin.query('grant create on schema public to public')
+
+    expect(await open()).toEqual({ creates: true, executes: true })
+
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+
+    expect(await open()).toEqual({ creates: false, executes: false })
+
+    // And every function, the application's own among them, sets a search
+    // path and searches the temporary schema last, where a type of another
+    // role would otherwise stand in for one it declares; the functions of
+    // extensions keep their own.
+    const { rows: paths } = await admin.query<{ signature: string; path: string | null }>(
+      `select p.oid::regprocedure::text as signature,
+              (select s from unnest(p.proconfig) s where s like 'search_path=%') as path
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public'
+          and not exists (select 1 from pg_depend d
+                           where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')`,
+    )
+
+    expect(paths.length).toBeGreaterThan(90)
+    expect(paths.filter((row) => !row.path?.endsWith('pg_temp'))).toEqual([])
+
+    const { rows: unset } = await admin.query<{ signature: string }>(
+      `select p.oid::regprocedure::text as signature
+         from pg_proc p
+         join pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public' and p.prosecdef
+          and not exists (select 1 from unnest(p.proconfig) s where s like 'search_path=%')`,
+    )
+
+    expect(unset).toEqual([])
+
+    await revertMigration(admin, '0150_definer_triggers_closed')
+
+    expect(await open()).toEqual({ creates: false, executes: true })
+  })
+})

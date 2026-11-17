@@ -44,21 +44,21 @@
 CREATE FUNCTION "counter_hint"(kind text, tenant uuid) RETURNS text
 	LANGUAGE sql
 	STABLE
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 	SELECT current_setting('opengewerk_' || kind || '.t' || replace(tenant::text, '-', ''), true);
 $$;--> statement-breakpoint
 CREATE FUNCTION "keep_counter_hint"(kind text, tenant uuid, hint text) RETURNS void
 	LANGUAGE sql
 	VOLATILE
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 	SELECT set_config('opengewerk_' || kind || '.t' || replace(tenant::text, '-', ''), hint, true);
 $$;--> statement-breakpoint
 CREATE FUNCTION "counter_address"(kind text, tenant uuid) RETURNS tid
 	LANGUAGE plpgsql
 	STABLE
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	parts text[] := regexp_match(public.counter_hint(kind, tenant), '^\((\d{1,10}),(\d{1,5})\)$');
@@ -80,7 +80,7 @@ $$;--> statement-breakpoint
 -- run as the owner of the tables do.
 CREATE FUNCTION "lock_sync_counter"(tenant uuid) RETURNS void
 	LANGUAGE plpgsql
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 	SET enable_seqscan = off
 	SET enable_indexscan = off
 	SET enable_bitmapscan = off
@@ -123,7 +123,10 @@ $$;--> statement-breakpoint
 -- Before the commit `close_sync_counter` writes the last number to the row,
 -- once. A sequence is not rolled back, which is why it is set at every opening
 -- and trusted for no longer than one transaction; a number given out under a
--- savepoint that is rolled back is simply not used again.
+-- savepoint that is rolled back is not used again while the counter stays
+-- open. Takes the savepoint the opening back as well, the next opening starts
+-- from the last number committed again and hands those numbers out anew; none
+-- of them stands in a row that was committed.
 --
 -- The sequences stand in public under the name of their tenant
 -- (`sync_counter_t<id>`) and belong to the owner of the tables. The application
@@ -232,6 +235,10 @@ BEGIN
 	RETURN NULL;
 END;
 $$;--> statement-breakpoint
+-- Closed to every role but the owner (opengewerk#975). A trigger already on a
+-- table fires without the right; hung on a temporary table of its own, a role
+-- that may execute it would have it write as the owner of the tables.
+REVOKE EXECUTE ON FUNCTION "close_sync_counter"() FROM PUBLIC;--> statement-breakpoint
 CREATE CONSTRAINT TRIGGER "sync_counter_closes" AFTER UPDATE ON "sync_sequences"
 	DEFERRABLE INITIALLY DEFERRED
 	FOR EACH ROW WHEN (new.opened_in IS NOT NULL AND new.opened_in IS DISTINCT FROM old.opened_in)
@@ -267,7 +274,7 @@ GRANT EXECUTE ON FUNCTION "next_sync_sequence"(uuid) TO "opengewerk_app";--> sta
 -- that guards a fixed record sees the row as the caller sent it.
 CREATE FUNCTION "stamp_sync_columns"() RETURNS trigger
 	LANGUAGE plpgsql
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
 	new.updated_at := now();

@@ -19,7 +19,7 @@
 -- when is what the metadata of a file has to say.
 CREATE FUNCTION "record_attachment_uploader"() RETURNS trigger
 	LANGUAGE plpgsql
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
 	new.created_by := nullif(current_setting('app.user_id', true), '');
@@ -36,7 +36,7 @@ $$;--> statement-breakpoint
 CREATE FUNCTION "attachment_may_go"(p_attachment uuid) RETURNS boolean
 	LANGUAGE plpgsql
 	STABLE
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	allowed boolean;
@@ -57,7 +57,7 @@ $$;--> statement-breakpoint
 CREATE FUNCTION "attachment_purging"(p_attachment uuid) RETURNS boolean
 	LANGUAGE sql
 	STABLE
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 	SELECT p_attachment IS NOT NULL
 	   AND coalesce(current_setting('app.purging_attachment', true), '') = p_attachment::text
@@ -70,7 +70,7 @@ $$;--> statement-breakpoint
 -- decision was taken on.
 CREATE FUNCTION "attachment_version_stays_as_written"() RETURNS trigger
 	LANGUAGE plpgsql
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
 	IF TG_OP = 'DELETE' AND public.attachment_purging(old.attachment_id) THEN
@@ -91,7 +91,7 @@ $$;--> statement-breakpoint
 -- version is taking.
 CREATE FUNCTION "file_goes_with_its_document"() RETURNS trigger
 	LANGUAGE plpgsql
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
 	IF coalesce(current_setting('app.taking_file', true), '') = old.tenant_id::text || '/' || old.sha256 THEN
@@ -124,7 +124,7 @@ $$;--> statement-breakpoint
 CREATE FUNCTION "file_naming_lock"(p_tenant uuid) RETURNS void
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
 	IF p_tenant IS NULL OR p_tenant::text IS DISTINCT FROM nullif(current_setting('app.tenant_id', true), '') THEN
@@ -150,7 +150,7 @@ $$;--> statement-breakpoint
 CREATE FUNCTION "file_named_by_a_value"(p_tenant uuid, p_hash text) RETURNS boolean
 	LANGUAGE plpgsql
 	VOLATILE
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	named boolean;
@@ -182,7 +182,7 @@ $$;--> statement-breakpoint
 CREATE FUNCTION "version_takes_its_files"() RETURNS trigger
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	hash text;
@@ -210,6 +210,10 @@ BEGIN
 	RETURN NULL;
 END;
 $$;--> statement-breakpoint
+-- Closed to every role but the owner (opengewerk#975). A trigger already on a
+-- table fires without the right; hung on a temporary table of its own, a role
+-- that may execute it would have it write as the owner of the tables.
+REVOKE EXECUTE ON FUNCTION "version_takes_its_files"() FROM PUBLIC;--> statement-breakpoint
 
 -- Lets a document go for good (#658), on the way the application opens for it
 -- (`application_attachment_may_go`) and nowhere else: its versions go, and so
@@ -221,7 +225,7 @@ $$;--> statement-breakpoint
 -- went.
 CREATE FUNCTION "purge_attachment"(p_attachment uuid, p_title text) RETURNS integer
 	LANGUAGE plpgsql
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	tenant uuid;

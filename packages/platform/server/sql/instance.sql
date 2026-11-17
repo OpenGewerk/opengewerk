@@ -20,7 +20,7 @@ BEGIN
 	RAISE EXCEPTION 'Das Protokoll der Instanz wird nur ergänzt. Ein Eintrag wird weder geändert noch gelöscht.'
 		USING ERRCODE = 'OG002';
 END;
-$$ LANGUAGE plpgsql;--> statement-breakpoint
+$$ LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp;--> statement-breakpoint
 
 CREATE TRIGGER "instance_changes_stay"
 	BEFORE UPDATE OR DELETE ON "instance_changes"
@@ -40,7 +40,7 @@ CREATE TRIGGER "instance_changes_stay_on_truncate"
 CREATE FUNCTION "record_instance_change"() RETURNS trigger
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	before_row jsonb := '{}'::jsonb;
@@ -78,6 +78,10 @@ BEGIN
 	RETURN NULL;
 END;
 $$;--> statement-breakpoint
+-- Closed to every role but the owner (opengewerk#975). A trigger already on a
+-- table fires without the right; hung on a temporary table of its own, a role
+-- that may execute it would have it write as the owner of the tables.
+REVOKE EXECUTE ON FUNCTION "record_instance_change"() FROM PUBLIC;--> statement-breakpoint
 
 CREATE TRIGGER "instance_changes" AFTER INSERT OR UPDATE OR DELETE ON "instance_operators"
 	FOR EACH ROW EXECUTE FUNCTION "record_instance_change"();--> statement-breakpoint
@@ -114,7 +118,7 @@ SELECT set_config('app.reason', '', true);--> statement-breakpoint
 CREATE FUNCTION "create_tenant"(company text) RETURNS uuid
 	LANGUAGE plpgsql
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
 	created uuid;
@@ -152,7 +156,7 @@ CREATE FUNCTION "tenants_with_leads"()
 	LANGUAGE sql
 	STABLE
 	SECURITY DEFINER
-	SET search_path = pg_catalog, public
+	SET search_path = pg_catalog, public, pg_temp
 AS $$
 	SELECT t.id, t.name, t.created_at,
 	       coalesce((SELECT array_agg(m.user_id ORDER BY m.created_at) FROM public.memberships m

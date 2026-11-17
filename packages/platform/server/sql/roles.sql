@@ -20,4 +20,15 @@ BEGIN
 	END IF;
 END
 $$;--> statement-breakpoint
+-- And no role but the owner creates in the schema (opengewerk#975). The
+-- functions that run as the owner of the tables look there for what they call,
+-- and what another role put there first would run with the owner's rights.
+-- PostgreSQL 15 took the right from every role; a cluster upgraded from an
+-- older version still grants it. Taking it back is not undone with the block.
+REVOKE CREATE ON SCHEMA "public" FROM PUBLIC;--> statement-breakpoint
+-- For the same reason every function of the blocks names the temporary schema
+-- last in its search path. Left out, it is searched first for tables and
+-- types, before pg_catalog, and a type a role made there in its session, a
+-- domain with a check of its own, say, would stand in for one a function of
+-- the owner declares; the check would run with the owner's rights.
 GRANT USAGE ON SCHEMA "public" TO "opengewerk_app";
