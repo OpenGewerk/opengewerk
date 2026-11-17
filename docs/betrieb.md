@@ -932,10 +932,10 @@ Anders als unter "Zurückspielen" folgt hier noch kein `start.sh`: Das der
 neuen Fassung brächte die Datenbank mit ihren Migrationen gleich wieder auf
 den neuen Stand, und die alte Fassung lehnte sie danach ab. Eine verschlüsselte
 Sicherung bekommt ihren Schlüssel wie dort. Nur wenn `restore.sh` ohne Fehler
-durchlief, geht es weiter: Scheitert es, bleibt die Anwendung angehalten und
-ausgesperrt, bis die Ursache behoben und die Sicherung noch einmal
-zurückgespielt ist, und weder das alte Paket noch der Befehl unten kommen
-vorher. Danach das Paket der alten Fassung an dieselbe Stelle entpacken. Das Zurückspielen lässt die Anwendung dabei ausgesperrt, bis die
+durchlief, geht es weiter: Scheitert es, bleibt die Anwendung angehalten, und
+war die Datenbank schon ersetzt, auch ausgesperrt, bis die Ursache behoben und
+die Sicherung noch einmal zurückgespielt ist; weder das alte Paket noch der
+Befehl unten kommen vorher. Danach das Paket der alten Fassung an dieselbe Stelle entpacken. Das Zurückspielen lässt die Anwendung dabei ausgesperrt, bis die
 Migrationen gelaufen sind, und erst das `start.sh` einer Fassung nach 0.8.0
 gibt sie dann frei. Geht es zurück auf 0.8.0 oder früher, gibt man die
 Anmeldung deshalb vor dem Start von Hand zurück, und zwar erst, wenn die neue
