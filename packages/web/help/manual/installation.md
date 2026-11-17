@@ -4,6 +4,8 @@ Was ein Server braucht, das Paket prüfen und entpacken, der erste Start und der
 
 ## Schritt für Schritt
 
+Die Befehle laufen als root auf dem Server, so wie Docker es ohnehin verlangt. Bist du als anderer Benutzer angemeldet, stellst du `sudo` voran.
+
 1. Auf dem Server Docker Engine ab 28.3.3 und Docker Compose ab 2.22 einrichten. Ältere Fassungen lassen Rechner im selben Netz an Ports, die nur auf `127.0.0.1` liegen.
 2. Das Paket `opengewerk-X.Y.Z.tar.gz` von der Release-Seite laden, X.Y.Z ist die Fassung, und mit `cosign verify-blob` gegen seine Signatur prüfen. Die Befehle dazu stehen auf der Release-Seite.
 3. Entpacken, etwa nach `/opt`: `tar --no-same-owner -xzf opengewerk-X.Y.Z.tar.gz -C /opt`. Das Paket bringt den Ordner `opengewerk` mit.
