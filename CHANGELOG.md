@@ -7,6 +7,32 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-17
+
+Die achte Fassung bringt fast den ganzen Rest von Phase 2 und eine lange Reihe von Sicherheitskorrekturen. Neu sind
+die Serviceaufträge mit Schnellerfassung und Abrechnung vor Ort, der Notdienst mit Rufbereitschaftsplan und
+Zuschlägen, Wartungsverträge mit Intervall, Laufzeit und Kündigungsfrist samt Dauerrechnung, Erinnerungen an Kunden
+zu Prüfungen und Wartungen und Bestätigungsmails zu Termin und Auftragseingang. Für den Vertrieb gibt es Leads mit
+einer Pipeline, abgelehnte Angebote und den Verlauf am Kunden und am Objekt. Dazu kommen die Funktionen für den
+Datenschutz: Kunden sperren und löschen, das Löschkonzept für Leads, Kunden, Objekte und Beschäftigte, Auskunft und
+Datenexport je Person und das Verzeichnis der Verarbeitungstätigkeiten mit TOM und Löschkonzept als Dokumente. Wer
+die Instanz betreibt, pflegt dort jetzt Impressum und Datenschutzhinweise.
+
+Der Abschnitt „Sicherheit“ ist diesmal lang. Er schließt die Befunde aus einem Deep Scan von CodeRabbit vom
+08.11.2026 und einige, die bei ihrer Behebung dazukamen; welche Fassungen betroffen waren, steht in den Advisories.
+Die Migrationen 0120 bis 0150 laufen beim Start. Vor dem Update sollte jedes Gerät senden, was bei ihm wartet: Eine
+Unterschrift, die noch mit der alten Prüfsumme wartet, kommt danach als Konflikt zurück und muss neu geleistet
+werden. Nach dem Update holt ein Gerät beim ersten Öffnen alles neu und zeigt ohne Netz bis dahin nichts aus seiner
+Ablage, und wer sich genau während des Updates angemeldet hat, meldet sich noch einmal an. Wer die Datenbank nicht
+über den mitgelieferten Stapel betreibt: Die Anwendung startet nicht, wenn ihre Rolle im Schema `public` anlegen
+darf oder über eine Mitgliedschaft Superuser oder `BYPASSRLS` erreicht, und die Meldung im Log sagt, was zu ändern
+ist.
+
+Noch nicht dabei sind aus Phase 2 die Hilfe (#269) und der Import aus Messgeräten (#309), dazu DATANORM 5 (#455),
+die Zuschlagsstaffel aus den Z-Sätzen (#798) und fünf Grenzwerte im Paket Elektro (#731). Vor dem produktiven Einsatz
+stehen weiter die fachliche Abnahme der Regelpakete und Grenzwerte (#31) und der Praxistest der E-Rechnung bei einem
+echten Empfänger (#133).
+
 ### Hinzugefügt
 
 - Wer die Instanz betreibt, pflegt Impressum und Datenschutzhinweise der Instanz unter „Instanz verwalten“,
