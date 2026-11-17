@@ -64,11 +64,21 @@ printf 'psql %s\n' "$*" >> "$CALLS"
 case " $* " in
   *" --single-transaction "*) printf 'restore-as %s password=%s\n' "$*" "${PGPASSWORD:-}" >> "$CALLS" ;;
 esac
-# The files it plays are written down as well, in their order.
+# The files it plays are written down as well, in their order, each line with
+# the call that played it and whether that call was one transaction that stops
+# at the first error.
+mode=plain
+case " $* " in
+  *" --single-transaction "*)
+    case " $* " in
+      *" --set ON_ERROR_STOP=1 "*) mode=transaction ;;
+    esac
+    ;;
+esac
 previous=''
 for argument in "$@"; do
   if [ "$previous" = --file ] && [ "$argument" != - ]; then
-    cat "$argument" >> "$CALLS"
+    sed "s/^/file $$ $mode: /" "$argument" >> "$CALLS"
   fi
   previous=$argument
 done
@@ -495,10 +505,17 @@ grep '^restore-as ' "$CALLS" > "$work/restored"
 grep -q -- '--username opengewerk_owner ' "$work/restored"
 grep -q ' password=owner-probe$' "$work/restored"
 grep -q -- '--set ON_ERROR_STOP=1 ' "$work/restored"
-grep -q '^DROP SCHEMA IF EXISTS drizzle CASCADE;$' "$CALLS"
 grep '^pg_restore ' "$CALLS" | grep -q -- '--no-owner --file '
-# Emptied first, then the dump, both in the one transaction of the psql.
-awk '/^DROP SCHEMA IF EXISTS drizzle CASCADE;$/ { emptied = NR } /^-- the statements of the dump$/ { played = NR } END { exit !(emptied && played && emptied < played) }' "$CALLS"
+# Emptied first, then the dump, both in the same call and so in its one
+# transaction: emptied in one call and played in another, a dump that fails
+# could not take the emptying back.
+awk '/^file [0-9]+ transaction: DROP SCHEMA IF EXISTS drizzle CASCADE;$/ { emptied = NR; emptying = $2 }
+  /^file [0-9]+ transaction: -- the statements of the dump$/ { played = NR; playing = $2 }
+  END { exit !(emptied && played && emptied < played && emptying == playing) }' "$CALLS" || {
+  echo 'FEHLER: Leeren und Dump laufen nicht nacheinander in derselben Transaktion'
+  grep '^file ' "$CALLS"
+  exit 1
+}
 if grep '^pg_restore ' "$CALLS" | grep -q -e '--clean' -e '--username' -e '--host'; then
   echo 'FEHLER: pg_restore räumt selbst auf oder meldet sich an'
   grep '^pg_restore ' "$CALLS"
