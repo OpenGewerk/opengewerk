@@ -608,9 +608,12 @@ grep -q 'älteren Fassung' "$work/out" || {
   cat "$work/out"
   exit 1
 }
-# The way back to a version up to 0.8.0, whose start.sh knows no note.
-grep -q 'alter role opengewerk_app login; comment on role opengewerk_app is null' "$work/out" || {
-  echo 'FEHLER: die Meldung nennt nicht, wie eine Fassung bis 0.8.0 die Anmeldung zurückbekommt'
+# The way back to a version up to 0.8.0, whose start.sh knows no note: the
+# running application stopped first, then the login given back.
+awk '/^  docker compose -f docker\/compose.yaml stop app backup-schedule$/ { stopped = NR }
+  /alter role opengewerk_app login; comment on role opengewerk_app is null/ { unlocked = NR }
+  END { exit !(stopped && unlocked && stopped < unlocked) }' "$work/out" || {
+  echo 'FEHLER: die Meldung nennt nicht, wie eine Fassung bis 0.8.0 nach dem Anhalten die Anmeldung zurückbekommt'
   cat "$work/out"
   exit 1
 }

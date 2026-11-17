@@ -490,7 +490,10 @@ if [ "$waiting" -eq 1 ]; then
 		# The way back after an update starts the older version next, and up to
 		# 0.8.0 its start.sh does not know the note.
 		echo "Startet danach eine Fassung bis 0.8.0, gibt ihr Start die Anmeldung nicht"
-		echo "zurück; dann vorher im Ordner der Installation:"
+		echo "zurück. Dann vorher im Ordner der Installation die laufende Anwendung"
+		echo "anhalten, damit sie nicht auf dem älteren Schema arbeitet, und erst dann"
+		echo "die Anmeldung zurückgeben:"
+		echo "  docker compose -f docker/compose.yaml stop app backup-schedule"
 		echo "  docker compose -f docker/compose.yaml exec postgres psql -U postgres -c \"alter role opengewerk_app login; comment on role opengewerk_app is null\""
 	elif [ "$level_before" -eq 0 ]; then
 		echo "Die Datenbank davor hatte keine Migrationen, welchen Stand die Anwendung"
