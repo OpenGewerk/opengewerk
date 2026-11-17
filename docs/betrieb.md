@@ -677,7 +677,11 @@ Tabellen angelegt haben, die er nicht kennt. Bis dahin räumte
 späteren Tabelle, die an einer Tabelle des Dumps hing, brach es ab und ließ ein
 halbes Schema zurück. Den Dump schreibt der Lauf dafür zuerst als SQL in den
 Container, und das braucht dort etwa viermal so viel Platz wie der Dump; fehlt
-er, scheitert der Lauf, bevor er die Datenbank anfasst. Scheitert jetzt eine
+er, scheitert der Lauf, bevor er die Datenbank anfasst. Meldet `psql` beim
+Einspielen einen Fehler, fragt der Lauf die Datenbank, wie die Transaktion
+ausging: Bricht die Verbindung nach dem Abschluss ab, aber bevor die Antwort
+ankommt, steht die Sicherung womöglich schon drin. Nur eine Transaktion, die
+sicher abgebrochen ist, gilt als nicht geschehen. Scheitert also eine
 Anweisung, beim Leeren oder beim
 Einspielen, steht die Datenbank da wie vorher, und die Anwendung bekommt ihre
 Anmeldung zurück. Scheitert der Lauf erst danach, am Dateispeicher oder an einer

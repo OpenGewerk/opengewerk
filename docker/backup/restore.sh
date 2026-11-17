@@ -296,6 +296,7 @@ lock_application
 # a statement in the dump could take that back with RESET ROLE.
 empty_owned_schema() {
 	cat <<'SQL'
+SELECT 'restore-transaction ' || pg_catalog.pg_current_xact_id();
 DROP SCHEMA IF EXISTS drizzle CASCADE;
 DO $$
 DECLARE
@@ -383,10 +384,30 @@ empty_owned_schema >"${work}/empty.sql"
 # and a pg_restore that stopped halfway would hand it half a dump, which the
 # transaction would then commit over an emptied schema.
 pg_restore --no-owner --file "${work}/database.sql" "${work}/database.dump"
-PGPASSWORD="$OPENGEWERK_OWNER_PASSWORD" PGOPTIONS="-c client_min_messages=warning" \
+#
+# The transaction names its number first. A psql that fails has not always
+# seen it fail: when the connection breaks after the COMMIT went out and
+# before its answer came back, the database may hold the backup already. So
+# the database is asked how the transaction ended, and only one it aborted
+# leaves the database as it was; one it committed, or one whose end nobody
+# can say, counts as replaced.
+if ! PGPASSWORD="$OPENGEWERK_OWNER_PASSWORD" PGOPTIONS="-c client_min_messages=warning" \
 	psql --host "$POSTGRES_HOST" --username opengewerk_owner --dbname "$POSTGRES_DB" \
-	--no-psqlrc --quiet --single-transaction --set ON_ERROR_STOP=1 \
-	--file "${work}/empty.sql" --file "${work}/database.sql" >/dev/null
+	--no-psqlrc --quiet --tuples-only --no-align --single-transaction --set ON_ERROR_STOP=1 \
+	--file "${work}/empty.sql" --file "${work}/database.sql" >"${work}/played.txt"; then
+	transaction=$(sed -n 's/^restore-transaction \([0-9][0-9]*\)$/\1/p' "${work}/played.txt" | head -n 1)
+	# Without its number the transaction never began, and nothing changed.
+	if [ -n "$transaction" ]; then
+		outcome=$(psql --host "$POSTGRES_HOST" --username postgres --dbname postgres --quiet \
+			--tuples-only --no-align \
+			--command "select pg_catalog.pg_xact_status('${transaction}'::xid8)") || outcome=''
+		if [ "$outcome" != aborted ]; then
+			echo "Die Transaktion des Rückspielens ist nicht sicher abgebrochen (${outcome:-unbekannt})." >&2
+			replaced=1
+		fi
+	fi
+	exit 1
+fi
 replaced=1
 # A note an earlier restore left belongs to the database that was there.
 superuser_command "comment on role opengewerk_app is null"

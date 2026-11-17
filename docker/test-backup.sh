@@ -91,6 +91,7 @@ esac
 case "$*" in
   *server_version*) echo 18 ;;
   *rolcanlogin*) echo "${WAS_LOCKED:-f}" ;;
+  *pg_xact_status*) echo "${XACT_STATUS:-aborted}" ;;
   *"to_regclass('drizzle.__drizzle_migrations')"*) echo t ;;
   # How far the migrations had come: before the dump is played and after.
   *'max(created_at)'*)
@@ -101,6 +102,16 @@ case "$*" in
     fi
     ;;
 esac
+# The call that plays the dump fails after the transaction named its number,
+# the way a connection lost after the COMMIT went out looks to psql.
+if [ -n "${PLAY_FAILS:-}" ]; then
+  case " $* " in
+    *" --single-transaction "*)
+      echo 'restore-transaction 42'
+      exit 1
+      ;;
+  esac
+fi
 FAKE
 cat > "$work/bin/pg_restore" <<'FAKE'
 #!/bin/sh
@@ -586,6 +597,28 @@ fi
 grep -q 'wie sie es vor diesem Lauf war' "$work/out" || {
   echo 'FEHLER: die Meldung sagt nicht, warum die Anwendung ausgesperrt bleibt'
   cat "$work/out"
+  exit 1
+}
+# psql fails while playing: the database is asked how the transaction ended.
+# Committed, or not known, the application stays locked; aborted, it gets its
+# login back.
+halfway PLAY_FAILS=1 XACT_STATUS=committed
+grep -q "pg_xact_status('42'::xid8)" "$CALLS" || {
+  echo 'FEHLER: nach einem Fehler beim Einspielen wurde nicht nach dem Ausgang der Transaktion gefragt'
+  exit 1
+}
+if grep -q 'alter role opengewerk_app login' "$CALLS"; then
+  echo 'FEHLER: nach einer übernommenen Transaktion bekam die Anwendung ihre Anmeldung zurück'
+  exit 1
+fi
+halfway PLAY_FAILS=1 XACT_STATUS='in progress'
+if grep -q 'alter role opengewerk_app login' "$CALLS"; then
+  echo 'FEHLER: bei offenem Ausgang der Transaktion bekam die Anwendung ihre Anmeldung zurück'
+  exit 1
+fi
+halfway PLAY_FAILS=1 XACT_STATUS=aborted
+grep -q 'alter role opengewerk_app login' "$CALLS" || {
+  echo 'FEHLER: nach einer abgebrochenen Transaktion blieb die Anwendung ausgesperrt'
   exit 1
 }
 check 'Rückspielen: scheitert es nach der Datenbank, bleibt die Anwendung ausgesperrt, davor nicht'
