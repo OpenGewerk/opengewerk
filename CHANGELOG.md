@@ -9,10 +9,10 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
-- `docs/entwicklung.md` nennt nicht mehr als kommend, was mit 0.7.0 und 0.8.0 erschienen ist: die Wiederholungsprüfung als
-  erste Art eines Gewerks in der Fristen-Engine, dazu Gewährleistung und Wartung als Arten, die übrigen Protokolle aus
-  Abschnitt 5.1 mit der Frist der nächsten Prüfung, Material aus dem Lager im Regiebericht und die Plantafel, und sie
-  nennt die Mails an Kunden aus 0.8.0 (#978). Warum: Wer sich in den Code einliest, hielt sonst Gebautes für offen.
+- `docs/entwicklung.md` beschreibt den Stand nach 0.8.0, wo sie bisher Erschienenes als kommend oder fehlend nannte
+  (#978): die Arten und Aktionen der Fristen-Engine, die Protokolle aus Abschnitt 5.1 mit der Frist der nächsten
+  Prüfung, Material aus dem Lager im Regiebericht, die Plantafel, die Mails an Kunden und die Anlässe für Push.
+  Warum: Wer sich in den Code einliest, hielt sonst Gebautes für offen.
 
 ## [0.8.0] - 2026-11-17
 
