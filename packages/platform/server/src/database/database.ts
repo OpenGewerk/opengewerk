@@ -444,7 +444,10 @@ export class Database {
    * (opengewerk/opengewerk#685). Row level security does not apply to a
    * superuser or a role with BYPASSRLS at all, and to the owner of a table only
    * through FORCE, which a member of the owner can switch off. A name says none
-   * of that: a role of any name is asked for what it is.
+   * of that: a role of any name is asked for what it is. Superuser and BYPASSRLS
+   * are asked through every role it belongs to as well: neither is inherited,
+   * but SET ROLE takes either on in a moment (security review on
+   * opengewerk#976).
    *
    * Nor may it create in `public` (opengewerk#975). The functions that run as
    * the owner of the tables look there for what they call, and an overload or a
@@ -475,7 +478,11 @@ export class Database {
       creates: boolean
       places: boolean
     }>(
-      `select r.rolname as name, r.rolsuper as superuser, r.rolbypassrls as bypass,
+      `select r.rolname as name,
+              exists (select 1 from pg_roles x
+                       where x.rolsuper and pg_has_role(r.oid, x.oid, 'MEMBER')) as superuser,
+              exists (select 1 from pg_roles x
+                       where x.rolbypassrls and pg_has_role(r.oid, x.oid, 'MEMBER')) as bypass,
               coalesce((select pg_has_role(r.oid, o.oid, 'MEMBER') from pg_roles o where o.rolname = $1),
                        false) as member,
               exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
@@ -505,15 +512,17 @@ export class Database {
 
     if (role.superuser) {
       return (
-        `Die Anwendung verbindet sich als "${role.name}", und diese Rolle ist Superuser. Für ` +
-        `einen Superuser gilt keine Zeilensicherheit, die Mandantentrennung greift nicht. ${expected}`
+        `Die Anwendung verbindet sich als "${role.name}", und diese Rolle ist Superuser oder gehört ` +
+        `einem an, zu dem sie wechseln kann. Für einen Superuser gilt keine Zeilensicherheit, die ` +
+        `Mandantentrennung greift nicht. ${expected}`
       )
     }
 
     if (role.bypass) {
       return (
-        `Die Anwendung verbindet sich als "${role.name}", und diese Rolle hat BYPASSRLS. Damit ` +
-        `gilt für sie keine Zeilensicherheit, die Mandantentrennung greift nicht. ${expected}`
+        `Die Anwendung verbindet sich als "${role.name}", und diese Rolle hat BYPASSRLS oder gehört ` +
+        `einer Rolle an, die es hat und zu der sie wechseln kann. Damit gilt für sie keine ` +
+        `Zeilensicherheit, die Mandantentrennung greift nicht. ${expected}`
       )
     }
 

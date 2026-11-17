@@ -22,6 +22,8 @@ const roles = {
   owner: 'role_problem_owner',
   lender: 'role_problem_lender',
   creator: 'role_problem_creator',
+  root: 'role_problem_root',
+  skipper: 'role_problem_skipper',
 } as const
 
 let pool: Pool
@@ -71,6 +73,8 @@ beforeAll(async () => {
   await pool.query(`create role "${roles.owner}" login password '${password}'`)
   await pool.query(`create role "${roles.lender}" nologin`)
   await pool.query(`create role "${roles.creator}" nologin`)
+  await pool.query(`create role "${roles.root}" nologin superuser`)
+  await pool.query(`create role "${roles.skipper}" nologin bypassrls`)
   await pool.query('create table public.role_problem_probe (id integer)')
   await pool.query(`alter table public.role_problem_probe owner to "${roles.owner}"`)
 })
@@ -97,6 +101,36 @@ describe('the role an application connects as (#685)', () => {
     expect(await problemOf(roles.bypass)).toContain(
       `"${roles.bypass}", und diese Rolle hat BYPASSRLS`,
     )
+  })
+
+  it('is refused when it may SET ROLE to a superuser', async () => {
+    // The attribute is not inherited, but SET ROLE takes it on in a moment
+    // (security review on opengewerk#976).
+    await pool.query(`grant "${roles.root}" to "${roles.plain}" with inherit false, set true`)
+
+    try {
+      expect(await problemOf(roles.plain)).toContain(
+        `"${roles.plain}", und diese Rolle ist Superuser oder gehört einem an`,
+      )
+    } finally {
+      await pool.query(`revoke "${roles.root}" from "${roles.plain}"`)
+    }
+
+    expect(await problemOf(roles.plain)).toBeNull()
+  })
+
+  it('is refused when it may SET ROLE to a role with BYPASSRLS', async () => {
+    await pool.query(`grant "${roles.skipper}" to "${roles.plain}" with inherit false, set true`)
+
+    try {
+      expect(await problemOf(roles.plain)).toContain(
+        `"${roles.plain}", und diese Rolle hat BYPASSRLS oder gehört einer Rolle an`,
+      )
+    } finally {
+      await pool.query(`revoke "${roles.skipper}" from "${roles.plain}"`)
+    }
+
+    expect(await problemOf(roles.plain)).toBeNull()
   })
 
   it('is refused as a member of the owner of the tables', async () => {
