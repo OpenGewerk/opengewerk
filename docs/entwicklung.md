@@ -291,7 +291,7 @@ Eine Frist ist ein Tag, an dem etwas fällig wird, weil vorher etwas anderes ges
 
 **Auf dem Server und nicht auf dem Gerät.** Eine Frist entsteht aus dem, was die Geräte geschickt haben, und der nächste Lauf bestimmt sie aus ihrer Quelle neu; was ein Gerät im Keller an ihr änderte, wäre eine Minute später überschrieben. Die Tabellen stehen deshalb nicht im Abgleich (Nachtrag in ADR 0005). Was eine Frist auslöst, reist dagegen wie alles andere: ihre Aufgabe kommt mit dem nächsten Abruf auf das Gerät der verantwortlichen Person.
 
-Was nicht dazugehört: die Arten der Gewerke, deren erste mit der Wiederholungsprüfung kommt (#301), und Fristen, die niemand aus einer Quelle ableiten kann. Die kommen, wo ein Issue sie braucht, als neue Art mit einer neuen Quelle.
+Was nicht dazugehört: Fristen, die niemand aus einer Quelle ableiten kann. Die Arten der Gewerke kommen, wo ein Issue sie braucht, als neue Art mit einer neuen Quelle; die erste kam mit der Wiederholungsprüfung (#301) in 0.7.0.
 
 ## Ansprechpartner
 
@@ -413,7 +413,7 @@ Die PV-Struktur unter einer PV-Anlage mit Wechselrichter, String und Modulen gib
 
 **Das letzte Protokoll ist die Vorlage des nächsten.** Übernommen wird, was die Definition mit `carry` kennzeichnet: Prüfer, Messgerät, Netzform und Nennspannung. Was die letzte Prüfung festgestellt, gemessen und unterschrieben hat, nicht, sonst stünde das Ergebnis im neuen Protokoll, bevor jemand hingesehen hat.
 
-Was nicht dazugehört: der Import aus Messgeräten (#69, dann Phase 2), die übrigen Protokolle aus Abschnitt 5.1 (Phase 2) und die Frist bis zur nächsten Prüfung, die zur Fristen-Engine gehört. Die Felder, die ein Betrieb seinem Regiebericht gibt, nutzen dieselbe Engine mit einer Definition in der Datenbank, siehe das Kapitel zum Regiebericht.
+Was nicht dazugehört: der Import aus Messgeräten (#309). Die übrigen Protokolle aus Abschnitt 5.1 (#301, #303, #304) und die Frist bis zur nächsten Prüfung aus der Fristen-Engine (#814, #822) sind mit 0.7.0 dazugekommen. Die Felder, die ein Betrieb seinem Regiebericht gibt, nutzen dieselbe Engine mit einer Definition in der Datenbank, siehe das Kapitel zum Regiebericht.
 
 ## Audit-Log
 
@@ -501,4 +501,4 @@ Eine Codebasis, zwei Einstiege, wie ADR 0004 es festlegt. `/` ist das Büro, `/m
 
 **Die gebaute Oberfläche liefert derselbe Prozess aus, der auch die API bedient.** Ein zweiter Container davor wäre eine weitere Sache, die eine Installation einrichten und aktualisieren muss. Zwei Hüllen gibt es trotzdem: alles unter `/m` kommt mit der Baustellen-Hülle zurück, alles andere mit der des Büros. Ein tiefer Link in die Baustelle, der mit der Bürohülle beantwortet wird, öffnet auf einem Telefon eine Oberfläche für Maus und Tastatur. Eine Adresse, die eine Datei nennt, also mit einer Endung wie `.png` oder `.js` endet, bekommt keine Hülle: gibt es die Datei nicht, antwortet der Server mit 404. Mit einer Hülle und 200 sähe eine fehlende Datei aus wie eine vorhandene, und genau so fehlten im Abbild von 0.1.0 Favicon und Icons, ohne dass es auffiel (#213).
 
-Was ausdrücklich noch fehlt, hat je ein eigenes Issue im Meilenstein Phase 2, allen voran die Plantafel. Formular-Engine und Prüfprotokoll gibt es seit #78 und #79, den Aufbau unterhalb der Anlage seit #70, siehe "Anlagenstruktur und Stromkreisverzeichnis".
+Die Plantafel gibt es seit 0.7.0 (#290); was noch fehlt, hat je ein eigenes Issue im Meilenstein seiner Phase. Formular-Engine und Prüfprotokoll gibt es seit #78 und #79, den Aufbau unterhalb der Anlage seit #70, siehe "Anlagenstruktur und Stromkreisverzeichnis".
