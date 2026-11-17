@@ -683,8 +683,9 @@ Einspielen, steht die Datenbank da wie vorher, und die Anwendung bekommt ihre
 Anmeldung zurück. Scheitert der Lauf erst danach, am Dateispeicher oder an einer
 der Prüfungen, bleibt sie ausgesperrt, und die Meldung sagt das. Ebenso, wenn
 sie schon vor dem Lauf ausgesperrt war, weil ein früherer nicht durchlief. Ein
-Lauf, der durchgeht, gibt die Anmeldung zurück; wer den Stand trotzdem so
-nehmen will, gibt sie von Hand zurück:
+Lauf, der durchgeht, gibt die Anmeldung zurück oder überlässt das dem Start,
+siehe unten; wer den Stand nach einem Fehler trotzdem so nehmen will, gibt sie
+von Hand zurück:
 
 ```bash
 docker compose -f docker/compose.yaml exec postgres psql -U postgres -c "alter role opengewerk_app login"
@@ -692,9 +693,9 @@ docker compose -f docker/compose.yaml exec postgres psql -U postgres -c "alter r
 
 Nach einem Erfolg startet die Instanz im Ordner der Installation mit
 `sh docker/start.sh`. Stammt die Sicherung von einer älteren Fassung als die
-Datenbank davor, bleibt die Anwendung auch nach dem Erfolg ausgesperrt, mit
-einem Vermerk an ihrer Rolle: Sie liefe sonst auf einem Schema, das älter ist
-als sie. `start.sh` bringt die Datenbank mit den Migrationen auf den Stand der
+Datenbank davor, oder war die Anwendung schon vor dem Lauf ausgesperrt, bleibt
+sie auch nach dem Erfolg ausgesperrt, mit einem Vermerk an ihrer Rolle: Sie
+liefe sonst womöglich auf einem Schema, das älter ist als sie. `start.sh` bringt die Datenbank mit den Migrationen auf den Stand der
 Fassung, gibt der Anwendung dann die Anmeldung zurück und startet sie.
 
 Der Lauf sperrt die Anwendung für seine Dauer aus, spielt beide Teile zurück

@@ -224,6 +224,10 @@ superuser_command() {
 # application stays locked then, because it would work on a schema older than
 # itself until the migrations have run; start.sh runs them and gives the login
 # back to a role that carries this note, and only to such a role.
+#
+# The same when the application was locked before the run. The database this
+# run replaced is then one an earlier restore left, and how far its migrations
+# had come says nothing about how far the application needs them.
 waiting_note='restored, waiting for migrations'
 
 unlock_application() {
@@ -247,16 +251,16 @@ was_locked=$(psql --host "$POSTGRES_HOST" --username postgres --dbname postgres 
 # nothing works on that state, and the message says so. A second restore gives
 # the login back when it goes through.
 replaced=0
-behind=0
+waiting=0
 unlock_and_cleanup() {
 	if [ "$1" -eq 0 ]; then
-		[ "$behind" -eq 1 ] || unlock_application || true
+		[ "$waiting" -eq 1 ] || unlock_application || true
 	elif [ "$replaced" -eq 1 ]; then
 		superuser_command "comment on role opengewerk_app is null" || true
 		echo "" >&2
 		echo "Die Anwendung bleibt ausgesperrt: die Datenbank ist schon zurückgespielt," >&2
-		echo "der Rest nicht. Das Rückspielen noch einmal laufen lassen; nach einem" >&2
-		echo "Erfolg gibt es der Anwendung die Anmeldung selbst zurück." >&2
+		echo "der Rest nicht. Das Rückspielen noch einmal laufen lassen und danach" >&2
+		echo "starten; der Start gibt der Anwendung die Anmeldung zurück." >&2
 	elif [ "$was_locked" = t ]; then
 		echo "" >&2
 		echo "Die Anwendung bleibt ausgesperrt, wie sie es vor diesem Lauf war: ein" >&2
@@ -473,14 +477,19 @@ fi
 chains=$(wc -l <"${work}/audit-chains.tsv" | tr -d ' ')
 echo "    ${chains} Kette(n) stimmen mit der Sicherung überein."
 
-if [ "$level_after" -lt "$level_before" ]; then
-	behind=1
+if [ "$level_after" -lt "$level_before" ] || [ "$was_locked" = t ]; then
+	waiting=1
 	superuser_command "comment on role opengewerk_app is '${waiting_note}'"
 fi
 
 echo "Fertig."
-if [ "$behind" -eq 1 ]; then
-	echo "Die Sicherung stammt von einer älteren Fassung als die Datenbank davor."
+if [ "$waiting" -eq 1 ]; then
+	if [ "$level_after" -lt "$level_before" ]; then
+		echo "Die Sicherung stammt von einer älteren Fassung als die Datenbank davor."
+	else
+		echo "Die Anwendung war schon vor diesem Lauf ausgesperrt, von einem früheren"
+		echo "Rückspielen."
+	fi
 	echo "Die Anwendung bleibt ausgesperrt, bis die Migrationen gelaufen sind; das"
 	echo "erledigt der Start, und danach bekommt sie ihre Anmeldung zurück."
 fi

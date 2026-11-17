@@ -591,6 +591,18 @@ grep -q 'älteren Fassung' "$work/out" || {
   cat "$work/out"
   exit 1
 }
+# Locked before the run, by an earlier restore: the database this one
+# replaces may itself be older than the application, so how far its
+# migrations had come proves nothing. Locked with the note as well.
+taken env POSTGRES_DB=opengewerk WAS_LOCKED=t sh "$work/bin/restore.sh" "$ours"
+if grep -q 'alter role opengewerk_app login' "$CALLS"; then
+  echo 'FEHLER: nach einer Sperre von vor dem Lauf kam die Anmeldung vor den Migrationen zurück'
+  exit 1
+fi
+grep -q "comment on role opengewerk_app is 'restored, waiting for migrations'" "$CALLS" || {
+  echo 'FEHLER: nach einer Sperre von vor dem Lauf trägt die Rolle nicht den Vermerk'
+  exit 1
+}
 check 'Rückspielen: eine ältere Sicherung lässt die Anwendung bis zu den Migrationen ausgesperrt'
 
 # 9. The heads of the chains go into statements of the superuser after the
