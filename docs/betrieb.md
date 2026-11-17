@@ -675,7 +675,10 @@ Datenbank, auch wenn er von einer älteren Fassung stammt und spätere Migration
 Tabellen angelegt haben, die er nicht kennt. Bis dahin räumte
 `pg_restore --clean` auf, und das verwirft nur, was im Dump steht; an einer
 späteren Tabelle, die an einer Tabelle des Dumps hing, brach es ab und ließ ein
-halbes Schema zurück. Scheitert jetzt eine Anweisung, beim Leeren oder beim
+halbes Schema zurück. Den Dump schreibt der Lauf dafür zuerst als SQL in den
+Container, und das braucht dort etwa viermal so viel Platz wie der Dump; fehlt
+er, scheitert der Lauf, bevor er die Datenbank anfasst. Scheitert jetzt eine
+Anweisung, beim Leeren oder beim
 Einspielen, steht die Datenbank da wie vorher, und die Anwendung bekommt ihre
 Anmeldung zurück. Scheitert der Lauf erst danach, am Dateispeicher oder an einer
 der Prüfungen, bleibt sie ausgesperrt, und die Meldung sagt das. Ebenso, wenn
