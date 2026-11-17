@@ -12,6 +12,11 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 - Abschnitt 1.2 der Feature-Gliederung nennt das Löschen nach dem Löschkonzept unter den Aktionen der Fristen-Engine
   (v2.80), und der Kommentar über `deadlineActions` und der Name ihres Tests zählen nicht mehr vier (#979). Warum:
   Gebaut ist es seit #317, und das Konzept ist die verbindliche Quelle für den Funktionsumfang.
+- Der Test des Regieberichts auf der Baustelle wartet nach jedem Schritt auf das, was der Schritt zeichnet, nach dem
+  Text auch darauf, dass sein Formular zu ist (#982). Warum: Unter der Last der CI suchte er den nächsten Knopf, bevor
+  er da oder frei war, und wurde rot, ohne dass sich etwas geändert hatte. Dazu prüft er auf der Seite für den Kunden
+  auch „Weitere Arbeitszeit eintragen“ und „Eine Viertelstunde mehr“; die Prüfung nannte bisher nur den Knopf, den es
+  nach der ersten Arbeitszeit nicht mehr gibt.
 - `docs/entwicklung.md` beschreibt den Stand nach 0.8.0, wo sie bisher Erschienenes als kommend oder fehlend nannte
   (#978): die Arten und Aktionen der Fristen-Engine und die Bedingungen der Wiedervorlage, die Protokolle aus
   Abschnitt 5.1 mit der Frist der nächsten Prüfung, die Widerrufsbelehrung am Angebot, Material aus dem Lager im
