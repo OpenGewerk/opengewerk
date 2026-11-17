@@ -358,33 +358,44 @@ describe('a report on site', () => {
 
     expect(router.state.location.pathname).toBe(`/auftraege/j-1/berichte/${reportId}`)
 
-    await user.click(screen.getByRole('button', { name: 'Text schreiben' }))
+    await user.click(await screen.findByRole('button', { name: 'Text schreiben' }))
     await user.type(
-      screen.getByRole('textbox', { name: 'Was gemacht wurde' }),
+      await screen.findByRole('textbox', { name: 'Was gemacht wurde' }),
       'Zwei Leitungsschutzschalter im Keller getauscht.',
     )
     await user.click(screen.getByRole('button', { name: 'Text sichern' }))
 
-    await user.click(screen.getByRole('button', { name: 'Arbeitszeit eintragen' }))
-    await user.type(screen.getByLabelText('Stunden'), '2,5')
+    // Each step waits for what the one before draws, which takes a moment more under load (#982).
+    // While the text is saved its form is still open and the next button there but disabled.
+    await waitFor(() => {
+      expect(screen.queryByRole('textbox', { name: 'Was gemacht wurde' })).toBeNull()
+    })
+    await user.click(await screen.findByRole('button', { name: 'Arbeitszeit eintragen' }))
+    await user.type(await screen.findByLabelText('Stunden'), '2,5')
     await user.click(screen.getByRole('button', { name: 'Arbeitszeit sichern' }))
 
-    await user.click(screen.getByRole('button', { name: 'Material eintragen' }))
-    await user.type(screen.getByLabelText('Material'), 'LS-Schalter B16')
+    await user.click(await screen.findByRole('button', { name: 'Material eintragen' }))
+    await user.type(await screen.findByLabelText('Material'), 'LS-Schalter B16')
     await user.clear(screen.getByLabelText('Menge'))
     await user.type(screen.getByLabelText('Menge'), '2')
     await user.click(screen.getByRole('button', { name: 'Material sichern' }))
 
-    expect(screen.getByText('2,5 Std.')).toBeTruthy()
-    expect(screen.getByText('2 Stk.')).toBeTruthy()
+    expect(await screen.findByText('2,5 Std.')).toBeTruthy()
+    expect(await screen.findByText('2 Stk.')).toBeTruthy()
 
-    await user.click(screen.getByRole('button', { name: 'Vom Kunden unterschreiben lassen' }))
+    await user.click(
+      await screen.findByRole('button', { name: 'Vom Kunden unterschreiben lassen' }),
+    )
 
-    // Nothing on the page the customer reads can be changed from it.
-    expect(screen.queryByRole('button', { name: 'Arbeitszeit eintragen' })).toBeNull()
+    // The page the customer reads stands first: nothing on it can be changed from it.
+    const name = await screen.findByLabelText('Name')
+
+    // Once hours are written the button is called "Weitere Arbeitszeit eintragen".
+    expect(screen.queryByRole('button', { name: /Arbeitszeit eintragen$/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Eine Viertelstunde mehr' })).toBeNull()
     expect(screen.queryByRole('button', { name: /entfernen$/ })).toBeNull()
 
-    await user.type(screen.getByLabelText('Name'), 'Erika Berg')
+    await user.type(name, 'Erika Berg')
     const drawn = signOn(screen.getByRole('img', { name: 'Unterschriftsfeld' }))
     await user.click(screen.getByRole('button', { name: 'Unterschreiben' }))
 
@@ -392,7 +403,7 @@ describe('a report on site', () => {
     expect(await screen.findByRole('img', { name: 'Unterschrift von Erika Berg' })).toBeTruthy()
     expect(screen.getByText('Unterschrieben')).toBeTruthy()
     expect(screen.getByText(/Noch nicht übertragen\. Die Unterschrift geht/)).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Arbeitszeit eintragen' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Arbeitszeit eintragen$/ })).toBeNull()
     expect(server.operations()).toEqual([])
 
     // The network comes back.
