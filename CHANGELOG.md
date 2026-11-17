@@ -7,7 +7,19 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ## [Unreleased]
 
-<<<<<<< HEAD
+### Hinzugefügt
+
+- Die Hilfe im Büro und auf der Baustelle (#269), nach Abschnitt 8 der Feature-Gliederung und den Tafeln aus Version
+  168 des Canvas: Das Fragezeichen in der Kopfleiste öffnet neben jeder Seite des Büros ihren Text mit den Schritten
+  ihres wichtigsten Ablaufs, auf einem schmalen Bildschirm steht „Hilfe zu dieser Seite“ im Menü. Unter „Hilfe“ stehen
+  die Kurzanleitungen zu Angebot, Regiebericht und Rechnung, Plantafel und Prüfprotokoll, eine Suche über alle Texte
+  und „Was ist neu“ mit den Versionshinweisen in der Sprache eines Betriebs. Auf der Baustelle führt das Menü zur Hilfe,
+  mit einem Text je Bildschirm und denselben Kurzanleitungen. Wer die Instanz betreibt, findet im Bereich der Instanz
+  das Handbuch mit Installation, Update, Sicherung und weiteren Betrieben. Die Texte kommen mit der Anwendung und sind
+  ohne Netz da; der Fuß der Anmeldung führt zur Hilfe auf opengewerk.de, weil vor der Anmeldung nichts von der
+  Anwendung geladen ist. Ein Test hält fest, dass jede Seite des Büros einen Text hat. Warum: Wer neu in OpenGewerk
+  arbeitet, soll an der Stelle nachlesen können, an der die Frage aufkommt, auch im Keller ohne Netz.
+
 ### Behoben
 
 - Abschnitt 1.2 der Feature-Gliederung nennt das Löschen nach dem Löschkonzept unter den Aktionen der Fristen-Engine
@@ -23,20 +35,6 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Abschnitt 5.1 mit der Frist der nächsten Prüfung, die Widerrufsbelehrung am Angebot, Material aus dem Lager im
   Regiebericht, die Plantafel, die Mails an Kunden und die Anlässe für Push, von denen Termin und Urlaub nur als Push
   kommen. Warum: Wer sich in den Code einliest, hielt sonst Gebautes für offen.
-=======
-### Hinzugefügt
-
-- Die Hilfe im Büro und auf der Baustelle (#269), nach Abschnitt 8 der Feature-Gliederung und den Tafeln aus Version
-  168 des Canvas: Das Fragezeichen in der Kopfleiste öffnet neben jeder Seite des Büros ihren Text mit den Schritten
-  ihres wichtigsten Ablaufs, auf einem schmalen Bildschirm steht „Hilfe zu dieser Seite“ im Menü. Unter „Hilfe“ stehen
-  die Kurzanleitungen zu Angebot, Regiebericht und Rechnung, Plantafel und Prüfprotokoll, eine Suche über alle Texte
-  und „Was ist neu“ mit den Versionshinweisen in der Sprache eines Betriebs. Auf der Baustelle führt das Menü zur Hilfe,
-  mit einem Text je Bildschirm und denselben Kurzanleitungen. Wer die Instanz betreibt, findet im Bereich der Instanz
-  das Handbuch mit Installation, Update, Sicherung und weiteren Betrieben. Die Texte kommen mit der Anwendung und sind
-  ohne Netz da; der Fuß der Anmeldung führt zur Hilfe auf opengewerk.de, weil vor der Anmeldung nichts von der
-  Anwendung geladen ist. Ein Test hält fest, dass jede Seite des Büros einen Text hat. Warum: Wer neu in OpenGewerk
-  arbeitet, soll an der Stelle nachlesen können, an der die Frage aufkommt, auch im Keller ohne Netz.
->>>>>>> a665a16a (CHANGELOG und Funktionsumfang nennen die Hilfe)
 
 ## [0.8.0] - 2026-11-17
 
