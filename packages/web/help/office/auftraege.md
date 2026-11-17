@@ -6,7 +6,7 @@ Hier stehen alle Aufträge des Betriebs mit ihrem Stand. Ein Auftrag gehört zu 
 
 1. Einen Auftrag am Objekt anlegen oder aus einem angenommenen Angebot.
 2. Die Termine auf der [Plantafel](/plantafel) den Leuten im Betrieb zuteilen.
-3. Auf der Baustelle entstehen Regiebericht, Lieferschein und Protokolle, auch ohne Netz.
+3. Auf der Baustelle entstehen Regiebericht und Protokolle, auch ohne Netz. Einen Lieferschein macht das Büro aus der Auftragsbestätigung; auf der Baustelle wird er gelesen und, wenn der Empfänger möchte, unterschrieben.
 4. Aus den unterschriebenen Berichten die Rechnung anlegen, festschreiben und verschicken.
 
 ## Serviceaufträge
