@@ -347,7 +347,7 @@ describe('the menu on site', () => {
     expect(screen.getByRole('dialog', { name: 'Menü' })).toBeTruthy()
   })
 
-  it('closes when a row of it leads to another screen', async () => {
+  it('closes when a row of it leads to another screen, and stays closed on the way back', async () => {
     const { router } = await frame({
       menu: (
         <button
@@ -368,6 +368,11 @@ describe('the menu on site', () => {
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/regale/s-1')
     })
+    expect(screen.queryByRole('dialog', { name: 'Menü' })).toBeNull()
+
+    // And back on the screen it was opened on, it stays closed.
+    await act(() => router.navigate({ to: '/' }))
+    await screen.findByRole('heading', { level: 1, name: 'Regale' })
     expect(screen.queryByRole('dialog', { name: 'Menü' })).toBeNull()
   })
 

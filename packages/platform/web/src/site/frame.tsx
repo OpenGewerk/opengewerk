@@ -84,8 +84,15 @@ export function SiteFrame({
   const places = usePlaces(tabs, conflicts)
   const path = useRouterState({ select: (state) => state.location.pathname })
   // The menu stands open on the screen it was opened on: a row of it that
-  // leads to another screen closes it on the way there.
+  // leads to another screen closes it on the way there, and coming back to
+  // that screen leaves it closed. Put right while rendering, as React has it
+  // for state that follows a value, and not in an effect.
   const [menuAt, setMenuAt] = useState<string | null>(null)
+
+  if (menuAt !== null && menuAt !== path) {
+    setMenuAt(null)
+  }
+
   const menuOpen = menuAt === path
   const openMenu = useCallback(() => {
     setMenuAt(path)
