@@ -10,8 +10,8 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 ### Behoben
 
 - Abschnitt 1.2 der Feature-Gliederung nennt das Löschen nach dem Löschkonzept unter den Aktionen der Fristen-Engine
-  (v2.80), und der Kommentar über `deadlineActions` zählt sechs statt vier (#979). Warum: Gebaut ist es seit #317, und
-  das Konzept ist die verbindliche Quelle für den Funktionsumfang.
+  (v2.80), und der Kommentar über `deadlineActions` und der Name ihres Tests zählen nicht mehr vier (#979). Warum:
+  Gebaut ist es seit #317, und das Konzept ist die verbindliche Quelle für den Funktionsumfang.
 
 ## [0.8.0] - 2026-11-17
 
