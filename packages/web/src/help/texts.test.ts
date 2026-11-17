@@ -46,17 +46,25 @@ function officePaths(): readonly string[] {
 
 /**
  * The paths of the routes below a parent, each read from its own call of
- * `createRoute`, whatever order its properties stand in.
+ * `createRoute`, whatever order its properties stand in and whichever quotes
+ * its path has. A route below the parent whose path cannot be read stops the
+ * test instead of falling out of it unseen.
  */
 function routesIn(router: string, parent: string): readonly string[] {
   return router
     .split('createRoute(')
     .slice(1)
     .filter((call) => new RegExp(String.raw`getParentRoute:\s*\(\)\s*=>\s*${parent}\b`).test(call))
-    .flatMap((call) => {
-      const path = /\bpath:\s*'([^']+)'/.exec(call)?.[1]
+    .map((call) => {
+      const path = /\bpath:\s*(['"`])([^'"`]+)\1/.exec(call)?.[2]
 
-      return path === undefined ? [] : [path]
+      if (path === undefined) {
+        throw new Error(
+          `A route below ${parent} without a path that can be read: ${call.slice(0, 80)}`,
+        )
+      }
+
+      return path
     })
 }
 
@@ -103,16 +111,21 @@ describe('the texts of the help', () => {
     expect(paths.filter((path) => officeHelpKey(opened(path), has) === null)).toEqual([])
   })
 
-  it('read a route of the office whatever order its properties stand in', () => {
+  it('read a route of the office whatever order its properties stand in and whichever quotes it has', () => {
     const router = [
       "createRoute({ getParentRoute: () => office, path: '/eins', component: One }),",
       "createRoute({ getParentRoute: () => office, component: Two, path: '/zwei' }),",
       "createRoute({\n  component: Three,\n  getParentRoute: () => office,\n  path: '/drei',\n}),",
+      'createRoute({ getParentRoute: () => office, path: "/vier" }),',
+      'createRoute({ getParentRoute: () => office, path: `/fuenf` }),',
       "createRoute({ getParentRoute: () => officeOther, path: '/fremd' }),",
       "createRoute({ getParentRoute: () => instance, path: '/instanz' }),",
     ].join('\n')
 
-    expect(routesIn(router, 'office')).toEqual(['/eins', '/zwei', '/drei'])
+    expect(routesIn(router, 'office')).toEqual(['/eins', '/zwei', '/drei', '/vier', '/fuenf'])
+    expect(() =>
+      routesIn('createRoute({ getParentRoute: () => office, path: paths.neu }),', 'office'),
+    ).toThrow(/without a path that can be read/)
   })
 
   it('lend only texts there are, to addresses the office has', () => {
