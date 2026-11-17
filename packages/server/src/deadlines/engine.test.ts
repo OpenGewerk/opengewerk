@@ -435,7 +435,7 @@ describe('the businesses', () => {
   })
 })
 
-describe('the four actions', () => {
+describe('the actions', () => {
   const everything: DeadlineKind = {
     key: 'probe.everything',
     trade: null,

@@ -43,7 +43,7 @@ import type {
  */
 
 /**
- * What happens once a deadline has come within its lead, the four of section
+ * What happens once a deadline has come within its lead, the six of section
  * 1.2. Each happens once per due day, however often the engine runs and
  * however long the instance was down before it caught up.
  *
