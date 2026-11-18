@@ -201,7 +201,10 @@ fi
 # path that is not there, which is what it says for a file that vanished.
 if [ -n "\${TAR_MISSES:-}" ] && [ "\$1" = --create ]; then
   case " \$* " in
-    *" --directory \$STORAGE_PATH "*) exec $real_tar "\$@" "\$TAR_MISSES" ;;
+    *" --directory \$STORAGE_PATH "*)
+      [ -z "\${FAKE_MARK:-}" ] || : > "\$FAKE_MARK"
+      exec $real_tar "\$@" "\$TAR_MISSES"
+      ;;
   esac
 fi
 # A tar that stops with an error and says nothing at all.
@@ -209,6 +212,7 @@ fi
 if [ -n "\${TAR_MIXED:-}" ] && [ "\$1" = --create ]; then
   case " \$* " in
     *" --directory \$STORAGE_PATH "*)
+      [ -z "\${FAKE_MARK:-}" ] || : > "\$FAKE_MARK"
       $real_tar "\$@" || exit
       printf 'tar: ./ab/cd/weg: No such file or directory\\n' >&2
       for n in 1 2 3 4 5 6 7 8; do
@@ -220,7 +224,11 @@ if [ -n "\${TAR_MIXED:-}" ] && [ "\$1" = --create ]; then
 fi
 if [ -n "\${TAR_SILENT:-}" ] && [ "\$1" = --create ]; then
   case " \$* " in
-    *" --directory \$STORAGE_PATH "*) $real_tar "\$@"; exit 1 ;;
+    *" --directory \$STORAGE_PATH "*)
+      [ -z "\${FAKE_MARK:-}" ] || : > "\$FAKE_MARK"
+      $real_tar "\$@"
+      exit 1
+      ;;
   esac
 fi
 # The other form busybox tar has for it, when the file goes between the look
@@ -321,6 +329,7 @@ cat > "$work/bin/find" <<FAKE
 $real_find "\$@" || exit
 [ "\$1" = . ] || exit 0
 if [ -n "\${FIND_MISSES:-}" ]; then
+  [ -z "\${FAKE_MARK:-}" ] || : > "\$FAKE_MARK"
   printf 'find: %s: No such file or directory\\n' "\$FIND_MISSES" >&2
   exit 1
 fi
@@ -333,6 +342,7 @@ cat > "$work/bin/grep" <<FAKE
 if [ -n "\${GREP_FAILS:-}" ] && [ "\$1" = -v ]; then
   case "\$*" in
     *vanished.patterns*)
+      [ -z "\${FAKE_MARK:-}" ] || : > "\$FAKE_MARK"
       echo 'grep: Input/output error' >&2
       exit 2
       ;;
@@ -1100,6 +1110,20 @@ run_backup() {
   FIXED_STAMP=$(printf '2031-01-01T%06dZ' "$stamp_number") POSTGRES_DB=opengewerk \
     sh "$work/bin/backup.sh" > "$work/out" 2>&1
 }
+# A backup that has to fail at what a stand-in does: the stand-in leaves a
+# mark, so a backup that failed earlier for another reason does not count.
+refused_at() {
+  rm -f "$work/fake-mark"
+  if FAKE_MARK="$work/fake-mark" run_backup; then
+    echo "FEHLER: $1"
+    exit 1
+  fi
+  test -f "$work/fake-mark" || {
+    echo "FEHLER: $1 (der Fehler trat nie ein)"
+    cat "$work/out"
+    exit 1
+  }
+}
 backed_up() {
   run_backup || {
     echo "FEHLER: $1"
@@ -1265,10 +1289,7 @@ if tar --list --file "$work/first/storage.tar" | grep -q 'liegengeblieben.part';
 fi
 tar --list --file "$work/first/storage.tar" > /dev/null
 rm -f "$STORAGE_PATH/liegengeblieben.part"
-if TAR_MISSES=/nirgends run_backup; then
-  echo 'FEHLER: ein anderer Fehler von tar ließ die Sicherung durch'
-  exit 1
-fi
+TAR_MISSES=/nirgends refused_at 'ein anderer Fehler von tar ließ die Sicherung durch'
 check 'Dateispeicher vor der Datenbank: ohne .part, eine verschwundene Datei geduldet, jeder andere Fehler nicht'
 
 # The other forms of a file that went while it was read: tar could not open
@@ -1276,26 +1297,14 @@ check 'Dateispeicher vor der Datenbank: ohne .part, eine verschwundene Datei ged
 # still does.
 TAR_CANT_OPEN="./ab/cd/$(hash_of 'weg')" backed_up 'eine Datei, die tar nicht mehr öffnen konnte, beendete die Sicherung'
 FIND_MISSES=./ab/cd/unterwegs.part backed_up 'ein .part, das während find verschwand, beendete die Sicherung'
-if FIND_MISSES=/nirgends run_backup; then
-  echo 'FEHLER: ein anderer Fehler von find ließ die Sicherung durch'
-  exit 1
-fi
+FIND_MISSES=/nirgends refused_at 'ein anderer Fehler von find ließ die Sicherung durch'
 check 'Dateispeicher: eine Datei, die tar nicht mehr öffnen konnte oder find verschwunden fand, beendet die Sicherung nicht'
 
 # A failure of tar that names no gone file is no file that went, and a file
 # that went beside several other errors does not hide them.
-if TAR_SILENT=1 run_backup; then
-  echo 'FEHLER: ein Fehler von tar ohne Meldung ließ die Sicherung durch'
-  exit 1
-fi
-if TAR_MIXED=1 run_backup; then
-  echo 'FEHLER: andere Fehler neben einer verschwundenen Datei ließen die Sicherung durch'
-  exit 1
-fi
-if TAR_MISSES="./$(hash_of 'weg')" GREP_FAILS=1 run_backup; then
-  echo 'FEHLER: ein grep, das die Meldungen nicht lesen konnte, ließ die Sicherung durch'
-  exit 1
-fi
+TAR_SILENT=1 refused_at 'ein Fehler von tar ohne Meldung ließ die Sicherung durch'
+TAR_MIXED=1 refused_at 'andere Fehler neben einer verschwundenen Datei ließen die Sicherung durch'
+TAR_MISSES="./$(hash_of 'weg')" GREP_FAILS=1 refused_at 'ein grep, das die Meldungen nicht lesen konnte, ließ die Sicherung durch'
 check 'Dateispeicher: ein Fehler ohne Meldung oder neben einer verschwundenen Datei beendet die Sicherung'
 
 # A link that stood under a name of the store when the first part was packed,
@@ -1333,14 +1342,20 @@ test -f "$work/sha-failed" || {
 rm -rf "$(dirname "$(stored "$unread_hash")")"
 check 'Dateispeicher: eine neue Datei, die sich nicht lesen lässt, beendet die Sicherung'
 
-# A backup that has taken more than half a day stops before the second part:
-# the sweep could by then take a file the dump names.
+# A backup that has taken more than half a day by the time it read the store
+# stops and writes no archive: the sweep could by then have taken a file the
+# dump names.
 rm -f "$work/clock-read"
+archives_before=$(ls "$work/backups" | wc -l)
 if CLOCK_RUNS_AWAY="$work/clock-read" run_backup; then
   echo 'FEHLER: eine Sicherung, die länger als einen halben Tag lief, ging durch'
   exit 1
 fi
 grep -q 'seit mehr als zwölf Stunden' "$work/out"
+test "$(ls "$work/backups" | wc -l)" = "$archives_before" || {
+  echo 'FEHLER: eine Sicherung, die zu lange lief, hinterließ ein Archiv'
+  exit 1
+}
 check 'Dateispeicher: nach einem halben Tag bis zum Ende des Lesens bricht die Sicherung ab'
 
 echo 'Sicherungen: alles in Ordnung.'
