@@ -255,22 +255,23 @@ only_here_over_http() {
 # The port Docker Compose takes for $1, only where it is certain without
 # reading the .env the way Compose reads it: from the exported environment
 # when the variable is there, else from the .env ($2) when exactly one line in
-# it names the variable, that line is NAME=digits and nothing more (a
-# carriage return from Windows aside), and no line that is no comment holds a
-# quote, which could begin a value over several lines. Prints the number and
-# ends with 0. Ends with 1 when the variable is empty or named nowhere, so
-# that the default in compose.yaml holds. Ends with 2 in every other case,
-# COMPOSE_ENV_FILES among them, which makes Compose read other files: then
-# nothing here guesses the port.
+# it that is no comment names the variable, that line is NAME=digits and
+# nothing more (a carriage return from Windows aside), and no line that is no
+# comment holds a quote, which could begin a value over several lines. Prints
+# the number and ends with 0. Ends with 1 when the variable is empty or named
+# nowhere, so that the default in compose.yaml holds. Ends with 2 in every
+# other case, and whenever the environment holds a variable of Compose
+# (COMPOSE_ENV_FILES, COMPOSE_DISABLE_ENV_FILE and the others), which can make
+# it read other files or none: then nothing here guesses the port.
 plain_port() {
   if printenv "$1" >/dev/null 2>&1; then
     plain=$(printenv "$1")
-  elif printenv COMPOSE_ENV_FILES >/dev/null 2>&1; then
+  elif printenv | grep -q '^COMPOSE_'; then
     return 2
   elif [ ! -f "$2" ]; then
     return 1
   else
-    plain=$(grep -F "$1" "$2" | sed 's/\r$//')
+    plain=$(grep -v '^[[:space:]]*#' "$2" | grep -F "$1" | sed 's/\r$//')
     [ -n "$plain" ] || return 1
     if grep -v '^[[:space:]]*#' "$2" | grep -q "[\"'\`]"; then
       return 2
@@ -288,6 +289,25 @@ plain_port() {
   printf '%s\n' "$plain"
 }
 
+# Whether a browser opens port $1, digits without leading zeros: ends with 0
+# from 1 to 65535, with 1 for a bad port of the Fetch standard, which browsers
+# refuse, and with 2 for anything out of range.
+browser_opens() {
+  case "$1" in
+    '' | *[!0-9]*) return 2 ;;
+  esac
+  if [ "${#1}" -gt 5 ] || [ "$1" -gt 65535 ] || [ "$1" -eq 0 ]; then
+    return 2
+  fi
+  case "$1" in
+    1 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 20 | 21 | 22 | 23 | 25 | 37 | 42 | 43 | 53 | 69 | 77 | 79 | 87 | 95 | \
+      101 | 102 | 103 | 104 | 109 | 110 | 111 | 113 | 115 | 117 | 119 | 123 | 135 | 137 | 139 | 143 | 161 | \
+      179 | 389 | 427 | 465 | 512 | 513 | 514 | 515 | 526 | 530 | 531 | 532 | 540 | 548 | 554 | 556 | 563 | \
+      587 | 601 | 636 | 989 | 990 | 993 | 995 | 1719 | 1720 | 1723 | 2049 | 3659 | 4045 | 4190 | 5060 | 5061 | \
+      6000 | 6566 | 6665 | 6666 | 6667 | 6668 | 6669 | 6679 | 6697 | 10080) return 1 ;;
+  esac
+}
+
 # The address, the one value nothing here can make up.
 address=$(grep '^TRUSTED_ORIGINS=' "$env_file" | head -n 1 | cut -d= -f2-)
 
@@ -299,6 +319,9 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
     1) port=$(sed -n "s/.*\${${APPLICATION_PREFIX}_PORT:-\([0-9]*\)}.*/\1/p" "$here/compose.yaml" 2>/dev/null | head -n 1) ;;
     *) port='' port_known='' ;;
   esac
+  if [ -n "$port" ] && ! browser_opens "$(printf '%s' "$port" | sed 's/^0*\(.\)/\1/')"; then
+    port='' port_known=''
+  fi
 
   address_variable="${APPLICATION_PREFIX}_ADDRESS"
   eval "wanted=\${${address_variable}:-}"
@@ -401,17 +424,9 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
       case "$port" in
         '' | *[!0-9]*) fail "\"$wanted\" hat nach dem Namen der Maschine keinen Port aus Ziffern zwischen 1 und 65535." ;;
       esac
-      if [ "${#digits}" -gt 5 ] || [ "$digits" -gt 65535 ] || [ "$digits" -eq 0 ]; then
-        fail "\"$wanted\" hat nach dem Namen der Maschine keinen Port aus Ziffern zwischen 1 und 65535."
-      fi
-      case "$digits" in
-        1 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 20 | 21 | 22 | 23 | 25 | 37 | 42 | 43 | 53 | 69 | 77 | 79 | 87 | 95 | \
-          101 | 102 | 103 | 104 | 109 | 110 | 111 | 113 | 115 | 117 | 119 | 123 | 135 | 137 | 139 | 143 | 161 | \
-          179 | 389 | 427 | 465 | 512 | 513 | 514 | 515 | 526 | 530 | 531 | 532 | 540 | 548 | 554 | 556 | 563 | \
-          587 | 601 | 636 | 989 | 990 | 993 | 995 | 1719 | 1720 | 1723 | 2049 | 3659 | 4045 | 4190 | 5060 | 5061 | \
-          6000 | 6566 | 6665 | 6666 | 6667 | 6668 | 6669 | 6679 | 6697 | 10080)
-          fail "\"$wanted\": Port $digits öffnen Browser nicht, sie sperren ihn. Bitte einen anderen Port nehmen."
-          ;;
+      browser_opens "$digits" || case $? in
+        1) fail "\"$wanted\": Port $digits öffnen Browser nicht, sie sperren ihn. Bitte einen anderen Port nehmen." ;;
+        *) fail "\"$wanted\" hat nach dem Namen der Maschine keinen Port aus Ziffern zwischen 1 und 65535." ;;
       esac
       case "$scheme:$digits" in
         http:80 | https:443) wanted="$scheme://$host" ;;

@@ -283,11 +283,12 @@ check 'http:// nur für diese Maschine: andere Adressen abgelehnt, localhost und
 
 # 9c. The port of the address offered is the one Docker Compose takes, and
 # only where that is certain: from the exported environment first, else from
-# a .env with one line NAME=digits and no quote outside a comment. Named
-# nowhere or empty (1): the default of compose.yaml holds. Anything else (2),
-# a second line, another way of writing it, ${...}, a quote that could start
-# a value over several lines, COMPOSE_ENV_FILES: no port is offered. A
-# variable of the shell that is not exported is no part of the environment.
+# a .env with one line NAME=digits outside the comments and no quote outside
+# them. Named nowhere or empty (1): the default of compose.yaml holds.
+# Anything else (2), a second line, another way of writing it, ${...}, a quote
+# that could start a value over several lines, a variable of Compose in the
+# environment: no port is offered. A variable of the shell that is not
+# exported is no part of the environment.
 sed -n '/^plain_port() {/,/^}/p' "$work/setup.sh" > "$work/plain-port.sh"
 test -s "$work/plain-port.sh"
 . "$work/plain-port.sh"
@@ -304,7 +305,7 @@ for pair in 'PROBE_PORT=24567|0 24567' 'PROBE_PORT=24567\r|0 24567' 'PROBE_PORT=
   '# "Port" steht unten\nOTHER=1\nPROBE_PORT=24567|0 24567' 'OTHER="x"|1' \
   'PROBE_PORT=24567 # lokal|2' 'PROBE_PORT="24567"|2' "PROBE_PORT='24567'|2" 'export PROBE_PORT=24567|2' \
   '  PROBE_PORT = 24567|2' 'PROBE_PORT: 24567|2' 'PROBE_PORT=1\nPROBE_PORT=24567|2' \
-  'PROBE_PORT=24567\n# PROBE_PORT=8080|2' 'PROBE_PORT=24567#x|2' 'PROBE_PORT=${BASE_PORT}|2' \
+  'PROBE_PORT=24567\n# PROBE_PORT=8080|0 24567' '  # PROBE_PORT=1\nPROBE_PORT=24567|0 24567' 'PROBE_PORT=24567#x|2' 'PROBE_PORT=${BASE_PORT}|2' \
   'PROBE_PORT=24567\nOTHER="x"|2' "PROBE_PORT=24567\nOTHER='x'|2" 'PROBE_PORT=24567\nOTHER=`x`|2' \
   "OTHER='Text \\\\' mit Apostroph\nPROBE_PORT=24567\nEnde'|2"; do
   line=${pair%%|*}
@@ -334,19 +335,43 @@ plain_port PROBE_PORT "$work/multi.env" > /dev/null || multi_state=$?
 PROBE_PORT=24998
 [ "$(plain_port PROBE_PORT "$work/port.env")" = 24567 ]
 unset PROBE_PORT
-files_state=0
-(
-  export COMPOSE_ENV_FILES=/elsewhere/.env
-  plain_port PROBE_PORT "$work/port.env" > /dev/null
-) || files_state=$?
-[ "$files_state" = 2 ] || {
-  printf 'FEHLER: mit COMPOSE_ENV_FILES ergab die .env %s, nicht 2\n' "$files_state"
-  exit 1
-}
+for compose_variable in COMPOSE_ENV_FILES COMPOSE_DISABLE_ENV_FILE COMPOSE_PROFILES; do
+  files_state=0
+  (
+    export "$compose_variable=1"
+    plain_port PROBE_PORT "$work/port.env" > /dev/null
+  ) || files_state=$?
+  [ "$files_state" = 2 ] || {
+    printf 'FEHLER: mit %s ergab die .env %s, nicht 2\n' "$compose_variable" "$files_state"
+    exit 1
+  }
+done
 missing_state=0
 plain_port PROBE_PORT "$work/no-such.env" > /dev/null || missing_state=$?
 [ "$missing_state" = 1 ]
 check 'Port aus der .env: nur, wo er ohne Auslegung feststeht'
+
+# 9d. The question in a terminal: Enter takes the address with the port
+# Docker Compose takes, and a port browsers refuse is not offered at all.
+if command -v script > /dev/null 2>&1; then
+  rm -f "$work/.env"
+  printf '\n' | OPENGEWERK_PORT=8080 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1
+  grep -q 'Leer lassen für http://localhost:8080' "$work/asked.txt"
+  grep -qxF 'TRUSTED_ORIGINS=http://localhost:8080' "$work/.env"
+  rm -f "$work/.env"
+  if printf '\n' | OPENGEWERK_PORT=6000 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
+    echo 'FEHLER: ohne Adresse lief die Einrichtung mit Port 6000 durch'
+    exit 1
+  fi
+  if grep -q 'Leer lassen\|sperren' "$work/asked.txt"; then
+    echo 'FEHLER: Port 6000 wurde als Adresse angeboten'
+    cat "$work/asked.txt"
+    exit 1
+  fi
+  check 'Rückfrage im Terminal: Enter nimmt den Port von Docker Compose, einen gesperrten bietet sie nicht an'
+else
+  echo 'Hinweis: ohne "script" bleibt die Rückfrage im Terminal ungeprüft.'
+fi
 
 # 10. Another application runs the same script against its own folder
 # (opengewerk-haustechnik#14): its name at the start of every line, its prefix

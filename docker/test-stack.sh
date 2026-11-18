@@ -42,22 +42,23 @@ compose() {
 # The port Docker Compose takes for $1, only where it is certain without
 # reading the .env the way Compose reads it: from the exported environment
 # when the variable is there, else from the .env ($2) when exactly one line in
-# it names the variable, that line is NAME=digits and nothing more (a
-# carriage return from Windows aside), and no line that is no comment holds a
-# quote, which could begin a value over several lines. Prints the number and
-# ends with 0. Ends with 1 when the variable is empty or named nowhere, so
-# that the default in compose.yaml holds. Ends with 2 in every other case,
-# COMPOSE_ENV_FILES among them, which makes Compose read other files: then
-# nothing here guesses the port.
+# it that is no comment names the variable, that line is NAME=digits and
+# nothing more (a carriage return from Windows aside), and no line that is no
+# comment holds a quote, which could begin a value over several lines. Prints
+# the number and ends with 0. Ends with 1 when the variable is empty or named
+# nowhere, so that the default in compose.yaml holds. Ends with 2 in every
+# other case, and whenever the environment holds a variable of Compose
+# (COMPOSE_ENV_FILES, COMPOSE_DISABLE_ENV_FILE and the others), which can make
+# it read other files or none: then nothing here guesses the port.
 plain_port() {
   if printenv "$1" >/dev/null 2>&1; then
     plain=$(printenv "$1")
-  elif printenv COMPOSE_ENV_FILES >/dev/null 2>&1; then
+  elif printenv | grep -q '^COMPOSE_'; then
     return 2
   elif [ ! -f "$2" ]; then
     return 1
   else
-    plain=$(grep -F "$1" "$2" | sed 's/\r$//')
+    plain=$(grep -v '^[[:space:]]*#' "$2" | grep -F "$1" | sed 's/\r$//')
     [ -n "$plain" ] || return 1
     if grep -v '^[[:space:]]*#' "$2" | grep -q "[\"'\`]"; then
       return 2
@@ -76,13 +77,13 @@ plain_port() {
 }
 
 # The port on this machine: the one Docker Compose takes, else its default in
-# compose.yaml, read the way setup.sh reads it. A port that is no plain number
+# compose.yaml, read the way setup.sh reads it. A port that is not certain
 # stops the test with a sentence instead of testing some other port.
 port() {
   found=$(plain_port "${APPLICATION_PREFIX}_PORT" "$here/.env") || case $? in
     1) found=$(sed -n "s/.*\${${APPLICATION_PREFIX}_PORT:-\([0-9]*\)}.*/\1/p" "$here/compose.yaml" | head -n 1) ;;
     *)
-      echo "FEHLER: ${APPLICATION_PREFIX}_PORT ist keine einfache Zahl; test-stack.sh braucht den Port als Zahl." >&2
+      echo "FEHLER: Welchen Port Docker Compose für ${APPLICATION_PREFIX}_PORT nimmt, steht nicht sicher fest. test-stack.sh braucht ihn als einzige Zeile ${APPLICATION_PREFIX}_PORT=Zahl in der .env, ohne Anführungszeichen außerhalb der Kommentare, oder exportiert, und keine Variable COMPOSE_... in der Umgebung." >&2
       exit 1
       ;;
   esac
