@@ -450,6 +450,13 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
     *) wanted="$scheme://$host" ;;
   esac
 
+  # The .env as it is now: an address someone put there while the question
+  # waited stays, and nothing is written.
+  now=$(grep '^TRUSTED_ORIGINS=' "$env_file" | head -n 1 | cut -d= -f2-)
+  if [ "$now" != "$address" ]; then
+    fail "In docker/.env steht inzwischen eine andere Adresse. Die Einrichtung lässt sie, wie sie ist, und trägt nichts ein."
+  fi
+
   draft=$(mktemp "$here/.env.XXXXXX")
 
   while IFS= read -r line || [ -n "$line" ]; do

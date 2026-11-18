@@ -347,6 +347,15 @@ if docker compose version > /dev/null 2>&1; then
     awk -v second="$second" '{ print } index($0, "${OPENGEWERK_PORT:-23700}:23700") { print "      - '\''" second "'\''" }' \
       "$source_dir/compose.yaml" > "$work/ports/compose.yaml"
     [ "$(grep -cF "      - '$second'" "$work/ports/compose.yaml")" = 1 ]
+    # Compose takes the file, with every value it requires set: the empty
+    # answer below is about the second mapping, not about a broken file.
+    grep -o '\${[A-Za-z_][A-Za-z0-9_]*:?' "$source_dir/compose.yaml" | sed -e 's/^\${//' -e 's/:?$/=set/' |
+      sort -u > "$work/ports/.env"
+    docker compose -f "$work/ports/compose.yaml" config -q || {
+      printf 'FEHLER: Docker Compose nahm compose.yaml mit der zweiten Zuordnung %s nicht an\n' "$second"
+      exit 1
+    }
+    rm "$work/ports/.env"
     [ -z "$(port_in "$work/ports")" ] || {
       printf 'FEHLER: mit der zweiten Zuordnung %s wurde ein Port angeboten\n' "$second"
       exit 1
@@ -360,8 +369,9 @@ fi
 
 # A stand-in for docker, for answers Compose would not give here. It prints
 # FAKE_JSON when that is set, else one mapping with the port FAKE_PUBLISHED,
-# and from its third question on FAKE_LATER, when that is set. FAKE_COUNT
-# holds how often it was asked.
+# and from its third question on FAKE_LATER, when that is set; from then on it
+# also writes FAKE_OPERATOR into the address of the .env FAKE_ENV, as someone
+# would while the question waits. FAKE_COUNT holds how often it was asked.
 mkdir "$work/fake"
 cat > "$work/fake/docker" <<'FAKE'
 #!/bin/sh
@@ -379,6 +389,10 @@ fi
 port=$FAKE_PUBLISHED
 if [ -n "${FAKE_LATER:-}" ] && [ "$asked" -gt 2 ]; then
   port=$FAKE_LATER
+fi
+if [ -n "${FAKE_OPERATOR:-}" ] && [ "$asked" -gt 2 ]; then
+  sed "s|^TRUSTED_ORIGINS=.*|TRUSTED_ORIGINS=$FAKE_OPERATOR|" "$FAKE_ENV" > "$FAKE_ENV.new"
+  mv "$FAKE_ENV.new" "$FAKE_ENV"
 fi
 printf '{\n  "services": {\n    "app": {\n      "ports": [\n        {\n          "target": 23700,\n          "published": "%s"\n        }\n      ]\n    }\n  }\n}\n' "$port"
 FAKE
@@ -490,6 +504,16 @@ if script -q -e -c true /dev/null > /dev/null 2>&1; then
   fi
   grep -q 'hat sich während der Frage geändert' "$work/asked.txt"
   untouched 'ein geänderter Port'
+  # An address someone put into the .env while the question waited stays.
+  rm -f "$work/.env" "$FAKE_COUNT"
+  if printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=8080 FAKE_OPERATOR=https://werkstatt.example.org \
+    FAKE_ENV="$work/.env" script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
+    echo 'FEHLER: die Einrichtung überschrieb eine Adresse, die während der Frage eingetragen wurde'
+    exit 1
+  fi
+  grep -q 'inzwischen eine andere Adresse' "$work/asked.txt"
+  grep -qxF 'TRUSTED_ORIGINS=https://werkstatt.example.org' "$work/.env"
+  [ "$(grep -c '^TRUSTED_ORIGINS=' "$work/.env")" = 1 ]
   check 'Rückfrage im Terminal: Enter nimmt den Port von Docker Compose, sonst nichts'
 else
   echo 'Hinweis: ohne "script" bleibt die Rückfrage im Terminal ungeprüft.'

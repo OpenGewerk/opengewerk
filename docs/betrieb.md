@@ -763,7 +763,11 @@ Nach einem Erfolg startet die Instanz im Ordner der Installation mit
 Datenbank davor, hatte diese keine Migrationen, oder war die Anwendung schon vor
 dem Lauf ausgesperrt, bleibt sie auch nach dem Erfolg ausgesperrt, mit einem Vermerk an ihrer Rolle: Sie
 liefe sonst womöglich auf einem Schema, das älter ist als sie. `start.sh` bringt die Datenbank mit den Migrationen auf den Stand der
-Fassung, gibt der Anwendung dann die Anmeldung zurück und startet sie.
+Fassung, gibt der Anwendung dann die Anmeldung zurück und startet sie. Das tut
+es nur mit Docker Engine ab 28.3.3: Auf einer älteren bleibt die Anwendung
+ausgesperrt, bis Docker aktualisiert ist, die Daten sind dann aber schon
+zurückgespielt. Der Container des Rückspielens sieht die Engine nicht, deshalb
+sagt `restore.sh` das vor dem Aussperren.
 
 Der Lauf sperrt die Anwendung für seine Dauer aus, spielt beide Teile zurück
 und prüft danach drei Dinge, von denen jedes eine Frage beantwortet, die die

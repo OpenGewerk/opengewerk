@@ -356,6 +356,43 @@ describe('the configuration', () => {
     ])
   })
 
+  it('turns away an entry with a user or a password without repeating it', () => {
+    for (const entry of [
+      'https://test:geheim@probewerk.example.de',
+      'test:geheim@probewerk.example.de',
+      'https://geheim@',
+    ]) {
+      expect(() =>
+        readConfiguration(
+          { ...valid, TRUSTED_ORIGINS: `https://probewerk.example.de, ${entry}` },
+          writable,
+        ),
+      ).toThrow(/^(?![\s\S]*geheim)[\s\S]*Angaben vor dem Namen/)
+    }
+  })
+
+  it('turns away a port browsers refuse to open', () => {
+    for (const entry of [
+      'https://probewerk.example.de:6000',
+      'https://probewerk.example.de:0',
+      'http://localhost:10080',
+    ]) {
+      expect(() =>
+        readConfiguration(
+          { ...valid, TRUSTED_ORIGINS: `https://probewerk.example.de, ${entry}` },
+          writable,
+        ),
+      ).toThrow(`TRUSTED_ORIGINS enthält "${entry}" mit Port`)
+    }
+
+    expect(
+      readConfiguration(
+        { ...valid, TRUSTED_ORIGINS: 'https://probewerk.example.de:8443' },
+        writable,
+      ).trustedOrigins,
+    ).toEqual(['https://probewerk.example.de:8443'])
+  })
+
   it('turns away a name with a dot at its end, which a browser rarely sends', () => {
     for (const entry of ['https://probewerk.example.de.', 'http://localhost.:23700']) {
       expect(() =>

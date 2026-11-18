@@ -351,6 +351,19 @@ function sessionSecret(application: ServerApplication, environment: Environment)
 const thisMachine = new Set(['localhost', '127.0.0.1', '[::1]'])
 
 /**
+ * The ports browsers refuse to open, the bad ports of the Fetch standard, 0
+ * among them. An origin with one of them never sends a request. The setup
+ * script holds the same list.
+ */
+const badPorts = new Set([
+  0, 1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102,
+  103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465,
+  512, 513, 514, 515, 526, 530, 531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993,
+  995, 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668,
+  6669, 6679, 6697, 10080,
+])
+
+/**
  * The addresses a browser may send an authenticated request from.
  *
  * Every entry has to be an origin and nothing more: scheme, host, optional
@@ -376,6 +389,16 @@ function trustedOrigins(
   }
 
   for (const entry of entries) {
+    // An "@" stands only before the name, for a user and a password, never
+    // in an origin. Such an entry is turned away without repeating it: the
+    // sentence lands in the log, and the password would with it.
+    if (entry.includes('@')) {
+      throw new ConfigurationError(
+        'TRUSTED_ORIGINS enthält einen Eintrag mit "@", also mit Angaben vor dem Namen wie ' +
+          `Benutzer oder Passwort. Erwartet wird nur die Herkunft, etwa ${application.exampleOrigin}`,
+      )
+    }
+
     let parsed: URL
 
     try {
@@ -402,6 +425,13 @@ function trustedOrigins(
       throw new ConfigurationError(
         `TRUSTED_ORIGINS enthält "${entry}". Erwartet wird eine Adresse mit https:// davor, ` +
           `etwa ${application.exampleOrigin}`,
+      )
+    }
+
+    if (parsed.port !== '' && badPorts.has(Number(parsed.port))) {
+      throw new ConfigurationError(
+        `TRUSTED_ORIGINS enthält "${entry}" mit Port ${parsed.port}, den Browser nicht öffnen. ` +
+          'Gemeint ist eine Adresse mit einem anderen Port.',
       )
     }
 
