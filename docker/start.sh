@@ -71,11 +71,9 @@ minimum_docker='28.3.3'
 # meanwhile changes nothing. DOCKER_HOST, when set, names the engine already.
 if [ -z "${DOCKER_HOST:-}" ] && [ -z "${DOCKER_CONTEXT:-}" ]; then
   DOCKER_CONTEXT=$(docker context show 2>/dev/null) || DOCKER_CONTEXT=''
-  if [ -n "$DOCKER_CONTEXT" ]; then
-    export DOCKER_CONTEXT
-  else
-    unset DOCKER_CONTEXT
-  fi
+  [ -n "$DOCKER_CONTEXT" ] ||
+    fail 'Docker nennt keinen Kontext, an dem sich die Engine festhalten ließe. Läuft der Docker-Dienst?'
+  export DOCKER_CONTEXT
 fi
 
 docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null) ||

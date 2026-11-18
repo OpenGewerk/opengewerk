@@ -46,6 +46,9 @@ chmod +x "$work/bin/docker"
 CALLS="$work/calls"
 PATH="$work/bin:$PATH"
 export CALLS PATH
+# Which engine start.sh talks to is what case 13 checks; nothing of the
+# machine this runs on comes in.
+unset DOCKER_CONTEXT DOCKER_HOST
 
 check() {
   printf 'check: %s\n' "$1"
@@ -326,6 +329,13 @@ grep -q '^eigener|compose -f .*compose.yaml up -d --wait' "$CALLS"
 DOCKER_HOST=tcp://127.0.0.1:2375 WATCHED=DOCKER_CONTEXT CONTEXT_IN_USE=nachbar OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
   sh "$work/docker/start.sh" < /dev/null > /dev/null 2>&1
 grep -q '^|compose -f .*compose.yaml up -d --wait' "$CALLS"
-check 'Docker: Prüfung und Start im selben Kontext, ein gesetzter Kontext oder DOCKER_HOST bleibt'
+: > "$CALLS"
+if out=$(CONTEXT_IN_USE='' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null 2>&1); then
+  echo 'FEHLER: ohne lesbaren Kontext lief der Start durch'
+  exit 1
+fi
+printf '%s' "$out" | grep -q 'nennt keinen Kontext'
+absent 'compose -f'
+check 'Docker: Prüfung und Start im selben Kontext, ein gesetzter Kontext oder DOCKER_HOST bleibt, ohne Kontext kein Start'
 
 echo 'Startskript: alles in Ordnung.'

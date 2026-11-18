@@ -179,6 +179,14 @@ for pair in 'http://localhost:80 http://localhost' 'https://opengewerk.example.o
     exit 1
   }
 done
+for address in https://:443 http://:8080 'http://[]:80'; do
+  rm -f "$work/.env"
+  if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
+    printf 'FEHLER: %s lief durch\n' "$address"
+    exit 1
+  fi
+  printf '%s' "$out" | grep -q 'nennt keine Maschine'
+done
 for address in http://localhost:65536 https://opengewerk.example.org:65536 http://localhost:80:80 \
   https://opengewerk.example.org:999999 'http://[::1]:x'; do
   rm -f "$work/.env"

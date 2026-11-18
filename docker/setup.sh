@@ -304,6 +304,9 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
     *:*) host=${host_and_port%%:*} port=${host_and_port#*:} given=yes ;;
     *) host=$host_and_port port='' given='' ;;
   esac
+  case "$host" in
+    '' | '[]') fail "\"$wanted\" nennt keine Maschine." ;;
+  esac
   case "$given" in
     yes)
       digits=$(printf '%s' "$port" | sed 's/^0*\(.\)/\1/')
