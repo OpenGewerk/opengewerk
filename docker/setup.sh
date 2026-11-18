@@ -282,13 +282,6 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
   # a browser sends, and the sign in would fail without saying why.
   wanted=${wanted%/}
 
-  # Nor the port a scheme has anyway: the origin a browser sends leaves it out,
-  # and the application, which compares against that, would not start.
-  case "$wanted" in
-    http://*:80) wanted=${wanted%:80} ;;
-    https://*:443) wanted=${wanted%:443} ;;
-  esac
-
   case "$wanted" in
     http://*/* | https://*/*)
       fail "\"$wanted\" hat einen Pfad. Gebraucht wird nur die Adresse, etwa $APPLICATION_EXAMPLE_ADDRESS."
@@ -296,6 +289,34 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
     http://?* | https://?*) ;;
     *)
       fail "\"$wanted\" ist keine Adresse mit http:// oder https:// davor."
+      ;;
+  esac
+
+  # The port written the way a browser sends it in the origin, which the
+  # application compares against: everything after the host is the port, a
+  # number up to 65535 without leading zeros, and the port a scheme has anyway
+  # is left out. Otherwise the application would not start.
+  scheme=${wanted%%://*}
+  host_and_port=${wanted#*://}
+  case "$host_and_port" in
+    \[*\]) host=$host_and_port port='' given='' ;;
+    \[*\]:*) host=${host_and_port%%]:*}] port=${host_and_port#*]:} given=yes ;;
+    *:*) host=${host_and_port%%:*} port=${host_and_port#*:} given=yes ;;
+    *) host=$host_and_port port='' given='' ;;
+  esac
+  case "$given" in
+    yes)
+      digits=$(printf '%s' "$port" | sed 's/^0*\(.\)/\1/')
+      case "$port" in
+        '' | *[!0-9]*) fail "\"$wanted\" hat nach dem Namen der Maschine keinen Port aus Ziffern zwischen 0 und 65535." ;;
+      esac
+      if [ "${#digits}" -gt 5 ] || [ "$digits" -gt 65535 ]; then
+        fail "\"$wanted\" hat nach dem Namen der Maschine keinen Port aus Ziffern zwischen 0 und 65535."
+      fi
+      case "$scheme:$digits" in
+        http:80 | https:443) wanted="$scheme://$host" ;;
+        *) wanted="$scheme://$host:$digits" ;;
+      esac
       ;;
   esac
 

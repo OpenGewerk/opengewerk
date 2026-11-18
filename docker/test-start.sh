@@ -33,7 +33,12 @@ eval "seen=\${${WATCHED:-OPENGEWERK_VERSION}:-}"
 printf '%s|%s\n' "$seen" "$*" >> "$CALLS"
 case "$*" in
   *' exec -T app '*) printf '%s' "${SETUP_NEEDED-false}" ;;
-  'version --format '*) printf '%s\n' "${DOCKER_SERVER-28.3.3}" ;;
+  "version --format {{.Server.Version}}") printf '%s\n' "${DOCKER_SERVER-28.3.3}" ;;
+  'version --format '*)
+    echo 'nur {{.Server.Version}} ist die Fassung der Engine' >&2
+    exit 1
+    ;;
+  'context show') printf '%s\n' "${CONTEXT_IN_USE-default}" ;;
 esac
 FAKE
 chmod +x "$work/bin/docker"
@@ -275,7 +280,7 @@ check 'Paket mit Digest ohne cosign: sagt, wie man von Hand prüft'
 # 12. The version of the engine (#985): below 28.3.3, or one that cannot be
 # read as numbers, stops the start before anything is pulled, built or set
 # up; 28.3.3 and newer, a suffix of a distribution included, starts.
-for engine in 27.5.1 28.3.2 28.2.0 dev 28.4.dev 28.3.3-rc.1 '28.3.3~rc1' ''; do
+for engine in 27.5.1 28.3.2 28.2.0 dev 28.4.dev 28.3.3-rc.1 '28.3.3~rc1' '' 28garbage.4.0 28.4x.0 '28.3.3x'; do
   : > "$CALLS"
   rm -f "$work/docker/.env"
   if out=$(DOCKER_SERVER=$engine OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null 2>&1); then
@@ -301,5 +306,26 @@ for engine in 28.3.3 28.4.0 29.0.0 28.10.1 '29.4.2+dfsg1' 28.3.3+ds1 29.0.0-rc.1
   grep -q 'compose -f .*compose.yaml up -d --wait' "$CALLS"
 done
 check 'Docker ab 28.3.3 startet'
+
+# 13. The engine checked is the one compose talks to (#985): the context in use
+# when start.sh began holds for every call after, and one set beforehand, or
+# DOCKER_HOST, is left as it is.
+: > "$CALLS"
+WATCHED=DOCKER_CONTEXT CONTEXT_IN_USE=nachbar OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
+  sh "$work/docker/start.sh" < /dev/null > /dev/null 2>&1
+grep -q '^nachbar|compose -f .*compose.yaml up -d --wait' "$CALLS" || {
+  echo 'FEHLER: compose lief nicht im Kontext, dessen Engine geprüft wurde'
+  cat "$CALLS"
+  exit 1
+}
+: > "$CALLS"
+DOCKER_CONTEXT=eigener WATCHED=DOCKER_CONTEXT CONTEXT_IN_USE=nachbar OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
+  sh "$work/docker/start.sh" < /dev/null > /dev/null 2>&1
+grep -q '^eigener|compose -f .*compose.yaml up -d --wait' "$CALLS"
+: > "$CALLS"
+DOCKER_HOST=tcp://127.0.0.1:2375 WATCHED=DOCKER_CONTEXT CONTEXT_IN_USE=nachbar OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
+  sh "$work/docker/start.sh" < /dev/null > /dev/null 2>&1
+grep -q '^|compose -f .*compose.yaml up -d --wait' "$CALLS"
+check 'Docker: Prüfung und Start im selben Kontext, ein gesetzter Kontext oder DOCKER_HOST bleibt'
 
 echo 'Startskript: alles in Ordnung.'

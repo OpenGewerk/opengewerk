@@ -65,14 +65,34 @@ docker compose version >/dev/null 2>&1 ||
 # (CVE-2025-54388): a machine next door would get past the proxy. A version
 # that cannot be read as numbers counts as too old.
 minimum_docker='28.3.3'
+
+# The engine checked is the one everything below talks to: the context in use
+# now, fixed for this run, so that a "docker context use" in another shell
+# meanwhile changes nothing. DOCKER_HOST, when set, names the engine already.
+if [ -z "${DOCKER_HOST:-}" ] && [ -z "${DOCKER_CONTEXT:-}" ]; then
+  DOCKER_CONTEXT=$(docker context show 2>/dev/null) || DOCKER_CONTEXT=''
+  if [ -n "$DOCKER_CONTEXT" ]; then
+    export DOCKER_CONTEXT
+  else
+    unset DOCKER_CONTEXT
+  fi
+fi
+
 docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null) ||
   fail 'Docker antwortet nicht. Läuft der Docker-Dienst, und darf dieser Benutzer ihn ansprechen?'
 
 docker_too_old=$(printf '%s\n' "$docker_version" | awk -F. -v minimum="$minimum_docker" '
-  function number(field) { return field ~ /^[0-9]+/ ? field + 0 : -1 }
+  { original = $0 }
+  function number(field) { return field ~ /^[0-9]+$/ ? field + 0 : -1 }
   {
     split(minimum, least, ".")
-    # All three parts readable first, then compared: 28.4.dev is no version.
+    # All three parts readable first, then compared: 28.4.dev and 28garbage.4.0
+    # are no versions. Only the third may carry what a distribution or a
+    # pre-release adds (28.3.3+ds1, 28.3.3-rc.1, 28.3.3~rc1), and only after
+    # a sign.
+    patch = $3
+    sub(/[-+~].*$/, "", patch)
+    $3 = patch
     for (i = 1; i <= 3; i++) {
       if (number($i) < 0) { print "yes"; exit }
     }
@@ -82,7 +102,7 @@ docker_too_old=$(printf '%s\n' "$docker_version" | awk -F. -v minimum="$minimum_
     }
     # The minimum itself, but a pre-release of it (28.3.3-rc.1, or 28.3.3~rc1
     # in a Debian package), comes before the release that has the fix.
-    print ($3 ~ /^[0-9]+[-~]/ ? "yes" : "no")
+    print (original ~ /^[0-9]+\.[0-9]+\.[0-9]+[-~]/ ? "yes" : "no")
     exit
   }')
 

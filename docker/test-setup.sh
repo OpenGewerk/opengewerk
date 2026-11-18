@@ -167,7 +167,9 @@ check 'Schrägstrich am Ende: weggenommen'
 
 # 9b. The port of the scheme is taken off as well, another port stays.
 for pair in 'http://localhost:80 http://localhost' 'https://opengewerk.example.org:443 https://opengewerk.example.org' \
-  'http://[::1]:80 http://[::1]' 'http://localhost:8080 http://localhost:8080'; do
+  'http://[::1]:80 http://[::1]' 'http://localhost:8080 http://localhost:8080' 'http://localhost:080 http://localhost' \
+  'https://opengewerk.example.org:0443 https://opengewerk.example.org' 'http://localhost:08080 http://localhost:8080' \
+  'https://opengewerk.example.org:8443 https://opengewerk.example.org:8443'; do
   given=${pair% *}
   kept=${pair#* }
   rm "$work/.env"
@@ -177,7 +179,16 @@ for pair in 'http://localhost:80 http://localhost' 'https://opengewerk.example.o
     exit 1
   }
 done
-check 'Port des Schemas: weggenommen, ein anderer bleibt'
+for address in http://localhost:65536 https://opengewerk.example.org:65536 http://localhost:80:80 \
+  https://opengewerk.example.org:999999 'http://[::1]:x'; do
+  rm -f "$work/.env"
+  if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
+    printf 'FEHLER: %s lief durch\n' "$address"
+    exit 1
+  fi
+  printf '%s' "$out" | grep -q 'keinen Port aus Ziffern zwischen 0 und 65535'
+done
+check 'Port des Schemas: weggenommen, führende Nullen weg, ein anderer bleibt, keiner über 65535 und keiner doppelt'
 
 # 9a. Plain http only on this machine (#984): every other host, and a port
 # that is no number, is turned away with a sentence that asks for https; the
