@@ -46,6 +46,14 @@ cp "$source_dir/backup/backup.sh" "$source_dir/backup/restore.sh" \
 # with a version; whatever else the scripts ask is answered with nothing.
 cat > "$work/bin/pg_dump" <<'FAKE'
 #!/bin/sh
+# While the dump runs, the sweep of the store may take a file whose last row
+# just went, and somebody may upload one (#991).
+if [ -n "${DUMP_SWEEPS:-}" ]; then
+  rm -f "$STORAGE_PATH/$DUMP_SWEEPS"
+fi
+if [ -n "${DUMP_UPLOADS:-}" ]; then
+  printf '%s' "$DUMP_UPLOADS" > "$STORAGE_PATH/$(printf '%s' "$DUMP_UPLOADS" | sha256sum | cut -d' ' -f1)"
+fi
 while [ $# -gt 0 ]; do
   if [ "$1" = --file ]; then
     printf 'dump\n' > "$2"
@@ -426,7 +434,7 @@ refused 'weicht vom Verzeichnis ab' env POSTGRES_DB=opengewerk sh "$work/bin/res
 refused 'weicht vom Verzeichnis ab' env POSTGRES_DB=opengewerk sh "$work/bin/verify.sh" "$ours"
 check 'Verzeichnis: ein verändertes Archiv ist nicht mehr das geschriebene, die Datenbank nicht gefragt'
 
-for part in database.dump storage.tar audit-chains.tsv; do
+for part in database.dump storage.tar storage-late.tar audit-chains.tsv; do
   repacked one_byte_more "$part"
   refused "Die Prüfsumme von $part stimmt nicht" env POSTGRES_DB=opengewerk \
     sh "$work/bin/restore.sh" --skip-origin-check "$ours"
@@ -441,7 +449,21 @@ refused 'Im Manifest steht keine Prüfsumme für storage.tar' env POSTGRES_DB=op
 repacked rm audit-chains.tsv
 refused 'In der Sicherung fehlt audit-chains.tsv' env POSTGRES_DB=opengewerk \
   sh "$work/bin/restore.sh" --skip-origin-check "$ours"
+# The second part of the store, named in the manifest and missing.
+repacked rm storage-late.tar
+refused 'In der Sicherung fehlt storage-late.tar' env POSTGRES_DB=opengewerk \
+  sh "$work/bin/restore.sh" --skip-origin-check "$ours"
 check 'Manifest: ein Teil ohne Prüfsumme und ein fehlender Teil werden abgelehnt'
+
+# An archive from before #991 has no second part, and its manifest names none:
+# it goes back as it did.
+before_991() {
+  rm storage-late.tar
+  without_its_checksum storage-late.tar
+}
+repacked before_991
+taken env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" --skip-origin-check "$ours"
+check 'Manifest: ein Archiv ohne zweiten Teil des Dateispeichers geht zurück wie bisher'
 
 # Packed again without a change it goes through, and the database is asked:
 # what was turned away above was the change and not the packing.
@@ -896,5 +918,45 @@ fi
 grep -q 'liegt schon eine Sicherung' "$work/out"
 test "$(sha256sum "$first")" = "$sum"
 check 'Strom: eine zweite Sicherung in derselben Sekunde lässt die erste, wie sie war'
+
+# 11. The file store around the database (#991). While the backup runs, the
+# sweep takes a file whose last row went after the dump, and somebody uploads
+# a file. The archive holds both, the old one in the part from before the
+# dump and the new one in the part after it, and a restore brings both back.
+old_text='abgelegt vor der Sicherung'
+old_hash=$(printf '%s' "$old_text" | sha256sum | cut -d' ' -f1)
+new_text='abgelegt während der Sicherung'
+new_hash=$(printf '%s' "$new_text" | sha256sum | cut -d' ' -f1)
+printf '%s' "$old_text" > "$STORAGE_PATH/$old_hash"
+
+POSTGRES_DB=opengewerk DUMP_SWEEPS="$old_hash" DUMP_UPLOADS="$new_text" \
+  sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
+  cat "$work/out"
+  exit 1
+}
+around=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
+rm -rf "$work/around"
+mkdir "$work/around"
+tar --extract --gzip --file "$work/backups/$around" --directory "$work/around"
+grep -q '"storage-late.tar"' "$work/around/manifest.json"
+tar --list --file "$work/around/storage.tar" | grep -q "$old_hash" || {
+  echo 'FEHLER: die Datei, die das Aufräumen während der Sicherung nahm, fehlt im Archiv'
+  exit 1
+}
+tar --list --file "$work/around/storage-late.tar" | grep -q "$new_hash" || {
+  echo 'FEHLER: die Datei, die während der Sicherung kam, fehlt im Archiv'
+  exit 1
+}
+
+taken env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$around"
+test "$(cat "$STORAGE_PATH/$old_hash")" = "$old_text" || {
+  echo 'FEHLER: das Rückspielen brachte die genommene Datei nicht zurück'
+  exit 1
+}
+test "$(cat "$STORAGE_PATH/$new_hash")" = "$new_text" || {
+  echo 'FEHLER: das Rückspielen brachte die Datei aus dem zweiten Teil nicht zurück'
+  exit 1
+}
+check 'Dateispeicher um die Datenbank: genommene und neue Datei im Archiv und nach dem Rückspielen'
 
 echo 'Sicherungen: alles in Ordnung.'

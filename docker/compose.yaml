@@ -344,8 +344,9 @@ services:
   # (#130). Runs with the instance and not in a profile: a backup that has to
   # be switched on is missing on the day it is needed. The office shows when
   # the last one finished and warns after two days, which answers the old
-  # worry about a backup nobody watches. Why the hour is fixed, why it catches
-  # up and why it skips an instance without a business stands in schedule.sh.
+  # worry about a backup nobody watches. Why the time is a setting of the
+  # instance, why it catches up and why it skips an instance without a business
+  # stands in schedule.sh.
   backup-schedule:
     build:
       context: ./backup

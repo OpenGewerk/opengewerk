@@ -162,7 +162,14 @@ esac
 
 rm -f "$copy"
 
-for part in manifest.json database.dump storage.tar audit-chains.tsv; do
+# The second part of the store comes with archives from #991 on, and an
+# archive whose manifest names it has to bring it. One from before has none.
+parts="database.dump storage.tar audit-chains.tsv"
+if grep -q '"storage-late.tar"' "${work}/manifest.json"; then
+	parts="${parts} storage-late.tar"
+fi
+
+for part in manifest.json $parts; do
 	if [ ! -f "${work}/${part}" ]; then
 		echo "In der Sicherung fehlt ${part}. Sie ist unvollständig." >&2
 		exit 1
@@ -171,7 +178,7 @@ done
 
 # --- Check 1: did the archive arrive whole? --------------------------------
 echo "  Prüfsummen werden geprüft."
-for part in database.dump storage.tar audit-chains.tsv; do
+for part in $parts; do
 	expected=$(sed -n "s/.*\"${part}\": \"\([0-9a-f]*\)\".*/\1/p" "${work}/manifest.json")
 	actual=$(sha256sum "${work}/${part}" | cut -d' ' -f1)
 
@@ -427,6 +434,12 @@ storage_owner=$(stat -c '%u:%g' "$STORAGE_PATH")
 
 find "$STORAGE_PATH" -mindepth 1 -delete
 tar --extract --no-same-owner --file "${work}/storage.tar" --directory "$STORAGE_PATH"
+# What the store got while the backup ran, see backup.sh.
+case " $parts " in
+*" storage-late.tar "*)
+	tar --extract --no-same-owner --file "${work}/storage-late.tar" --directory "$STORAGE_PATH"
+	;;
+esac
 chown -R "$storage_owner" "$STORAGE_PATH"
 
 # --- Check 2: is every file still the file its name claims? ----------------

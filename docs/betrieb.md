@@ -539,21 +539,28 @@ docker compose -f docker/compose.yaml --profile backup run --rm backup backup.sh
 Das ist die Sicherung von Hand, etwa vor einem Update. Jede Nacht sichert die
 Instanz ohnehin von selbst, siehe unten.
 
-Das Ergebnis ist ein Archiv mit drei Teilen und einem Manifest:
+Das Ergebnis ist ein Archiv mit vier Teilen und einem Manifest:
 
 | Teil | Inhalt |
 | --- | --- |
 | `database.dump` | die Datenbank, `pg_dump` im Custom-Format |
 | `storage.tar` | der inhaltsadressierte Dateispeicher |
+| `storage-late.tar` | was der Dateispeicher bekam, während die Sicherung lief |
 | `audit-chains.tsv` | je Mandant der Kopf der Audit-Hashkette |
 | `manifest.json` | Zeitstempel, PostgreSQL-Version und eine Prüfsumme je Teil |
 
-**Datenbank und Dateien liegen im selben Lauf, und die Reihenfolge ist nicht
-vertauschbar.** Ein Beleg zeigt per Hash auf eine Datei. Würden zuerst die
-Dateien gesichert, hätte alles, was zwischen den beiden Schritten hochgeladen
-wird, eine Zeile im Dump und keine Datei im Archiv: eine zurückgespielte
-Rechnung, die auf nichts zeigt. Andersherum ist der schlimmste Fall eine Datei,
-auf die niemand verweist, und die kostet Plattenplatz und sonst nichts.
+**Datenbank und Dateien liegen im selben Lauf, und der Dateispeicher wird um
+die Datenbank herum gesichert** (#991). Ein Beleg zeigt per Hash auf eine Datei.
+Würden die Dateien nur vorher gesichert, hätte alles, was zwischen den beiden
+Schritten hochgeladen wird, eine Zeile im Dump und keine Datei im Archiv: eine
+zurückgespielte Rechnung, die auf nichts zeigt. Würden sie nur nachher
+gesichert, könnte das Aufräumen (siehe unten) eine Datei, deren letzte Zeile
+gleich nach dem Dump ging, herausnehmen, bevor die Sicherung sie liest. Deshalb
+kommt zuerst der Dateispeicher in `storage.tar`, dann die Datenbank, dann
+alles, was der Speicher seit dem Beginn bekam, in `storage-late.tar`. Der
+schlimmste Fall ist eine Datei, auf die niemand verweist, und die kostet
+Plattenplatz und sonst nichts. Ein Archiv von vor dieser Änderung hat keinen
+späten Teil und geht wie bisher zurück.
 
 **Eine Datei, auf die niemand mehr verweist, geht nach einem Tag** (#657). Einmal
 am Tag nimmt die Anwendung die Bytes jeder Datei aus dem Speicher, die kein

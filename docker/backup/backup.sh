@@ -4,11 +4,15 @@
 #
 # Three things in here are decisions rather than mechanics.
 #
-# 1. THE ORDER IS DATABASE FIRST, FILES SECOND, and it is not interchangeable.
-#    A row points at a file by its hash. Dumping files first would mean that
+# 1. THE FILE STORE IS PACKED AROUND THE DATABASE, once before the dump and
+#    once after it. A row points at a file by its hash. Packed only before,
 #    anything uploaded between the two steps has a row in the dump and no file
-#    in the archive: a restored record pointing at nothing. The other way
-#    round the worst case is a file nobody references, and an unreferenced
+#    in the archive. Packed only after, a file whose last row went after the
+#    dump could be taken by the sweep of the store before tar reached it
+#    (#991), and the dump would name a file the archive lacks. So the store is
+#    packed first, then the database is dumped, and then every file written
+#    since a mark set before the first pack goes into a second, small part.
+#    The worst case left is a file nobody references, and an unreferenced
 #    file in a content addressed store costs disk and nothing else.
 #
 # 2. IT CONNECTS AS THE SUPERUSER, not as the owner of the tables. Row level
@@ -155,13 +159,23 @@ echo "Sicherung ${name} wird erstellt."
 # busybox sh does not understand $'\t', so the tab is built instead of written.
 tab=$(printf '\t')
 
-# --- 1. The database -------------------------------------------------------
+# --- 1. The file store, before the database --------------------------------
+# See the note at the top. The mark is set a second before tar starts: a file
+# written in the second of the mark goes into this part, and one written while
+# or after tar runs has a later time and goes into the second part.
+echo "  Dateispeicher wird gesichert."
+mark="${work}/storage.mark"
+: >"$mark"
+sleep 1
+tar --create --file "${work}/storage.tar" --directory "$STORAGE_PATH" .
+
+# --- 2. The database -------------------------------------------------------
 # Custom format, because it restores selectively and compresses on the way.
 echo "  Datenbank wird gesichert."
 pg_dump --host "$POSTGRES_HOST" --username postgres --dbname "$POSTGRES_DB" \
 	--format custom --compress 6 --file "${work}/database.dump"
 
-# --- 2. The heads of the audit chains --------------------------------------
+# --- 3. The heads of the audit chains --------------------------------------
 # Read with the same connection, right after the dump, so the heads describe
 # the state the dump holds.
 echo "  Audit-Ketten werden festgehalten."
@@ -169,17 +183,27 @@ checked_query audit_chains "tenant_id next_sequence head_hash" \
 	"select tenant_id, next_sequence, coalesce(head_hash, '') from only public.audit_chains order by tenant_id" \
 	--field-separator="$tab" >"${work}/audit-chains.tsv" || exit 1
 
-# --- 3. The file store -----------------------------------------------------
-# After the database, never before it. See the note at the top.
-echo "  Dateispeicher wird gesichert."
-tar --create --file "${work}/storage.tar" --directory "$STORAGE_PATH" .
+# --- 4. What the store got since the mark ---------------------------------
+# Every file written after the mark, an upload while the backup ran above all.
+# Copied first and packed as a folder, so that a part with no file in it is
+# still a valid archive. A new file is younger than the grace of the sweep and
+# stays where it is until it is copied.
+echo "  Nachträge im Dateispeicher werden gesichert."
+mkdir "${work}/storage-late"
+(cd "$STORAGE_PATH" && find . -type f -newer "$mark") | while IFS= read -r file; do
+	mkdir -p "${work}/storage-late/$(dirname "$file")"
+	cp -p "${STORAGE_PATH}/${file}" "${work}/storage-late/${file}"
+done
+tar --create --file "${work}/storage-late.tar" --directory "${work}/storage-late" .
+rm -rf "${work}/storage-late" "$mark"
 
-# --- 4. The manifest -------------------------------------------------------
+# --- 5. The manifest -------------------------------------------------------
 # A checksum per part, so that a restore can tell a damaged archive from a
 # complete one before it touches a running database.
 echo "  Prüfsummen werden berechnet."
 database_hash=$(sha256sum "${work}/database.dump" | cut -d' ' -f1)
 storage_hash=$(sha256sum "${work}/storage.tar" | cut -d' ' -f1)
+late_hash=$(sha256sum "${work}/storage-late.tar" | cut -d' ' -f1)
 chains_hash=$(sha256sum "${work}/audit-chains.tsv" | cut -d' ' -f1)
 storage_files=$(find "$STORAGE_PATH" -type f | wc -l | tr -d ' ')
 chains=$(wc -l <"${work}/audit-chains.tsv" | tr -d ' ')
@@ -190,10 +214,11 @@ cat >"${work}/manifest.json" <<JSON
   "name": "${name}",
   "created": "${stamp}",
   "postgres": "${server_version}",
-  "order": "database-then-storage",
+  "order": "storage-database-late",
   "parts": {
     "database.dump": "${database_hash}",
     "storage.tar": "${storage_hash}",
+    "storage-late.tar": "${late_hash}",
     "audit-chains.tsv": "${chains_hash}"
   },
   "storageFiles": ${storage_files},
@@ -201,7 +226,7 @@ cat >"${work}/manifest.json" <<JSON
 }
 JSON
 
-# --- 5. Pack, and encrypt when a key is there ------------------------------
+# --- 6. Pack, and encrypt when a key is there ------------------------------
 # In one stream into the hidden file: the packed archive in the clear exists
 # nowhere, not on the target and not here.
 #
@@ -259,7 +284,7 @@ fi
 mv "$partial" "$archive"
 renamed=true
 
-# --- 6. The record of the archive and the one the office reads -------------
+# --- 7. The record of the archive and the one the office reads -------------
 # Both on the instance, never on the target, and both written under a
 # temporary name and moved into place: the office never reads a record of a
 # backup that is not there, and restore.sh never finds half a line.
@@ -313,7 +338,7 @@ fi
 
 recorded=true
 
-# --- 7. Retention ----------------------------------------------------------
+# --- 8. Retention ----------------------------------------------------------
 # Oldest first, keep the newest BACKUP_KEEP. Sorting by name works because the
 # timestamp is the name and it is written in a sortable shape. Only archives of
 # this prefix count, see names.sh. After the record, so that a retention that
