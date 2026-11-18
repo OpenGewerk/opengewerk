@@ -275,9 +275,12 @@ names_of() {
 # Only plain files of the first part count as held: a link there under a name
 # of the store is not the file a later upload put in its place.
 # The whole name, everything after the five columns before it, and not only
-# its last word: a file named "./Import ./ab/cd/<hash>" is not that hash.
+# its last word: a file named "./Import ./ab/cd/<hash>" is not that hash. Cut
+# from the line as it is, column by column, and not by setting the columns,
+# which would build the line anew and take a blank at the end of the name.
 tar --list --verbose --file "${work}/storage.tar" |
-	awk '$1 ~ /^-/ { $1 = $2 = $3 = $4 = $5 = ""; sub(/^ +/, ""); print }' >"${work}/storage.names"
+	awk '$1 ~ /^-/ { name = $0; for (i = 1; i <= 5; i++) sub(/^[^ ]+ +/, "", name); print name }' \
+		>"${work}/storage.names"
 names_of "${work}/storage.names" | sort >"${work}/storage.first"
 
 # find looks at every entry before it reads its name, so a .part that goes

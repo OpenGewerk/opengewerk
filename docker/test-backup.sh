@@ -1451,6 +1451,19 @@ printf '%s\n' "$blanked_names" | grep -q "^\./$blank_tail\$" || {
   exit 1
 }
 rm -rf "$STORAGE_PATH/Import ." "$(dirname "$(stored "$blank_hash")")"
+# And one whose name is the hash with a blank at its end.
+trailing_text='Leerzeichen am Ende'
+trailing_hash=$(hash_of "$trailing_text")
+mkdir -p "$(dirname "$(stored "$trailing_hash")")"
+printf '%s' "$trailing_text" > "$(stored "$trailing_hash") "
+DUMP_UPLOADS="$trailing_text" backed_up 'ein Name mit Leerzeichen am Ende im ersten Teil beendete die Sicherung'
+unpacked trailing
+trailing_names=$(tar --list --file "$work/trailing/storage-late.tar")
+printf '%s\n' "$trailing_names" | grep -q "^\./$(stored "$trailing_hash" | sed "s|^$STORAGE_PATH/||")\$" || {
+  echo 'FEHLER: eine Datei, die ein Name mit Leerzeichen am Ende im ersten Teil vortäuschte, fehlt im zweiten'
+  exit 1
+}
+rm -rf "$(dirname "$(stored "$trailing_hash")")"
 check 'Dateispeicher: ein Name mit Leerzeichen im ersten Teil hält keine Datei aus dem zweiten'
 
 # A link or pipe in the second part that rm could not take ends the backup.
