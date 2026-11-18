@@ -179,7 +179,7 @@ for pair in 'http://localhost:80 http://localhost' 'https://opengewerk.example.o
     exit 1
   }
 done
-for address in https://:443 http://:8080 'http://[]:80'; do
+for address in https://:443 http://:8080 'http://[]:80' 'https://[::1'; do
   rm -f "$work/.env"
   if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
     printf 'FEHLER: %s lief durch\n' "$address"
@@ -188,7 +188,7 @@ for address in https://:443 http://:8080 'http://[]:80'; do
   printf '%s' "$out" | grep -q 'nennt keine Maschine'
 done
 for address in http://localhost:65536 https://opengewerk.example.org:65536 http://localhost:80:80 \
-  https://opengewerk.example.org:999999 'http://[::1]:x'; do
+  https://opengewerk.example.org:999999 'http://[::1]:x' 'https://[::1]:8443]' 'https://[::1]x'; do
   rm -f "$work/.env"
   if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
     printf 'FEHLER: %s lief durch\n' "$address"
@@ -196,6 +196,14 @@ for address in http://localhost:65536 https://opengewerk.example.org:65536 http:
   fi
   printf '%s' "$out" | grep -q 'keinen Port aus Ziffern zwischen 0 und 65535'
 done
+# http to another machine with a port out of range: the first word is about
+# https, so that one run says what to change.
+rm -f "$work/.env"
+if out=$(OPENGEWERK_ADDRESS=http://opengewerk.example.org:65536 sh "$work/setup.sh" < /dev/null 2>&1); then
+  echo 'FEHLER: http mit einem Port über 65535 lief durch'
+  exit 1
+fi
+printf '%s' "$out" | grep -q 'beginnt mit https://'
 check 'Port des Schemas: weggenommen, führende Nullen weg, ein anderer bleibt, keiner über 65535 und keiner doppelt'
 
 # 9a. Plain http only on this machine (#984): every other host, and a port

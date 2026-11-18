@@ -533,6 +533,7 @@ if [ "$waiting" -eq 1 ]; then
 	echo "Die Anwendung bleibt ausgesperrt, bis die Migrationen gelaufen sind; das"
 	echo "erledigt der Start, und danach bekommt sie ihre Anmeldung zurück."
 fi
-echo "Jetzt im Ordner der Installation starten, das führt auch die Migrationen aus,"
-echo "wenn die Sicherung von einer älteren Fassung stammt (mit Docker Engine ab 28.3.3):"
+echo "Jetzt im Ordner der Installation starten; das braucht Docker Engine ab 28.3.3"
+echo "und führt auch die Migrationen aus, wenn die Sicherung von einer älteren"
+echo "Fassung stammt:"
 echo "  sh docker/start.sh"

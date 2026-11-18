@@ -258,7 +258,10 @@ address=$(grep '^TRUSTED_ORIGINS=' "$env_file" | head -n 1 | cut -d= -f2-)
 
 if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
   # The port from the .env, else the default Docker Compose falls back to.
-  port=$(grep "^${APPLICATION_PREFIX}_PORT=" "$env_file" | head -n 1 | cut -d= -f2-)
+  # Read the way start.sh reads the version: a comment after a blank, quotes,
+  # blanks and a carriage return from Windows are no part of the port.
+  port=$(grep "^${APPLICATION_PREFIX}_PORT=" "$env_file" | head -n 1 | cut -d= -f2- |
+    sed 's/[[:space:]]#.*//' | tr -d "\r\"' ")
 
   if [ -z "$port" ]; then
     port=$(sed -n "s/.*\${${APPLICATION_PREFIX}_PORT:-\([0-9]*\)}.*/\1/p" "$here/compose.yaml" 2>/dev/null | head -n 1)
@@ -299,14 +302,27 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
   scheme=${wanted%%://*}
   host_and_port=${wanted#*://}
   case "$host_and_port" in
-    \[*\]) host=$host_and_port port='' given='' ;;
-    \[*\]:*) host=${host_and_port%%]:*}] port=${host_and_port#*]:} given=yes ;;
+    \[*\]*)
+      # An address of IPv6 ends at the first closing bracket; after it comes
+      # nothing or a colon and the port.
+      host=${host_and_port%%]*}]
+      rest=${host_and_port#*]}
+      case "$rest" in
+        '') port='' given='' ;;
+        :*) port=${rest#:} given=yes ;;
+        *) fail "\"$wanted\" hat nach dem Namen der Maschine keinen Port aus Ziffern zwischen 0 und 65535." ;;
+      esac
+      ;;
+    \[*) fail "\"$wanted\" nennt keine Maschine." ;;
     *:*) host=${host_and_port%%:*} port=${host_and_port#*:} given=yes ;;
     *) host=$host_and_port port='' given='' ;;
   esac
   case "$host" in
     '' | '[]') fail "\"$wanted\" nennt keine Maschine." ;;
   esac
+  # Whether http may be, first: it says what else to change, whatever the
+  # port is.
+  only_here_over_http "$scheme://$host"
   case "$given" in
     yes)
       digits=$(printf '%s' "$port" | sed 's/^0*\(.\)/\1/')
@@ -322,8 +338,6 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
       esac
       ;;
   esac
-
-  only_here_over_http "$wanted"
 
   draft=$(mktemp "$here/.env.XXXXXX")
 
