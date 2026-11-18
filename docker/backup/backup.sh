@@ -308,6 +308,17 @@ if [ "$odd_lines" != 0 ]; then
 	echo "  die Sicherung bricht ab." >&2
 	exit 1
 fi
+# And nothing in the store but files and folders. A link, a pipe or any other
+# kind of entry is nothing FileStore makes, and the target of a link stands
+# only in the verbose listing, where a line break in it could pass for an
+# entry as well. A line there that starts with neither the type of a file or
+# a folder nor with "./" (the rest of a name, see above) stops the backup.
+odd_kinds=$(tar --list --verbose --file "${work}/storage.tar" | grep -Ecv '^([-d]|\./)' || true)
+if [ "$odd_kinds" != 0 ]; then
+	echo "  Im Dateispeicher liegt etwas, das weder Datei noch Ordner ist, etwa ein Link;" >&2
+	echo "  der Speicher legt so etwas nie an, die Sicherung bricht ab." >&2
+	exit 1
+fi
 names_of "${work}/storage.names" | sort >"${work}/storage.first"
 
 # find looks at every entry before it reads its name, so a .part that goes

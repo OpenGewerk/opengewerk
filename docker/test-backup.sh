@@ -1405,39 +1405,34 @@ test -f "$work/grep-mark" || {
 }
 check 'Dateispeicher: ein Fehler ohne Meldung oder neben einer verschwundenen Datei beendet die Sicherung'
 
-# A link that stood under a name of the store when the first part was packed,
-# and a file uploaded in its place during the dump: the first part holds only
-# the link, so the file is in the second.
-relinked_text='erst Link, dann Datei'
-relinked_hash=$(hash_of "$relinked_text")
-mkdir -p "$(dirname "$(stored "$relinked_hash")")"
-# busybox lists a link as "name -> target", which the layout never fits, so
-# this case holds without the type filter as well; the pipe below needs it.
-ln -s "./$(stored "$relinked_hash" | sed "s|^$STORAGE_PATH/||")" "$(stored "$relinked_hash")"
-DUMP_UPLOADS="$relinked_text" backed_up 'eine Datei an Stelle eines Links beendete die Sicherung'
-unpacked relinked
-relinked_names=$(tar --list --file "$work/relinked/storage-late.tar")
-printf '%s\n' "$relinked_names" | grep -q "$relinked_hash" || {
-  echo 'FEHLER: eine Datei, die an Stelle eines Links kam, fehlt im zweiten Teil'
-  exit 1
-}
-rm -rf "$(dirname "$(stored "$relinked_hash")")"
-# A pipe under a name of the store when the first part was packed: busybox
-# lists it under its bare name, so only the type filter keeps it from being
-# held, and the file uploaded in its place during the dump in the second part.
-piped_text='erst Pipe, dann Datei'
-piped_hash=$(hash_of "$piped_text")
-mkdir -p "$(dirname "$(stored "$piped_hash")")"
-mkfifo "$(stored "$piped_hash")"
-DUMP_UPLOADS="$piped_text" backed_up 'eine Datei an Stelle einer Pipe beendete die Sicherung'
-unpacked piped
-piped_names=$(tar --list --file "$work/piped/storage-late.tar")
-printf '%s\n' "$piped_names" | grep -q "$piped_hash" || {
-  echo 'FEHLER: eine Datei, die an Stelle einer Pipe kam, fehlt im zweiten Teil'
-  exit 1
-}
-rm -rf "$(dirname "$(stored "$piped_hash")")"
-check 'Dateispeicher: ein Link oder eine Pipe im ersten Teil hält die Datei an ihrer Stelle nicht aus dem zweiten'
+# A link or a pipe in the store when the first part is packed, under a name
+# of the store or elsewhere, a link with a line break in its target among
+# them: the store never makes one, and the backup stops without an archive.
+odd_text='erst Link oder Pipe, dann Datei'
+odd_hash=$(hash_of "$odd_text")
+odd_place=$(stored "$odd_hash")
+for kind in link pipe target; do
+  mkdir -p "$(dirname "$odd_place")"
+  case "$kind" in
+    link) ln -s "./$(printf '%s' "$odd_place" | sed "s|^$STORAGE_PATH/||")" "$odd_place" ;;
+    pipe) mkfifo "$odd_place" ;;
+    target) ln -s "irgendwo
+-rw-r--r-- 0/0 1 2031-01-01 00:00:00 ./$(printf '%s' "$odd_place" | sed "s|^$STORAGE_PATH/||")" "$STORAGE_PATH/verweis" ;;
+  esac
+  archives_before=$(ls "$work/backups" | wc -l)
+  if DUMP_UPLOADS="$odd_text" run_backup; then
+    printf 'FEHLER: ein %s im Speicher ließ die Sicherung durch\n' "$kind"
+    exit 1
+  fi
+  grep -q 'weder Datei noch Ordner' "$work/out" || {
+    printf 'FEHLER: ein %s im Speicher beendete die Sicherung nicht an seiner Stelle\n' "$kind"
+    cat "$work/out"
+    exit 1
+  }
+  test "$(ls "$work/backups" | wc -l)" = "$archives_before"
+  "$real_rm" -rf "$(dirname "$odd_place")" "$STORAGE_PATH/verweis"
+done
+check 'Dateispeicher: ein Link oder eine Pipe im Speicher beendet die Sicherung'
 
 # A file in the first part whose name ends like a stored file after a blank,
 # "./Import ./ab/cd/<hash>": the file uploaded at the true name during the
