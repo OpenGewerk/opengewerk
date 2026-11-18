@@ -173,9 +173,14 @@ PATTERNS
 
 	# The status of grep -v itself, not of a pipe into grep -q: that one quits
 	# at the first line, and under pipefail the writer it leaves behind would
-	# turn the answer round as soon as there is more than one.
-	if ! grep -q -f "${work}/vanished.patterns" "$1" ||
-		grep -v -f "${work}/vanished.patterns" -e '^tar: error exit delayed from previous errors$' "$1" >/dev/null; then
+	# turn the answer round as soon as there is more than one. And only its 1,
+	# no other line, is good news; a 2 is a grep that could not read.
+	others=0
+	if grep -q -f "${work}/vanished.patterns" "$1"; then
+		grep -v -f "${work}/vanished.patterns" -e '^tar: error exit delayed from previous errors$' \
+			"$1" >/dev/null || others=$?
+	fi
+	if [ "$others" -ne 1 ]; then
 		echo "  Beim Lesen des Dateispeichers kam ein Fehler, die Sicherung bricht ab:" >&2
 		cat "$1" >&2
 		return 1
@@ -220,24 +225,21 @@ checked_query audit_chains "tenant_id next_sequence head_hash" \
 #
 # A file the sweep takes is one no row names. Whatever the dump names was put
 # before the dump, and the sweep only takes what is older than its grace of a
-# day; so this holds as long as the backup takes less than that, and a backup
-# that has taken half of it stops instead.
-if [ $(($(date +%s) - started)) -gt 43200 ]; then
-	echo "  Die Sicherung läuft seit mehr als zwölf Stunden, das Aufräumen des" >&2
-	echo "  Dateispeichers könnte inzwischen Dateien nehmen, die der Dump nennt." >&2
-	echo "  Sie bricht ab; eine Sicherung braucht sonst Minuten." >&2
-	exit 1
-fi
-
+# day; so this holds as long as the store is read within less than that, and a
+# backup that has taken half of it by then stops instead, see below.
 echo "  Nachträge im Dateispeicher werden gesichert."
-layout='^\./[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{64}$'
+# The two folders are the first four characters of the hash, as FileStore
+# lays them out; a hash under any other folders is no stored file.
+layout='^\./\([0-9a-f][0-9a-f]\)/\([0-9a-f][0-9a-f]\)/\1\2[0-9a-f]\{60\}$'
 
 # grep says 1 when no line fits, which here is an empty list and no error.
 names_of() {
-	grep -E "$layout" "$1" || [ $? -eq 1 ]
+	grep "$layout" "$1" || [ $? -eq 1 ]
 }
 
-tar --list --file "${work}/storage.tar" >"${work}/storage.names"
+# Only plain files of the first part count as held: a link there under a name
+# of the store is not the file a later upload put in its place.
+tar --list --verbose --file "${work}/storage.tar" | awk '$1 ~ /^-/ { print $NF }' >"${work}/storage.names"
 names_of "${work}/storage.names" | sort >"${work}/storage.first"
 
 # find looks at every entry before it reads its name, so a .part that goes
@@ -255,22 +257,36 @@ names_of "${work}/storage.now" | sort | comm -13 "${work}/storage.first" - >"${w
 # find and tar cannot be that.
 mkdir "${work}/storage-late"
 if [ -s "${work}/storage-late.list" ]; then
-	if ! tar --create --file "${work}/storage-late.raw" --directory "$STORAGE_PATH" \
+	if ! tar --create --no-recursion --file "${work}/storage-late.raw" --directory "$STORAGE_PATH" \
 		-T "${work}/storage-late.list" 2>"${work}/storage-late.err"; then
 		only_vanished "${work}/storage-late.err" || exit 1
 	fi
 	tar --extract --no-same-owner --file "${work}/storage-late.raw" --directory "${work}/storage-late"
 	rm -f "${work}/storage-late.raw"
 fi
+# Nothing but files and the two folders above them: a name of the list that
+# had become a folder by the time tar came is packed as an empty folder only
+# (--no-recursion) and goes here with whatever else lies that deep.
 find "${work}/storage-late" ! -type f ! -type d -exec rm -f {} \;
+find "${work}/storage-late" -mindepth 3 -type d -prune -exec rm -rf {} \;
 find "${work}/storage-late" -type f >"${work}/storage-late.files"
 while IFS= read -r copy; do
 	held_hash=$(sha256sum "$copy" | cut -d' ' -f1)
-	if [ "$held_hash" != "$(basename "$copy")" ]; then
+	held_path=$(printf '%s' "$held_hash" | cut -c1-2)/$(printf '%s' "$held_hash" | cut -c3-4)/$held_hash
+	if [ "${copy#"${work}/storage-late/"}" != "$held_path" ]; then
 		rm -f "$copy"
 	fi
 done <"${work}/storage-late.files"
 tar --create --file "${work}/storage-late.tar" --directory "${work}/storage-late" .
+
+# The store is read. Did that take half the grace of the sweep or more, the
+# second part may lack a file the sweep took meanwhile; this backup stops.
+if [ $(($(date +%s) - started)) -gt 43200 ]; then
+	echo "  Die Sicherung läuft seit mehr als zwölf Stunden, das Aufräumen des" >&2
+	echo "  Dateispeichers könnte inzwischen Dateien nehmen, die der Dump nennt." >&2
+	echo "  Sie bricht ab; eine Sicherung braucht sonst Minuten." >&2
+	exit 1
+fi
 rm -rf "${work}/storage-late" "${work}/storage-late.files" "${work}/storage-late.list" \
 	"${work}/storage-late.err" "${work}/storage.names" "${work}/storage.first" "${work}/storage.now" \
 	"${work}/vanished.patterns"

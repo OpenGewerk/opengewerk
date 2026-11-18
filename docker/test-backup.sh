@@ -59,12 +59,13 @@ fi
 if [ -n "${DUMP_UPLOADS:-}" ]; then
   uploaded=$(stored "$(printf '%s' "$DUMP_UPLOADS" | sha256sum | cut -d' ' -f1)")
   mkdir -p "$(dirname "$uploaded")"
+  rm -f "$uploaded"
   printf '%s' "$DUMP_UPLOADS" > "$uploaded"
 fi
 # A file named after its own hash that does not lie where the store keeps it.
 if [ -n "${DUMP_ASTRAY:-}" ]; then
-  mkdir -p "$STORAGE_PATH/zz/zz"
-  printf '%s' "$DUMP_ASTRAY" > "$STORAGE_PATH/zz/zz/$(printf '%s' "$DUMP_ASTRAY" | sha256sum | cut -d' ' -f1)"
+  mkdir -p "$STORAGE_PATH/00/00"
+  printf '%s' "$DUMP_ASTRAY" > "$STORAGE_PATH/00/00/$(printf '%s' "$DUMP_ASTRAY" | sha256sum | cut -d' ' -f1)"
 fi
 # A write still under way, which is no stored file yet.
 if [ -n "${DUMP_WRITES:-}" ]; then
@@ -252,6 +253,11 @@ if [ -n "\${LATE_HASH:-}" ] && [ "\$1" = --create ]; then
           rm -f "\$late"
           mkfifo "\$late"
           ;;
+        dir)
+          rm -f "\$late"
+          mkdir "\$late"
+          printf 'GEHEIMNIS DES CONTAINERS' > "\$late/\$(printf 'GEHEIMNIS DES CONTAINERS' | sha256sum | cut -d' ' -f1)"
+          ;;
         folder)
           printf 'GEHEIMNIS DES CONTAINERS' > "\$LATE_TARGET/\$LATE_HASH"
           mv "\$(dirname "\$late")" "\$(dirname "\$late").moved"
@@ -316,6 +322,21 @@ if [ -n "\${FIND_MISSES:-}" ]; then
   exit 1
 fi
 FAKE
+# grep as it is, unless GREP_FAILS is set: then the grep -v that holds what
+# tar or find said against the gone files cannot read.
+real_grep=$(command -v grep)
+cat > "$work/bin/grep" <<FAKE
+#!/bin/sh
+if [ -n "\${GREP_FAILS:-}" ] && [ "\$1" = -v ]; then
+  case "\$*" in
+    *vanished.patterns*)
+      echo 'grep: Input/output error' >&2
+      exit 2
+      ;;
+  esac
+fi
+exec $real_grep "\$@"
+FAKE
 # sha256sum as it is, unless SHA_FAILS names a file it is asked to read.
 real_sha256sum=$(command -v sha256sum)
 cat > "$work/bin/sha256sum" <<FAKE
@@ -327,7 +348,7 @@ fi
 exec $real_sha256sum "\$@"
 FAKE
 chmod +x "$work/bin/pg_dump" "$work/bin/psql" "$work/bin/pg_restore" "$work/bin/age" "$work/bin/tar" \
-  "$work/bin/date" "$work/bin/cp" "$work/bin/find" "$work/bin/sha256sum"
+  "$work/bin/date" "$work/bin/cp" "$work/bin/find" "$work/bin/sha256sum" "$work/bin/grep"
 
 PATH="$work/bin:$PATH"
 PGPASSWORD=probe
@@ -1180,7 +1201,7 @@ if printf '%s\n' "$madeup_names" | grep -q "$astray_hash"; then
   echo 'FEHLER: eine Datei, die nicht nach ihrem Hash liegt, steht im zweiten Teil'
   exit 1
 fi
-rm -rf "$STORAGE_PATH/zz"
+rm -rf "$STORAGE_PATH/00"
 check 'Dateispeicher: nur Dateien, die nach ihrem Hash liegen, kommen in den zweiten Teil'
 
 # What may happen to a new file between find and the tar of the second part.
@@ -1190,7 +1211,7 @@ check 'Dateispeicher: nur Dateien, die nach ihrem Hash liegen, kommen in den zwe
 printf 'GEHEIMNIS DES CONTAINERS' > "$work/secret"
 mkdir -p "$work/outside"
 late_number=0
-for does in vanish link pipe folder; do
+for does in vanish link pipe dir folder; do
   late_number=$((late_number + 1))
   late_text="gleich verändert: $does"
   late_hash=$(hash_of "$late_text")
@@ -1222,7 +1243,7 @@ for does in vanish link pipe folder; do
   late_folder=$(dirname "$(stored "$late_hash")")
   rm -rf "$late_folder" "$late_folder.moved" "$(dirname "$late_folder")"
 done
-check 'Dateispeicher: verschwunden, Link, Pipe oder Ordner als Link zwischen find und tar, nichts Fremdes im Archiv'
+check 'Dateispeicher: verschwunden, Link, Pipe, Ordner oder Ordner als Link zwischen find und tar, nichts Fremdes im Archiv'
 
 # The first part, packed while the store is in use: a write under way stays
 # out of it, a file the sweep takes while tar runs does not end the backup,
@@ -1263,7 +1284,28 @@ if TAR_MIXED=1 run_backup; then
   echo 'FEHLER: andere Fehler neben einer verschwundenen Datei ließen die Sicherung durch'
   exit 1
 fi
+if TAR_MISSES="./$(hash_of 'weg')" GREP_FAILS=1 run_backup; then
+  echo 'FEHLER: ein grep, das die Meldungen nicht lesen konnte, ließ die Sicherung durch'
+  exit 1
+fi
 check 'Dateispeicher: ein Fehler ohne Meldung oder neben einer verschwundenen Datei beendet die Sicherung'
+
+# A link that stood under a name of the store when the first part was packed,
+# and a file uploaded in its place during the dump: the first part holds only
+# the link, so the file is in the second.
+relinked_text='erst Link, dann Datei'
+relinked_hash=$(hash_of "$relinked_text")
+mkdir -p "$(dirname "$(stored "$relinked_hash")")"
+ln -s "$work/nowhere" "$(stored "$relinked_hash")"
+DUMP_UPLOADS="$relinked_text" backed_up 'eine Datei an Stelle eines Links beendete die Sicherung'
+unpacked relinked
+relinked_names=$(tar --list --file "$work/relinked/storage-late.tar")
+printf '%s\n' "$relinked_names" | grep -q "$relinked_hash" || {
+  echo 'FEHLER: eine Datei, die an Stelle eines Links kam, fehlt im zweiten Teil'
+  exit 1
+}
+rm -rf "$(dirname "$(stored "$relinked_hash")")"
+check 'Dateispeicher: ein Link im ersten Teil hält die Datei an seiner Stelle nicht aus dem zweiten'
 
 # A new file sha256sum cannot read ends the backup instead of leaving the
 # second part without it.
@@ -1284,6 +1326,6 @@ if CLOCK_RUNS_AWAY="$work/clock-read" run_backup; then
   exit 1
 fi
 grep -q 'seit mehr als zwölf Stunden' "$work/out"
-check 'Dateispeicher: nach einem halben Tag bricht die Sicherung vor dem zweiten Teil ab'
+check 'Dateispeicher: nach einem halben Tag bis zum Ende des Lesens bricht die Sicherung ab'
 
 echo 'Sicherungen: alles in Ordnung.'

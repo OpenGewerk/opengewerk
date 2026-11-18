@@ -560,9 +560,9 @@ kommt zuerst der Dateispeicher in `storage.tar`, dann die Datenbank, dann
 jede Datei, die der Speicher jetzt hat und `storage.tar` nicht, in
 `storage-late.tar`. Welche das sind, liest die Sicherung aus dem ersten Teil,
 nicht aus einer Uhr. Der schlimmste Fall ist eine Datei, auf die niemand
-verweist, und die kostet Plattenplatz und sonst nichts. Das gilt, solange eine
-Sicherung kürzer läuft als die Frist des Aufräumens; nach zwölf Stunden bricht
-sie deshalb ab. Ein Archiv von vor dieser Änderung hat keinen
+verweist, und die kostet Plattenplatz und sonst nichts. Das gilt, solange die
+Sicherung den Speicher schneller liest, als die Frist des Aufräumens dauert;
+ist sie danach schon zwölf Stunden unterwegs, bricht sie deshalb ab. Ein Archiv von vor dieser Änderung hat keinen
 späten Teil und geht wie bisher zurück.
 
 **Eine Datei, auf die niemand mehr verweist, geht nach einem Tag** (#657). Einmal
