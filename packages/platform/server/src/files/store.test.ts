@@ -11,7 +11,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { FileStore, StoredFileDamagedError, StoredFileMissingError } from './store.js'
 
@@ -122,20 +122,20 @@ describe('the sweep of the file store', () => {
       new Set(asked.filter((name) => names.includes(name)))
 
   it('dates a new file from its put, not from its writing (#991)', async () => {
-    // The clock of the put an hour ahead of the clock of the disk: the file
-    // carries the time of its put, which is what a backup holds it to.
-    const later = new Date(Date.now() + 60 * 60 * 1000)
+    // A clock that moves on with every reading, an hour each: the file carries
+    // the reading after its rename, the moment it was put in place, and not
+    // the one from before it.
+    const start = Date.now()
+    let readings = 0
+    const moving = new FileStore(root, () => new Date(start + ++readings * 60 * 60 * 1000))
 
-    vi.useFakeTimers({ toFake: ['Date'] })
-    vi.setSystemTime(later)
-    try {
-      const { sha256 } = await store.put(new TextEncoder().encode('Lieferschein'))
-      const path = join(root, sha256.slice(0, 2), sha256.slice(2, 4), sha256)
+    const { sha256 } = await moving.put(new TextEncoder().encode('Lieferschein'))
+    const path = join(root, sha256.slice(0, 2), sha256.slice(2, 4), sha256)
 
-      expect(Math.abs(statSync(path).mtime.getTime() - later.getTime())).toBeLessThan(2000)
-    } finally {
-      vi.useRealTimers()
-    }
+    expect(readings).toBe(2)
+    expect(Math.abs(statSync(path).mtime.getTime() - (start + 2 * 60 * 60 * 1000))).toBeLessThan(
+      2000,
+    )
   })
 
   it('keeps a file as new as the last put of the same bytes', async () => {

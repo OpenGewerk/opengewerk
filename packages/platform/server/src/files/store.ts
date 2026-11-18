@@ -88,7 +88,11 @@ function hashOf(bytes: Uint8Array): string {
  * class is ever asked. A hash on its own opens nothing.
  */
 export class FileStore implements FileStorage {
-  constructor(private readonly root: string) {}
+  /** The clock defaults to the one of the machine; a test passes one it can move. */
+  constructor(
+    private readonly root: string,
+    private readonly clock: () => Date = () => new Date(),
+  ) {}
 
   private pathOf(sha256: string): string {
     // Refused rather than joined. A name that is not a hash could walk out
@@ -118,7 +122,7 @@ export class FileStore implements FileStorage {
       // Put again: the file is as new as this put, so that the sweep of the
       // store, which only takes what is older than its grace, leaves it
       // alone while the row that will name it is still being written (#657).
-      const now = new Date()
+      const now = this.clock()
 
       await utimes(target, now, now)
 
@@ -143,7 +147,7 @@ export class FileStore implements FileStorage {
     // packed would be in neither (#991). Dated before the rename, so that the
     // name never points at an older file, and once more after it.
     try {
-      const writtenAt = new Date()
+      const writtenAt = this.clock()
 
       await utimes(temporary, writtenAt, writtenAt)
       await rename(temporary, target)
@@ -152,7 +156,7 @@ export class FileStore implements FileStorage {
       throw error
     }
 
-    const putAt = new Date()
+    const putAt = this.clock()
 
     await utimes(target, putAt, putAt)
 

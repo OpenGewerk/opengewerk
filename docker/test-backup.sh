@@ -54,6 +54,10 @@ fi
 if [ -n "${DUMP_UPLOADS:-}" ]; then
   printf '%s' "$DUMP_UPLOADS" > "$STORAGE_PATH/$(printf '%s' "$DUMP_UPLOADS" | sha256sum | cut -d' ' -f1)"
 fi
+# A write still under way, which is no stored file yet.
+if [ -n "${DUMP_WRITES:-}" ]; then
+  printf 'halb' > "$STORAGE_PATH/$DUMP_WRITES"
+fi
 while [ $# -gt 0 ]; do
   if [ "$1" = --file ]; then
     printf 'dump\n' > "$2"
@@ -207,6 +211,15 @@ FAKE
 # copied and the archive again right after.
 cat > "$work/bin/cp" <<FAKE
 #!/bin/sh
+# A file renamed between find and cp: its source is gone when cp comes.
+if [ -n "\${CP_VANISHES:-}" ]; then
+  case "\$*" in
+    *"\$CP_VANISHES"*)
+      rm -f "\$2"
+      exec $real_cp "\$@"
+      ;;
+  esac
+fi
 if [ -n "\${CP_SERVES:-}" ] && [ "\$1" = "\${CP_FROM:-}" ]; then
   exec $real_cp "\$CP_SERVES" "\$2"
 fi
@@ -929,7 +942,7 @@ new_text='abgelegt während der Sicherung'
 new_hash=$(printf '%s' "$new_text" | sha256sum | cut -d' ' -f1)
 printf '%s' "$old_text" > "$STORAGE_PATH/$old_hash"
 
-POSTGRES_DB=opengewerk DUMP_SWEEPS="$old_hash" DUMP_UPLOADS="$new_text" \
+POSTGRES_DB=opengewerk DUMP_SWEEPS="$old_hash" DUMP_UPLOADS="$new_text" DUMP_WRITES=unterwegs.part \
   sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
   cat "$work/out"
   exit 1
@@ -947,6 +960,10 @@ tar --list --file "$work/around/storage-late.tar" | grep -q "$new_hash" || {
   echo 'FEHLER: die Datei, die während der Sicherung kam, fehlt im Archiv'
   exit 1
 }
+if tar --list --file "$work/around/storage-late.tar" | grep -q 'unterwegs.part'; then
+  echo 'FEHLER: ein Schreibvorgang, der noch lief, steht im zweiten Teil'
+  exit 1
+fi
 
 taken env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$around"
 test "$(cat "$STORAGE_PATH/$old_hash")" = "$old_text" || {
@@ -958,5 +975,17 @@ test "$(cat "$STORAGE_PATH/$new_hash")" = "$new_text" || {
   exit 1
 }
 check 'Dateispeicher um die Datenbank: genommene und neue Datei im Archiv und nach dem Rückspielen'
+
+# A file that is gone between find and cp, renamed or set aside the moment the
+# second part comes to it, does not end the backup of the night.
+gone_text='umbenannt, bevor cp kam'
+gone_hash=$(printf '%s' "$gone_text" | sha256sum | cut -d' ' -f1)
+POSTGRES_DB=opengewerk DUMP_UPLOADS="$gone_text" CP_VANISHES="$gone_hash" \
+  sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
+  echo 'FEHLER: eine Datei, die zwischen find und cp verschwand, beendete die Sicherung'
+  cat "$work/out"
+  exit 1
+}
+check 'Dateispeicher um die Datenbank: eine Datei, die gerade verschwindet, beendet die Sicherung nicht'
 
 echo 'Sicherungen: alles in Ordnung.'

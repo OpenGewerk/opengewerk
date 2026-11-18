@@ -186,13 +186,16 @@ checked_query audit_chains "tenant_id next_sequence head_hash" \
 # --- 4. What the store got since the mark ---------------------------------
 # Every file written after the mark, an upload while the backup ran above all.
 # Copied first and packed as a folder, so that a part with no file in it is
-# still a valid archive. A new file is younger than the grace of the sweep and
-# stays where it is until it is copied.
+# still a valid archive. Only stored files: a write still under way as .part
+# or a file set aside as .gone is renamed any moment, and neither is a file a
+# row names. A file gone between find and cp was one of those, or one the
+# sweep took, which is old and in the first part; a new file is younger than
+# the grace of the sweep and stays.
 echo "  Nachträge im Dateispeicher werden gesichert."
 mkdir "${work}/storage-late"
-(cd "$STORAGE_PATH" && find . -type f -newer "$mark") | while IFS= read -r file; do
+(cd "$STORAGE_PATH" && find . -type f -newer "$mark" ! -name '*.part' ! -name '*.gone') | while IFS= read -r file; do
 	mkdir -p "${work}/storage-late/$(dirname "$file")"
-	cp -p "${STORAGE_PATH}/${file}" "${work}/storage-late/${file}"
+	cp -p "${STORAGE_PATH}/${file}" "${work}/storage-late/${file}" || [ ! -e "${STORAGE_PATH}/${file}" ]
 done
 tar --create --file "${work}/storage-late.tar" --directory "${work}/storage-late" .
 rm -rf "${work}/storage-late" "$mark"
