@@ -653,7 +653,7 @@ check 'zweite Anwendung: falsches Präfix und fehlende Namen abgelehnt'
 # addresses and commas stop the run with the number of the line, never with a
 # value; the line with the value GEHEIM-1 is where it would show. The file
 # stays as it was to the byte, also when its last line has no line end.
-for case in export blanks blank_after vtab_after nbsp_after quotes escaped after_quote comment_glued bom twice origins_quoted origins_variable origins_comment version_variable; do
+for case in export blanks blank_after vtab_after nbsp_after quotes escaped after_quote comment_glued bom twice origins_quoted origins_variable origins_comment version_variable version_tab; do
   rm -f "$work/.env"
   OPENGEWERK_ADDRESS=https://opengewerk.example.org sh "$work/setup.sh" < /dev/null > /dev/null 2>&1
   case "$case" in
@@ -674,7 +674,10 @@ for case in export blanks blank_after vtab_after nbsp_after quotes escaped after
       expected='der Wert beginnt mit einem Leerzeichen' ;;
     version_variable)
       sed -i 's|^OPENGEWERK_VERSION=.*|OPENGEWERK_VERSION=${TAG:-GEHEIM-1}|' "$work/.env"
-      expected='OPENGEWERK_VERSION bitte ohne $' ;;
+      expected='OPENGEWERK_VERSION bitte nur mit der Fassung' ;;
+    version_tab)
+      sed -i 's|^OPENGEWERK_VERSION=.*|OPENGEWERK_VERSION=0.8.0\t|' "$work/.env"
+      expected='OPENGEWERK_VERSION bitte nur mit der Fassung' ;;
     quotes)
       printf "EXTRA_VALUE='GEHEIM-1\nOTHER_VALUE=more'\n" >> "$work/.env"
       expected='schließt nicht auf dieser Zeile' ;;

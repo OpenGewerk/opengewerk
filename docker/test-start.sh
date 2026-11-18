@@ -70,7 +70,7 @@ export CALLS PATH
 # Which engine start.sh talks to is what case 13 checks; nothing of the
 # machine this runs on comes in.
 unset DOCKER_CONTEXT DOCKER_HOST CONTEXT_FAILS CONTEXT_IN_USE DOCKER_SERVER DOCKER_SERVERS DOCKER_ID DOCKER_IDS \
-  WATCHED SETUP_NEEDED
+  WATCHED SETUP_NEEDED TRUSTED_ORIGINS
 
 check() {
   printf 'check: %s\n' "$1"

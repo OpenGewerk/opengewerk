@@ -223,13 +223,22 @@ while IFS= read -r line || [ -n "$line" ]; do
         ;;
     esac
   fi
-  # The version start.sh reads from its line as well (#1001), with its quotes
-  # and comment taken away; a ${...} Compose would fill in, and it would read
-  # another version than the one Compose starts.
+  # The version start.sh reads from its line as well (#1001), taking away a
+  # comment, quotes and blanks. What is left of it here, without a comment
+  # after a space, the spaces at its end and its quotes, are the characters of
+  # a tag and nothing else: a ${...} Compose would fill in, a tab or another
+  # blank at the end it would take away, and start.sh would read another
+  # version than the one Compose starts.
   if [ "$name" = "${APPLICATION_PREFIX}_VERSION" ]; then
-    case "$value" in
-      *\$*)
-        fail "docker/.env, Zeile $line_number: $name bitte ohne \$ schreiben, nur die Fassung, etwa 0.8.0."
+    version=${value%%" #"*}
+    version=${version%"${version##*[! ]}"}
+    case "$version" in
+      \"*\") version=${version#\"} version=${version%\"} ;;
+      \'*\') version=${version#\'} version=${version%\'} ;;
+    esac
+    case "$version" in
+      *[!A-Za-z0-9._-]*)
+        fail "docker/.env, Zeile $line_number: $name bitte nur mit der Fassung schreiben, etwa 0.8.0, ohne \$ und ohne Tabulator."
         ;;
     esac
   fi
