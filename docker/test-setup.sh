@@ -649,10 +649,11 @@ check 'zweite Anwendung: falsches Präfix und fehlende Namen abgelehnt'
 
 # 11. The .env in a form this script reads the way Docker Compose does
 # (#996). "export", blanks around the =, a value in quotes over several lines
-# and a name twice stop the run with the number of the line, never with a
+# or with a backslash in it, a name twice and TRUSTED_ORIGINS with more than
+# addresses and commas stop the run with the number of the line, never with a
 # value; the line with the value GEHEIM-1 is where it would show. The file
 # stays as it was to the byte, also when its last line has no line end.
-for case in export blanks blank_after quotes twice; do
+for case in export blanks blank_after quotes escaped twice origins_quoted origins_variable origins_comment; do
   rm -f "$work/.env"
   OPENGEWERK_ADDRESS=https://opengewerk.example.org sh "$work/setup.sh" < /dev/null > /dev/null 2>&1
   case "$case" in
@@ -668,9 +669,21 @@ for case in export blanks blank_after quotes twice; do
     quotes)
       printf "EXTRA_VALUE='GEHEIM-1\nOTHER_VALUE=more'\n" >> "$work/.env"
       expected='schließt nicht auf dieser Zeile' ;;
+    escaped)
+      printf '%s\n' 'EXTRA_VALUE="GEHEIM-1\"' 'OTHER_VALUE=more"' >> "$work/.env"
+      expected='mit einem \ darin' ;;
     twice)
       printf 'TRUSTED_ORIGINS=https://GEHEIM-1.example.org\n' >> "$work/.env"
       expected='TRUSTED_ORIGINS steht ein zweites Mal' ;;
+    origins_quoted)
+      sed -i 's|^TRUSTED_ORIGINS=.*|TRUSTED_ORIGINS="https://GEHEIM-1.example.org"|' "$work/.env"
+      expected='TRUSTED_ORIGINS bitte nur mit den Adressen' ;;
+    origins_variable)
+      sed -i 's|^TRUSTED_ORIGINS=.*|TRUSTED_ORIGINS=${PUBLIC_ORIGIN:-https://GEHEIM-1.example.org}|' "$work/.env"
+      expected='TRUSTED_ORIGINS bitte nur mit den Adressen' ;;
+    origins_comment)
+      sed -i 's|^TRUSTED_ORIGINS=.*|TRUSTED_ORIGINS=https://GEHEIM-1.example.org # alt|' "$work/.env"
+      expected='TRUSTED_ORIGINS bitte nur mit den Adressen' ;;
   esac
   before=$(cksum < "$work/.env")
   if out=$(sh "$work/setup.sh" < /dev/null 2>&1); then
@@ -694,23 +707,24 @@ for case in export blanks blank_after quotes twice; do
     exit 1
   }
 done
-check '.env: export, Leerzeichen um das =, Wert über mehrere Zeilen und doppelter Name halten an, ohne Wert'
+check '.env: export, Leerzeichen um das =, Wert über mehrere Zeilen, \ in Anführungszeichen, doppelter Name und TRUSTED_ORIGINS mit mehr als Adressen halten an, ohne Wert'
 
-# Quotes closed on their line, a comment after the value, a carriage return
-# from Windows and comments after blanks are read away; the example address in
-# quotes is the example address all the same.
+# A carriage return from Windows is read away, comments after blanks stay, and
+# another value may stand in quotes with a comment after it; the example
+# address with a carriage return is the example address all the same.
 rm -f "$work/.env"
 sh "$work/setup.sh" < /dev/null > /dev/null 2>&1 || true
-sed -e 's/^TRUSTED_ORIGINS=\(.*\)$/TRUSTED_ORIGINS="\1" # Vorlage/' -e 's/$/\r/' "$work/.env" > "$work/.env.windows"
+sed -e 's/$/\r/' "$work/.env" > "$work/.env.windows"
 printf '   # eingerückter Kommentar\r\n' >> "$work/.env.windows"
+printf 'EXTRA_VALUE="mit Leerzeichen" # Kommentar\r\n' >> "$work/.env.windows"
 mv "$work/.env.windows" "$work/.env"
 OPENGEWERK_ADDRESS=https://werkstatt.example.org sh "$work/setup.sh" < /dev/null > "$work/out" 2>&1 || {
-  echo 'FEHLER: eine .env aus Windows mit Anführungszeichen und Kommentar wurde abgelehnt'
+  echo 'FEHLER: eine .env aus Windows mit Kommentaren und einem Wert in Anführungszeichen wurde abgelehnt'
   cat "$work/out"
   exit 1
 }
 grep -qxF 'TRUSTED_ORIGINS=https://werkstatt.example.org' "$work/.env"
-check '.env: Anführungszeichen, Kommentar und Windows-Zeilenende gelesen wie von Docker Compose'
+check '.env: Windows-Zeilenende, Kommentare und andere Werte in Anführungszeichen angenommen'
 
 # An address exported in the environment counts before the .env, as for
 # Docker Compose: no question and nothing written; an empty one stops.

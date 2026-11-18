@@ -168,7 +168,9 @@ while IFS= read -r line || [ -n "$line" ]; do
       ;;
   esac
   # A value in quotes ends on its line: one that goes on would hide the lines
-  # after it from Compose, not from this script.
+  # after it from Compose, not from this script. A backslash before a quote
+  # keeps it from closing the value, for Compose and not for this check, so a
+  # value in quotes has no backslash at all.
   case "$value" in
     \"*) rest=${value#\"} quote='"' ;;
     \'*) rest=${value#\'} quote="'" ;;
@@ -176,8 +178,20 @@ while IFS= read -r line || [ -n "$line" ]; do
   esac
   if [ -n "$quote" ]; then
     case "$rest" in
+      *\\*) fail "docker/.env, Zeile $line_number ($name): ein Wert in Anführungszeichen mit einem \\ darin geht hier nicht." ;;
       *"$quote"*) ;;
       *) fail "docker/.env, Zeile $line_number ($name): das Anführungszeichen am Anfang des Werts schließt nicht auf dieser Zeile. Ein Wert über mehrere Zeilen geht hier nicht." ;;
+    esac
+  fi
+  # TRUSTED_ORIGINS is read here and in start.sh straight from its line. It
+  # stands there in the one form whose text is the value Docker Compose takes:
+  # addresses and commas, and nothing Compose takes away or fills in, such as
+  # quotes, a comment or a ${...}.
+  if [ "$name" = TRUSTED_ORIGINS ]; then
+    case "$value" in
+      *[!]A-Za-z0-9.:/,_[-]*)
+        fail "docker/.env, Zeile $line_number: TRUSTED_ORIGINS bitte nur mit den Adressen schreiben, durch Komma getrennt, ohne Anführungszeichen, Leerzeichen, Kommentar oder \$."
+        ;;
     esac
   fi
   case "$names_seen" in
@@ -380,10 +394,11 @@ browser_opens() {
 }
 
 # The value of TRUSTED_ORIGINS in the .env, from its one line there, without
-# a comment after it, quotes or a carriage return from Windows, as Docker
-# Compose reads it; the version in start.sh is read the same way.
+# a carriage return from Windows. The checks above hold that line to the
+# addresses alone, so this is the value Docker Compose takes; start.sh reads
+# it the same way.
 origins_in_env_file() {
-  sed -n 's/^TRUSTED_ORIGINS=//p' "$env_file" | sed 's/[[:space:]]#.*//' | tr -d "\r\"'"
+  sed -n 's/^TRUSTED_ORIGINS=//p' "$env_file" | tr -d '\r'
 }
 
 # The address, the one value nothing here can make up, as the instance will
