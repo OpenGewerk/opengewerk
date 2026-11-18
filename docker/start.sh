@@ -72,9 +72,12 @@ docker_too_old=$(printf '%s\n' "$docker_version" | awk -F. -v minimum="$minimum_
   function number(field) { return field ~ /^[0-9]+/ ? field + 0 : -1 }
   {
     split(minimum, least, ".")
+    # All three parts readable first, then compared: 28.4.dev is no version.
+    for (i = 1; i <= 3; i++) {
+      if (number($i) < 0) { print "yes"; exit }
+    }
     for (i = 1; i <= 3; i++) {
       have = number($i)
-      if (have < 0) { print "yes"; exit }
       if (have != least[i] + 0) { print (have < least[i] + 0 ? "yes" : "no"); exit }
     }
     print "no"
@@ -82,7 +85,7 @@ docker_too_old=$(printf '%s\n' "$docker_version" | awk -F. -v minimum="$minimum_
   }')
 
 if [ "$docker_too_old" != 'no' ]; then
-  fail "Docker meldet die Fassung \"$docker_version\", $APPLICATION_NAME braucht Docker Engine ab $minimum_docker. Ältere Fassungen lassen Rechner im selben Netz an Ports heran, die nur auf 127.0.0.1 veröffentlicht sind, und damit am Proxy mit TLS vorbei (CVE-2025-54388). Docker aktualisieren: https://docs.docker.com/engine/install/"
+  fail "Docker meldet die Fassung \"$docker_version\", $APPLICATION_NAME braucht Docker Engine ab $minimum_docker. Vor 28.0.0 erreichen Rechner im selben Netz Ports, die nur auf 127.0.0.1 veröffentlicht sind, und 28.2.0 bis 28.3.2 öffnen sie nach einem Neuladen von firewalld wieder (CVE-2025-54388); beides führt am Proxy mit TLS vorbei. Docker aktualisieren: https://docs.docker.com/engine/install/"
 fi
 
 sh "$scripts/setup.sh"

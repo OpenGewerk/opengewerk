@@ -169,14 +169,15 @@ check 'Schrägstrich am Ende: weggenommen'
 # that is no number, is turned away with a sentence that asks for https; the
 # three names of this machine, with and without a port, are taken.
 for address in http://opengewerk.example.org http://192.168.1.20:23700 \
-  http://localhost.example.org http://localhost:x@example.org http://127.0.0.1:; do
+  http://localhost.example.org http://localhost:x@example.org http://127.0.0.1: \
+  http://localhost:1@example.org:8080 http://localhost:abc:23700 'http://[::1]:1@example.org:80'; do
   rm -f "$work/.env"
   if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
     printf 'FEHLER: %s lief durch\n' "$address"
     exit 1
   fi
   case "$address" in
-    *:x@* | *:) printf '%s' "$out" | grep -q 'keinen Port aus Ziffern' ;;
+    *@* | *:abc:* | *:) printf '%s' "$out" | grep -q 'keinen Port aus Ziffern' ;;
     *) printf '%s' "$out" | grep -q 'beginnt mit https://' ;;
   esac
 done
@@ -186,6 +187,28 @@ for address in http://localhost http://localhost:23700 http://127.0.0.1 http://[
   grep -qxF "TRUSTED_ORIGINS=$address" "$work/.env"
 done
 check 'http:// nur für diese Maschine: andere Adressen abgelehnt, localhost, 127.0.0.1 und [::1] angenommen'
+
+# 9b. An address set by hand before (#984): every entry of the list is held to
+# the same rule, also one behind a comma and blanks, and a list of an https
+# address and the address of Vite on this machine is taken.
+rm -f "$work/.env"
+OPENGEWERK_ADDRESS=https://opengewerk.example.org sh "$work/setup.sh" < /dev/null > /dev/null 2>&1
+sed 's|^TRUSTED_ORIGINS=.*|TRUSTED_ORIGINS=https://opengewerk.example.org, http://192.168.1.20:23700|' \
+  "$work/.env" > "$work/.env.lan"
+mv "$work/.env.lan" "$work/.env"
+if out=$(sh "$work/setup.sh" < /dev/null 2>&1); then
+  echo 'FEHLER: eine http://-Adresse aus der .env lief durch'
+  exit 1
+fi
+printf '%s' "$out" | grep -q '"http://192.168.1.20:23700" in TRUSTED_ORIGINS in docker/.env beginnt mit http://'
+sed 's|^TRUSTED_ORIGINS=.*|TRUSTED_ORIGINS=https://opengewerk.example.org,http://localhost:5173|' \
+  "$work/.env" > "$work/.env.vite"
+mv "$work/.env.vite" "$work/.env"
+sh "$work/setup.sh" < /dev/null > /dev/null 2>&1 || {
+  echo 'FEHLER: https mit der Adresse von Vite auf dieser Maschine wurde abgelehnt'
+  exit 1
+}
+check 'Adresse aus der .env: jeder Eintrag geprüft, http:// nur für diese Maschine'
 
 # 10. Another application runs the same script against its own folder
 # (opengewerk-haustechnik#14): its name at the start of every line, its prefix

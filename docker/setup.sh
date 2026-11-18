@@ -222,6 +222,35 @@ if [ -n "$without_push" ]; then
   say "Ohne openssl ließ sich kein Schlüssel für Push-Nachrichten erzeugen. VAPID_PRIVATE_KEY bleibt leer, und $APPLICATION_NAME läuft ohne Push; den Befehl für einen Schlüssel nennt docker/.env.example."
 fi
 
+# Plain http only on this machine (#984). Anywhere else the setup code and
+# every password would cross the network readable, so an address of another
+# host is the one of a reverse proxy with TLS. After a name of this machine
+# comes nothing, or a colon and a port of digits and nothing else: in
+# http://localhost:1@example.org:8080 the host is example.org. The second
+# argument says where the address stands.
+only_here_over_http() {
+  case "$1" in
+    http://*) ;;
+    *) return 0 ;;
+  esac
+
+  host_and_port=${1#http://}
+
+  case "$host_and_port" in
+    localhost | 127.0.0.1 | '[::1]') return 0 ;;
+    localhost:*) port_part=${host_and_port#localhost:} ;;
+    127.0.0.1:*) port_part=${host_and_port#127.0.0.1:} ;;
+    '[::1]':*) port_part=${host_and_port#'[::1]:'} ;;
+    *)
+      fail "\"$1\"$2 beginnt mit http://. So gingen Einrichtungscode und Passwörter lesbar durchs Netz. Die Adresse beginnt mit https://, davor steht ein Reverse Proxy mit TLS, Vorlagen dafür liegen in docker/proxy/. Nur auf dieser Maschine, mit localhost, 127.0.0.1 oder [::1], geht http://."
+      ;;
+  esac
+
+  case "$port_part" in
+    '' | *[!0-9]*) fail "\"$1\"$2 hat nach dem Namen der Maschine keinen Port aus Ziffern." ;;
+  esac
+}
+
 # The address, the one value nothing here can make up.
 address=$(grep '^TRUSTED_ORIGINS=' "$env_file" | head -n 1 | cut -d= -f2-)
 
@@ -261,26 +290,7 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
       ;;
   esac
 
-  # Plain http only on this machine (#984). Anywhere else the setup code and
-  # every password would cross the network readable, so the address is the
-  # one of a reverse proxy with TLS. A port is digits and nothing more: in
-  # http://localhost:x@example.org the host is example.org.
-  case "$wanted" in
-    http://*)
-      host_and_port=${wanted#http://}
-      case "$host_and_port" in
-        localhost | 127.0.0.1 | '[::1]') ;;
-        localhost:* | 127.0.0.1:* | '[::1]':*)
-          case "${host_and_port##*:}" in
-            '' | *[!0-9]*) fail "\"$wanted\" hat keinen Port aus Ziffern." ;;
-          esac
-          ;;
-        *)
-          fail "\"$wanted\" beginnt mit http://. So gingen Einrichtungscode und Passwörter lesbar durchs Netz. Die Adresse beginnt mit https://, davor steht ein Reverse Proxy mit TLS, Vorlagen dafür liegen in docker/proxy/. Nur auf dieser Maschine, mit localhost, 127.0.0.1 oder [::1], geht http://."
-          ;;
-      esac
-      ;;
-  esac
+  only_here_over_http "$wanted" ''
 
   draft=$(mktemp "$here/.env.XXXXXX")
 
@@ -294,3 +304,17 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
   replace_env "$draft"
   say "Adresse eingetragen: $wanted"
 fi
+
+# Every entry of the list, the address just entered as much as one set by
+# hand before (#984). Read the way the application reads it: split at commas,
+# blanks around an entry and a carriage return from Windows taken off.
+origins=$(grep '^TRUSTED_ORIGINS=' "$env_file" | head -n 1 | cut -d= -f2- | tr ',' '\n')
+
+while IFS= read -r origin; do
+  origin=$(printf '%s' "$origin" | tr -d ' \t\r')
+  if [ -n "$origin" ]; then
+    only_here_over_http "$origin" ' in TRUSTED_ORIGINS in docker/.env'
+  fi
+done <<ORIGINS
+$origins
+ORIGINS
