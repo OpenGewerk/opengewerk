@@ -27,6 +27,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Der Test der Ansprechpartner wartet nach jedem Klick, der ein Formular öffnet, auf ein Element dieses Formulars, bevor er es benutzt (#992). Warum: Unter der Last der CI suchte er "Entfernen", bevor das Formular gezeichnet war, und wurde rot, ohne dass sich etwas geändert hatte.
 - Eine Sicherung einer älteren Fassung geht in eine Datenbank einer neueren zurück, und ein gescheitertes
   Zurückspielen lässt die Datenbank, wie sie war (#988). Warum: `restore.sh` räumte mit `pg_restore --clean` auf, das
   nur verwirft, was im Dump steht. Was spätere Migrationen angelegt hatten, blieb stehen, und der Lauf brach mitten im
