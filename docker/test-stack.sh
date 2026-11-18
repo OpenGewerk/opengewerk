@@ -56,9 +56,11 @@ published_port() {
   mappings=$(printf '%s\n' "$config" | grep -c '^[[:space:]]*"target":[[:space:]]*[0-9]' || true)
   [ "$mappings" = 1 ] || return 0
   published=$(printf '%s\n' "$config" | sed -n 's/^[[:space:]]*"published":[[:space:]]*"\([^"]*\)".*$/\1/p')
+  # Without leading zeros, the way a browser writes the port and the address
+  # check below holds it.
   case "$published" in
     '' | *[!0-9]*) ;;
-    *) printf '%s\n' "$published" ;;
+    *) printf '%s\n' "$published" | sed 's/^0*\(.\)/\1/' ;;
   esac
 }
 

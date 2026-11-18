@@ -332,9 +332,11 @@ else
 fi
 
 # 9d. The question in a terminal: Enter takes the address with the port
-# Docker Compose publishes, and a port browsers refuse is not offered at all.
-# A stand-in for docker answers the question for the port.
-if command -v script > /dev/null 2>&1; then
+# Docker Compose publishes, written without leading zeros, and a port browsers
+# refuse is not offered at all, with leading zeros neither. A stand-in for
+# docker answers the question for the port. Needs the script of util-linux,
+# which the CI has.
+if script -q -e -c true /dev/null > /dev/null 2>&1; then
   mkdir "$work/fake"
   cat > "$work/fake/docker" <<'FAKE'
 #!/bin/sh
@@ -347,18 +349,18 @@ esac
 FAKE
   chmod +x "$work/fake/docker"
   rm -f "$work/.env"
-  printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=8080 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1
+  printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=08080 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1
   grep -q 'Leer lassen für http://localhost:8080' "$work/asked.txt"
   grep -qxF 'TRUSTED_ORIGINS=http://localhost:8080' "$work/.env"
   rm -f "$work/.env"
-  if printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=6000 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
-    echo 'FEHLER: ohne Adresse lief die Einrichtung mit Port 6000 durch'
+  if printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=06000 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
+    echo 'FEHLER: ohne Adresse lief die Einrichtung mit Port 06000 durch'
     exit 1
   fi
   if grep -q 'Leer lassen\|sperren' "$work/asked.txt" ||
     ! grep -q 'Unter welcher Adresse' "$work/asked.txt" ||
     ! grep -q 'fehlt die Adresse' "$work/asked.txt"; then
-    echo 'FEHLER: Port 6000 wurde als Adresse angeboten, oder die Rückfrage endete aus einem anderen Grund'
+    echo 'FEHLER: Port 06000 wurde als Adresse angeboten, oder die Rückfrage endete aus einem anderen Grund'
     cat "$work/asked.txt"
     exit 1
   fi
