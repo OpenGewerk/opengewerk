@@ -281,17 +281,16 @@ etwa `http://localhost:5173`; die Vorschau kennt sie von selbst.
 Mit `http://` startet die Anwendung nur, wenn die Adresse auf dieser Maschine
 liegt, also `localhost`, `127.0.0.1` oder `[::1]` (#984). Für jede andere
 verlangt sie `https://`, sonst gingen Einrichtungscode und Passwörter lesbar
-durchs Netz. Steht in einer bestehenden Installation noch eine solche Adresse,
-erfasst ab dann niemand mehr etwas, und jedes Gerät sendet unter der alten
-Adresse, was bei ihm wartet, bis keines mehr "Änderungen warten auf dem Gerät"
-zeigt: Der Browser hält den Postausgang je Adresse, unter `https://` sieht er
-ihn nicht mehr. Die alte Adresse bleibt erreichbar, bis das geschafft ist.
-Danach kommt TLS an den Reverse Proxy, Vorlagen liegen unter `docker/proxy/`,
-dann die Adresse mit `https://` in `TRUSTED_ORIGINS`, und erst danach wird
-wieder erfasst.
-Einen Namen mit einem Punkt am Ende (`https://betrieb.example.`) nimmt die
-Anwendung ebenfalls nicht an, denn ein Browser schickt den Punkt nur mit, wenn
-er auch in der Adresszeile steht; dort steht die Adresse ohne ihn.
+durchs Netz. Ebenso wenig nimmt sie einen Namen mit einem Punkt am Ende
+(`https://betrieb.example.`), denn ein Browser schickt den Punkt nur mit, wenn
+er auch in der Adresszeile steht, und keinen Port, den Browser sperren.
+Steht in einer bestehenden Installation eine solche Adresse, erfasst ab dann
+niemand mehr etwas, und jedes Gerät sendet unter der alten Adresse, was bei ihm
+wartet, bis keines mehr "Änderungen warten auf dem Gerät" zeigt: Der Browser
+hält den Postausgang je Adresse, unter der neuen sieht er ihn nicht mehr. Die
+alte Adresse bleibt erreichbar, bis das geschafft ist. Danach kommt, wo nötig,
+TLS an den Reverse Proxy, Vorlagen liegen unter `docker/proxy/`, dann die neue
+Adresse in `TRUSTED_ORIGINS`, und erst danach wird wieder erfasst.
 
 Der erste Eintrag aus `TRUSTED_ORIGINS` steht auch auf jedem QR-Etikett einer
 Anlage (#308), gedruckt, für die zehn Jahre, die ein Aufkleber im Zählerschrank

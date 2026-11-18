@@ -50,10 +50,20 @@ compose() {
 # three levels in), each mapping there has a target, and its published port
 # stands right after it.
 published_port() {
-  missing=$(docker compose -f "$here/compose.yaml" config --format json 2>&1 >/dev/null |
-    sed -n 's/.*required variable \([A-Za-z_][A-Za-z0-9_]*\) is missing a value.*/\1=stand-in/p' |
-    sort -u | tr '\n' ' ')
-  # Names and values have no blanks, so each stand-in is one word.
+  # Names and values have no blanks, so each stand-in is one word. Asked
+  # again with the stand-ins found so far, since a Compose may name only one
+  # missing value at a time; ten rounds at most.
+  missing=''
+  rounds=0
+  while [ "$rounds" -lt 10 ]; do
+    # shellcheck disable=SC2086
+    found=$(env $missing docker compose -f "$here/compose.yaml" config --format json 2>&1 >/dev/null |
+      sed -n 's/.*required variable \([A-Za-z_][A-Za-z0-9_]*\) is missing a value.*/\1=stand-in/p' |
+      sort -u | tr '\n' ' ')
+    [ -n "$found" ] || break
+    missing="$missing$found"
+    rounds=$((rounds + 1))
+  done
   # shellcheck disable=SC2086
   config=$(env $missing docker compose -f "$here/compose.yaml" config --format json 2>/dev/null) || return 0
   printf '%s\n' "$config" | awk '

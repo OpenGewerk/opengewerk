@@ -376,6 +376,18 @@ function trustedOrigins(
   environment: Environment,
 ): readonly string[] {
   const raw = required(application, environment, 'TRUSTED_ORIGINS')
+
+  // An "@" stands only before the name, for a user and a password, never in
+  // an origin. Such a value is turned away without repeating it, and before
+  // it is split at the commas, which a password can hold as well: the
+  // sentence lands in the log, and the password would with it.
+  if (raw.includes('@')) {
+    throw new ConfigurationError(
+      'TRUSTED_ORIGINS enthält ein "@", also Angaben vor dem Namen wie Benutzer oder ' +
+        `Passwort. Erwartet wird nur die Herkunft, etwa ${application.exampleOrigin}`,
+    )
+  }
+
   const entries = raw
     .split(',')
     .map((entry) => entry.trim())
@@ -389,16 +401,6 @@ function trustedOrigins(
   }
 
   for (const entry of entries) {
-    // An "@" stands only before the name, for a user and a password, never
-    // in an origin. Such an entry is turned away without repeating it: the
-    // sentence lands in the log, and the password would with it.
-    if (entry.includes('@')) {
-      throw new ConfigurationError(
-        'TRUSTED_ORIGINS enthält einen Eintrag mit "@", also mit Angaben vor dem Namen wie ' +
-          `Benutzer oder Passwort. Erwartet wird nur die Herkunft, etwa ${application.exampleOrigin}`,
-      )
-    }
-
     let parsed: URL
 
     try {

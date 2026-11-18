@@ -14,6 +14,13 @@ trap 'rm -rf "$work"' EXIT
 
 cp "$source_dir/setup.sh" "$source_dir/.env.example" "$source_dir/application.env" "$work/"
 
+# What the environment of whoever runs the test holds for the address, the
+# port and Compose stays out; the cases that need one set it themselves.
+unset OPENGEWERK_ADDRESS OPENGEWERK_PORT
+for compose_variable in $(printenv | sed -n 's/^\(COMPOSE_[A-Za-z0-9_]*\)=.*/\1/p'); do
+  unset "$compose_variable"
+done
+
 check() {
   printf 'check: %s\n' "$1"
 }
@@ -214,7 +221,7 @@ if out=$(OPENGEWERK_ADDRESS=http://opengewerk.example.org:65536 sh "$work/setup.
 fi
 printf '%s' "$out" | grep -q 'beginnt mit https://'
 for address in 'https://[2001:0db8::1]:443' 'https://[2001:db8::1]' 'http://[fe80::1]:8080' 'http://[::1]' \
-  'http://[::1]:23700' 'http://[::1]:x' 'https://[::1]:8443]' 'https://[::1]x' 'http://[::1]:1@example.org:80'; do
+  'http://[::1]:23700' 'http://[::1]:x' 'https://[::1]:8443]' 'https://[::1]x'; do
   rm -f "$work/.env"
   if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
     printf 'FEHLER: %s lief durch\n' "$address"
@@ -237,7 +244,9 @@ for pair in 'https://OpenGewerk.Example.org https://opengewerk.example.org' \
     exit 1
   }
 done
-for pair in 'https://bücher.example.org|nicht so, wie ein Browser' 'https://user@example.org|nicht so, wie ein Browser' \
+for pair in 'https://bücher.example.org|nicht so, wie ein Browser' 'https://user@example.org|Angaben vor dem Namen' \
+  'http://[::1]:1@example.org:80|Angaben vor dem Namen' 'http://localhost:x@example.org|Angaben vor dem Namen' \
+  'http://localhost:1@example.org:8080|Angaben vor dem Namen' \
   'https://example.org.|Punkt am Ende des Namens' 'http://127.0.0.1.:23700|Punkt am Ende des Namens' \
   'https://example.org?x|nicht so, wie ein Browser' \
   'https://example.org#x|nicht so, wie ein Browser' 'https://a..example.org|nicht so, wie ein Browser' \
@@ -263,15 +272,14 @@ check 'Port des Schemas: weggenommen, führende Nullen weg, ein anderer bleibt, 
 # that asks for digits; localhost and 127.0.0.1, with and without a port, are
 # taken. [::1] is refused with the IPv6 addresses under 9b.
 for address in http://opengewerk.example.org http://192.168.1.20:23700 \
-  http://localhost.example.org http://localhost:x@example.org http://127.0.0.1: \
-  http://localhost:1@example.org:8080 http://localhost:abc:23700; do
+  http://localhost.example.org http://127.0.0.1: http://localhost:abc:23700; do
   rm -f "$work/.env"
   if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
     printf 'FEHLER: %s lief durch\n' "$address"
     exit 1
   fi
   case "$address" in
-    *@* | *:abc:* | *:) printf '%s' "$out" | grep -q 'keinen Port aus Ziffern' ;;
+    *:abc:* | *:) printf '%s' "$out" | grep -q 'keinen Port aus Ziffern' ;;
     *) printf '%s' "$out" | grep -q 'beginnt mit https://' ;;
   esac
 done
@@ -283,7 +291,7 @@ done
 check 'http:// nur für diese Maschine: andere Adressen abgelehnt, localhost und 127.0.0.1 angenommen'
 
 # 9c. An address with a user and a password before the name is turned away,
-# and no sentence repeats it.
+# and no sentence repeats either of them.
 for address in 'https://benutzer:geheim@example.org:8080' 'https://benutzer:geheim@example.org' \
   'https://geheim@example.org' 'http://benutzer:geheim@localhost:8080'; do
   rm -f "$work/.env"
@@ -291,7 +299,7 @@ for address in 'https://benutzer:geheim@example.org:8080' 'https://benutzer:gehe
     printf 'FEHLER: %s lief durch\n' "$address"
     exit 1
   fi
-  if printf '%s' "$out" | grep -q geheim; then
+  if printf '%s' "$out" | grep -q 'geheim\|benutzer'; then
     printf 'FEHLER: die Meldung zu einer Adresse mit Passwort wiederholte es: %s\n' "$out"
     exit 1
   fi
@@ -316,12 +324,6 @@ port_in() {
 if docker compose version > /dev/null 2>&1; then
   mkdir "$work/ports"
   cp "$source_dir/compose.yaml" "$work/ports/compose.yaml"
-  # What the environment of whoever runs the test holds for Compose stays out
-  # of these cases; the two that test it set it themselves.
-  unset OPENGEWERK_PORT
-  for compose_variable in $(printenv | sed -n 's/^\(COMPOSE_[A-Za-z0-9_]*\)=.*/\1/p'); do
-    unset "$compose_variable"
-  done
   printf 'OPENGEWERK_PORT=24567\n' > "$work/ports/.env"
   [ "$(port_in "$work/ports")" = 24567 ]
   [ "$(OPENGEWERK_PORT=24999 port_in "$work/ports")" = 24999 ]
@@ -368,7 +370,8 @@ else
 fi
 
 # A stand-in for docker, for answers Compose would not give here. It prints
-# FAKE_JSON when that is set, else one mapping with the port FAKE_PUBLISHED,
+# nothing but the first of FAKE_MISSING that is not set, as missing, when there
+# is one. Else FAKE_JSON when that is set, else one mapping with the port FAKE_PUBLISHED,
 # and from its third question on FAKE_LATER, when that is set; from then on it
 # also writes FAKE_OPERATOR into the address of the .env FAKE_ENV, as someone
 # would while the question waits. FAKE_COUNT holds how often it was asked.
@@ -382,6 +385,13 @@ esac
 asked=$(cat "$FAKE_COUNT" 2>/dev/null || echo 0)
 asked=$((asked + 1))
 echo "$asked" > "$FAKE_COUNT"
+# One missing value at a time, as an older Compose names them.
+for name in ${FAKE_MISSING:-}; do
+  if ! printenv "$name" > /dev/null; then
+    echo "error while interpolating: required variable $name is missing a value: $name fehlt" >&2
+    exit 1
+  fi
+done
 if [ -n "${FAKE_JSON:-}" ]; then
   printf '%s\n' "$FAKE_JSON"
   exit 0
@@ -426,6 +436,13 @@ rm -f "$FAKE_COUNT"
 }
 rm -f "$FAKE_COUNT"
 [ "$(PATH="$work/fake:$PATH" FAKE_PUBLISHED=08080 port_in "$work")" = 8080 ]
+# A Compose that names one missing value at a time is asked until it names
+# none.
+rm -f "$FAKE_COUNT"
+[ "$(PATH="$work/fake:$PATH" FAKE_MISSING='ERSTER_WERT ZWEITER_WERT' FAKE_PUBLISHED=8080 port_in "$work")" = 8080 ] || {
+  echo 'FEHLER: mit zwei fehlenden Werten, einzeln gemeldet, kam kein Port'
+  exit 1
+}
 elsewhere='{
   "services": {
     "app": {

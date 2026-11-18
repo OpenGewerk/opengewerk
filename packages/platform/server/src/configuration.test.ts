@@ -361,13 +361,14 @@ describe('the configuration', () => {
       'https://test:geheim@probewerk.example.de',
       'test:geheim@probewerk.example.de',
       'https://geheim@',
+      'https://test:geheim,zweiter-teil@probewerk.example.de',
     ]) {
       expect(() =>
         readConfiguration(
           { ...valid, TRUSTED_ORIGINS: `https://probewerk.example.de, ${entry}` },
           writable,
         ),
-      ).toThrow(/^(?![\s\S]*geheim)[\s\S]*Angaben vor dem Namen/)
+      ).toThrow(/^(?![\s\S]*(?:geheim|zweiter-teil|test:))[\s\S]*Angaben vor dem Namen/)
     }
   })
 
