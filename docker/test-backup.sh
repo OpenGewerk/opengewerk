@@ -192,6 +192,12 @@ if [ -n "\${TAR_MISSES:-}" ] && [ "\$1" = --create ]; then
     *" --directory \$STORAGE_PATH "*) exec $real_tar "\$@" "\$TAR_MISSES" ;;
   esac
 fi
+# A tar that stops with an error and says nothing at all.
+if [ -n "\${TAR_SILENT:-}" ] && [ "\$1" = --create ]; then
+  case " \$* " in
+    *" --directory \$STORAGE_PATH "*) $real_tar "\$@"; exit 1 ;;
+  esac
+fi
 # The other form busybox tar has for it, when the file goes between the look
 # at it and the opening: everything else is packed, and this is said.
 if [ -n "\${TAR_CANT_OPEN:-}" ] && [ "\$1" = --create ]; then
@@ -1052,6 +1058,10 @@ if tar --list --file "$work/first/storage.tar" | grep -q 'liegengeblieben.part';
   echo 'FEHLER: ein Schreibvorgang, der noch lief, steht im ersten Teil'
   exit 1
 fi
+if [ -e "$work/first/vanished.patterns" ] || [ -e "$work/first/storage.err" ]; then
+  echo 'FEHLER: eine Arbeitsdatei der Sicherung steht im Archiv'
+  exit 1
+fi
 rm -f "$STORAGE_PATH/liegengeblieben.part"
 if POSTGRES_DB=opengewerk TAR_MISSES=/nirgends sh "$work/bin/backup.sh" > "$work/out" 2>&1; then
   echo 'FEHLER: ein anderer Fehler von tar beim ersten Teil ließ die Sicherung durch'
@@ -1079,5 +1089,12 @@ if POSTGRES_DB=opengewerk FIND_MISSES=/nirgends sh "$work/bin/backup.sh" > "$wor
   exit 1
 fi
 check 'Dateispeicher: eine Datei, die tar nicht mehr öffnen konnte oder find verschwunden fand, beendet die Sicherung nicht'
+
+# A failure of tar that names no gone file is no file that went.
+if POSTGRES_DB=opengewerk TAR_SILENT=1 sh "$work/bin/backup.sh" > "$work/out" 2>&1; then
+  echo 'FEHLER: ein Fehler von tar ohne Meldung ließ die Sicherung durch'
+  exit 1
+fi
+check 'Dateispeicher: ein Fehler von tar ohne Meldung beendet die Sicherung'
 
 echo 'Sicherungen: alles in Ordnung.'

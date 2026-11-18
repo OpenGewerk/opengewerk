@@ -161,13 +161,19 @@ tab=$(printf '\t')
 
 # Whether what tar or find said about the store is only that files went while
 # it read them: busybox names a path of the store it found gone, in one of
-# three forms, and sums up at the end. Anything else is printed and ends the
-# backup.
+# three forms, and sums up at the end. Anything else, and a failure that names
+# no gone path at all, is printed and ends the backup.
 only_vanished() {
-	if grep -v -e '^tar: \./.*: No such file or directory$' \
-		-e "^tar: can't open '\\./.*': No such file or directory$" \
-		-e '^find: \./.*: No such file or directory$' \
-		-e '^tar: error exit delayed from previous errors$' "$1" | grep -q .; then
+	cat >"${work}/vanished.patterns" <<'PATTERNS'
+^tar: \./.*: No such file or directory$
+^tar: can't open '\./.*': No such file or directory$
+^find: \./.*: No such file or directory$
+PATTERNS
+
+	if ! grep -q -f "${work}/vanished.patterns" "$1" ||
+		grep -v -f "${work}/vanished.patterns" -e '^tar: error exit delayed from previous errors$' "$1" |
+		grep -q .; then
+		echo "  Beim Lesen des Dateispeichers kam ein Fehler, die Sicherung bricht ab:" >&2
 		cat "$1" >&2
 		return 1
 	fi
@@ -227,7 +233,7 @@ while IFS= read -r file; do
 done <"${work}/storage-late.list"
 rm -f "${work}/storage-late.list" "${work}/storage-late.err"
 tar --create --file "${work}/storage-late.tar" --directory "${work}/storage-late" .
-rm -rf "${work}/storage-late" "$mark"
+rm -rf "${work}/storage-late" "$mark" "${work}/vanished.patterns"
 
 # --- 5. The manifest -------------------------------------------------------
 # A checksum per part, so that a restore can tell a damaged archive from a
