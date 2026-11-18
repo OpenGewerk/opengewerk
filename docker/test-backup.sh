@@ -37,6 +37,7 @@ real_tar=$(command -v tar)
 real_date=$(command -v date)
 real_cp=$(command -v cp)
 real_find=$(command -v find)
+real_rm=$(command -v rm)
 
 mkdir -p "$work/bin" "$work/storage" "$work/backups" "$work/status" "$work/tmp"
 cp "$source_dir/backup/backup.sh" "$source_dir/backup/restore.sh" \
@@ -262,17 +263,17 @@ if [ -n "\${LATE_HASH:-}" ] && [ "\$1" = --create ]; then
       # Every step has to work, or LATE_DONE is not written and the case fails.
       set -e
       case "\$LATE_DOES" in
-        vanish) rm -f "\$late" ;;
+        vanish) $real_rm -f "\$late" ;;
         link)
           ln -s "\$LATE_TARGET" "\$late.link"
           mv -f "\$late.link" "\$late"
           ;;
         pipe)
-          rm -f "\$late"
+          $real_rm -f "\$late"
           mkfifo "\$late"
           ;;
         dir)
-          rm -f "\$late"
+          $real_rm -f "\$late"
           mkdir "\$late"
           printf 'GEHEIMNIS DES CONTAINERS' > "\$late/\$(printf 'GEHEIMNIS DES CONTAINERS' | sha256sum | cut -d' ' -f1)"
           ;;
@@ -358,6 +359,21 @@ if [ -n "\${SHA_FAILS:-}" ] && [ "\$(basename "\${1:-}")" = "\$SHA_FAILS" ]; the
 fi
 exec $real_sha256sum "\$@"
 FAKE
+# rm as it is, unless RM_FAILS_ON is part of a path it is asked to remove.
+cat > "$work/bin/rm" <<FAKE
+#!/bin/sh
+if [ -n "\${RM_FAILS_ON:-}" ]; then
+  case "\$*" in
+    *"\$RM_FAILS_ON"*)
+      [ -z "\${FAKE_MARK:-}" ] || : > "\$FAKE_MARK"
+      echo "rm: \$*: I/O error" >&2
+      exit 1
+      ;;
+  esac
+fi
+exec $real_rm "\$@"
+FAKE
+chmod +x "$work/bin/rm"
 chmod +x "$work/bin/pg_dump" "$work/bin/psql" "$work/bin/pg_restore" "$work/bin/age" "$work/bin/tar" \
   "$work/bin/date" "$work/bin/cp" "$work/bin/find" "$work/bin/sha256sum" "$work/bin/grep"
 
@@ -612,7 +628,16 @@ without_the_late_part() {
 repacked without_the_late_part
 refused 'In der Sicherung fehlt storage-late.tar' env POSTGRES_DB=opengewerk \
   sh "$work/bin/restore.sh" --skip-origin-check "$ours"
-check 'Manifest: die Reihenfolge mit zweitem Teil verlangt ihn, auch ohne seine Prüfsumme'
+# The same written without blanks, as JSON allows.
+compact_order() {
+  without_the_late_part
+  sed 's/"order": "storage-database-late"/"order":"storage-database-late"/' manifest.json > manifest.new
+  mv manifest.new manifest.json
+}
+repacked compact_order
+refused 'In der Sicherung fehlt storage-late.tar' env POSTGRES_DB=opengewerk \
+  sh "$work/bin/restore.sh" --skip-origin-check "$ours"
+check 'Manifest: die Reihenfolge mit zweitem Teil verlangt ihn, auch ohne seine Prüfsumme und ohne Leerzeichen'
 
 before_991() {
   without_the_late_part
@@ -1216,6 +1241,20 @@ if [ -L "$STORAGE_PATH/$through_folder" ] || [ ! -f "$STORAGE_PATH/$through_fold
   cat "$work/out"
   exit 1
 fi
+# And when rm cannot take the link, the restore stops before the second part.
+rm -rf "$work/outside-restore"
+mkdir -p "$work/outside-restore"
+tar --create --gzip --file "$work/backups/$around" --directory "$work/through" .
+if POSTGRES_DB=opengewerk RM_FAILS_ON="$through_folder" sh "$work/bin/restore.sh" --skip-origin-check "$around" \
+  > "$work/out" 2>&1; then
+  echo 'FEHLER: ein Link, den rm nicht nahm, ließ das Rückspielen durch'
+  exit 1
+fi
+grep -q 'blieb ein Link' "$work/out"
+if [ -n "$(ls -A "$work/outside-restore")" ]; then
+  echo 'FEHLER: das Rückspielen schrieb durch einen Link, den rm nicht nahm'
+  exit 1
+fi
 check 'Rückspielen: ein Link im ersten Teil leitet den zweiten nicht aus dem Speicher hinaus'
 
 # A file the first part did not hold and that does not lie where the store
@@ -1331,6 +1370,33 @@ printf '%s\n' "$relinked_names" | grep -q "$relinked_hash" || {
 }
 rm -rf "$(dirname "$(stored "$relinked_hash")")"
 check 'Dateispeicher: ein Link im ersten Teil hält die Datei an seiner Stelle nicht aus dem zweiten'
+
+# A file in the first part whose name ends like a stored file after a blank,
+# "./Import ./ab/cd/<hash>": the file uploaded at the true name during the
+# dump is not taken for held and comes into the second part.
+blank_text='hinter einem Leerzeichen'
+blank_hash=$(hash_of "$blank_text")
+blank_tail=$(stored "$blank_hash" | sed "s|^$STORAGE_PATH/||")
+mkdir -p "$STORAGE_PATH/Import ./$(dirname "$blank_tail")"
+printf '%s' "$blank_text" > "$STORAGE_PATH/Import ./$blank_tail"
+DUMP_UPLOADS="$blank_text" backed_up 'ein Name mit Leerzeichen im ersten Teil beendete die Sicherung'
+unpacked blanked
+blanked_names=$(tar --list --file "$work/blanked/storage-late.tar")
+printf '%s\n' "$blanked_names" | grep -q "^\./$blank_tail\$" || {
+  echo 'FEHLER: eine Datei, die ein Name mit Leerzeichen im ersten Teil vortäuschte, fehlt im zweiten'
+  exit 1
+}
+rm -rf "$STORAGE_PATH/Import ." "$(dirname "$(stored "$blank_hash")")"
+check 'Dateispeicher: ein Name mit Leerzeichen im ersten Teil hält keine Datei aus dem zweiten'
+
+# A link or pipe in the second part that rm could not take ends the backup.
+pipe_text='Pipe, die bleibt'
+pipe_hash=$(hash_of "$pipe_text")
+DUMP_UPLOADS="$pipe_text" LATE_HASH="$pipe_hash" LATE_DOES=pipe LATE_TARGET="$work/secret" \
+  LATE_DONE="$work/late-done" RM_FAILS_ON="$pipe_hash" refused_at 'eine Pipe, die rm nicht nahm, blieb im zweiten Teil'
+grep -q 'keine Datei des Speichers' "$work/out"
+"$real_rm" -rf "$(dirname "$(stored "$pipe_hash")")"
+check 'Dateispeicher: was rm im zweiten Teil nicht nehmen kann, beendet die Sicherung'
 
 # A new file sha256sum cannot read ends the backup instead of leaving the
 # second part without it.

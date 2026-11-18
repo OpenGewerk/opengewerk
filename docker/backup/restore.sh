@@ -166,7 +166,7 @@ rm -f "$copy"
 # archive whose manifest names it, or the order that has it, has to bring it.
 # One from before has neither.
 parts="database.dump storage.tar audit-chains.tsv"
-if grep -q -e '"storage-late.tar"' -e '"order": "storage-database-late"' "${work}/manifest.json"; then
+if grep -q -e '"storage-late.tar"' -e '"order"[[:space:]]*:[[:space:]]*"storage-database-late"' "${work}/manifest.json"; then
 	parts="${parts} storage-late.tar"
 fi
 
@@ -439,6 +439,12 @@ tar --extract --no-same-owner --file "${work}/storage.tar" --directory "$STORAGE
 # with the first part would take whatever the second part unpacks under its
 # name to wherever it points in this container (#991).
 find "$STORAGE_PATH" -mindepth 1 ! -type f ! -type d -exec rm -f {} \;
+# find takes a failed rm for a test that did not hold and goes on.
+if [ -n "$(find "$STORAGE_PATH" -mindepth 1 ! -type f ! -type d)" ]; then
+	echo "Im Dateispeicher blieb ein Link oder etwas anderes, das keine Datei ist;" >&2
+	echo "es wird nichts weiter zurückgespielt." >&2
+	exit 1
+fi
 # What the store got while the backup ran, see backup.sh.
 case " $parts " in
 *" storage-late.tar "*)

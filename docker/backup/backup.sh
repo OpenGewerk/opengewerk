@@ -254,7 +254,10 @@ names_of() {
 
 # Only plain files of the first part count as held: a link there under a name
 # of the store is not the file a later upload put in its place.
-tar --list --verbose --file "${work}/storage.tar" | awk '$1 ~ /^-/ { print $NF }' >"${work}/storage.names"
+# The whole name, everything after the five columns before it, and not only
+# its last word: a file named "./Import ./ab/cd/<hash>" is not that hash.
+tar --list --verbose --file "${work}/storage.tar" |
+	awk '$1 ~ /^-/ { $1 = $2 = $3 = $4 = $5 = ""; sub(/^ +/, ""); print }' >"${work}/storage.names"
 names_of "${work}/storage.names" | sort >"${work}/storage.first"
 
 # find looks at every entry before it reads its name, so a .part that goes
@@ -284,6 +287,13 @@ fi
 # (--no-recursion) and goes here with whatever else lies that deep.
 find "${work}/storage-late" ! -type f ! -type d -exec rm -f {} \;
 find "${work}/storage-late" -mindepth 3 -type d -prune -exec rm -rf {} \;
+# find takes a failed rm for a test that did not hold and goes on, so what is
+# left is looked at once more.
+if [ -n "$(find "${work}/storage-late" ! -type f ! -type d)" ] ||
+	[ -n "$(find "${work}/storage-late" -mindepth 3 -type d)" ]; then
+	echo "  Im zweiten Teil blieb etwas, das keine Datei des Speichers ist, die Sicherung bricht ab." >&2
+	exit 1
+fi
 find "${work}/storage-late" -type f >"${work}/storage-late.files"
 while IFS= read -r copy; do
 	held_hash=$(sha256sum "$copy" | cut -d' ' -f1)
