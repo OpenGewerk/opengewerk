@@ -293,7 +293,8 @@ TLS an den Reverse Proxy, Vorlagen liegen unter `docker/proxy/`, dann die neue
 Adresse in `TRUSTED_ORIGINS`, und erst danach wird wieder erfasst. Wer das vor
 dem Update vergisst: Die Migrationen laufen, dann verweigert die Anwendung den
 Start; nach dem Ändern der Adresse startet sie ein neuer Lauf von
-`sh docker/start.sh`.
+`sh docker/start.sh`. Steht `TRUSTED_ORIGINS` auch in der Umgebung der Shell,
+gilt dieser Wert vor der `.env` und ist dort ebenso zu ändern.
 
 Der erste Eintrag aus `TRUSTED_ORIGINS` steht auch auf jedem QR-Etikett einer
 Anlage (#308), gedruckt, für die zehn Jahre, die ein Aufkleber im Zählerschrank

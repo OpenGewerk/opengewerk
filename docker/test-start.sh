@@ -48,6 +48,16 @@ case "$*" in
     echo 'nur {{.Server.Version}} ist die Fassung der Engine' >&2
     exit 1
     ;;
+  'info --format {{.ID}}')
+    # DOCKER_IDS answers in turn like DOCKER_SERVERS, else one engine with
+    # the ID in DOCKER_ID; an empty one says nothing.
+    if [ -n "${DOCKER_IDS:-}" ]; then
+      echo asked >> "$CALLS.id"
+      printf '%s\n' "$DOCKER_IDS" | awk -v n="$(wc -l < "$CALLS.id")" '{ print (n <= NF ? $n : $NF) }'
+    else
+      printf '%s\n' "${DOCKER_ID-engine-1}"
+    fi
+    ;;
   'context show')
     [ -z "${CONTEXT_FAILS:-}" ] || exit 1
     printf '%s\n' "${CONTEXT_IN_USE-default}"
@@ -61,7 +71,8 @@ PATH="$work/bin:$PATH"
 export CALLS PATH
 # Which engine start.sh talks to is what case 13 checks; nothing of the
 # machine this runs on comes in.
-unset DOCKER_CONTEXT DOCKER_HOST CONTEXT_FAILS CONTEXT_IN_USE DOCKER_SERVER DOCKER_SERVERS WATCHED SETUP_NEEDED
+unset DOCKER_CONTEXT DOCKER_HOST CONTEXT_FAILS CONTEXT_IN_USE DOCKER_SERVER DOCKER_SERVERS DOCKER_ID DOCKER_IDS \
+  WATCHED SETUP_NEEDED
 
 check() {
   printf 'check: %s\n' "$1"
@@ -427,5 +438,39 @@ grep -q 'run --rm migrate$' "$CALLS"
 absent 'up -d'
 rm -f "$CALLS.version"
 check 'Docker: vor jedem Schritt, der Container startet, wird die Engine noch einmal gefragt'
+
+# 15. Another engine behind the same context, new enough as well: before the
+# migrations nothing starts, after them the application does not start on
+# it; an engine without an ID starts nothing.
+: > "$CALLS"
+rm -f "$CALLS.id"
+if out=$(DOCKER_IDS='erste zweite' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
+  sh "$work/docker/start.sh" < /dev/null 2>&1); then
+  echo 'FEHLER: eine andere Engine vor den Migrationen bekam Container'
+  exit 1
+fi
+printf '%s' "$out" | grep -q 'eine andere Engine'
+absent 'run --rm migrate'
+absent 'up -d'
+: > "$CALLS"
+rm -f "$CALLS.id"
+if out=$(DOCKER_IDS='erste erste zweite' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
+  sh "$work/docker/start.sh" < /dev/null 2>&1); then
+  echo 'FEHLER: eine andere Engine nach den Migrationen startete die Anwendung'
+  exit 1
+fi
+printf '%s' "$out" | grep -q 'eine andere Engine.*schon auf dem neuen Stand'
+grep -q 'run --rm migrate$' "$CALLS"
+absent 'up -d'
+: > "$CALLS"
+rm -f "$CALLS.id"
+if out=$(DOCKER_ID='' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null 2>&1); then
+  echo 'FEHLER: eine Engine ohne Kennung bekam Container'
+  exit 1
+fi
+printf '%s' "$out" | grep -q 'keine Kennung seiner Engine'
+absent 'run --rm migrate'
+rm -f "$CALLS.id"
+check 'Docker: dieselbe Engine vom ersten Blick bis zum Start'
 
 echo 'Startskript: alles in Ordnung.'

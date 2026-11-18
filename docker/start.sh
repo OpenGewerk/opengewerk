@@ -82,11 +82,14 @@ if [ -z "${DOCKER_HOST:-}" ] && [ -z "${DOCKER_CONTEXT:-}" ]; then
   fi
 fi
 
-# The version of the engine, held against the minimum. Asked here and again
-# right before each step that starts containers: a context whose endpoint was
-# changed meanwhile, under the same name, is caught there.
-# engine_note is said after either sentence, once the migrations have run.
+# The version of the engine, held against the minimum, and the engine itself
+# by its ID. Asked here and again right before each step that starts
+# containers: a context whose endpoint was changed meanwhile, under the same
+# name, is caught there, whether the other engine is too old or not, since
+# its database never saw the migrations of this run. engine_note is said
+# after each sentence once the migrations have run.
 engine_note=''
+engine_id=''
 engine_new_enough() {
 docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null) ||
   fail "Docker antwortet nicht. Läuft der Docker-Dienst, und darf dieser Benutzer ihn ansprechen?$engine_note"
@@ -121,6 +124,15 @@ docker_too_old=$(printf '%s\n' "$docker_version" | awk -F. -v minimum="$minimum_
 
 if [ "$docker_too_old" != 'no' ]; then
   fail "Docker meldet die Fassung \"$docker_version\", $APPLICATION_NAME braucht Docker Engine ab $minimum_docker. Vor 28.0.0 erreichen Rechner im selben Netz Ports, die nur auf 127.0.0.1 veröffentlicht sind, und 28.2.0 bis 28.3.2 öffnen sie nach einem Neuladen von firewalld wieder (CVE-2025-54388); beides führt am Proxy mit TLS vorbei. Docker aktualisieren: https://docs.docker.com/engine/install/$engine_note"
+fi
+
+current_id=$(docker info --format '{{.ID}}' 2>/dev/null) || current_id=''
+if [ -z "$current_id" ]; then
+  fail "Docker nennt keine Kennung seiner Engine (docker info), an der sich prüfen ließe, dass der ganze Lauf mit derselben spricht.$engine_note"
+elif [ -z "$engine_id" ]; then
+  engine_id=$current_id
+elif [ "$current_id" != "$engine_id" ]; then
+  fail "Hinter dem Kontext steht jetzt eine andere Engine als zu Beginn dieses Laufs. Auf ihr startet $APPLICATION_NAME nicht, denn ihre Datenbank hat die Migrationen dieses Laufs nicht gesehen.$engine_note"
 fi
 }
 engine_new_enough

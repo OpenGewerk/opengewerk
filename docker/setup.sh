@@ -291,8 +291,9 @@ published_port() {
       if (mappings == 1 && published != "") {
         sub(/^ *"published": *"/, "", published)
         sub(/".*$/, "", published)
+        # Without leading zeros; 0 is no fixed port, Docker picks one then.
         sub(/^0*/, "", published)
-        print (published == "" ? 0 : published)
+        if (published != "") print published
       }
     }'
 }

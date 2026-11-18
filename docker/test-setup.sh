@@ -412,7 +412,8 @@ export FAKE_COUNT
 
 # 9e. The port comes from the mapping and nowhere else: "published" as the
 # name of a variable in the environment of a service is no port, a target
-# outside the ports of a service is no mapping, and leading zeros fall away.
+# outside the ports of a service is no mapping, leading zeros fall away, and 0
+# is no fixed port.
 decoy='{
   "services": {
     "app": {
@@ -436,6 +437,14 @@ rm -f "$FAKE_COUNT"
 }
 rm -f "$FAKE_COUNT"
 [ "$(PATH="$work/fake:$PATH" FAKE_PUBLISHED=08080 port_in "$work")" = 8080 ]
+# Port 0, in any spelling, is no fixed port: Docker picks one then.
+for nothing in 0 000; do
+  rm -f "$FAKE_COUNT"
+  [ -z "$(PATH="$work/fake:$PATH" FAKE_PUBLISHED=$nothing port_in "$work")" ] || {
+    printf 'FEHLER: der Port %s galt als fester Port\n' "$nothing"
+    exit 1
+  }
+done
 # A Compose that names one missing value at a time is asked until it names
 # none.
 rm -f "$FAKE_COUNT"
