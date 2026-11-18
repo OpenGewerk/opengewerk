@@ -298,8 +298,10 @@ tar --list --verbose --file "${work}/storage.tar" |
 # Every entry of the first part on a line of its own: a name with a line
 # break could let a part of it pass for an entry in the listing above. tar
 # lists every name of the first part starting with "./", so a line that does
-# not is the rest of one. The store never makes such a name; the backup stops
-# instead of guessing.
+# not is the rest of one, and the only kind of rest that could pass for an
+# entry there, which starts with the type of a file. The store never makes
+# such a name; the backup stops instead of guessing. A rest that starts with
+# "./" passes for no entry in the listing (no type in front), so it is let be.
 odd_lines=$(tar --list --file "${work}/storage.tar" | grep -cv '^\./' || true)
 if [ "$odd_lines" != 0 ]; then
 	echo "  Im Dateispeicher steht ein Name über mehrere Zeilen, den der Speicher nie anlegt;" >&2
