@@ -328,28 +328,19 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
   scheme=${wanted%%://*}
   host_and_port=${wanted#*://}
   case "$host_and_port" in
+    \[\]*) fail "\"$wanted\" nennt keine Maschine." ;;
     \[*\]*)
-      # An address of IPv6 ends at the first closing bracket; after it comes
-      # nothing or a colon and the port.
-      host=${host_and_port%%]*}]
-      rest=${host_and_port#*]}
-      [ "$host" != '[]' ] || fail "\"$wanted\" nennt keine Maschine."
       # No IPv6 address: the application is published on 127.0.0.1 only, so
       # [::1] reaches nothing, and any other has more than one way to be
       # written while the application takes only the one a browser sends.
       fail "\"$wanted\": Eine IPv6-Adresse nimmt die Rückfrage nicht. Auf dieser Maschine ist $APPLICATION_NAME unter localhost oder 127.0.0.1 erreichbar, für eine andere Maschine bitte ihren Namen nehmen, etwa $APPLICATION_EXAMPLE_ADDRESS."
-      case "$rest" in
-        '') port='' given='' ;;
-        :*) port=${rest#:} given=yes ;;
-        *) fail "\"$wanted\" hat nach dem Namen der Maschine keinen Port aus Ziffern zwischen 0 und 65535." ;;
-      esac
       ;;
     \[*) fail "\"$wanted\" nennt keine Maschine." ;;
     *:*) host=${host_and_port%%:*} port=${host_and_port#*:} given=yes ;;
     *) host=$host_and_port port='' given='' ;;
   esac
   case "$host" in
-    '' | '[]') fail "\"$wanted\" nennt keine Maschine." ;;
+    '') fail "\"$wanted\" nennt keine Maschine." ;;
   esac
   # The name the way a browser writes it in the origin: in small letters and
   # only with what a name in the network holds. A name with umlauts goes in
