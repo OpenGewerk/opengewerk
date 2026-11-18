@@ -41,27 +41,32 @@ compose() {
 
 # The port Docker Compose publishes the application on, asked from Compose
 # itself: the .env, the environment and the variables of Compose count the way
-# they count at the start, and nothing here reads the .env for it. The values
-# compose.yaml requires get a stand-in for this one question, since the
-# address, one of them, may be what is still missing. Prints the port, or
-# nothing when Compose gives no answer or maps more than one port: every
-# mapping, one without a port of its own as well, has a target that is a
-# number, where volumes and secrets have a path.
+# they count at the start, and nothing here reads the .env for it. A value
+# compose.yaml requires and Compose finds missing, such as the address being
+# asked for, gets a stand-in for this one question; a value that is set keeps
+# it. Prints the port without leading zeros, or nothing when Compose gives no
+# answer or maps more than one port. A mapping of a port is the only place
+# with a target that is a number, where volumes and secrets have a path, and
+# its published port stands right after it.
 published_port() {
-  stand_ins=$(grep -o '\${[A-Za-z_][A-Za-z0-9_]*:\{0,1\}?' "$here/compose.yaml" 2>/dev/null |
-    sed -e 's/^\${//' -e 's/:\{0,1\}?$/=stand-in/' | sort -u | tr '\n' ' ')
+  missing=$(docker compose -f "$here/compose.yaml" config --format json 2>&1 >/dev/null |
+    sed -n 's/.*required variable \([A-Za-z_][A-Za-z0-9_]*\) is missing a value.*/\1=stand-in/p' |
+    sort -u | tr '\n' ' ')
   # Names and values have no blanks, so each stand-in is one word.
   # shellcheck disable=SC2086
-  config=$(env $stand_ins docker compose -f "$here/compose.yaml" config --format json 2>/dev/null) || return 0
-  mappings=$(printf '%s\n' "$config" | grep -c '^[[:space:]]*"target":[[:space:]]*[0-9]' || true)
-  [ "$mappings" = 1 ] || return 0
-  published=$(printf '%s\n' "$config" | sed -n 's/^[[:space:]]*"published":[[:space:]]*"\([^"]*\)".*$/\1/p')
-  # Without leading zeros, the way a browser writes the port and the address
-  # check below holds it.
-  case "$published" in
-    '' | *[!0-9]*) ;;
-    *) printf '%s\n' "$published" | sed 's/^0*\(.\)/\1/' ;;
-  esac
+  config=$(env $missing docker compose -f "$here/compose.yaml" config --format json 2>/dev/null) || return 0
+  printf '%s\n' "$config" | awk '
+    /^ *"target": *[0-9]/ { mappings++; right_after = 1; next }
+    right_after && /^ *"published": *"[0-9][0-9]*"/ { published = $0 }
+    { right_after = 0 }
+    END {
+      if (mappings == 1 && published != "") {
+        sub(/^ *"published": *"/, "", published)
+        sub(/".*$/, "", published)
+        sub(/^0*/, "", published)
+        print (published == "" ? 0 : published)
+      }
+    }'
 }
 
 # The port on this machine, the one Docker Compose publishes, asked the way

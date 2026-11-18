@@ -282,8 +282,11 @@ Mit `http://` startet die Anwendung nur, wenn die Adresse auf dieser Maschine
 liegt, also `localhost`, `127.0.0.1` oder `[::1]` (#984). Für jede andere
 verlangt sie `https://`, sonst gingen Einrichtungscode und Passwörter lesbar
 durchs Netz. Steht in einer bestehenden Installation noch eine solche Adresse,
-kommt vor dem Update zuerst TLS an den Reverse Proxy, Vorlagen liegen unter
-`docker/proxy/`, und dann die Adresse mit `https://` in `TRUSTED_ORIGINS`.
+sendet vor dem Update zuerst jedes Gerät unter der alten Adresse, was bei ihm
+wartet, bis keines mehr "Änderungen warten auf dem Gerät" zeigt: Der Browser
+hält den Postausgang je Adresse, unter `https://` sieht er ihn nicht mehr.
+Danach kommt TLS an den Reverse Proxy, Vorlagen liegen unter `docker/proxy/`,
+und dann die Adresse mit `https://` in `TRUSTED_ORIGINS`.
 Einen Namen mit einem Punkt am Ende (`https://betrieb.example.`) nimmt die
 Anwendung ebenfalls nicht an, denn ein Browser schickt den Punkt nur mit, wenn
 er auch in der Adresszeile steht; dort steht die Adresse ohne ihn.

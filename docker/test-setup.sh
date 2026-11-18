@@ -282,24 +282,40 @@ for address in http://localhost http://localhost:23700 http://127.0.0.1 http://1
 done
 check 'http:// nur für diese Maschine: andere Adressen abgelehnt, localhost und 127.0.0.1 angenommen'
 
-# 9c. The port of the address offered is the one Docker Compose publishes,
+# 9c. An address with a user and a password before the name is turned away,
+# and no sentence repeats it.
+for address in 'https://benutzer:geheim@example.org:8080' 'https://benutzer:geheim@example.org' \
+  'https://geheim@example.org' 'http://benutzer:geheim@localhost:8080'; do
+  rm -f "$work/.env"
+  if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
+    printf 'FEHLER: %s lief durch\n' "$address"
+    exit 1
+  fi
+  if printf '%s' "$out" | grep -q geheim; then
+    printf 'FEHLER: die Meldung zu einer Adresse mit Passwort wiederholte es: %s\n' "$out"
+    exit 1
+  fi
+done
+check 'Adresse mit Benutzer und Passwort: abgelehnt, ohne sie zu wiederholen'
+
+# 9d. The port of the address offered is the one Docker Compose publishes,
 # asked from Compose itself: the exported environment before the .env, a
 # value over several lines and COMPOSE_DISABLE_ENV_FILE as Compose takes
-# them, the values compose.yaml requires replaced by a stand-in, since the
-# address is still missing then. A second published port offers none. Needs
-# Docker Compose, which the CI has.
+# them. A value compose.yaml requires gets a stand-in only where Compose finds
+# it missing, so a port given through one still counts. A second mapping of
+# any kind offers none. Needs Docker Compose, which the CI has.
+sed -n '/^published_port() {/,/^}/p' "$work/setup.sh" > "$work/published-port.sh"
+test -s "$work/published-port.sh"
+port_in() {
+  (
+    here=$1
+    . "$work/published-port.sh"
+    published_port
+  )
+}
 if docker compose version > /dev/null 2>&1; then
-  sed -n '/^published_port() {/,/^}/p' "$work/setup.sh" > "$work/published-port.sh"
-  test -s "$work/published-port.sh"
   mkdir "$work/ports"
   cp "$source_dir/compose.yaml" "$work/ports/compose.yaml"
-  port_in() {
-    (
-      here=$1
-      . "$work/published-port.sh"
-      published_port
-    )
-  }
   # What the environment of whoever runs the test holds for Compose stays out
   # of these cases; the two that test it set it themselves.
   unset OPENGEWERK_PORT
@@ -314,6 +330,17 @@ if docker compose version > /dev/null 2>&1; then
   [ "$(port_in "$work/ports")" = 24567 ]
   rm "$work/ports/.env"
   [ "$(port_in "$work/ports")" = 23700 ]
+  # A port given through a value compose.yaml requires: the value set counts,
+  # and without it none is offered.
+  sed 's/\${OPENGEWERK_PORT:-23700}/${OPENGEWERK_PORT:?Port fehlt}/' "$source_dir/compose.yaml" > "$work/ports/compose.yaml"
+  [ "$(grep -c 'OPENGEWERK_PORT:?Port fehlt' "$work/ports/compose.yaml")" = 1 ]
+  printf 'OPENGEWERK_PORT=24567\n' > "$work/ports/.env"
+  [ "$(port_in "$work/ports")" = 24567 ] || {
+    echo 'FEHLER: ein gesetzter Port, den compose.yaml verlangt, bekam einen Platzhalter'
+    exit 1
+  }
+  rm "$work/ports/.env"
+  [ -z "$(port_in "$work/ports")" ]
   # A second mapping of any kind, a range or one without a port of its own
   # included: no port is offered.
   for second in '127.0.0.1:23701:23701' '3000' '9000-9005:9000-9005'; do
@@ -331,29 +358,73 @@ else
   echo 'Hinweis: ohne Docker Compose bleibt der Port der vorgeschlagenen Adresse ungeprüft.'
 fi
 
-# 9d. The question in a terminal: Enter takes the address with the port
-# Docker Compose publishes, written without leading zeros, and a port browsers
-# refuse is not offered at all, with leading zeros neither. A stand-in for
-# docker answers the question for the port. Needs the script of util-linux,
-# which the CI has.
-if script -q -e -c true /dev/null > /dev/null 2>&1; then
-  mkdir "$work/fake"
-  cat > "$work/fake/docker" <<'FAKE'
+# A stand-in for docker, for answers Compose would not give here. It prints
+# FAKE_JSON when that is set, else one mapping with the port FAKE_PUBLISHED,
+# and from its third question on FAKE_LATER, when that is set. FAKE_COUNT
+# holds how often it was asked.
+mkdir "$work/fake"
+cat > "$work/fake/docker" <<'FAKE'
 #!/bin/sh
 case "$*" in
-  'compose -f '*' config --format json')
-    printf '{\n  "services": {\n    "app": {\n      "ports": [\n        {\n          "target": 23700,\n          "published": "%s"\n        }\n      ]\n    }\n  }\n}\n' "$FAKE_PUBLISHED"
-    ;;
+  'compose -f '*' config --format json') ;;
   *) exit 1 ;;
 esac
+asked=$(cat "$FAKE_COUNT" 2>/dev/null || echo 0)
+asked=$((asked + 1))
+echo "$asked" > "$FAKE_COUNT"
+if [ -n "${FAKE_JSON:-}" ]; then
+  printf '%s\n' "$FAKE_JSON"
+  exit 0
+fi
+port=$FAKE_PUBLISHED
+if [ -n "${FAKE_LATER:-}" ] && [ "$asked" -gt 2 ]; then
+  port=$FAKE_LATER
+fi
+printf '{\n  "services": {\n    "app": {\n      "ports": [\n        {\n          "target": 23700,\n          "published": "%s"\n        }\n      ]\n    }\n  }\n}\n' "$port"
 FAKE
-  chmod +x "$work/fake/docker"
-  rm -f "$work/.env"
+chmod +x "$work/fake/docker"
+FAKE_COUNT="$work/fake/count"
+export FAKE_COUNT
+
+# 9e. The port comes from the mapping and nowhere else: "published" as the
+# name of a variable in the environment of a service is no port, and leading
+# zeros fall away.
+decoy='{
+  "services": {
+    "app": {
+      "environment": {
+        "published": "8088"
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "target": 23700,
+          "protocol": "tcp"
+        }
+      ]
+    }
+  }
+}'
+rm -f "$FAKE_COUNT"
+[ -z "$(PATH="$work/fake:$PATH" FAKE_JSON=$decoy port_in "$work")" ] || {
+  echo 'FEHLER: eine Variable namens published galt als Port'
+  exit 1
+}
+rm -f "$FAKE_COUNT"
+[ "$(PATH="$work/fake:$PATH" FAKE_PUBLISHED=08080 port_in "$work")" = 8080 ]
+check 'Port der Adresse: nur aus der Zuordnung, ohne führende Nullen'
+
+# 9f. The question in a terminal: Enter takes the address with the port
+# Docker Compose publishes, a port browsers refuse is not offered at all, the
+# end of the input takes nothing, and neither does a port that changed while
+# the question waited. Needs the script of util-linux, which the CI has.
+if script -q -e -c true /dev/null > /dev/null 2>&1; then
+  rm -f "$work/.env" "$FAKE_COUNT"
   printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=08080 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1
   grep -q 'Leer lassen für http://localhost:8080' "$work/asked.txt"
   grep -qxF 'TRUSTED_ORIGINS=http://localhost:8080' "$work/.env"
   # The end of the input instead of a line (Ctrl+D) takes nothing.
-  rm -f "$work/.env"
+  rm -f "$work/.env" "$FAKE_COUNT"
   if printf '' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=8080 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
     echo 'FEHLER: das Ende der Eingabe nahm die vorgeschlagene Adresse'
     exit 1
@@ -363,7 +434,7 @@ FAKE
     echo 'FEHLER: das Ende der Eingabe trug eine Adresse ein'
     exit 1
   fi
-  rm -f "$work/.env"
+  rm -f "$work/.env" "$FAKE_COUNT"
   if printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=06000 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
     echo 'FEHLER: ohne Adresse lief die Einrichtung mit Port 06000 durch'
     exit 1
@@ -375,11 +446,22 @@ FAKE
     cat "$work/asked.txt"
     exit 1
   fi
-  rm -r "$work/fake"
-  check 'Rückfrage im Terminal: Enter nimmt den Port von Docker Compose, einen gesperrten bietet sie nicht an'
+  # A port that changed while the question waited is not taken.
+  rm -f "$work/.env" "$FAKE_COUNT"
+  if printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=8080 FAKE_LATER=8081 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
+    echo 'FEHLER: ein Port, der sich während der Frage änderte, wurde eingetragen'
+    exit 1
+  fi
+  grep -q 'hat sich während der Frage geändert' "$work/asked.txt"
+  if grep -q '^TRUSTED_ORIGINS=http://localhost' "$work/.env"; then
+    echo 'FEHLER: nach einem geänderten Port stand eine Adresse in der .env'
+    exit 1
+  fi
+  check 'Rückfrage im Terminal: Enter nimmt den Port von Docker Compose, sonst nichts'
 else
   echo 'Hinweis: ohne "script" bleibt die Rückfrage im Terminal ungeprüft.'
 fi
+rm -r "$work/fake"
 
 # 10. Another application runs the same script against its own folder
 # (opengewerk-haustechnik#14): its name at the start of every line, its prefix

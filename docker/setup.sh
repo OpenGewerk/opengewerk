@@ -254,27 +254,32 @@ only_here_over_http() {
 
 # The port Docker Compose publishes the application on, asked from Compose
 # itself: the .env, the environment and the variables of Compose count the way
-# they count at the start, and nothing here reads the .env for it. The values
-# compose.yaml requires get a stand-in for this one question, since the
-# address, one of them, may be what is still missing. Prints the port, or
-# nothing when Compose gives no answer or maps more than one port: every
-# mapping, one without a port of its own as well, has a target that is a
-# number, where volumes and secrets have a path.
+# they count at the start, and nothing here reads the .env for it. A value
+# compose.yaml requires and Compose finds missing, such as the address being
+# asked for, gets a stand-in for this one question; a value that is set keeps
+# it. Prints the port without leading zeros, or nothing when Compose gives no
+# answer or maps more than one port. A mapping of a port is the only place
+# with a target that is a number, where volumes and secrets have a path, and
+# its published port stands right after it.
 published_port() {
-  stand_ins=$(grep -o '\${[A-Za-z_][A-Za-z0-9_]*:\{0,1\}?' "$here/compose.yaml" 2>/dev/null |
-    sed -e 's/^\${//' -e 's/:\{0,1\}?$/=stand-in/' | sort -u | tr '\n' ' ')
+  missing=$(docker compose -f "$here/compose.yaml" config --format json 2>&1 >/dev/null |
+    sed -n 's/.*required variable \([A-Za-z_][A-Za-z0-9_]*\) is missing a value.*/\1=stand-in/p' |
+    sort -u | tr '\n' ' ')
   # Names and values have no blanks, so each stand-in is one word.
   # shellcheck disable=SC2086
-  config=$(env $stand_ins docker compose -f "$here/compose.yaml" config --format json 2>/dev/null) || return 0
-  mappings=$(printf '%s\n' "$config" | grep -c '^[[:space:]]*"target":[[:space:]]*[0-9]' || true)
-  [ "$mappings" = 1 ] || return 0
-  published=$(printf '%s\n' "$config" | sed -n 's/^[[:space:]]*"published":[[:space:]]*"\([^"]*\)".*$/\1/p')
-  # Without leading zeros, the way a browser writes the port and the address
-  # check below holds it.
-  case "$published" in
-    '' | *[!0-9]*) ;;
-    *) printf '%s\n' "$published" | sed 's/^0*\(.\)/\1/' ;;
-  esac
+  config=$(env $missing docker compose -f "$here/compose.yaml" config --format json 2>/dev/null) || return 0
+  printf '%s\n' "$config" | awk '
+    /^ *"target": *[0-9]/ { mappings++; right_after = 1; next }
+    right_after && /^ *"published": *"[0-9][0-9]*"/ { published = $0 }
+    { right_after = 0 }
+    END {
+      if (mappings == 1 && published != "") {
+        sub(/^ *"published": *"/, "", published)
+        sub(/".*$/, "", published)
+        sub(/^0*/, "", published)
+        print (published == "" ? 0 : published)
+      }
+    }'
 }
 
 # Whether a browser opens port $1, digits without leading zeros: ends with 0
@@ -319,7 +324,13 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
         printf '\n'
         fail "Die Frage nach der Adresse blieb ohne Antwort, in docker/.env ist nichts eingetragen. Das Skript noch einmal starten oder $address_variable setzen."
       fi
-      wanted=${wanted:-http://localhost:$port}
+      if [ -z "$wanted" ]; then
+        # Compose is asked once more: a port that changed meanwhile, in the
+        # .env or elsewhere, would not be the one the start publishes.
+        [ "$(published_port)" = "$port" ] ||
+          fail "Der Port, den Docker Compose veröffentlicht, hat sich während der Frage geändert; in docker/.env ist nichts eingetragen. Das Skript bitte noch einmal starten."
+        wanted=http://localhost:$port
+      fi
     else
       printf '  Etwa %s: ' "$APPLICATION_EXAMPLE_ADDRESS"
       read -r wanted || wanted=''
@@ -330,17 +341,24 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
     fail "In docker/.env fehlt die Adresse, unter der $APPLICATION_NAME erreichbar ist (TRUSTED_ORIGINS). Das Skript einmal im Terminal starten, dann fragt es danach, oder $address_variable setzen."
   fi
 
+  # The address as the sentences below repeat it. One with something before
+  # the name, which can be a user and a password, is not repeated.
+  case "$wanted" in
+    *@*) shown='Die Adresse' ;;
+    *) shown="\"$wanted\"" ;;
+  esac
+
   # An origin and nothing more: a path or a trailing slash never matches what
   # a browser sends, and the sign in would fail without saying why.
   wanted=${wanted%/}
 
   case "$wanted" in
     http://*/* | https://*/*)
-      fail "\"$wanted\" hat einen Pfad. Gebraucht wird nur die Adresse, etwa $APPLICATION_EXAMPLE_ADDRESS."
+      fail "$shown hat einen Pfad. Gebraucht wird nur die Adresse, etwa $APPLICATION_EXAMPLE_ADDRESS."
       ;;
     http://?* | https://?*) ;;
     *)
-      fail "\"$wanted\" ist keine Adresse mit http:// oder https:// davor."
+      fail "$shown ist keine Adresse mit http:// oder https:// davor."
       ;;
   esac
 
@@ -353,19 +371,19 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
   scheme=${wanted%%://*}
   host_and_port=${wanted#*://}
   case "$host_and_port" in
-    \[\]*) fail "\"$wanted\" nennt keine Maschine." ;;
+    \[\]*) fail "$shown nennt keine Maschine." ;;
     \[*\]*)
       # No IPv6 address: the application is published on 127.0.0.1 only, so
       # [::1] reaches nothing, and any other has more than one way to be
       # written while the application takes only the one a browser sends.
-      fail "\"$wanted\": Eine IPv6-Adresse nimmt die Rückfrage nicht. Auf dieser Maschine ist $APPLICATION_NAME unter localhost oder 127.0.0.1 erreichbar, für eine andere Maschine bitte ihren Namen nehmen, etwa $APPLICATION_EXAMPLE_ADDRESS."
+      fail "$shown: Eine IPv6-Adresse nimmt die Rückfrage nicht. Auf dieser Maschine ist $APPLICATION_NAME unter localhost oder 127.0.0.1 erreichbar, für eine andere Maschine bitte ihren Namen nehmen, etwa $APPLICATION_EXAMPLE_ADDRESS."
       ;;
-    \[*) fail "\"$wanted\" nennt keine Maschine." ;;
+    \[*) fail "$shown nennt keine Maschine." ;;
     *:*) host=${host_and_port%%:*} port=${host_and_port#*:} given=yes ;;
     *) host=$host_and_port port='' given='' ;;
   esac
   case "$host" in
-    '') fail "\"$wanted\" nennt keine Maschine." ;;
+    '') fail "$shown nennt keine Maschine." ;;
   esac
   # The name the way a browser writes it in the origin: in small letters and
   # only with what a name in the network holds. A name with umlauts goes in
@@ -377,10 +395,10 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
       host=$(printf '%s' "$host" | tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz')
       case "$host" in
         *.)
-          fail "\"$wanted\" hat einen Punkt am Ende des Namens. Ein Browser schickt ihn nur mit, wenn er auch in der Adresszeile steht, und die Anwendung startet mit ihm nicht. Bitte ohne den Punkt."
+          fail "$shown hat einen Punkt am Ende des Namens. Ein Browser schickt ihn nur mit, wenn er auch in der Adresszeile steht, und die Anwendung startet mit ihm nicht. Bitte ohne den Punkt."
           ;;
         *[!a-z0-9._-]* | .* | *..*)
-          fail "\"$wanted\" nennt die Maschine nicht so, wie ein Browser sie schreibt. Erlaubt sind Buchstaben, Ziffern, Punkt, Bindestrich und Unterstrich, ein Name mit Umlauten in seiner Form mit xn--."
+          fail "$shown nennt die Maschine nicht so, wie ein Browser sie schreibt. Erlaubt sind Buchstaben, Ziffern, Punkt, Bindestrich und Unterstrich, ein Name mit Umlauten in seiner Form mit xn--."
           ;;
       esac
       # A browser reads a name whose last part is a number, decimal or 0x and
@@ -402,7 +420,7 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
       esac
       if [ -n "$numeric" ] &&
         ! printf '%s\n' "$host" | grep -Eq '^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$'; then
-        fail "\"$wanted\" ist keine IPv4-Adresse in der Form, die ein Browser schreibt, etwa 192.0.2.10."
+        fail "$shown ist keine IPv4-Adresse in der Form, die ein Browser schreibt, etwa 192.0.2.10."
       fi
       ;;
   esac
@@ -413,11 +431,11 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
     yes)
       digits=$(printf '%s' "$port" | sed 's/^0*\(.\)/\1/')
       case "$port" in
-        '' | *[!0-9]*) fail "\"$wanted\" hat nach dem Namen der Maschine keinen Port aus Ziffern zwischen 1 und 65535." ;;
+        '' | *[!0-9]*) fail "$shown hat nach dem Namen der Maschine keinen Port aus Ziffern zwischen 1 und 65535." ;;
       esac
       browser_opens "$digits" || case $? in
-        1) fail "\"$wanted\": Port $digits öffnen Browser nicht, sie sperren ihn. Bitte einen anderen Port nehmen." ;;
-        *) fail "\"$wanted\" hat nach dem Namen der Maschine keinen Port aus Ziffern zwischen 1 und 65535." ;;
+        1) fail "$shown: Port $digits öffnen Browser nicht, sie sperren ihn. Bitte einen anderen Port nehmen." ;;
+        *) fail "$shown hat nach dem Namen der Maschine keinen Port aus Ziffern zwischen 1 und 65535." ;;
       esac
       case "$scheme:$digits" in
         http:80 | https:443) wanted="$scheme://$host" ;;
