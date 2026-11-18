@@ -1326,8 +1326,14 @@ for does in vanish link pipe dir folder; do
   mkdir "$work/late-$does/late"
   tar --extract --file "$work/late-$does/storage-late.tar" --directory "$work/late-$does/late"
   odd_in_late=$(find "$work/late-$does/late" ! -type d ! -type f)
-  if [ -n "$odd_in_late" ] ||
-    grep -r -q 'GEHEIMNIS DES CONTAINERS' "$work/late-$does/late" ||
+  # grep says 1 for no match; a 2, a file it could not read, fails the case.
+  secret_found=0
+  grep -r -q 'GEHEIMNIS DES CONTAINERS' "$work/late-$does/late" || secret_found=$?
+  if [ "$secret_found" -gt 1 ]; then
+    echo "FEHLER: bei $does ließ sich der zweite Teil nicht lesen"
+    exit 1
+  fi
+  if [ -n "$odd_in_late" ] || [ "$secret_found" -eq 0 ] ||
     [ -e "$work/late-$does/late/$(stored "$late_hash" | sed "s|^$STORAGE_PATH/||")" ]; then
     echo "FEHLER: bei $does steht etwas Fremdes oder die veränderte Datei im zweiten Teil"
     exit 1
@@ -1343,11 +1349,11 @@ check 'Dateispeicher: verschwunden, Link, Pipe, Ordner oder Ordner als Link zwis
 printf 'halb' > "$STORAGE_PATH/liegengeblieben.part"
 TAR_MISSES="./$(hash_of 'weg')" backed_up 'eine Datei, die während tar verschwand, beendete die Sicherung'
 unpacked first
-if tar --list --file "$work/first/storage.tar" | grep -q 'liegengeblieben.part'; then
+first_part_names=$(tar --list --file "$work/first/storage.tar")
+if printf '%s\n' "$first_part_names" | grep -q 'liegengeblieben.part'; then
   echo 'FEHLER: ein Schreibvorgang, der noch lief, steht im ersten Teil'
   exit 1
 fi
-tar --list --file "$work/first/storage.tar" > /dev/null
 rm -f "$STORAGE_PATH/liegengeblieben.part"
 TAR_MISSES=/nirgends refused_at 'ein anderer Fehler von tar ließ die Sicherung durch'
 check 'Dateispeicher vor der Datenbank: ohne .part, eine verschwundene Datei geduldet, jeder andere Fehler nicht'
