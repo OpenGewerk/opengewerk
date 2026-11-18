@@ -167,7 +167,7 @@ check 'Schrägstrich am Ende: weggenommen'
 
 # 9b. The port of the scheme is taken off as well, another port stays.
 for pair in 'http://localhost:80 http://localhost' 'https://opengewerk.example.org:443 https://opengewerk.example.org' \
-  'http://[::1]:80 http://[::1]' 'http://localhost:8080 http://localhost:8080' 'http://localhost:080 http://localhost' \
+  'http://localhost:8080 http://localhost:8080' 'http://localhost:080 http://localhost' \
   'https://opengewerk.example.org:0443 https://opengewerk.example.org' 'http://localhost:08080 http://localhost:8080' \
   'https://opengewerk.example.org:8443 https://opengewerk.example.org:8443'; do
   given=${pair% *}
@@ -188,7 +188,7 @@ for address in https://:443 http://:8080 'http://[]:80' 'https://[::1'; do
   printf '%s' "$out" | grep -q 'nennt keine Maschine'
 done
 for address in http://localhost:65536 https://opengewerk.example.org:65536 http://localhost:80:80 \
-  https://opengewerk.example.org:999999 'http://[::1]:x' 'https://[::1]:8443]' 'https://[::1]x'; do
+  https://opengewerk.example.org:999999; do
   rm -f "$work/.env"
   if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
     printf 'FEHLER: %s lief durch\n' "$address"
@@ -204,13 +204,14 @@ if out=$(OPENGEWERK_ADDRESS=http://opengewerk.example.org:65536 sh "$work/setup.
   exit 1
 fi
 printf '%s' "$out" | grep -q 'beginnt mit https://'
-for address in 'https://[2001:0db8::1]:443' 'https://[2001:db8::1]' 'http://[fe80::1]:8080'; do
+for address in 'https://[2001:0db8::1]:443' 'https://[2001:db8::1]' 'http://[fe80::1]:8080' 'http://[::1]' \
+  'http://[::1]:23700' 'http://[::1]:x' 'https://[::1]:8443]' 'https://[::1]x' 'http://[::1]:1@example.org:80'; do
   rm -f "$work/.env"
   if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
     printf 'FEHLER: %s lief durch\n' "$address"
     exit 1
   fi
-  printf '%s' "$out" | grep -q 'Von den IPv6-Adressen nimmt die Rückfrage nur \[::1\]'
+  printf '%s' "$out" | grep -q 'Eine IPv6-Adresse nimmt die Rückfrage nicht'
 done
 # The name as a browser writes it: in small letters, and nothing a browser
 # would write differently.
@@ -252,7 +253,7 @@ check 'Port des Schemas: weggenommen, führende Nullen weg, ein anderer bleibt, 
 # three names of this machine, with and without a port, are taken.
 for address in http://opengewerk.example.org http://192.168.1.20:23700 \
   http://localhost.example.org http://localhost:x@example.org http://127.0.0.1: \
-  http://localhost:1@example.org:8080 http://localhost:abc:23700 'http://[::1]:1@example.org:80'; do
+  http://localhost:1@example.org:8080 http://localhost:abc:23700; do
   rm -f "$work/.env"
   if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
     printf 'FEHLER: %s lief durch\n' "$address"
@@ -263,12 +264,12 @@ for address in http://opengewerk.example.org http://192.168.1.20:23700 \
     *) printf '%s' "$out" | grep -q 'beginnt mit https://' ;;
   esac
 done
-for address in http://localhost http://localhost:23700 http://127.0.0.1 http://[::1] http://[::1]:23700; do
+for address in http://localhost http://localhost:23700 http://127.0.0.1 http://127.0.0.1:23700; do
   rm -f "$work/.env"
   OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null > /dev/null 2>&1
   grep -qxF "TRUSTED_ORIGINS=$address" "$work/.env"
 done
-check 'http:// nur für diese Maschine: andere Adressen abgelehnt, localhost, 127.0.0.1 und [::1] angenommen'
+check 'http:// nur für diese Maschine: andere Adressen abgelehnt, localhost und 127.0.0.1 angenommen'
 
 # 9c. The port of the address offered is the one Docker Compose takes: from
 # the environment first, else from the last line of the .env that sets it,
@@ -303,8 +304,16 @@ printf 'PROBE_PORT=1\nPROBE_PORT=24567\n' > "$work/port.env"
 # loop ends instead of hanging.
 printf 'BASE_PORT=24567\nPROBE_PORT=${BASE_PORT}\n' > "$work/port.env"
 [ "$(compose_value PROBE_PORT "$work/port.env")" = 24567 ]
+# A line below the one that names it is not there yet when Compose reads it.
 printf 'PROBE_PORT=$BASE_PORT\nBASE_PORT="24568"\n' > "$work/port.env"
-[ "$(compose_value PROBE_PORT "$work/port.env")" = 24568 ]
+[ -z "$(compose_value PROBE_PORT "$work/port.env")" ]
+printf 'BASE_PORT=24567\nPROBE_PORT=${BASE_PORT}\nBASE_PORT=24568\n' > "$work/port.env"
+[ "$(compose_value PROBE_PORT "$work/port.env")" = 24567 ]
+# In single quotes, and from the environment, nothing is filled in.
+printf "BASE_PORT=24567\nPROBE_PORT='\${BASE_PORT}'\n" > "$work/port.env"
+[ "$(compose_value PROBE_PORT "$work/port.env")" = '${BASE_PORT}' ]
+printf 'BASE_PORT=24567\n' > "$work/port.env"
+[ "$(PROBE_PORT='${BASE_PORT}' compose_value PROBE_PORT "$work/port.env")" = '${BASE_PORT}' ]
 printf 'PROBE_PORT=${MISSING:-24569}\n' > "$work/port.env"
 [ "$(compose_value PROBE_PORT "$work/port.env")" = 24569 ]
 printf 'PROBE_PORT=${MISSING-24570}\n' > "$work/port.env"
@@ -313,11 +322,12 @@ printf 'EMPTY=\nPROBE_PORT=${EMPTY:-24571}\n' > "$work/port.env"
 [ "$(compose_value PROBE_PORT "$work/port.env")" = 24571 ]
 printf 'EMPTY=\nPROBE_PORT=${EMPTY-24572}\n' > "$work/port.env"
 [ -z "$(compose_value PROBE_PORT "$work/port.env")" ]
-printf 'PROBE_PORT=${LOOP_A}\nLOOP_A=${LOOP_B}\nLOOP_B=${LOOP_A}\n' > "$work/port.env"
-case "$(compose_value PROBE_PORT "$work/port.env")" in
-  '${LOOP_'*) ;;
-  *) echo 'FEHLER: eine Schleife von Variablen ergab einen Wert'; exit 1 ;;
-esac
+# Variables that name each other: each sees only the lines above it, so the
+# chain ends empty, as with Compose, and never runs in a circle.
+printf 'LOOP_A=${LOOP_B}\nLOOP_B=${LOOP_A}\nPROBE_PORT=${LOOP_B}\n' > "$work/port.env"
+[ -z "$(compose_value PROBE_PORT "$work/port.env")" ]
+printf 'LOOP_B=24573\nLOOP_A=${LOOP_B}\nLOOP_B=${LOOP_A}\nPROBE_PORT=${LOOP_B}\n' > "$work/port.env"
+[ "$(compose_value PROBE_PORT "$work/port.env")" = 24573 ]
 check 'Port aus der .env: so gelesen wie von Docker Compose'
 
 # 10. Another application runs the same script against its own folder

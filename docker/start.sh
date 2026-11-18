@@ -82,8 +82,8 @@ if [ -z "${DOCKER_HOST:-}" ] && [ -z "${DOCKER_CONTEXT:-}" ]; then
   fi
 fi
 
-# The version of the engine, held against the minimum. Asked here and once
-# more right before the first container starts: a context whose endpoint was
+# The version of the engine, held against the minimum. Asked here and again
+# right before each step that starts containers: a context whose endpoint was
 # changed meanwhile, under the same name, is caught there.
 engine_new_enough() {
 docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null) ||
@@ -238,6 +238,7 @@ SQL
 unlock_after_restore ||
   fail 'Nach dem Zurückspielen ließ sich der Anwendung die Anmeldung nicht zurückgeben, der Grund steht darüber.'
 
+engine_new_enough
 say "$APPLICATION_NAME startet."
 compose up -d --wait --wait-timeout 300 ||
   fail "$APPLICATION_NAME ist nicht gestartet. Warum, zeigt: docker compose -f docker/compose.yaml logs app"

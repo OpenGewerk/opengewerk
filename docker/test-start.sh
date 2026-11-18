@@ -34,12 +34,13 @@ printf '%s|%s\n' "$seen" "$*" >> "$CALLS"
 case "$*" in
   *' exec -T app '*) printf '%s' "${SETUP_NEEDED-false}" ;;
   "version --format {{.Server.Version}}")
-    # DOCKER_SERVER_LATER answers every question after the first one, as an
-    # engine swapped meanwhile behind the same context would.
-    if [ -n "${DOCKER_SERVER_LATER:-}" ] && [ -f "$CALLS.version" ]; then
-      printf '%s\n' "$DOCKER_SERVER_LATER"
+    # DOCKER_SERVERS answers the questions in turn, the last one for every
+    # question after, as an engine swapped meanwhile behind the same context
+    # would; else DOCKER_SERVER answers all of them.
+    if [ -n "${DOCKER_SERVERS:-}" ]; then
+      echo asked >> "$CALLS.version"
+      printf '%s\n' "$DOCKER_SERVERS" | awk -v n="$(wc -l < "$CALLS.version")" '{ print (n <= NF ? $n : $NF) }'
     else
-      : > "$CALLS.version"
       printf '%s\n' "${DOCKER_SERVER-28.3.3}"
     fi
     ;;
@@ -60,7 +61,7 @@ PATH="$work/bin:$PATH"
 export CALLS PATH
 # Which engine start.sh talks to is what case 13 checks; nothing of the
 # machine this runs on comes in.
-unset DOCKER_CONTEXT DOCKER_HOST CONTEXT_FAILS CONTEXT_IN_USE DOCKER_SERVER DOCKER_SERVER_LATER WATCHED SETUP_NEEDED
+unset DOCKER_CONTEXT DOCKER_HOST CONTEXT_FAILS CONTEXT_IN_USE DOCKER_SERVER DOCKER_SERVERS WATCHED SETUP_NEEDED
 
 check() {
   printf 'check: %s\n' "$1"
@@ -322,13 +323,26 @@ for engine in 28.3.3 28.4.0 29.0.0 28.10.1 '29.4.2+dfsg1' 28.3.3+ds1 29.0.0-rc.1
 done
 check 'Docker ab 28.3.3 startet'
 
+# Every question for the version of the engine, three in a run that starts
+# (at the beginning, before the migrations and before the start), was asked
+# with $1 in the watched variable, and no other.
+every_version_question_in() {
+  all_questions=$(grep -c '|version --format {{.Server.Version}}$' "$CALLS" || true)
+  these=$(grep -c "^$1|version --format {{.Server.Version}}\$" "$CALLS" || true)
+  [ "$all_questions" -eq 3 ] && [ "$these" -eq 3 ] || {
+    printf 'FEHLER: %s von %s Fragen nach der Engine liefen mit "%s"\n' "$these" "$all_questions" "$1"
+    cat "$CALLS"
+    exit 1
+  }
+}
+
 # 13. The engine checked is the one compose talks to (#985): the context in use
 # when start.sh began holds for every call after, and one set beforehand, or
 # DOCKER_HOST, is left as it is.
 : > "$CALLS"
 WATCHED=DOCKER_CONTEXT CONTEXT_IN_USE=nachbar OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
   sh "$work/docker/start.sh" < /dev/null > /dev/null 2>&1
-grep -q '^nachbar|version --format {{.Server.Version}}$' "$CALLS" &&
+every_version_question_in nachbar &&
   grep -q '^nachbar|compose -f .*compose.yaml up -d --wait' "$CALLS" || {
   echo 'FEHLER: Prüfung und compose liefen nicht im selben, festgehaltenen Kontext'
   cat "$CALLS"
@@ -337,7 +351,7 @@ grep -q '^nachbar|version --format {{.Server.Version}}$' "$CALLS" &&
 : > "$CALLS"
 DOCKER_CONTEXT=eigener WATCHED=DOCKER_CONTEXT CONTEXT_IN_USE=nachbar OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
   sh "$work/docker/start.sh" < /dev/null > /dev/null 2>&1
-grep -q '^eigener|version --format {{.Server.Version}}$' "$CALLS"
+every_version_question_in eigener
 grep -q '^eigener|compose -f .*compose.yaml up -d --wait' "$CALLS"
 : > "$CALLS"
 DOCKER_HOST=tcp://127.0.0.1:2375 WATCHED=DOCKER_CONTEXT CONTEXT_IN_USE=nachbar OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
@@ -346,7 +360,7 @@ grep -q '^|compose -f .*compose.yaml up -d --wait' "$CALLS"
 : > "$CALLS"
 DOCKER_HOST=tcp://127.0.0.1:2375 WATCHED=DOCKER_HOST CONTEXT_IN_USE=nachbar OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
   sh "$work/docker/start.sh" < /dev/null > /dev/null 2>&1
-grep -q '^tcp://127.0.0.1:2375|version --format {{.Server.Version}}$' "$CALLS"
+every_version_question_in tcp://127.0.0.1:2375
 grep -q '^tcp://127.0.0.1:2375|compose -f .*compose.yaml up -d --wait' "$CALLS"
 : > "$CALLS"
 if out=$(CONTEXT_IN_USE='' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null 2>&1); then
@@ -368,19 +382,31 @@ absent 'compose -f'
 test ! -f "$work/docker/.env"
 check 'Docker: Prüfung und Start im selben Kontext, ein gesetzter Kontext oder DOCKER_HOST bleibt, ohne Kontext kein Start'
 
-# 14. An engine that changed behind the same context between the first
-# check and the first container is asked again: no container starts.
+# 14. An engine that changed behind the same context between the checks is
+# asked again before each step that starts containers: too old before the
+# migrations, nothing starts; too old only before the start, the migrations
+# ran and the application does not start.
 : > "$CALLS"
 rm -f "$CALLS.version"
-if out=$(DOCKER_SERVER=28.3.3 DOCKER_SERVER_LATER=27.5.1 OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
+if out=$(DOCKER_SERVERS='28.3.3 27.5.1' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
   sh "$work/docker/start.sh" < /dev/null 2>&1); then
-  echo 'FEHLER: eine Engine, die zwischendurch zu alt wurde, startete Container'
+  echo 'FEHLER: eine Engine, die vor den Migrationen zu alt wurde, startete Container'
   exit 1
 fi
 printf '%s' "$out" | grep -q 'Docker meldet die Fassung "27.5.1"'
 absent 'run --rm migrate'
 absent 'up -d'
+: > "$CALLS"
 rm -f "$CALLS.version"
-check 'Docker: vor dem ersten Container wird die Engine noch einmal gefragt'
+if out=$(DOCKER_SERVERS='28.3.3 28.3.3 27.5.1' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
+  sh "$work/docker/start.sh" < /dev/null 2>&1); then
+  echo 'FEHLER: eine Engine, die vor dem Start zu alt wurde, startete die Anwendung'
+  exit 1
+fi
+printf '%s' "$out" | grep -q 'Docker meldet die Fassung "27.5.1"'
+grep -q 'run --rm migrate$' "$CALLS"
+absent 'up -d'
+rm -f "$CALLS.version"
+check 'Docker: vor jedem Schritt, der Container startet, wird die Engine noch einmal gefragt'
 
 echo 'Startskript: alles in Ordnung.'
