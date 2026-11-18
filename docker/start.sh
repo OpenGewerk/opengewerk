@@ -87,6 +87,9 @@ docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null) ||
 
 docker_too_old=$(printf '%s\n' "$docker_version" | awk -F. -v minimum="$minimum_docker" '
   { original = $0 }
+  # The whole of it first: three numbers, and after the third at most what a
+  # distribution or a pre-release adds behind a sign. 28.3.3.dev is none.
+  original !~ /^[0-9]+\.[0-9]+\.[0-9]+([-+~][0-9A-Za-z.+~-]*)?$/ { print "yes"; exit }
   function number(field) { return field ~ /^[0-9]+$/ ? field + 0 : -1 }
   {
     split(minimum, least, ".")

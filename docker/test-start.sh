@@ -286,7 +286,7 @@ check 'Paket mit Digest ohne cosign: sagt, wie man von Hand prüft'
 # 12. The version of the engine (#985): below 28.3.3, or one that cannot be
 # read as numbers, stops the start before anything is pulled, built or set
 # up; 28.3.3 and newer, a suffix of a distribution included, starts.
-for engine in 27.5.1 28.3.2 28.2.0 dev 28.4.dev 28.3.3-rc.1 '28.3.3~rc1' '' 28garbage.4.0 28.4x.0 '28.3.3x'; do
+for engine in 27.5.1 28.3.2 28.2.0 dev 28.4.dev 28.3.3-rc.1 '28.3.3~rc1' '' 28garbage.4.0 28.4x.0 '28.3.3x' 28.3.3.dev 28.3.3.1 '28.3.3 '; do
   : > "$CALLS"
   rm -f "$work/docker/.env"
   if out=$(DOCKER_SERVER=$engine OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null 2>&1); then
