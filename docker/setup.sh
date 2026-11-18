@@ -258,9 +258,10 @@ only_here_over_http() {
 # compose.yaml requires and Compose finds missing, such as the address being
 # asked for, gets a stand-in for this one question; a value that is set keeps
 # it. Prints the port without leading zeros, or nothing when Compose gives no
-# answer or maps more than one port. A mapping of a port is the only place
-# with a target that is a number, where volumes and secrets have a path, and
-# its published port stands right after it.
+# answer or maps more than one port. Read from the JSON Compose prints, two
+# blanks to a level: only the "ports" of a service count (in "services",
+# three levels in), each mapping there has a target, and its published port
+# stands right after it.
 published_port() {
   missing=$(docker compose -f "$here/compose.yaml" config --format json 2>&1 >/dev/null |
     sed -n 's/.*required variable \([A-Za-z_][A-Za-z0-9_]*\) is missing a value.*/\1=stand-in/p' |
@@ -269,7 +270,11 @@ published_port() {
   # shellcheck disable=SC2086
   config=$(env $missing docker compose -f "$here/compose.yaml" config --format json 2>/dev/null) || return 0
   printf '%s\n' "$config" | awk '
-    /^ *"target": *[0-9]/ { mappings++; right_after = 1; next }
+    /^  "services": \{$/ { services = 1; next }
+    services && /^  \}/ { services = 0; next }
+    services && /^      "ports": \[$/ { ports = 1; next }
+    ports && /^      \]/ { ports = 0; next }
+    ports && /^ *"target": *[0-9]/ { mappings++; right_after = 1; next }
     right_after && /^ *"published": *"[0-9][0-9]*"/ { published = $0 }
     { right_after = 0 }
     END {

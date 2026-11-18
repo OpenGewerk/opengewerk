@@ -387,8 +387,8 @@ FAKE_COUNT="$work/fake/count"
 export FAKE_COUNT
 
 # 9e. The port comes from the mapping and nowhere else: "published" as the
-# name of a variable in the environment of a service is no port, and leading
-# zeros fall away.
+# name of a variable in the environment of a service is no port, a target
+# outside the ports of a service is no mapping, and leading zeros fall away.
 decoy='{
   "services": {
     "app": {
@@ -412,6 +412,35 @@ rm -f "$FAKE_COUNT"
 }
 rm -f "$FAKE_COUNT"
 [ "$(PATH="$work/fake:$PATH" FAKE_PUBLISHED=08080 port_in "$work")" = 8080 ]
+elsewhere='{
+  "services": {
+    "app": {
+      "ports": [
+        {
+          "mode": "ingress",
+          "target": 23700,
+          "published": "8080",
+          "protocol": "tcp"
+        }
+      ],
+      "x-metadata": {
+        "target": 1
+      }
+    }
+  },
+  "x-ports": {
+    "ports": [
+      {
+        "target": 2
+      }
+    ]
+  }
+}'
+rm -f "$FAKE_COUNT"
+[ "$(PATH="$work/fake:$PATH" FAKE_JSON=$elsewhere port_in "$work")" = 8080 ] || {
+  echo 'FEHLER: ein Ziel außerhalb der Ports eines Dienstes zählte als Zuordnung'
+  exit 1
+}
 check 'Port der Adresse: nur aus der Zuordnung, ohne führende Nullen'
 
 # 9f. The question in a terminal: Enter takes the address with the port
@@ -423,6 +452,15 @@ if script -q -e -c true /dev/null > /dev/null 2>&1; then
   printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=08080 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1
   grep -q 'Leer lassen für http://localhost:8080' "$work/asked.txt"
   grep -qxF 'TRUSTED_ORIGINS=http://localhost:8080' "$work/.env"
+  # Every case that ends early leaves the address of the template as it was.
+  untouched() {
+    [ "$(grep -c '^TRUSTED_ORIGINS=' "$work/.env")" = 1 ] &&
+      grep -qxF "$(grep '^TRUSTED_ORIGINS=' "$work/.env.example")" "$work/.env" || {
+      printf 'FEHLER: %s, und in der .env stand danach eine andere Adresse\n' "$1"
+      grep '^TRUSTED_ORIGINS' "$work/.env"
+      exit 1
+    }
+  }
   # The end of the input instead of a line (Ctrl+D) takes nothing.
   rm -f "$work/.env" "$FAKE_COUNT"
   if printf '' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=8080 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
@@ -430,10 +468,7 @@ if script -q -e -c true /dev/null > /dev/null 2>&1; then
     exit 1
   fi
   grep -q 'blieb ohne Antwort' "$work/asked.txt"
-  if grep -q '^TRUSTED_ORIGINS=http://localhost' "$work/.env"; then
-    echo 'FEHLER: das Ende der Eingabe trug eine Adresse ein'
-    exit 1
-  fi
+  untouched 'das Ende der Eingabe'
   rm -f "$work/.env" "$FAKE_COUNT"
   if printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=06000 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
     echo 'FEHLER: ohne Adresse lief die Einrichtung mit Port 06000 durch'
@@ -446,6 +481,7 @@ if script -q -e -c true /dev/null > /dev/null 2>&1; then
     cat "$work/asked.txt"
     exit 1
   fi
+  untouched 'Port 06000'
   # A port that changed while the question waited is not taken.
   rm -f "$work/.env" "$FAKE_COUNT"
   if printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=8080 FAKE_LATER=8081 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
@@ -453,10 +489,7 @@ if script -q -e -c true /dev/null > /dev/null 2>&1; then
     exit 1
   fi
   grep -q 'hat sich während der Frage geändert' "$work/asked.txt"
-  if grep -q '^TRUSTED_ORIGINS=http://localhost' "$work/.env"; then
-    echo 'FEHLER: nach einem geänderten Port stand eine Adresse in der .env'
-    exit 1
-  fi
+  untouched 'ein geänderter Port'
   check 'Rückfrage im Terminal: Enter nimmt den Port von Docker Compose, sonst nichts'
 else
   echo 'Hinweis: ohne "script" bleibt die Rückfrage im Terminal ungeprüft.'
