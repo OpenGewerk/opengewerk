@@ -170,9 +170,11 @@ only_vanished() {
 ^find: \./.*: No such file or directory$
 PATTERNS
 
+	# The status of grep -v itself, not of a pipe into grep -q: that one quits
+	# at the first line, and under pipefail the writer it leaves behind would
+	# turn the answer round as soon as there is more than one.
 	if ! grep -q -f "${work}/vanished.patterns" "$1" ||
-		grep -v -f "${work}/vanished.patterns" -e '^tar: error exit delayed from previous errors$' "$1" |
-		grep -q .; then
+		grep -v -f "${work}/vanished.patterns" -e '^tar: error exit delayed from previous errors$' "$1" >/dev/null; then
 		echo "  Beim Lesen des Dateispeichers kam ein Fehler, die Sicherung bricht ab:" >&2
 		cat "$1" >&2
 		return 1
@@ -229,7 +231,10 @@ if ! (cd "$STORAGE_PATH" && find . -type f -newer "$mark" ! -name '*.part' ! -na
 fi
 # Copied as what it is: a name swapped for a link between find and cp stays
 # a link, which is then taken out, and never brings the file it points at,
-# one of this container perhaps, into the archive.
+# one of this container perhaps, into the archive. A folder on the way may be
+# swapped for a link as well, and cp follows that one; so a copy stays only
+# when its name is the SHA-256 of what it holds, which a file from anywhere
+# else cannot be.
 while IFS= read -r file; do
 	mkdir -p "${work}/storage-late/$(dirname "$file")"
 	cp -P -p "${STORAGE_PATH}/${file}" "${work}/storage-late/${file}" || {
@@ -237,6 +242,11 @@ while IFS= read -r file; do
 		rm -f "${work}/storage-late/${file}"
 		[ ! -e "${STORAGE_PATH}/${file}" ]
 	}
+	copy="${work}/storage-late/${file}"
+	if [ -f "$copy" ] && [ ! -L "$copy" ] &&
+		[ "$(sha256sum <"$copy" | cut -d' ' -f1)" != "$(basename "$file")" ]; then
+		rm -f "$copy"
+	fi
 done <"${work}/storage-late.list"
 find "${work}/storage-late" ! -type f ! -type d -exec rm -f {} \;
 rm -f "${work}/storage-late.list" "${work}/storage-late.err"

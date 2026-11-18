@@ -53,7 +53,8 @@ if [ -n "${DUMP_SWEEPS:-}" ]; then
   rm -f "$STORAGE_PATH/$DUMP_SWEEPS"
 fi
 if [ -n "${DUMP_UPLOADS:-}" ]; then
-  printf '%s' "$DUMP_UPLOADS" > "$STORAGE_PATH/$(printf '%s' "$DUMP_UPLOADS" | sha256sum | cut -d' ' -f1)"
+  mkdir -p "$STORAGE_PATH/${DUMP_UPLOAD_FOLDER:-.}"
+  printf '%s' "$DUMP_UPLOADS" > "$STORAGE_PATH/${DUMP_UPLOAD_FOLDER:-.}/$(printf '%s' "$DUMP_UPLOADS" | sha256sum | cut -d' ' -f1)"
 fi
 # A write still under way, which is no stored file yet.
 if [ -n "${DUMP_WRITES:-}" ]; then
@@ -193,6 +194,19 @@ if [ -n "\${TAR_MISSES:-}" ] && [ "\$1" = --create ]; then
   esac
 fi
 # A tar that stops with an error and says nothing at all.
+# A file that went and more than one other error: a failing disk, say.
+if [ -n "\${TAR_MIXED:-}" ] && [ "\$1" = --create ]; then
+  case " \$* " in
+    *" --directory \$STORAGE_PATH "*)
+      $real_tar "\$@" || exit
+      printf 'tar: ./ab/cd/weg: No such file or directory\\n' >&2
+      for n in 1 2 3 4 5 6 7 8; do
+        printf 'tar: ./ab/cd/x%s: Input/output error\\n' "\$n" >&2
+      done
+      exit 1
+      ;;
+  esac
+fi
 if [ -n "\${TAR_SILENT:-}" ] && [ "\$1" = --create ]; then
   case " \$* " in
     *" --directory \$STORAGE_PATH "*) $real_tar "\$@"; exit 1 ;;
@@ -244,6 +258,7 @@ if [ -n "\${CP_VANISHES:-}" ]; then
   case "\$*" in
     *"\$CP_VANISHES"*)
       rm -f "\$source"
+      : > "\$CP_VANISHED_MARK"
       exec $real_cp "\$@"
       ;;
   esac
@@ -261,6 +276,19 @@ if [ -n "\${CP_PARTIAL:-}" ]; then
 fi
 # A file swapped for a link between find and cp, the way a process that may
 # write to the store could do it: the name now points at CP_SWAP_TARGET.
+# The folder of a file swapped for a link between find and cp: the name is
+# the same, the file behind it one of CP_DIR_TARGET.
+if [ -n "\${CP_DIR_SWAPS:-}" ]; then
+  case "\$*" in
+    *"\$CP_DIR_SWAPS"*)
+      folder=\$(dirname "\$source")
+      printf 'GEHEIMNIS DES CONTAINERS' > "\$CP_DIR_TARGET/\$(basename "\$source")"
+      mv "\$folder" "\$folder.moved"
+      ln -s "\$CP_DIR_TARGET" "\$folder"
+      exec $real_cp "\$@"
+      ;;
+  esac
+fi
 if [ -n "\${CP_SWAPS:-}" ]; then
   case "\$*" in
     *"\$CP_SWAPS"*)
@@ -1056,10 +1084,15 @@ check 'Dateispeicher um die Datenbank: genommene und neue Datei im Archiv und na
 # second part comes to it, does not end the backup of the night.
 gone_text='umbenannt, bevor cp kam'
 gone_hash=$(printf '%s' "$gone_text" | sha256sum | cut -d' ' -f1)
-POSTGRES_DB=opengewerk DUMP_UPLOADS="$gone_text" CP_VANISHES="$gone_hash" \
+rm -f "$work/cp-vanished"
+POSTGRES_DB=opengewerk DUMP_UPLOADS="$gone_text" CP_VANISHES="$gone_hash" CP_VANISHED_MARK="$work/cp-vanished" \
   sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
   echo 'FEHLER: eine Datei, die zwischen find und cp verschwand, beendete die Sicherung'
   cat "$work/out"
+  exit 1
+}
+test -f "$work/cp-vanished" || {
+  echo 'FEHLER: die Datei verschwand nicht, der Fall wurde nicht geprüft'
   exit 1
 }
 check 'Dateispeicher um die Datenbank: eine Datei, die gerade verschwindet, beendet die Sicherung nicht'
@@ -1078,7 +1111,8 @@ first=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
 rm -rf "$work/first"
 mkdir "$work/first"
 tar --extract --gzip --file "$work/backups/$first" --directory "$work/first"
-if tar --list --file "$work/first/storage.tar" | grep -q 'liegengeblieben.part'; then
+first_list=$(tar --list --file "$work/first/storage.tar")
+if printf '%s\n' "$first_list" | grep -q 'liegengeblieben.part'; then
   echo 'FEHLER: ein Schreibvorgang, der noch lief, steht im ersten Teil'
   exit 1
 fi
@@ -1137,6 +1171,30 @@ fi
 rm -f "$STORAGE_PATH/$swap_hash"
 check 'Dateispeicher: ein untergeschobener Link bringt weder sich noch sein Ziel ins Archiv'
 
+# The same with the folder of the file swapped for a link: what cp then finds
+# behind the name is no file of the store and stays out.
+mkdir -p "$work/outside"
+folder_text='Ordner gleich ein Link'
+folder_hash=$(printf '%s' "$folder_text" | sha256sum | cut -d' ' -f1)
+POSTGRES_DB=opengewerk DUMP_UPLOADS="$folder_text" DUMP_UPLOAD_FOLDER=ef/gh CP_DIR_SWAPS="$folder_hash" \
+  CP_DIR_TARGET="$work/outside" sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
+  echo 'FEHLER: ein untergeschobener Ordner beendete die Sicherung'
+  cat "$work/out"
+  exit 1
+}
+rm -rf "$STORAGE_PATH/ef"
+redirected=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
+rm -rf "$work/redirected"
+mkdir "$work/redirected"
+tar --extract --gzip --file "$work/backups/$redirected" --directory "$work/redirected"
+mkdir "$work/redirected/late"
+tar --extract --file "$work/redirected/storage-late.tar" --directory "$work/redirected/late"
+if grep -r -q 'GEHEIMNIS DES CONTAINERS' "$work/redirected/late"; then
+  echo 'FEHLER: eine Datei hinter einem untergeschobenen Ordner steht im zweiten Teil'
+  exit 1
+fi
+check 'Dateispeicher: auch ein untergeschobener Ordner bringt keine fremde Datei ins Archiv'
+
 # A copy that failed halfway while its source went leaves nothing behind
 # that is packed.
 partial_text='halb kopiert'
@@ -1164,5 +1222,12 @@ if POSTGRES_DB=opengewerk TAR_SILENT=1 sh "$work/bin/backup.sh" > "$work/out" 2>
   exit 1
 fi
 check 'Dateispeicher: ein Fehler von tar ohne Meldung beendet die Sicherung'
+
+# A file that went beside several other errors: the others end the backup.
+if POSTGRES_DB=opengewerk TAR_MIXED=1 sh "$work/bin/backup.sh" > "$work/out" 2>&1; then
+  echo 'FEHLER: andere Fehler neben einer verschwundenen Datei ließen die Sicherung durch'
+  exit 1
+fi
+check 'Dateispeicher: mehrere andere Fehler neben einer verschwundenen Datei beenden die Sicherung'
 
 echo 'Sicherungen: alles in Ordnung.'

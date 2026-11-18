@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto'
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs'
@@ -180,6 +182,28 @@ describe('the sweep of the file store', () => {
     expect(readdirSync(dirname(path))).toEqual([basename(path)])
   })
 
+  // Windows makes links only with rights a test does not have; the CI runs it.
+  it.skipIf(process.platform === 'win32')(
+    'dates a link at a name of the store and not what it points at (#991)',
+    async () => {
+      const bytes = new TextEncoder().encode('Lieferschein')
+      const path = join(root, ...pathParts(bytes))
+      const outside = join(root, '..', `outside-${basename(root)}`)
+      const week = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+
+      writeFileSync(outside, bytes)
+      utimesSync(outside, week, week)
+      mkdirSync(dirname(path), { recursive: true })
+      symlinkSync(outside, path)
+
+      await store.put(bytes)
+
+      expect(Math.abs(statSync(outside).mtime.getTime() - week.getTime())).toBeLessThan(2000)
+      expect(lstatSync(path).isSymbolicLink()).toBe(true)
+      rmSync(outside, { force: true })
+    },
+  )
+
   it('dates a file in place once more when the first try fails (#991)', async () => {
     // The clock stands in for a passing error of the file system: it fails
     // at the second reading, the first after the file is in place.
@@ -318,6 +342,69 @@ describe('the sweep of the file store', () => {
     expect((await store.get(first)).byteLength).toBeGreaterThan(0)
     await expect(store.get(second)).rejects.toThrow(StoredFileMissingError)
     expect(everything()).toHaveLength(1)
+  })
+
+  it('reports the first error when a later batch gets no answer (#991)', async () => {
+    // More than a batch of old files: in the first batch one is put again
+    // and cannot be dated, the second batch gets no answer at all.
+    const week = new Date(Date.now() - 7 * day)
+
+    for (let index = 0; index <= 1000; index += 1) {
+      const sha256 = createHash('sha256').update(`Altlast ${index}`).digest('hex')
+      const folder = join(root, sha256.slice(0, 2), sha256.slice(2, 4))
+
+      mkdirSync(folder, { recursive: true })
+      writeFileSync(join(folder, sha256), `Altlast ${index}`)
+      utimesSync(join(folder, sha256), week, week)
+    }
+
+    let batches = 0
+    const failing = new FileStore(root, () => {
+      throw new Error('EIO')
+    })
+
+    await expect(
+      failing.sweep(async (names) => {
+        batches += 1
+
+        if (batches > 1) {
+          throw new Error('held down')
+        }
+
+        const [first = ''] = names
+
+        utimesSync(join(root, first.slice(0, 2), first.slice(2, 4), first), new Date(), new Date())
+
+        return new Set<string>()
+      }, before()),
+    ).rejects.toThrow('EIO')
+
+    expect(batches).toBe(2)
+    expect(everything()).toHaveLength(2)
+  })
+
+  it('leaves a file another put placed while it lay aside (#991)', async () => {
+    const sha256 = await oldFile('Inzwischen neu')
+    const path = join(root, sha256.slice(0, 2), sha256.slice(2, 4), sha256)
+    let other: number | undefined
+    // While the file lies aside and is dated, a put places the same bytes.
+    const sweeping = new FileStore(root, () => {
+      if (other === undefined) {
+        writeFileSync(path, 'Inzwischen neu')
+        other = statSync(path).ino
+      }
+
+      return new Date()
+    })
+
+    await sweeping.sweep(async () => {
+      await store.put(new TextEncoder().encode('Inzwischen neu'))
+
+      return new Set<string>()
+    }, before())
+
+    expect(statSync(path).ino).toBe(other)
+    expect(everything()).toEqual([`${sha256.slice(0, 2)}/${sha256.slice(2, 4)}/${sha256}`])
   })
 
   it('takes out what an unfinished write or sweep left behind once it is old', async () => {

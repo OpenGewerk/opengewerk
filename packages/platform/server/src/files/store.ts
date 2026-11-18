@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import {
   access,
   link,
+  lutimes,
   mkdir,
   open,
   readdir,
@@ -183,7 +184,9 @@ export class FileStore implements FileStorage {
       try {
         const now = this.clock()
 
-        await utimes(path, now, now)
+        // The name itself and never what it might point at: a link at a name
+        // of the store is none of its files.
+        await lutimes(path, now, now)
 
         return
       } catch (error) {
@@ -254,7 +257,16 @@ export class FileStore implements FileStorage {
 
     for (let start = 0; start < old.length; start += 1000) {
       const batch = old.slice(start, start + 1000)
-      const kept = await held(batch)
+      let kept: ReadonlySet<string>
+
+      // Without an answer nothing of this batch goes, and the others are
+      // still asked; an error from before stays the one reported.
+      try {
+        kept = await held(batch)
+      } catch (error) {
+        failure ??= { error }
+        continue
+      }
 
       for (const name of batch) {
         if (kept.has(name)) {
@@ -309,7 +321,10 @@ export class FileStore implements FileStorage {
         undated = { error }
       }
 
-      await rename(aside, path)
+      // Back under its name unless a put placed the same bytes there meanwhile;
+      // then that file stays, newer as it is, and this one goes.
+      await linkUnlessThere(aside, path)
+      await rm(aside, { force: true })
 
       if (undated !== undefined) {
         throw undated.error
