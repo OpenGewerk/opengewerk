@@ -466,13 +466,39 @@ chown -R "$storage_owner" "$STORAGE_PATH"
 # "probably" where this answers "yes".
 echo "  Dateispeicher wird gegen die Hashes geprüft."
 
+# Only what FileStore writes stays in the store: a file two folders deep, each
+# folder two hex characters, its name a SHA-256 in hex. Anything else, another
+# name, another depth, a name with a line break, or what a link swapped in
+# while the backup read the store left under a name of its own, is no stored
+# file. It goes now, before the check below reads names line by line; find
+# hands rm each path whole.
+hex='[0-9a-f]'
+stored_name=''
+hex_count=0
+while [ "$hex_count" -lt 64 ]; do
+	stored_name="${stored_name}${hex}"
+	hex_count=$((hex_count + 1))
+done
+stored_path="./${hex}${hex}/${hex}${hex}/${stored_name}"
+foreign=$(cd "$STORAGE_PATH" && find . -type f ! -path "$stored_path" | wc -l | tr -d ' ')
+(cd "$STORAGE_PATH" && find . -type f ! -path "$stored_path" -exec rm -f {} \;)
+left_foreign=$(cd "$STORAGE_PATH" && find . -type f ! -path "$stored_path")
+if [ -n "$left_foreign" ]; then
+	echo "Im Dateispeicher blieb eine Datei, die keine Datei des Speichers ist;" >&2
+	echo "es wird nichts weiter zurückgespielt." >&2
+	exit 1
+fi
+if [ "$foreign" -gt 0 ]; then
+	echo "    ${foreign} Datei(en) ohne Namen des Speichers entfernt."
+fi
+
 # Built as a checklist and handed to sha256sum, rather than compared in a
 # loop. A loop behind a pipe runs in a subshell, so its counters are gone by
 # the time anybody looks at them, and the check would report nothing while
 # appearing to work. sha256sum -c carries the verdict in its exit code.
 : >"${work}/expected.sha256"
 
-find "$STORAGE_PATH" -type f | while read -r file; do
+find "$STORAGE_PATH" -type f | while IFS= read -r file; do
 	name=$(basename "$file")
 
 	# Only files whose name is a SHA-256 in hex. Anything else is not a stored
@@ -504,7 +530,7 @@ if [ "$expected_files" -gt 0 ]; then
 		# A file rm cannot take is written down and the loop goes on with the
 		# next one; set -e would end it at the first otherwise.
 		: >"${work}/not-removed"
-		sha256sum -c "${work}/expected.sha256" 2>/dev/null | sed -n 's/: FAILED.*$//p' |
+		sha256sum -c "${work}/expected.sha256" 2>/dev/null | sed -n 's/: FAILED$//p' |
 			while IFS= read -r wrong; do
 				rm -f "$wrong" || printf '%s\n' "$wrong" >>"${work}/not-removed"
 			done

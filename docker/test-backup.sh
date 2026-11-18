@@ -38,6 +38,7 @@ real_date=$(command -v date)
 real_cp=$(command -v cp)
 real_find=$(command -v find)
 real_rm=$(command -v rm)
+real_timeout=$(command -v timeout)
 
 mkdir -p "$work/bin" "$work/storage" "$work/backups" "$work/status" "$work/tmp"
 cp "$source_dir/backup/backup.sh" "$source_dir/backup/restore.sh" \
@@ -385,6 +386,13 @@ fi
 exec $real_rm "\$@"
 FAKE
 chmod +x "$work/bin/rm"
+# timeout as it is; TIMEOUT_CALLS takes down what it is asked to limit.
+cat > "$work/bin/timeout" <<FAKE
+#!/bin/sh
+[ -z "\${TIMEOUT_CALLS:-}" ] || printf '%s\n' "\$*" >> "\$TIMEOUT_CALLS"
+exec $real_timeout "\$@"
+FAKE
+chmod +x "$work/bin/timeout"
 chmod +x "$work/bin/pg_dump" "$work/bin/psql" "$work/bin/pg_restore" "$work/bin/age" "$work/bin/tar" \
   "$work/bin/date" "$work/bin/cp" "$work/bin/find" "$work/bin/sha256sum" "$work/bin/grep"
 
@@ -1518,6 +1526,20 @@ test "$(ls "$work/backups" | wc -l)" = "$archives_before" || {
 rm -rf "$(dirname "$(stored "$(hash_of "$waits_text")")")"
 check 'Dateispeicher: ein tar, das wartet, endet mit den zwölf Stunden'
 
+# Both tars over the store run with that limit, the first part's and the
+# second's.
+limited_text='mit Grenze'
+rm -f "$work/timeout-calls"
+DUMP_UPLOADS="$limited_text" TIMEOUT_CALLS="$work/timeout-calls" backed_up 'eine Sicherung mit Zeitgrenze scheiterte'
+grep -q -- "tar --create --file .*/storage.tar --directory $STORAGE_PATH " "$work/timeout-calls" &&
+  grep -q -- "tar --create --no-recursion .* -T " "$work/timeout-calls" || {
+  echo 'FEHLER: nicht jedes tar über den Speicher lief mit der Zeitgrenze'
+  cat "$work/timeout-calls"
+  exit 1
+}
+rm -rf "$(dirname "$(stored "$(hash_of "$limited_text")")")"
+check 'Dateispeicher: beide tar über den Speicher laufen mit der Zeitgrenze'
+
 # A file in an archive whose content is not what its name says, as a link
 # swapped in while tar read the store would leave it: the restore stops and
 # does not leave the file in the store, where the application would read it.
@@ -1531,6 +1553,14 @@ tar --extract --file "$work/forged/storage.tar" --directory "$work/forged/first"
 forged_name=$(stored "$(hash_of 'echt')" | sed "s|^$STORAGE_PATH/||")
 test -f "$work/forged/first/$forged_name"
 printf 'GEHEIMNIS DES CONTAINERS' > "$work/forged/first/$forged_name"
+# And beside it what a swapped link can leave under a name that is no hash, a
+# folder whose name holds what sha256sum says, and a name with a line break.
+forged_dir=$(dirname "$forged_name")
+printf 'GEHEIMNIS DES CONTAINERS' > "$work/forged/first/$forged_dir/umgebung"
+mkdir -p "$work/forged/first/q: FAILEDzz"
+printf 'GEHEIMNIS DES CONTAINERS' > "$work/forged/first/q: FAILEDzz/$(hash_of 'anders')"
+printf 'GEHEIMNIS DES CONTAINERS' > "$work/forged/first/$forged_dir/zeile
+umbruch"
 tar --create --file "$work/forged/storage.tar" --directory "$work/forged/first" .
 rm -rf "$work/forged/first"
 sum=$(sha256sum "$work/forged/storage.tar" | cut -d' ' -f1)
@@ -1546,6 +1576,12 @@ if [ -e "$STORAGE_PATH/$forged_name" ] || grep -q 'ließ sich entfernen' "$work/
   echo 'FEHLER: die untergeschobene Datei blieb nach dem Rückspielen im Speicher'
   exit 1
 fi
+left_secret=$(grep -rl 'GEHEIMNIS DES CONTAINERS' "$STORAGE_PATH" || true)
+if [ -n "$left_secret" ]; then
+  printf 'FEHLER: fremder Inhalt blieb nach dem Rückspielen im Speicher: %s\n' "$left_secret"
+  exit 1
+fi
+grep -q 'ohne Namen des Speichers entfernt' "$work/out"
 # One rm cannot take is named, and the restore still stops.
 if POSTGRES_DB=opengewerk RM_FAILS_ON="$(hash_of 'echt')" sh "$work/bin/restore.sh" --skip-origin-check "$forged" \
   > "$work/out" 2>&1; then
