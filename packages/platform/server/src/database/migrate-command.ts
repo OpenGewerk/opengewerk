@@ -4,6 +4,7 @@ import {
   parseConnectionString,
   refusePlaceholder,
   type ServerApplication,
+  trustedOrigins,
 } from '../configuration.js'
 import {
   defaultMigrationHistory,
@@ -51,6 +52,14 @@ async function migrateFrom(
     'MIGRATION_DATABASE_URL',
     application.exampleDatabase,
   )
+
+  // The addresses the application refuses at its start are refused here,
+  // before the first change: else an update would migrate the schema and then
+  // not start, with no easy way back to the version before (#984). Only when
+  // the step hands the variable on; one that does not migrates as before.
+  if (environment['TRUSTED_ORIGINS'] !== undefined) {
+    trustedOrigins(application, environment)
+  }
 
   await runMigrations(connectionString, folder, history)
 

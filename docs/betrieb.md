@@ -278,6 +278,23 @@ nicht die Adresse, unter der die Anwendung erreichbar ist, scheitern im Browser
 die Anmeldung und jede Änderung, während `curl` durchgeht. Wer die Oberfläche mit
 Vite gegen einen eigenen Server entwickelt, trägt die Adresse von Vite dazu ein,
 etwa `http://localhost:5173`; die Vorschau kennt sie von selbst.
+Mit `http://` startet die Anwendung nur, wenn die Adresse auf dieser Maschine
+liegt, also `localhost`, `127.0.0.1` oder `[::1]` (#984). Für jede andere
+verlangt sie `https://`, sonst gingen Einrichtungscode und Passwörter lesbar
+durchs Netz. Ebenso wenig nimmt sie einen Namen mit einem Punkt am Ende
+(`https://betrieb.example.`), denn ein Browser schickt den Punkt nur mit, wenn
+er auch in der Adresszeile steht, und keinen Port, den Browser sperren.
+Steht in einer bestehenden Installation eine solche Adresse, erfasst ab dann
+niemand mehr etwas, und jedes Gerät sendet unter der alten Adresse, was bei ihm
+wartet, bis keines mehr "Änderungen warten auf dem Gerät" zeigt: Der Browser
+hält den Postausgang je Adresse, unter der neuen sieht er ihn nicht mehr. Die
+alte Adresse bleibt erreichbar, bis das geschafft ist. Danach kommt, wo nötig,
+TLS an den Reverse Proxy, Vorlagen liegen unter `docker/proxy/`, dann die neue
+Adresse in `TRUSTED_ORIGINS`, und erst danach wird wieder erfasst. Wer das vor
+dem Update vergisst, dem bricht schon die Migration ab, vor der ersten Änderung,
+und die Datenbank bleibt auf dem Stand davor; nach dem Ändern der Adresse läuft
+`sh docker/start.sh` durch. Steht `TRUSTED_ORIGINS` auch in der Umgebung der Shell,
+gilt dieser Wert vor der `.env` und ist dort ebenso zu ändern.
 
 Der erste Eintrag aus `TRUSTED_ORIGINS` steht auch auf jedem QR-Etikett einer
 Anlage (#308), gedruckt, für die zehn Jahre, die ein Aufkleber im Zählerschrank
@@ -749,7 +766,11 @@ Nach einem Erfolg startet die Instanz im Ordner der Installation mit
 Datenbank davor, hatte diese keine Migrationen, oder war die Anwendung schon vor
 dem Lauf ausgesperrt, bleibt sie auch nach dem Erfolg ausgesperrt, mit einem Vermerk an ihrer Rolle: Sie
 liefe sonst womöglich auf einem Schema, das älter ist als sie. `start.sh` bringt die Datenbank mit den Migrationen auf den Stand der
-Fassung, gibt der Anwendung dann die Anmeldung zurück und startet sie.
+Fassung, gibt der Anwendung dann die Anmeldung zurück und startet sie. Das tut
+es nur mit Docker Engine ab 28.3.3: Auf einer älteren bleibt die Anwendung
+ausgesperrt, bis Docker aktualisiert ist, die Daten sind dann aber schon
+zurückgespielt. Der Container des Rückspielens sieht die Engine nicht, deshalb
+sagt `restore.sh` das vor dem Aussperren.
 
 Der Lauf sperrt die Anwendung für seine Dauer aus, spielt beide Teile zurück
 und prüft danach drei Dinge, von denen jedes eine Frage beantwortet, die die
@@ -979,8 +1000,8 @@ Organisation.
 
 Vor die Anwendung gehört ein Reverse Proxy mit TLS. Sie lauscht absichtlich nur
 auf `127.0.0.1`: eine Anwendung, die Rechnungen führt, steht nicht
-unverschlüsselt im Netz. Das hält Docker erst ab Engine 28.3.3: Davor erreichen
-Rechner im selben Netzsegment auch einen Port auf `127.0.0.1`, und 28.2.0 bis
+unverschlüsselt im Netz. Das hält Docker erst ab Engine 28.3.3: Vor 28.0.0
+erreichen Rechner im selben Netzsegment auch einen Port auf `127.0.0.1`, und 28.2.0 bis
 28.3.2 öffnen ihn nach einem Neuladen von firewalld wieder (CVE-2025-54388). Zwei Vorlagen liegen unter `docker/proxy/`, auch im
 Installationspaket: [`apache.conf`](../docker/proxy/apache.conf) für Apache 2.4
 und [`nginx.conf`](../docker/proxy/nginx.conf) für nginx. Jede ist für sich

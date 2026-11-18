@@ -39,19 +39,67 @@ compose() {
   docker compose -f "$here/compose.yaml" "$@"
 }
 
-# The port on this machine: from the .env once there is one, else the default
-# Docker Compose falls back to, read the way setup.sh reads it.
+# The port Docker Compose publishes the application on, asked from Compose
+# itself: the .env, the environment and the variables of Compose count the way
+# they count at the start, and nothing here reads the .env for it. A value
+# compose.yaml requires and Compose finds missing, such as the address being
+# asked for, gets a stand-in for this one question; a value that is set keeps
+# it. Prints the port without leading zeros, or nothing when Compose gives no
+# answer or maps more than one port, or the one it maps is no TCP port. Read
+# from the JSON Compose prints, two blanks to a level: only the "ports" of a
+# service count (in "services", three levels in), each mapping there is one
+# object with a target, its published port and its protocol.
+published_port() {
+  # Names and values have no blanks, so each stand-in is one word. Asked
+  # again with the stand-ins found so far, since a Compose may name only one
+  # missing value at a time; ten rounds at most.
+  missing=''
+  rounds=0
+  while [ "$rounds" -lt 10 ]; do
+    # shellcheck disable=SC2086
+    found=$(env $missing docker compose -f "$here/compose.yaml" config --format json 2>&1 >/dev/null |
+      sed -n 's/.*required variable \([A-Za-z_][A-Za-z0-9_]*\) is missing a value.*/\1=stand-in/p' |
+      sort -u | tr '\n' ' ')
+    [ -n "$found" ] || break
+    missing="$missing$found"
+    rounds=$((rounds + 1))
+  done
+  # shellcheck disable=SC2086
+  config=$(env $missing docker compose -f "$here/compose.yaml" config --format json 2>/dev/null) || return 0
+  printf '%s\n' "$config" | awk '
+    /^  "services": \{$/ { services = 1; next }
+    services && /^  \}/ { services = 0; next }
+    services && /^      "ports": \[$/ { ports = 1; next }
+    ports && /^      \]/ { ports = 0; next }
+    ports && /^        \{$/ { entry = 1; target = 0; value = ""; protocol = "tcp"; next }
+    entry && /^ *"target": *[0-9]/ { target = 1; next }
+    entry && /^ *"published": *"[0-9][0-9]*"/ { value = $0; next }
+    entry && /^ *"protocol": *"/ { protocol = $0; sub(/^ *"protocol": *"/, "", protocol); sub(/".*$/, "", protocol); next }
+    entry && /^        \}/ {
+      entry = 0
+      if (target) { mappings++; if (protocol == "tcp") published = value }
+      next
+    }
+    END {
+      if (mappings == 1 && published != "") {
+        sub(/^ *"published": *"/, "", published)
+        sub(/".*$/, "", published)
+        # Without leading zeros; 0 is no fixed port, Docker picks one then.
+        sub(/^0*/, "", published)
+        if (published != "") print published
+      }
+    }'
+}
+
+# The port on this machine, the one Docker Compose publishes, asked the way
+# setup.sh asks. Without an answer the test stops with a sentence instead of
+# testing some other port.
 port() {
-  found=''
-
-  if [ -f "$here/.env" ]; then
-    found=$(grep "^${APPLICATION_PREFIX}_PORT=" "$here/.env" | head -n 1 | cut -d= -f2-)
-  fi
-
+  found=$(published_port)
   if [ -z "$found" ]; then
-    found=$(sed -n "s/.*\${${APPLICATION_PREFIX}_PORT:-\([0-9]*\)}.*/\1/p" "$here/compose.yaml" | head -n 1)
+    echo "FEHLER: Docker Compose nennt für $here/compose.yaml keinen einzelnen veröffentlichten Port (docker compose config)." >&2
+    exit 1
   fi
-
   printf '%s\n' "$found"
 }
 

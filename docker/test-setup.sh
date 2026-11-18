@@ -14,6 +14,15 @@ trap 'rm -rf "$work"' EXIT
 
 cp "$source_dir/setup.sh" "$source_dir/.env.example" "$source_dir/application.env" "$work/"
 
+# What the environment of whoever runs the test holds for the address, the
+# port, Compose and the stand-in for docker below stays out; the cases that
+# need one set it themselves.
+unset OPENGEWERK_ADDRESS OPENGEWERK_PORT TRUSTED_ORIGINS FAKE_JSON FAKE_PUBLISHED FAKE_LATER FAKE_OPERATOR FAKE_ENV \
+  FAKE_MISSING FAKE_COUNT
+for compose_variable in $(printenv | sed -n 's/^\(COMPOSE_[A-Za-z0-9_]*\)=.*/\1/p'); do
+  unset "$compose_variable"
+done
+
 check() {
   printf 'check: %s\n' "$1"
 }
@@ -164,6 +173,415 @@ rm "$work/.env"
 OPENGEWERK_ADDRESS=https://opengewerk.example.org/ sh "$work/setup.sh" < /dev/null > /dev/null 2>&1
 grep -q '^TRUSTED_ORIGINS=https://opengewerk.example.org$' "$work/.env"
 check 'Schrägstrich am Ende: weggenommen'
+
+# 9b. The port of the scheme is taken off as well, another port stays.
+for pair in 'http://localhost:80 http://localhost' 'https://opengewerk.example.org:443 https://opengewerk.example.org' \
+  'http://localhost:8080 http://localhost:8080' 'http://localhost:080 http://localhost' \
+  'https://opengewerk.example.org:0443 https://opengewerk.example.org' 'http://localhost:08080 http://localhost:8080' \
+  'https://opengewerk.example.org:8443 https://opengewerk.example.org:8443'; do
+  given=${pair% *}
+  kept=${pair#* }
+  rm "$work/.env"
+  OPENGEWERK_ADDRESS=$given sh "$work/setup.sh" < /dev/null > /dev/null 2>&1
+  grep -qxF "TRUSTED_ORIGINS=$kept" "$work/.env" || {
+    printf 'FEHLER: aus %s wurde nicht %s\n' "$given" "$kept"
+    exit 1
+  }
+done
+for address in https://:443 http://:8080 'http://[]:80' 'https://[::1'; do
+  rm -f "$work/.env"
+  if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
+    printf 'FEHLER: %s lief durch\n' "$address"
+    exit 1
+  fi
+  printf '%s' "$out" | grep -q 'nennt keine Maschine'
+done
+for address in http://localhost:65536 https://opengewerk.example.org:65536 http://localhost:80:80 \
+  https://opengewerk.example.org:999999 http://localhost:0 https://opengewerk.example.org:00000; do
+  rm -f "$work/.env"
+  if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
+    printf 'FEHLER: %s lief durch\n' "$address"
+    exit 1
+  fi
+  printf '%s' "$out" | grep -q 'keinen Port aus Ziffern zwischen 1 und 65535'
+done
+# A port browsers do not open, in any spelling.
+for address in https://opengewerk.example.org:6000 http://localhost:10080 http://127.0.0.1:0021; do
+  rm -f "$work/.env"
+  if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
+    printf 'FEHLER: %s lief durch\n' "$address"
+    exit 1
+  fi
+  printf '%s' "$out" | grep -q 'öffnen Browser nicht'
+done
+# http to another machine with a port out of range: the first word is about
+# https, so that one run says what to change.
+rm -f "$work/.env"
+if out=$(OPENGEWERK_ADDRESS=http://opengewerk.example.org:65536 sh "$work/setup.sh" < /dev/null 2>&1); then
+  echo 'FEHLER: http mit einem Port über 65535 lief durch'
+  exit 1
+fi
+printf '%s' "$out" | grep -q 'beginnt mit https://'
+for address in 'https://[2001:0db8::1]:443' 'https://[2001:db8::1]' 'http://[fe80::1]:8080' 'http://[::1]' \
+  'http://[::1]:23700' 'http://[::1]:x' 'https://[::1]:8443]' 'https://[::1]x'; do
+  rm -f "$work/.env"
+  if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
+    printf 'FEHLER: %s lief durch\n' "$address"
+    exit 1
+  fi
+  printf '%s' "$out" | grep -q 'Eine IPv6-Adresse nimmt die Rückfrage nicht'
+done
+# The name as a browser writes it: in small letters, and nothing a browser
+# would write differently.
+for pair in 'https://OpenGewerk.Example.org https://opengewerk.example.org' \
+  'http://LOCALHOST:23700 http://localhost:23700' 'https://192.0.2.10 https://192.0.2.10' \
+  'https://werk_statt.example.org:8443 https://werk_statt.example.org:8443' \
+  'https://werkstatt.0xlab https://werkstatt.0xlab'; do
+  given=${pair% *}
+  kept=${pair#* }
+  rm -f "$work/.env"
+  OPENGEWERK_ADDRESS=$given sh "$work/setup.sh" < /dev/null > /dev/null 2>&1
+  grep -qxF "TRUSTED_ORIGINS=$kept" "$work/.env" || {
+    printf 'FEHLER: aus %s wurde nicht %s\n' "$given" "$kept"
+    exit 1
+  }
+done
+for pair in 'https://bücher.example.org|nicht so, wie ein Browser' 'https://user@example.org|Angaben vor dem Namen' \
+  'http://[::1]:1@example.org:80|Angaben vor dem Namen' 'http://localhost:x@example.org|Angaben vor dem Namen' \
+  'http://localhost:1@example.org:8080|Angaben vor dem Namen' \
+  'https://example.org.|Punkt am Ende des Namens' 'http://127.0.0.1.:23700|Punkt am Ende des Namens' \
+  'https://example.org?x|nicht so, wie ein Browser' \
+  'https://example.org#x|nicht so, wie ein Browser' 'https://a..example.org|nicht so, wie ein Browser' \
+  'https://127.1|keine IPv4-Adresse' 'https://0x7f.0.0.1|keine IPv4-Adresse' \
+  'https://192.0.2.010|keine IPv4-Adresse' 'https://256.1.1.1|keine IPv4-Adresse' 'https://example.0x10|keine IPv4-Adresse'; do
+  address=${pair%%|*}
+  said=${pair#*|}
+  rm -f "$work/.env"
+  if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
+    printf 'FEHLER: %s lief durch\n' "$address"
+    exit 1
+  fi
+  printf '%s' "$out" | grep -q "$said" || {
+    printf 'FEHLER: %s ohne den Satz "%s"\n' "$address" "$said"
+    printf '%s\n' "$out"
+    exit 1
+  }
+done
+check 'Port des Schemas: weggenommen, führende Nullen weg, ein anderer bleibt, keiner über 65535 und keiner doppelt'
+
+# 9a. Plain http only on this machine (#984): every other host is turned
+# away with a sentence that asks for https, a port that is no number with one
+# that asks for digits; localhost and 127.0.0.1, with and without a port, are
+# taken. [::1] is refused with the IPv6 addresses under 9b.
+for address in http://opengewerk.example.org http://192.168.1.20:23700 \
+  http://localhost.example.org http://127.0.0.1: http://localhost:abc:23700; do
+  rm -f "$work/.env"
+  if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
+    printf 'FEHLER: %s lief durch\n' "$address"
+    exit 1
+  fi
+  case "$address" in
+    *:abc:* | *:) printf '%s' "$out" | grep -q 'keinen Port aus Ziffern' ;;
+    *) printf '%s' "$out" | grep -q 'beginnt mit https://' ;;
+  esac
+done
+for address in http://localhost http://localhost:23700 http://127.0.0.1 http://127.0.0.1:23700; do
+  rm -f "$work/.env"
+  OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null > /dev/null 2>&1
+  grep -qxF "TRUSTED_ORIGINS=$address" "$work/.env"
+done
+check 'http:// nur für diese Maschine: andere Adressen abgelehnt, localhost und 127.0.0.1 angenommen'
+
+# 9c. An address with a user and a password before the name is turned away,
+# and no sentence repeats either of them.
+for address in 'https://benutzer:geheim@example.org:8080' 'https://benutzer:geheim@example.org' \
+  'https://geheim@example.org' 'http://benutzer:geheim@localhost:8080'; do
+  rm -f "$work/.env"
+  if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
+    printf 'FEHLER: %s lief durch\n' "$address"
+    exit 1
+  fi
+  if printf '%s' "$out" | grep -q 'geheim\|benutzer'; then
+    printf 'FEHLER: die Meldung zu einer Adresse mit Passwort wiederholte es: %s\n' "$out"
+    exit 1
+  fi
+done
+check 'Adresse mit Benutzer und Passwort: abgelehnt, ohne sie zu wiederholen'
+
+# 9d. The port of the address offered is the one Docker Compose publishes,
+# asked from Compose itself: the exported environment before the .env, a
+# value over several lines and COMPOSE_DISABLE_ENV_FILE as Compose takes
+# them. A value compose.yaml requires gets a stand-in only where Compose finds
+# it missing, so a port given through one still counts. A second mapping of
+# any kind offers none. Needs Docker Compose, which the CI has.
+sed -n '/^published_port() {/,/^}/p' "$work/setup.sh" > "$work/published-port.sh"
+test -s "$work/published-port.sh"
+port_in() {
+  (
+    here=$1
+    . "$work/published-port.sh"
+    published_port
+  )
+}
+if docker compose version > /dev/null 2>&1; then
+  mkdir "$work/ports"
+  cp "$source_dir/compose.yaml" "$work/ports/compose.yaml"
+  printf 'OPENGEWERK_PORT=24567\n' > "$work/ports/.env"
+  [ "$(port_in "$work/ports")" = 24567 ]
+  [ "$(OPENGEWERK_PORT=24999 port_in "$work/ports")" = 24999 ]
+  [ "$(COMPOSE_DISABLE_ENV_FILE=1 port_in "$work/ports")" = 23700 ]
+  printf "OPENGEWERK_PORT=24567\nNOTE='erste Zeile\nOPENGEWERK_PORT=24999\nletzte'\n" > "$work/ports/.env"
+  [ "$(port_in "$work/ports")" = 24567 ]
+  rm "$work/ports/.env"
+  [ "$(port_in "$work/ports")" = 23700 ]
+  # The migrate step gets the address as Compose hands it on, so that it
+  # refuses one the application would before the first change (#984).
+  grep -o '\${[A-Za-z_][A-Za-z0-9_]*:?' "$source_dir/compose.yaml" | sed -e 's/^\${//' -e 's/:?$/=set/' |
+    sort -u > "$work/ports/.env"
+  TRUSTED_ORIGINS=set docker compose -f "$work/ports/compose.yaml" config --format json |
+    awk '/^    "migrate": \{$/ { migrate = 1; next } migrate && /^    \}/ { migrate = 0 }
+      migrate && /^ *"TRUSTED_ORIGINS": "set"/ { found = 1 } END { exit !found }' || {
+    echo 'FEHLER: der Schritt migrate bekommt TRUSTED_ORIGINS nicht'
+    exit 1
+  }
+  rm "$work/ports/.env"
+  # A port given through a value compose.yaml requires: the value set counts,
+  # and without it none is offered.
+  sed 's/\${OPENGEWERK_PORT:-23700}/${OPENGEWERK_PORT:?Port fehlt}/' "$source_dir/compose.yaml" > "$work/ports/compose.yaml"
+  [ "$(grep -c 'OPENGEWERK_PORT:?Port fehlt' "$work/ports/compose.yaml")" = 1 ]
+  printf 'OPENGEWERK_PORT=24567\n' > "$work/ports/.env"
+  [ "$(port_in "$work/ports")" = 24567 ] || {
+    echo 'FEHLER: ein gesetzter Port, den compose.yaml verlangt, bekam einen Platzhalter'
+    exit 1
+  }
+  rm "$work/ports/.env"
+  [ -z "$(port_in "$work/ports")" ]
+  # A second mapping of any kind, a range or one without a port of its own
+  # included: no port is offered.
+  for second in '127.0.0.1:23701:23701' '3000' '9000-9005:9000-9005'; do
+    awk -v second="$second" '{ print } index($0, "${OPENGEWERK_PORT:-23700}:23700") { print "      - '\''" second "'\''" }' \
+      "$source_dir/compose.yaml" > "$work/ports/compose.yaml"
+    [ "$(grep -cF "      - '$second'" "$work/ports/compose.yaml")" = 1 ]
+    # Compose takes the file, with every value it requires set: the empty
+    # answer below is about the second mapping, not about a broken file.
+    grep -o '\${[A-Za-z_][A-Za-z0-9_]*:?' "$source_dir/compose.yaml" | sed -e 's/^\${//' -e 's/:?$/=set/' |
+      sort -u > "$work/ports/.env"
+    docker compose -f "$work/ports/compose.yaml" config -q || {
+      printf 'FEHLER: Docker Compose nahm compose.yaml mit der zweiten Zuordnung %s nicht an\n' "$second"
+      exit 1
+    }
+    [ -z "$(port_in "$work/ports")" ] || {
+      printf 'FEHLER: mit der zweiten Zuordnung %s wurde ein Port angeboten\n' "$second"
+      exit 1
+    }
+    rm "$work/ports/.env"
+  done
+  rm -r "$work/ports"
+  check 'Port der Adresse: so, wie Docker Compose ihn veröffentlicht'
+else
+  echo 'Hinweis: ohne Docker Compose bleibt der Port der vorgeschlagenen Adresse ungeprüft.'
+fi
+
+# A stand-in for docker, for answers Compose would not give here. It prints
+# nothing but the first of FAKE_MISSING that is not set, as missing, when there
+# is one. Else FAKE_JSON when that is set, else one mapping with the port FAKE_PUBLISHED,
+# and from its third question on FAKE_LATER, when that is set; from then on it
+# also writes FAKE_OPERATOR into the address of the .env FAKE_ENV, as someone
+# would while the question waits. FAKE_COUNT holds how often it was asked.
+mkdir "$work/fake"
+cat > "$work/fake/docker" <<'FAKE'
+#!/bin/sh
+case "$*" in
+  'compose -f '*' config --format json') ;;
+  *) exit 1 ;;
+esac
+asked=$(cat "$FAKE_COUNT" 2>/dev/null || echo 0)
+asked=$((asked + 1))
+echo "$asked" > "$FAKE_COUNT"
+# One missing value at a time, as an older Compose names them.
+for name in ${FAKE_MISSING:-}; do
+  if ! printenv "$name" > /dev/null; then
+    echo "error while interpolating: required variable $name is missing a value: $name fehlt" >&2
+    exit 1
+  fi
+done
+if [ -n "${FAKE_JSON:-}" ]; then
+  printf '%s\n' "$FAKE_JSON"
+  exit 0
+fi
+port=$FAKE_PUBLISHED
+if [ -n "${FAKE_LATER:-}" ] && [ "$asked" -gt 2 ]; then
+  port=$FAKE_LATER
+fi
+if [ -n "${FAKE_OPERATOR:-}" ] && [ "$asked" -gt 2 ]; then
+  sed "s|^TRUSTED_ORIGINS=.*|TRUSTED_ORIGINS=$FAKE_OPERATOR|" "$FAKE_ENV" > "$FAKE_ENV.new"
+  mv "$FAKE_ENV.new" "$FAKE_ENV"
+fi
+printf '{\n  "services": {\n    "app": {\n      "ports": [\n        {\n          "target": 23700,\n          "published": "%s"\n        }\n      ]\n    }\n  }\n}\n' "$port"
+FAKE
+chmod +x "$work/fake/docker"
+FAKE_COUNT="$work/fake/count"
+export FAKE_COUNT
+
+# 9e. The port comes from the mapping and nowhere else: "published" as the
+# name of a variable in the environment of a service is no port, a target
+# outside the ports of a service is no mapping, leading zeros fall away, and 0
+# is no fixed port.
+decoy='{
+  "services": {
+    "app": {
+      "environment": {
+        "published": "8088"
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "target": 23700,
+          "protocol": "tcp"
+        }
+      ]
+    }
+  }
+}'
+rm -f "$FAKE_COUNT"
+[ -z "$(PATH="$work/fake:$PATH" FAKE_JSON=$decoy port_in "$work")" ] || {
+  echo 'FEHLER: eine Variable namens published galt als Port'
+  exit 1
+}
+rm -f "$FAKE_COUNT"
+[ "$(PATH="$work/fake:$PATH" FAKE_PUBLISHED=08080 port_in "$work")" = 8080 ]
+# A mapping over UDP alone gives no port for a browser.
+udp='{
+  "services": {
+    "app": {
+      "ports": [
+        {
+          "mode": "ingress",
+          "host_ip": "127.0.0.1",
+          "target": 23700,
+          "published": "8080",
+          "protocol": "udp"
+        }
+      ]
+    }
+  }
+}'
+rm -f "$FAKE_COUNT"
+[ -z "$(PATH="$work/fake:$PATH" FAKE_JSON=$udp port_in "$work")" ] || {
+  echo 'FEHLER: eine Zuordnung über UDP gab einen Port'
+  exit 1
+}
+tcp=$(printf '%s\n' "$udp" | sed 's/"udp"/"tcp"/')
+rm -f "$FAKE_COUNT"
+[ "$(PATH="$work/fake:$PATH" FAKE_JSON=$tcp port_in "$work")" = 8080 ]
+# Port 0, in any spelling, is no fixed port: Docker picks one then.
+for nothing in 0 000; do
+  rm -f "$FAKE_COUNT"
+  [ -z "$(PATH="$work/fake:$PATH" FAKE_PUBLISHED=$nothing port_in "$work")" ] || {
+    printf 'FEHLER: der Port %s galt als fester Port\n' "$nothing"
+    exit 1
+  }
+done
+# A Compose that names one missing value at a time is asked until it names
+# none.
+rm -f "$FAKE_COUNT"
+[ "$(PATH="$work/fake:$PATH" FAKE_MISSING='ERSTER_WERT ZWEITER_WERT' FAKE_PUBLISHED=8080 port_in "$work")" = 8080 ] || {
+  echo 'FEHLER: mit zwei fehlenden Werten, einzeln gemeldet, kam kein Port'
+  exit 1
+}
+elsewhere='{
+  "services": {
+    "app": {
+      "ports": [
+        {
+          "mode": "ingress",
+          "target": 23700,
+          "published": "8080",
+          "protocol": "tcp"
+        }
+      ],
+      "x-metadata": {
+        "target": 1
+      }
+    }
+  },
+  "x-ports": {
+    "ports": [
+      {
+        "target": 2
+      }
+    ]
+  }
+}'
+rm -f "$FAKE_COUNT"
+[ "$(PATH="$work/fake:$PATH" FAKE_JSON=$elsewhere port_in "$work")" = 8080 ] || {
+  echo 'FEHLER: ein Ziel außerhalb der Ports eines Dienstes zählte als Zuordnung'
+  exit 1
+}
+check 'Port der Adresse: nur aus der Zuordnung, ohne führende Nullen'
+
+# 9f. The question in a terminal: Enter takes the address with the port
+# Docker Compose publishes, a port browsers refuse is not offered at all, the
+# end of the input takes nothing, and neither does a port that changed while
+# the question waited. Needs the script of util-linux, which the CI has.
+if script -q -e -c true /dev/null > /dev/null 2>&1; then
+  rm -f "$work/.env" "$FAKE_COUNT"
+  printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=08080 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1
+  grep -q 'Leer lassen für http://localhost:8080' "$work/asked.txt"
+  grep -qxF 'TRUSTED_ORIGINS=http://localhost:8080' "$work/.env"
+  # Every case that ends early leaves the address of the template as it was.
+  untouched() {
+    [ "$(grep -c '^TRUSTED_ORIGINS=' "$work/.env")" = 1 ] &&
+      grep -qxF "$(grep '^TRUSTED_ORIGINS=' "$work/.env.example")" "$work/.env" || {
+      printf 'FEHLER: %s, und in der .env stand danach eine andere Adresse\n' "$1"
+      grep '^TRUSTED_ORIGINS' "$work/.env"
+      exit 1
+    }
+  }
+  # The end of the input instead of a line (Ctrl+D) takes nothing.
+  rm -f "$work/.env" "$FAKE_COUNT"
+  if printf '' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=8080 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
+    echo 'FEHLER: das Ende der Eingabe nahm die vorgeschlagene Adresse'
+    exit 1
+  fi
+  grep -q 'blieb ohne Antwort' "$work/asked.txt"
+  untouched 'das Ende der Eingabe'
+  rm -f "$work/.env" "$FAKE_COUNT"
+  if printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=06000 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
+    echo 'FEHLER: ohne Adresse lief die Einrichtung mit Port 06000 durch'
+    exit 1
+  fi
+  if grep -q 'Leer lassen\|sperren' "$work/asked.txt" ||
+    ! grep -q 'Unter welcher Adresse' "$work/asked.txt" ||
+    ! grep -q 'fehlt die Adresse' "$work/asked.txt"; then
+    echo 'FEHLER: Port 06000 wurde als Adresse angeboten, oder die Rückfrage endete aus einem anderen Grund'
+    cat "$work/asked.txt"
+    exit 1
+  fi
+  untouched 'Port 06000'
+  # A port that changed while the question waited is not taken.
+  rm -f "$work/.env" "$FAKE_COUNT"
+  if printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=8080 FAKE_LATER=8081 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
+    echo 'FEHLER: ein Port, der sich während der Frage änderte, wurde eingetragen'
+    exit 1
+  fi
+  grep -q 'hat sich während der Frage geändert' "$work/asked.txt"
+  untouched 'ein geänderter Port'
+  # An address someone put into the .env while the question waited stays.
+  rm -f "$work/.env" "$FAKE_COUNT"
+  if printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=8080 FAKE_OPERATOR=https://werkstatt.example.org \
+    FAKE_ENV="$work/.env" script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
+    echo 'FEHLER: die Einrichtung überschrieb eine Adresse, die während der Frage eingetragen wurde'
+    exit 1
+  fi
+  grep -q 'inzwischen eine andere Adresse' "$work/asked.txt"
+  grep -qxF 'TRUSTED_ORIGINS=https://werkstatt.example.org' "$work/.env"
+  [ "$(grep -c '^TRUSTED_ORIGINS=' "$work/.env")" = 1 ]
+  check 'Rückfrage im Terminal: Enter nimmt den Port von Docker Compose, sonst nichts'
+else
+  echo 'Hinweis: ohne "script" bleibt die Rückfrage im Terminal ungeprüft.'
+fi
+rm -r "$work/fake"
 
 # 10. Another application runs the same script against its own folder
 # (opengewerk-haustechnik#14): its name at the start of every line, its prefix

@@ -347,19 +347,47 @@ function sessionSecret(application: ServerApplication, environment: Environment)
   return value
 }
 
+/** The names of this machine, written the way `URL.hostname` gives them. */
+const thisMachine = new Set(['localhost', '127.0.0.1', '[::1]'])
+
+/**
+ * The ports browsers refuse to open, the bad ports of the Fetch standard, 0
+ * among them. An origin with one of them never sends a request. The setup
+ * script holds the same list.
+ */
+const badPorts = new Set([
+  0, 1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102,
+  103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465,
+  512, 513, 514, 515, 526, 530, 531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993,
+  995, 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668,
+  6669, 6679, 6697, 10080,
+])
+
 /**
  * The addresses a browser may send an authenticated request from.
  *
  * Every entry has to be an origin and nothing more: scheme, host, optional
  * port. A path or a trailing slash never matches what a browser puts in the
  * Origin header, so an entry with one would look configured and protect
- * nothing.
+ * nothing. Plain http only for this machine (#984).
  */
-function trustedOrigins(
+export function trustedOrigins(
   application: ServerApplication,
   environment: Environment,
 ): readonly string[] {
   const raw = required(application, environment, 'TRUSTED_ORIGINS')
+
+  // An "@" stands only before the name, for a user and a password, never in
+  // an origin. Such a value is turned away without repeating it, and before
+  // it is split at the commas, which a password can hold as well: the
+  // sentence lands in the log, and the password would with it.
+  if (raw.includes('@')) {
+    throw new ConfigurationError(
+      'TRUSTED_ORIGINS enthält ein "@", also Angaben vor dem Namen wie Benutzer oder ' +
+        `Passwort. Erwartet wird nur die Herkunft, etwa ${application.exampleOrigin}`,
+    )
+  }
+
   const entries = raw
     .split(',')
     .map((entry) => entry.trim())
@@ -388,6 +416,44 @@ function trustedOrigins(
       throw new ConfigurationError(
         `TRUSTED_ORIGINS darf nur Herkunft enthalten, ohne Pfad und ohne Schrägstrich am ` +
           `Ende. Gelesen wurde "${entry}", gemeint ist vermutlich "${parsed.origin}".`,
+      )
+    }
+
+    // Plain http only on this machine (#984): anywhere else the setup code
+    // and every password would cross the network readable. Held here, where
+    // the value arrives the way Docker Compose or anything else handed it on,
+    // and not only where a script reads the .env.
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new ConfigurationError(
+        `TRUSTED_ORIGINS enthält "${entry}". Erwartet wird eine Adresse mit https:// davor, ` +
+          `etwa ${application.exampleOrigin}`,
+      )
+    }
+
+    if (parsed.port !== '' && badPorts.has(Number(parsed.port))) {
+      throw new ConfigurationError(
+        `TRUSTED_ORIGINS enthält "${entry}" mit Port ${parsed.port}, den Browser nicht öffnen. ` +
+          'Gemeint ist eine Adresse mit einem anderen Port.',
+      )
+    }
+
+    // A browser sends the dot at the end of a name only when it stands in the
+    // address bar as well, so such an entry would almost never match. The
+    // setup script turns it away for the same reason.
+    if (parsed.hostname.endsWith('.')) {
+      throw new ConfigurationError(
+        `TRUSTED_ORIGINS enthält "${entry}" mit einem Punkt am Ende des Namens. Ein Browser ` +
+          'schickt ihn nur mit, wenn er auch in der Adresszeile steht; gemeint ist die Adresse ' +
+          'ohne ihn.',
+      )
+    }
+
+    if (parsed.protocol === 'http:' && !thisMachine.has(parsed.hostname)) {
+      throw new ConfigurationError(
+        `TRUSTED_ORIGINS enthält "${entry}". Über http:// gingen Einrichtungscode und ` +
+          'Passwörter lesbar durchs Netz. Die Adresse beginnt mit https://, davor steht ein ' +
+          'Reverse Proxy mit TLS. Nur auf dieser Maschine, mit localhost, 127.0.0.1 oder ' +
+          '[::1], geht http://.',
       )
     }
   }
