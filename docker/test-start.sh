@@ -38,7 +38,10 @@ case "$*" in
     echo 'nur {{.Server.Version}} ist die Fassung der Engine' >&2
     exit 1
     ;;
-  'context show') printf '%s\n' "${CONTEXT_IN_USE-default}" ;;
+  'context show')
+    [ -z "${CONTEXT_FAILS:-}" ] || exit 1
+    printf '%s\n' "${CONTEXT_IN_USE-default}"
+    ;;
 esac
 FAKE
 chmod +x "$work/bin/docker"
@@ -316,19 +319,26 @@ check 'Docker ab 28.3.3 startet'
 : > "$CALLS"
 WATCHED=DOCKER_CONTEXT CONTEXT_IN_USE=nachbar OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
   sh "$work/docker/start.sh" < /dev/null > /dev/null 2>&1
-grep -q '^nachbar|compose -f .*compose.yaml up -d --wait' "$CALLS" || {
-  echo 'FEHLER: compose lief nicht im Kontext, dessen Engine geprüft wurde'
+grep -q '^nachbar|version --format {{.Server.Version}}$' "$CALLS" &&
+  grep -q '^nachbar|compose -f .*compose.yaml up -d --wait' "$CALLS" || {
+  echo 'FEHLER: Prüfung und compose liefen nicht im selben, festgehaltenen Kontext'
   cat "$CALLS"
   exit 1
 }
 : > "$CALLS"
 DOCKER_CONTEXT=eigener WATCHED=DOCKER_CONTEXT CONTEXT_IN_USE=nachbar OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
   sh "$work/docker/start.sh" < /dev/null > /dev/null 2>&1
+grep -q '^eigener|version --format {{.Server.Version}}$' "$CALLS"
 grep -q '^eigener|compose -f .*compose.yaml up -d --wait' "$CALLS"
 : > "$CALLS"
 DOCKER_HOST=tcp://127.0.0.1:2375 WATCHED=DOCKER_CONTEXT CONTEXT_IN_USE=nachbar OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
   sh "$work/docker/start.sh" < /dev/null > /dev/null 2>&1
 grep -q '^|compose -f .*compose.yaml up -d --wait' "$CALLS"
+: > "$CALLS"
+DOCKER_HOST=tcp://127.0.0.1:2375 WATCHED=DOCKER_HOST CONTEXT_IN_USE=nachbar OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
+  sh "$work/docker/start.sh" < /dev/null > /dev/null 2>&1
+grep -q '^tcp://127.0.0.1:2375|version --format {{.Server.Version}}$' "$CALLS"
+grep -q '^tcp://127.0.0.1:2375|compose -f .*compose.yaml up -d --wait' "$CALLS"
 : > "$CALLS"
 if out=$(CONTEXT_IN_USE='' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null 2>&1); then
   echo 'FEHLER: ohne lesbaren Kontext lief der Start durch'
@@ -336,6 +346,17 @@ if out=$(CONTEXT_IN_USE='' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/d
 fi
 printf '%s' "$out" | grep -q 'nennt keinen Kontext'
 absent 'compose -f'
+# A CLI before 23.0 knows no "context show": the version still speaks first.
+: > "$CALLS"
+rm -f "$work/docker/.env"
+if out=$(CONTEXT_FAILS=1 DOCKER_SERVER=20.10.24 OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
+  sh "$work/docker/start.sh" < /dev/null 2>&1); then
+  echo 'FEHLER: eine alte Docker-CLI ohne Kontext lief durch'
+  exit 1
+fi
+printf '%s' "$out" | grep -q 'Docker meldet die Fassung "20.10.24"'
+absent 'compose -f'
+test ! -f "$work/docker/.env"
 check 'Docker: Prüfung und Start im selben Kontext, ein gesetzter Kontext oder DOCKER_HOST bleibt, ohne Kontext kein Start'
 
 echo 'Startskript: alles in Ordnung.'

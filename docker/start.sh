@@ -69,11 +69,17 @@ minimum_docker='28.3.3'
 # The engine checked is the one everything below talks to: the context in use
 # now, fixed for this run, so that a "docker context use" in another shell
 # meanwhile changes nothing. DOCKER_HOST, when set, names the engine already.
+# A CLI before 23.0 knows no "context show"; then the version below still
+# speaks first, and only one that would do stops for want of a context.
+no_context=''
 if [ -z "${DOCKER_HOST:-}" ] && [ -z "${DOCKER_CONTEXT:-}" ]; then
   DOCKER_CONTEXT=$(docker context show 2>/dev/null) || DOCKER_CONTEXT=''
-  [ -n "$DOCKER_CONTEXT" ] ||
-    fail 'Docker nennt keinen Kontext, an dem sich die Engine festhalten ließe. Läuft der Docker-Dienst?'
-  export DOCKER_CONTEXT
+  if [ -n "$DOCKER_CONTEXT" ]; then
+    export DOCKER_CONTEXT
+  else
+    unset DOCKER_CONTEXT
+    no_context=yes
+  fi
 fi
 
 docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null) ||
@@ -106,6 +112,10 @@ docker_too_old=$(printf '%s\n' "$docker_version" | awk -F. -v minimum="$minimum_
 
 if [ "$docker_too_old" != 'no' ]; then
   fail "Docker meldet die Fassung \"$docker_version\", $APPLICATION_NAME braucht Docker Engine ab $minimum_docker. Vor 28.0.0 erreichen Rechner im selben Netz Ports, die nur auf 127.0.0.1 veröffentlicht sind, und 28.2.0 bis 28.3.2 öffnen sie nach einem Neuladen von firewalld wieder (CVE-2025-54388); beides führt am Proxy mit TLS vorbei. Docker aktualisieren: https://docs.docker.com/engine/install/"
+fi
+
+if [ -n "$no_context" ]; then
+  fail 'Docker nennt keinen Kontext, an dem sich die Engine festhalten ließe. Läuft der Docker-Dienst?'
 fi
 
 sh "$scripts/setup.sh"
