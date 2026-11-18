@@ -501,4 +501,26 @@ absent 'run --rm migrate'
 rm -f "$CALLS.engine"
 check 'Docker: dieselbe Engine vom ersten Blick bis zum Start'
 
+# 16. The address start.sh names is the one the instance runs with (#996): the
+# environment before the .env, and in the .env without quotes, comment or
+# carriage return.
+: > "$CALLS"
+out=$(TRUSTED_ORIGINS=https://umgebung.example.org sh "$work/docker/start.sh" < /dev/null 2>&1)
+printf '%s' "$out" | grep -qF 'Im Browser: https://umgebung.example.org' || {
+  echo 'FEHLER: start.sh nannte nicht die Adresse aus der Umgebung'
+  printf '%s\n' "$out"
+  exit 1
+}
+sed 's/^TRUSTED_ORIGINS=.*$/TRUSTED_ORIGINS="https:\/\/werkstatt.example.org,https:\/\/b.example.org" # Werkstatt\r/' \
+  "$work/docker/.env" > "$work/docker/.env.quoted"
+mv "$work/docker/.env.quoted" "$work/docker/.env"
+: > "$CALLS"
+out=$(sh "$work/docker/start.sh" < /dev/null 2>&1)
+printf '%s' "$out" | grep -q 'Im Browser: https://werkstatt.example.org$' || {
+  echo 'FEHLER: start.sh nannte die Adresse aus der .env nicht ohne Anführungszeichen und Kommentar'
+  printf '%s\n' "$out"
+  exit 1
+}
+check 'Adresse im Browser: aus der Umgebung vor der .env, ohne Anführungszeichen und Kommentar'
+
 echo 'Startskript: alles in Ordnung.'

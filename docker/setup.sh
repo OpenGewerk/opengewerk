@@ -127,7 +127,69 @@ fi
 
 chmod 600 "$env_file"
 
+# Every assignment in the .env in the form this script finds the way Docker
+# Compose finds it (#996): NAME=value with the name at the start of the line,
+# and no name twice. Compose takes more, "export", blanks around the =, a
+# value in quotes over several lines, the last of two lines with one name,
+# and in such a form this script would not see the name, or see another line
+# than Compose: an "export SESSION_SECRET=..." got a second line with a new
+# secret below it, and Compose took that one. Such a file stops the run with
+# the number of the line, and with the name where it is one, never with a
+# value, which can be a secret. Blank lines and comments, also after blanks,
+# stay as they are; quotes closed on their line, a comment after the value
+# and a carriage return from Windows are read away where a value is read.
+carriage_return=$(printf '\r')
+line_number=0
+names_seen=' '
+while IFS= read -r line || [ -n "$line" ]; do
+  line_number=$((line_number + 1))
+  line=${line%"$carriage_return"}
+  # Empty, or nothing but blanks.
+  case "$line" in
+    *[!\ \	]*) ;;
+    *) continue ;;
+  esac
+  case "${line#"${line%%[!\ \	]*}"}" in
+    \#*) continue ;;
+  esac
+  case "$line" in
+    *=*) name=${line%%=*} ;;
+    *) fail "docker/.env, Zeile $line_number: keine Zeile der Form NAME=Wert." ;;
+  esac
+  case "$name" in
+    '' | [!A-Za-z_]* | *[!A-Za-z0-9_]*)
+      fail "docker/.env, Zeile $line_number: bitte als NAME=Wert schreiben, ohne export davor und ohne Leerzeichen um das =."
+      ;;
+  esac
+  value=${line#*=}
+  case "$value" in
+    [\ \	]*)
+      fail "docker/.env, Zeile $line_number: bitte als NAME=Wert schreiben, ohne export davor und ohne Leerzeichen um das =."
+      ;;
+  esac
+  # A value in quotes ends on its line: one that goes on would hide the lines
+  # after it from Compose, not from this script.
+  case "$value" in
+    \"*) rest=${value#\"} quote='"' ;;
+    \'*) rest=${value#\'} quote="'" ;;
+    *) rest='' quote='' ;;
+  esac
+  if [ -n "$quote" ]; then
+    case "$rest" in
+      *"$quote"*) ;;
+      *) fail "docker/.env, Zeile $line_number ($name): das Anführungszeichen am Anfang des Werts schließt nicht auf dieser Zeile. Ein Wert über mehrere Zeilen geht hier nicht." ;;
+    esac
+  fi
+  case "$names_seen" in
+    *" $name "*)
+      fail "docker/.env, Zeile $line_number: $name steht ein zweites Mal in der Datei. Docker Compose nimmt die letzte Zeile, dieses Skript die erste; bitte nur eine behalten."
+      ;;
+  esac
+  names_seen="$names_seen$name "
+done < "$env_file"
+
 # A last line without a line end would swallow the first line appended below.
+# Only now, after the checks above, so that a file they stop stays as it was.
 if [ -n "$(tail -c 1 "$env_file")" ]; then
   printf '\n' >> "$env_file"
 fi
@@ -230,25 +292,19 @@ fi
 # early word for the address asked for here; the application holds every
 # entry of TRUSTED_ORIGINS to the same rule when it starts, however the value
 # reached it.
+# $1 is scheme and name, the port is checked on its own below; $2 is the
+# address as it was given, which the sentence quotes.
 only_here_over_http() {
   case "$1" in
     http://*) ;;
     *) return 0 ;;
   esac
 
-  host_and_port=${1#http://}
-
-  case "$host_and_port" in
+  case "${1#http://}" in
     localhost | 127.0.0.1) return 0 ;;
-    localhost:*) port_part=${host_and_port#localhost:} ;;
-    127.0.0.1:*) port_part=${host_and_port#127.0.0.1:} ;;
     *)
-      fail "\"$1\" beginnt mit http://. So gingen Einrichtungscode und Passwörter lesbar durchs Netz. Die Adresse beginnt mit https://, davor steht ein Reverse Proxy mit TLS, Vorlagen dafür liegen in docker/proxy/. Nur auf dieser Maschine, mit localhost oder 127.0.0.1, geht http://."
+      fail "\"$2\" beginnt mit http://. So gingen Einrichtungscode und Passwörter lesbar durchs Netz. Die Adresse beginnt mit https://, davor steht ein Reverse Proxy mit TLS, Vorlagen dafür liegen in docker/proxy/. Nur auf dieser Maschine, mit localhost oder 127.0.0.1, geht http://."
       ;;
-  esac
-
-  case "$port_part" in
-    '' | *[!0-9]*) fail "\"$1\" hat nach dem Namen der Maschine keinen Port aus Ziffern." ;;
   esac
 }
 
@@ -323,10 +379,30 @@ browser_opens() {
   esac
 }
 
-# The address, the one value nothing here can make up.
-address=$(grep '^TRUSTED_ORIGINS=' "$env_file" | head -n 1 | cut -d= -f2-)
+# The value of TRUSTED_ORIGINS in the .env, from its one line there, without
+# a comment after it, quotes or a carriage return from Windows, as Docker
+# Compose reads it; the version in start.sh is read the same way.
+origins_in_env_file() {
+  sed -n 's/^TRUSTED_ORIGINS=//p' "$env_file" | sed 's/[[:space:]]#.*//' | tr -d "\r\"'"
+}
+
+# The address, the one value nothing here can make up, as the instance will
+# run with it: from the environment when it is exported there, which Docker
+# Compose takes before the .env, else from its one line in the .env.
+if printenv TRUSTED_ORIGINS >/dev/null 2>&1; then
+  address=$(printenv TRUSTED_ORIGINS)
+  address_from_environment=yes
+else
+  address=$(origins_in_env_file)
+  address_from_environment=''
+fi
 
 if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
+  # An address written into the .env would not count while the environment
+  # holds another one.
+  if [ -n "$address_from_environment" ]; then
+    fail "TRUSTED_ORIGINS steht in der Umgebung und ist leer oder die Beispieladresse. Die Umgebung geht docker/.env vor, deshalb trägt dieses Skript dort nichts ein. Die Variable bitte mit der Adresse setzen oder aus der Umgebung nehmen."
+  fi
   address_variable="${APPLICATION_PREFIX}_ADDRESS"
   eval "wanted=\${${address_variable}:-}"
 
@@ -373,6 +449,14 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
   # An origin and nothing more: a path or a trailing slash never matches what
   # a browser sends, and the sign in would fail without saying why.
   wanted=${wanted%/}
+
+  # One address, not the list TRUSTED_ORIGINS can hold: a second one is
+  # written into the .env by hand.
+  case "$wanted" in
+    *,*)
+      fail "Die Rückfrage nimmt eine einzige Adresse, keine Liste. Weitere Adressen kommen danach von Hand in docker/.env, durch Komma getrennt."
+      ;;
+  esac
 
   case "$wanted" in
     http://*/* | https://*/*)
@@ -448,7 +532,7 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
   esac
   # Whether http may be, first: it says what else to change, whatever the
   # port is.
-  only_here_over_http "$scheme://$host"
+  only_here_over_http "$scheme://$host" "$wanted"
   case "$given" in
     yes)
       digits=$(printf '%s' "$port" | sed 's/^0*\(.\)/\1/')
@@ -469,7 +553,7 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
 
   # The .env as it is now: an address someone put there while the question
   # waited stays, and nothing is written.
-  now=$(grep '^TRUSTED_ORIGINS=' "$env_file" | head -n 1 | cut -d= -f2-)
+  now=$(origins_in_env_file)
   if [ "$now" != "$address" ]; then
     fail "In docker/.env steht inzwischen eine andere Adresse. Die Einrichtung lässt sie, wie sie ist, und trägt nichts ein."
   fi

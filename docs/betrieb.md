@@ -77,6 +77,14 @@ Zufallswert, sondern ein Schlüssel auf P-256; der Befehl dafür steht in
 Platzhalter aus der Vorlage findet, startet nicht: sie nennt die Variable, nie
 ihren Wert, und verweist auf das Skript.
 
+Jede Zeile der `.env` hat die Form `NAME=Wert`, ohne `export` davor und ohne
+Leerzeichen um das `=`; ein Wert in Anführungszeichen endet auf seiner Zeile,
+und jeder Name steht nur einmal da. Docker Compose nimmt auch anderes an, liest
+es aber anders als die Skripte, die dann eine andere Adresse nennen oder sehen
+würden als die, mit der die Anwendung läuft. `sh docker/start.sh` hält deshalb
+bei einer anderen Form an, nennt die Nummer der Zeile, nie ihren Wert, und
+lässt die Datei, wie sie ist (#996).
+
 **Eingestellt wird in der Oberfläche, nicht in der `.env`.** Briefkopf, Steuern,
 Mailserver und alles, was ein Betrieb sonst festlegt, stehen im Büro. In der
 `.env` bleibt nur, was gebraucht wird, bevor die Oberfläche läuft: die

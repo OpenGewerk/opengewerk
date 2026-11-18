@@ -272,7 +272,15 @@ say "$APPLICATION_NAME startet."
 compose up -d --wait --wait-timeout 300 ||
   fail "$APPLICATION_NAME ist nicht gestartet. Warum, zeigt: docker compose -f docker/compose.yaml logs app"
 
-address=$(grep '^TRUSTED_ORIGINS=' "$here/.env" | head -n 1 | cut -d= -f2- | cut -d, -f1)
+# The address the instance runs with, read the way setup.sh reads it and
+# Docker Compose takes it: from the environment when it is exported there,
+# else from its one line in the .env (#996), without a comment, quotes or a
+# carriage return. The first of a list.
+if printenv TRUSTED_ORIGINS >/dev/null 2>&1; then
+  address=$(printenv TRUSTED_ORIGINS | cut -d, -f1)
+else
+  address=$(sed -n 's/^TRUSTED_ORIGINS=//p' "$here/.env" | sed 's/[[:space:]]#.*//' | tr -d "\r\"'" | cut -d, -f1)
+fi
 say "$APPLICATION_NAME läuft. Im Browser: $address"
 
 # An instance nobody has set up yet asks for the setup code on its first
