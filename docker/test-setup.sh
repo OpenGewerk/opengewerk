@@ -17,8 +17,8 @@ cp "$source_dir/setup.sh" "$source_dir/.env.example" "$source_dir/application.en
 # What the environment of whoever runs the test holds for the address, the
 # port, Compose and the stand-in for docker below stays out; the cases that
 # need one set it themselves.
-unset OPENGEWERK_ADDRESS OPENGEWERK_PORT FAKE_JSON FAKE_PUBLISHED FAKE_LATER FAKE_OPERATOR FAKE_ENV FAKE_MISSING \
-  FAKE_COUNT
+unset OPENGEWERK_ADDRESS OPENGEWERK_PORT TRUSTED_ORIGINS FAKE_JSON FAKE_PUBLISHED FAKE_LATER FAKE_OPERATOR FAKE_ENV \
+  FAKE_MISSING FAKE_COUNT
 for compose_variable in $(printenv | sed -n 's/^\(COMPOSE_[A-Za-z0-9_]*\)=.*/\1/p'); do
   unset "$compose_variable"
 done
@@ -338,7 +338,7 @@ if docker compose version > /dev/null 2>&1; then
   # refuses one the application would before the first change (#984).
   grep -o '\${[A-Za-z_][A-Za-z0-9_]*:?' "$source_dir/compose.yaml" | sed -e 's/^\${//' -e 's/:?$/=set/' |
     sort -u > "$work/ports/.env"
-  docker compose -f "$work/ports/compose.yaml" config --format json |
+  TRUSTED_ORIGINS=set docker compose -f "$work/ports/compose.yaml" config --format json |
     awk '/^    "migrate": \{$/ { migrate = 1; next } migrate && /^    \}/ { migrate = 0 }
       migrate && /^ *"TRUSTED_ORIGINS": "set"/ { found = 1 } END { exit !found }' || {
     echo 'FEHLER: der Schritt migrate bekommt TRUSTED_ORIGINS nicht'

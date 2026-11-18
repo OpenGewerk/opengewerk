@@ -332,13 +332,13 @@ for engine in 28.3.3 28.4.0 29.0.0 28.10.1 '29.4.2+dfsg1' 28.3.3+ds1 29.0.0-rc.1
 done
 check 'Docker ab 28.3.3 startet'
 
-# Every question for the version of the engine, three in a run that starts
-# (at the beginning, before the migrations and before the start), was asked
-# with $1 in the watched variable, and no other.
+# Every question for the version of the engine, four in a run that starts (at
+# the beginning, before the migrations, right after them and before the
+# start), was asked with $1 in the watched variable, and no other.
 every_version_question_in() {
   all_questions=$(grep -c '|info --format {{.ServerVersion}}|{{.ID}}$' "$CALLS" || true)
   these=$(grep -c "^$1|info --format {{.ServerVersion}}|{{.ID}}\$" "$CALLS" || true)
-  [ "$all_questions" -eq 3 ] && [ "$these" -eq 3 ] || {
+  [ "$all_questions" -eq 4 ] && [ "$these" -eq 4 ] || {
     printf 'FEHLER: %s von %s Fragen nach der Engine liefen mit "%s"\n' "$these" "$all_questions" "$1"
     cat "$CALLS"
     exit 1
@@ -460,6 +460,9 @@ if out=$(DOCKER_IDS='erste erste zweite' OPENGEWERK_ADDRESS=http://127.0.0.1:237
 fi
 printf '%s' "$out" | grep -q 'eine andere Engine.*schon auf dem neuen Stand'
 grep -q 'run --rm migrate$' "$CALLS"
+# Asked right after the migrations, so the login of a restore does not come
+# back on the other engine either.
+absent 'exec -T postgres psql'
 absent 'up -d'
 : > "$CALLS"
 rm -f "$CALLS.engine"

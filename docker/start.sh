@@ -3,8 +3,8 @@
 #
 # First the engine (#985): Docker Engine 28.3.3 or newer, the context held for
 # the whole run, and the same engine from this check to the start, asked again
-# before each step that starts containers. Below it nothing is pulled, built
-# or set up, and no .env is made.
+# before each step that starts containers and right after the migrations.
+# Below it nothing is pulled, built or set up, and no .env is made.
 #
 # Then the .env, through setup.sh: on the first start every secret is made
 # and the address asked for, later only what a newer version brought is
@@ -88,8 +88,8 @@ if [ -z "${DOCKER_HOST:-}" ] && [ -z "${DOCKER_CONTEXT:-}" ]; then
 fi
 
 # The version of the engine, held against the minimum, and the engine itself
-# by its ID. Asked here and again right before each step that starts
-# containers: a context whose endpoint was changed meanwhile, under the same
+# by its ID. Asked here, again right before each step that starts containers
+# and right after the migrations: a context whose endpoint was changed meanwhile, under the same
 # name, is caught there, whether the other engine is too old or not, since
 # its database never saw the migrations of this run. engine_note is said
 # after each sentence once the migrations have run.
@@ -239,6 +239,11 @@ say 'Die Datenbank wird eingerichtet oder auf den neuen Stand gebracht.'
 compose run --rm migrate ||
   fail 'Die Migration ist gescheitert, der Grund steht darüber. Eine laufende Instanz arbeitet unverändert weiter, die Datenbank steht auf dem Stand davor.'
 
+# Asked again right after the migrations, before the login comes back below:
+# an engine swapped meanwhile would get it without having seen them.
+engine_note=' Die Datenbank steht schon auf dem neuen Stand; ein neuer Lauf von sh docker/start.sh mit derselben Fassung startet die Dienste, sobald Docker passt.'
+engine_new_enough
+
 # After a restore of a backup from an earlier version, restore.sh leaves the
 # application locked, with a note on its role, so that it does not work on a
 # schema older than itself (#988). The migrations have run now, and the login
@@ -262,7 +267,6 @@ SQL
 unlock_after_restore ||
   fail 'Nach dem Zurückspielen ließ sich der Anwendung die Anmeldung nicht zurückgeben, der Grund steht darüber.'
 
-engine_note=' Die Datenbank steht schon auf dem neuen Stand; ein neuer Lauf von sh docker/start.sh mit derselben Fassung startet die Dienste, sobald Docker passt.'
 engine_new_enough
 say "$APPLICATION_NAME startet."
 compose up -d --wait --wait-timeout 300 ||
