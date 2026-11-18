@@ -248,9 +248,10 @@ for pair in 'https://bücher.example.org|nicht so, wie ein Browser' 'https://use
 done
 check 'Port des Schemas: weggenommen, führende Nullen weg, ein anderer bleibt, keiner über 65535 und keiner doppelt'
 
-# 9a. Plain http only on this machine (#984): every other host, and a port
-# that is no number, is turned away with a sentence that asks for https; the
-# three names of this machine, with and without a port, are taken.
+# 9a. Plain http only on this machine (#984): every other host is turned
+# away with a sentence that asks for https, a port that is no number with one
+# that asks for digits; localhost and 127.0.0.1, with and without a port, are
+# taken. [::1] is refused with the IPv6 addresses under 9b.
 for address in http://opengewerk.example.org http://192.168.1.20:23700 \
   http://localhost.example.org http://localhost:x@example.org http://127.0.0.1: \
   http://localhost:1@example.org:8080 http://localhost:abc:23700; do
@@ -305,10 +306,20 @@ for pair in 'PROBE_PORT=24567|0 24567' 'PROBE_PORT=24567 # lokal|0 24567' 'PROBE
 done
 printf 'PROBE_PORT=24567\n' > "$work/port.env"
 [ "$(PROBE_PORT=24999 plain_port PROBE_PORT "$work/port.env")" = 24999 ]
-if PROBE_PORT='' plain_port PROBE_PORT "$work/port.env" > /dev/null; then
-  echo 'FEHLER: ein leerer Port aus der Umgebung galt als Zahl'
+empty_state=0
+PROBE_PORT='' plain_port PROBE_PORT "$work/port.env" > /dev/null || empty_state=$?
+[ "$empty_state" = 1 ] || {
+  printf 'FEHLER: ein leerer Port aus der Umgebung ergab %s, nicht 1\n' "$empty_state"
   exit 1
-fi
+}
+# A value over several lines: no port is read from the file at all.
+printf "OTHER='erste Zeile\nexport PROBE_PORT=24999'\nPROBE_PORT=24567\n" > "$work/multi.env"
+multi_state=0
+plain_port PROBE_PORT "$work/multi.env" > /dev/null || multi_state=$?
+[ "$multi_state" = 2 ] || {
+  printf 'FEHLER: ein Wert über mehrere Zeilen ergab %s, nicht 2\n' "$multi_state"
+  exit 1
+}
 PROBE_PORT=24998
 [ "$(plain_port PROBE_PORT "$work/port.env")" = 24567 ]
 unset PROBE_PORT

@@ -260,9 +260,13 @@ only_here_over_http() {
 # the variable is set nowhere or empty, so that the default in compose.yaml
 # holds, and with 2 when it holds anything else, such as ${...} that Compose
 # fills in from other variables: then nobody here guesses which port it is.
+# A value in quotes that goes on over the next line, which Compose allows,
+# makes every line after it doubtful, so the file then gives no port either.
 plain_port() {
   if printenv "$1" >/dev/null 2>&1; then
     plain=$(printenv "$1")
+  elif grep -Eq "^[^#=]*=[[:space:]]*(\"[^\"]*|'[^']*)\$" "$2" 2>/dev/null; then
+    return 2
   else
     plain=$({ grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" "$2" 2>/dev/null || true; } | tail -n 1 |
       sed -e 's/^[^=]*=//' -e 's/\r$//' -e 's/^[[:space:]]*//' |

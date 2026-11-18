@@ -334,6 +334,17 @@ every_version_question_in() {
     cat "$CALLS"
     exit 1
   }
+  # And every other call of docker after the context was read, pull, run and
+  # up among them, with the same. Before it only "compose version" runs, which
+  # asks the local plugin and no engine; cosign is no call of docker.
+  elsewhere=$(awk -v prefix="$1|" 'read && !/^cosign[|]/ && index($0, prefix) != 1 { n++ }
+    /[|]context show$/ { read = 1 }
+    END { print n + 0 }' "$CALLS")
+  [ "$elsewhere" -eq 0 ] || {
+    printf 'FEHLER: %s Aufrufe von docker liefen nicht mit "%s"\n' "$elsewhere" "$1"
+    cat "$CALLS"
+    exit 1
+  }
 }
 
 # 13. The engine checked is the one compose talks to (#985): the context in use

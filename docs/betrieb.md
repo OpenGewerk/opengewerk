@@ -985,8 +985,8 @@ Organisation.
 
 Vor die Anwendung gehört ein Reverse Proxy mit TLS. Sie lauscht absichtlich nur
 auf `127.0.0.1`: eine Anwendung, die Rechnungen führt, steht nicht
-unverschlüsselt im Netz. Das hält Docker erst ab Engine 28.3.3: Davor erreichen
-Rechner im selben Netzsegment auch einen Port auf `127.0.0.1`, und 28.2.0 bis
+unverschlüsselt im Netz. Das hält Docker erst ab Engine 28.3.3: Vor 28.0.0
+erreichen Rechner im selben Netzsegment auch einen Port auf `127.0.0.1`, und 28.2.0 bis
 28.3.2 öffnen ihn nach einem Neuladen von firewalld wieder (CVE-2025-54388). Zwei Vorlagen liegen unter `docker/proxy/`, auch im
 Installationspaket: [`apache.conf`](../docker/proxy/apache.conf) für Apache 2.4
 und [`nginx.conf`](../docker/proxy/nginx.conf) für nginx. Jede ist für sich
