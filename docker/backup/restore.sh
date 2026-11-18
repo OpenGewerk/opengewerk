@@ -493,8 +493,26 @@ if [ -n "$left_foreign" ]; then
 	echo "es wird nichts weiter zurückgespielt." >&2
 	exit 1
 fi
+# And only where FileStore looks for it: the two folders are the first four
+# characters of the name. Every name is hex by now, so the list is read line
+# by line, and without a process for each file.
+(cd "$STORAGE_PATH" && find . -type f) >"${work}/stored.list"
+while IFS= read -r file; do
+	name=${file##*/}
+	after_first=${name#??}
+	after_second=${after_first#??}
+	if [ "$file" != "./${name%"$after_first"}/${after_first%"$after_second"}/${name}" ]; then
+		rm -f "${STORAGE_PATH}/${file#./}" || {
+			echo "Im Dateispeicher blieb eine Datei, die keine Datei des Speichers ist;" >&2
+			echo "es wird nichts weiter zurückgespielt." >&2
+			exit 1
+		}
+		foreign=$((foreign + 1))
+	fi
+done <"${work}/stored.list"
+rm -f "${work}/stored.list"
 if [ "$foreign" -gt 0 ]; then
-	echo "    ${foreign} Datei(en) ohne Namen des Speichers entfernt."
+	echo "    ${foreign} Datei(en) ohne Namen oder Ort des Speichers entfernt."
 fi
 
 # Built as a checklist and handed to sha256sum, rather than compared in a

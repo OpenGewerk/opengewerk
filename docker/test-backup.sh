@@ -338,6 +338,10 @@ cat > "$work/bin/find" <<FAKE
 #!/bin/sh
 $real_find "\$@" || exit
 [ "\$1" = . ] || [ "\$1" = "\$STORAGE_PATH" ] || exit 0
+# A find over the store that does not come back, as on a disk that hangs.
+if [ -n "\${FIND_HANGS:-}" ] && [ "\$1" = . ]; then
+  sleep 30
+fi
 if [ -n "\${FIND_MISSES:-}" ]; then
   [ -z "\${FAKE_MARK:-}" ] || : > "\$FAKE_MARK"
   printf 'find: %s: No such file or directory\\n' "\$FIND_MISSES" >&2
@@ -1537,15 +1541,29 @@ test "$(ls "$work/backups" | wc -l)" = "$archives_before" || {
   exit 1
 }
 rm -rf "$(dirname "$(stored "$(hash_of "$waits_text")")")"
+# A find over the store that hangs is ended the same way.
+hangs_text='find hängt'
+echo '100.00 200.00' > "$work/uptime"
+if DUMP_UPLOADS="$hangs_text" UPTIME_PATH="$work/uptime" UPTIME_ALMOST=1 FIND_HANGS=1 run_backup; then
+  echo 'FEHLER: eine Sicherung, deren find hing, ging durch'
+  exit 1
+fi
+grep -q 'in zwölf Stunden nicht zum Ende' "$work/out" || {
+  echo 'FEHLER: eine Sicherung, deren find hing, endete nicht an der Grenze von zwölf Stunden'
+  cat "$work/out"
+  exit 1
+}
+rm -rf "$(dirname "$(stored "$(hash_of "$hangs_text")")")"
 check 'Dateispeicher: ein tar, das wartet, endet mit den zwölf Stunden'
 
 # Both tars over the store run with that limit, the first part's and the
-# second's.
+# second's, and so does the find between them.
 limited_text='mit Grenze'
 rm -f "$work/timeout-calls"
 DUMP_UPLOADS="$limited_text" TIMEOUT_CALLS="$work/timeout-calls" backed_up 'eine Sicherung mit Zeitgrenze scheiterte'
 grep -q -- "tar --create --file .*/storage.tar --directory $STORAGE_PATH " "$work/timeout-calls" &&
-  grep -q -- "tar --create --no-recursion .* -T " "$work/timeout-calls" || {
+  grep -q -- "tar --create --no-recursion .* -T " "$work/timeout-calls" &&
+  grep -q -- " find \. -type f\$" "$work/timeout-calls" || {
   echo 'FEHLER: nicht jedes tar über den Speicher lief mit der Zeitgrenze'
   cat "$work/timeout-calls"
   exit 1
@@ -1574,6 +1592,10 @@ mkdir -p "$work/forged/first/q: FAILEDzz"
 printf 'GEHEIMNIS DES CONTAINERS' > "$work/forged/first/q: FAILEDzz/$(hash_of 'anders')"
 printf 'GEHEIMNIS DES CONTAINERS' > "$work/forged/first/$forged_dir/zeile
 umbruch"
+# And a file whose content is its name, but in folders FileStore never looks in.
+astray_hash=$(hash_of 'versetzt')
+mkdir -p "$work/forged/first/00/00"
+printf 'versetzt' > "$work/forged/first/00/00/$astray_hash"
 tar --create --file "$work/forged/storage.tar" --directory "$work/forged/first" .
 rm -rf "$work/forged/first"
 sum=$(sha256sum "$work/forged/storage.tar" | cut -d' ' -f1)
@@ -1594,7 +1616,11 @@ if [ -n "$left_secret" ]; then
   printf 'FEHLER: fremder Inhalt blieb nach dem Rückspielen im Speicher: %s\n' "$left_secret"
   exit 1
 fi
-grep -q 'ohne Namen des Speichers entfernt' "$work/out"
+grep -q 'ohne Namen oder Ort des Speichers entfernt' "$work/out"
+if [ -e "$STORAGE_PATH/00/00/$astray_hash" ]; then
+  echo 'FEHLER: eine Datei am falschen Ort blieb nach dem Rückspielen im Speicher'
+  exit 1
+fi
 # One rm cannot take is named, and the restore still stops.
 if POSTGRES_DB=opengewerk RM_FAILS_ON="$(hash_of 'echt')" sh "$work/bin/restore.sh" --skip-origin-check "$forged" \
   > "$work/out" 2>&1; then

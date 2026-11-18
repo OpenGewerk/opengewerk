@@ -210,16 +210,30 @@ uptime_seconds() {
 store_tar() {
 	tar_said=$1
 	shift
-	now=$(uptime_seconds) || exit 1
-	left=$((started + 43200 - now))
-	[ "$left" -gt 0 ] || left=1
+	left=$(time_left) || exit 1
 	status=0
 	timeout "$left" tar "$@" 2>"$tar_said" || status=$?
-	if [ "$status" -eq 143 ] || [ "$status" -eq 124 ]; then
+	out_of_time "$status"
+	return "$status"
+}
+
+# Seconds left of the twelve hours, one at least, so that a read started late
+# ends at once.
+time_left() {
+	now=$(uptime_seconds) || return 1
+	left=$((started + 43200 - now))
+	[ "$left" -gt 0 ] || left=1
+	echo "$left"
+}
+
+# Ends the backup when a read of the store was ended by its limit.
+out_of_time() {
+	case "$1" in
+	124 | 143)
 		echo "  Das Lesen des Dateispeichers kam in zwölf Stunden nicht zum Ende, die Sicherung bricht ab." >&2
 		exit 1
-	fi
-	return "$status"
+		;;
+	esac
 }
 
 # --- 1. The file store, before the database --------------------------------
@@ -284,8 +298,14 @@ tar --list --verbose --file "${work}/storage.tar" |
 names_of "${work}/storage.names" | sort >"${work}/storage.first"
 
 # find looks at every entry before it reads its name, so a .part that goes
-# while it walks makes it say "No such file or directory" as well.
-if ! (cd "$STORAGE_PATH" && find . -type f) >"${work}/storage.now" 2>"${work}/storage-late.err"; then
+# while it walks makes it say "No such file or directory" as well. It walks
+# within the twelve hours like tar.
+left=$(time_left) || exit 1
+status=0
+(cd "$STORAGE_PATH" && timeout "$left" find . -type f) >"${work}/storage.now" 2>"${work}/storage-late.err" ||
+	status=$?
+out_of_time "$status"
+if [ "$status" -ne 0 ]; then
 	only_vanished "${work}/storage-late.err" || exit 1
 fi
 names_of "${work}/storage.now" | sort | comm -13 "${work}/storage.first" - >"${work}/storage-late.list"
