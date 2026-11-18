@@ -1304,7 +1304,9 @@ check 'Dateispeicher: ein Fehler ohne Meldung oder neben einer verschwundenen Da
 relinked_text='erst Link, dann Datei'
 relinked_hash=$(hash_of "$relinked_text")
 mkdir -p "$(dirname "$(stored "$relinked_hash")")"
-ln -s "$work/nowhere" "$(stored "$relinked_hash")"
+# The link names its own place in the store, so a list of the first part that
+# took the name of any entry, a link's as well, would hold it as there.
+ln -s "./$(stored "$relinked_hash" | sed "s|^$STORAGE_PATH/||")" "$(stored "$relinked_hash")"
 DUMP_UPLOADS="$relinked_text" backed_up 'eine Datei an Stelle eines Links beendete die Sicherung'
 unpacked relinked
 relinked_names=$(tar --list --file "$work/relinked/storage-late.tar")
