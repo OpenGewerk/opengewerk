@@ -332,7 +332,7 @@ describe('the contacts at a customer in the office', () => {
     // "Anlegen" in the head of the card opens the form and makes way for the
     // one under it, which is called the same (#219).
     await userEvent.click(await section.findByRole('button', { name: 'Anlegen' }))
-    await userEvent.type(section.getByLabelText(/Nachname/), 'Brandt')
+    await userEvent.type(await section.findByLabelText(/Nachname/), 'Brandt')
     await userEvent.type(section.getByLabelText(/Funktion/), 'Buchhaltung')
     await userEvent.click(section.getByRole('button', { name: 'Anlegen' }))
     await client.synchronise()
@@ -354,7 +354,7 @@ describe('the contacts at a customer in the office', () => {
     // Spaces pass the browser's own check of a required field, and the sync
     // refuses a contact without a family name for the whole transmission
     // (opengewerk-haustechnik#85): the form asks the same rule first.
-    await userEvent.type(section.getByLabelText(/Nachname/), '   ')
+    await userEvent.type(await section.findByLabelText(/Nachname/), '   ')
     await userEvent.click(section.getByRole('button', { name: 'Anlegen' }))
 
     expect(await section.findByText('Der Nachname fehlt.')).toBeDefined()
@@ -372,7 +372,7 @@ describe('the contacts at a customer in the office', () => {
 
     await userEvent.click(await section.findByRole('button', { name: 'Albers bearbeiten' }))
 
-    const name = section.getByLabelText(/Nachname/)
+    const name = await section.findByLabelText(/Nachname/)
 
     await userEvent.clear(name)
     await userEvent.type(name, '  ')
@@ -389,7 +389,7 @@ describe('the contacts at a customer in the office', () => {
 
     await userEvent.click(await section.findByRole('button', { name: 'Petra Zander bearbeiten' }))
 
-    const role = section.getByLabelText(/Funktion/)
+    const role = await section.findByLabelText(/Funktion/)
 
     await userEvent.clear(role)
     await userEvent.type(role, 'Kaufmännische Leitung')
@@ -407,7 +407,7 @@ describe('the contacts at a customer in the office', () => {
     // Removing is in the form behind the pencil, with a question first, as
     // the canvas draws the card with a pencil and nothing else (#219).
     await userEvent.click(await section.findByRole('button', { name: 'Albers bearbeiten' }))
-    await userEvent.click(section.getByRole('button', { name: 'Entfernen' }))
+    await userEvent.click(await section.findByRole('button', { name: 'Entfernen' }))
 
     const question = await screen.findByRole('alertdialog', { name: 'Albers entfernen?' })
 
@@ -440,7 +440,7 @@ describe('the contacts at a customer in the office', () => {
     })
     await userEvent.click(await section.findByRole('button', { name: 'Albers bearbeiten' }))
 
-    expect(section.getByRole('status').textContent).toBe(
+    expect((await section.findByRole('status')).textContent).toBe(
       'Stammdaten werden nur mit Verbindung geändert. Gerade ist keine da.',
     )
     expect((section.getByRole('button', { name: 'Speichern' }) as HTMLButtonElement).disabled).toBe(
@@ -488,7 +488,7 @@ describe('the contacts at a job on site', () => {
     // One button, as on the board; a contact met on site goes to the site
     // unless somebody says otherwise.
     await userEvent.click(await section.findByRole('button', { name: 'Ansprechpartner anlegen' }))
-    expect((section.getByLabelText('Gehört zu') as HTMLSelectElement).value).toBe('site')
+    expect(((await section.findByLabelText('Gehört zu')) as HTMLSelectElement).value).toBe('site')
     await userEvent.type(section.getByLabelText(/Nachname/), 'Meyer')
     await userEvent.type(section.getByLabelText(/Funktion/), 'Mieterin')
     await userEvent.click(section.getByRole('button', { name: 'Anlegen' }))
