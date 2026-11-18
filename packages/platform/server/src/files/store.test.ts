@@ -262,6 +262,24 @@ describe('the sweep of the file store', () => {
     expect(everything()).toEqual([`${sha256.slice(0, 2)}/${sha256.slice(2, 4)}/${sha256}`])
   })
 
+  it('dates a file it puts back as of now (#991)', async () => {
+    const sha256 = await oldFile('Zurückgelegt')
+    const later = new Date(Date.now() + 2 * 60 * 60 * 1000)
+    const sweeping = new FileStore(root, () => later)
+
+    // Put again between the answer and the move, with the clock of the
+    // machine: the sweep puts the file back, and it carries the time of that.
+    await sweeping.sweep(async () => {
+      await store.put(new TextEncoder().encode('Zurückgelegt'))
+
+      return new Set<string>()
+    }, before())
+
+    const path = join(root, sha256.slice(0, 2), sha256.slice(2, 4), sha256)
+
+    expect(Math.abs(statSync(path).mtime.getTime() - later.getTime())).toBeLessThan(2000)
+  })
+
   it('takes out what an unfinished write or sweep left behind once it is old', async () => {
     const sha256 = await oldFile('Daneben')
     const folder = join(root, sha256.slice(0, 2), sha256.slice(2, 4))

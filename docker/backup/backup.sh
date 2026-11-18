@@ -159,6 +159,20 @@ echo "Sicherung ${name} wird erstellt."
 # busybox sh does not understand $'\t', so the tab is built instead of written.
 tab=$(printf '\t')
 
+# Whether what tar or find said about the store is only that files went while
+# it read them: busybox names a path of the store it found gone, in one of
+# three forms, and sums up at the end. Anything else is printed and ends the
+# backup.
+only_vanished() {
+	if grep -v -e '^tar: \./.*: No such file or directory$' \
+		-e "^tar: can't open '\\./.*': No such file or directory$" \
+		-e '^find: \./.*: No such file or directory$' \
+		-e '^tar: error exit delayed from previous errors$' "$1" | grep -q .; then
+		cat "$1" >&2
+		return 1
+	fi
+}
+
 # --- 1. The file store, before the database --------------------------------
 # See the note at the top. The mark is set a second before tar starts: a file
 # written in the second of the mark goes into this part, and one written while
@@ -173,11 +187,7 @@ mark="${work}/storage.mark"
 sleep 1
 if ! tar --create --file "${work}/storage.tar" --directory "$STORAGE_PATH" \
 	--exclude '*.part' --exclude '*.gone' . 2>"${work}/storage.err"; then
-	if grep -v -e '^tar: \./.*: No such file or directory$' \
-		-e '^tar: error exit delayed from previous errors$' "${work}/storage.err" | grep -q .; then
-		cat "${work}/storage.err" >&2
-		exit 1
-	fi
+	only_vanished "${work}/storage.err" || exit 1
 fi
 rm -f "${work}/storage.err"
 
@@ -204,11 +214,18 @@ checked_query audit_chains "tenant_id next_sequence head_hash" \
 # sweep took, which is old and in the first part; a new file is younger than
 # the grace of the sweep and stays.
 echo "  Nachträge im Dateispeicher werden gesichert."
+# find looks at every entry before it reads its name, so a .part that goes
+# while it walks makes it say "No such file or directory" as well.
 mkdir "${work}/storage-late"
-(cd "$STORAGE_PATH" && find . -type f -newer "$mark" ! -name '*.part' ! -name '*.gone') | while IFS= read -r file; do
+if ! (cd "$STORAGE_PATH" && find . -type f -newer "$mark" ! -name '*.part' ! -name '*.gone') \
+	>"${work}/storage-late.list" 2>"${work}/storage-late.err"; then
+	only_vanished "${work}/storage-late.err" || exit 1
+fi
+while IFS= read -r file; do
 	mkdir -p "${work}/storage-late/$(dirname "$file")"
 	cp -p "${STORAGE_PATH}/${file}" "${work}/storage-late/${file}" || [ ! -e "${STORAGE_PATH}/${file}" ]
-done
+done <"${work}/storage-late.list"
+rm -f "${work}/storage-late.list" "${work}/storage-late.err"
 tar --create --file "${work}/storage-late.tar" --directory "${work}/storage-late" .
 rm -rf "${work}/storage-late" "$mark"
 

@@ -36,6 +36,7 @@ real_age=$(command -v age) || {
 real_tar=$(command -v tar)
 real_date=$(command -v date)
 real_cp=$(command -v cp)
+real_find=$(command -v find)
 
 mkdir -p "$work/bin" "$work/storage" "$work/backups" "$work/status" "$work/tmp"
 cp "$source_dir/backup/backup.sh" "$source_dir/backup/restore.sh" \
@@ -191,6 +192,18 @@ if [ -n "\${TAR_MISSES:-}" ] && [ "\$1" = --create ]; then
     *" --directory \$STORAGE_PATH "*) exec $real_tar "\$@" "\$TAR_MISSES" ;;
   esac
 fi
+# The other form busybox tar has for it, when the file goes between the look
+# at it and the opening: everything else is packed, and this is said.
+if [ -n "\${TAR_CANT_OPEN:-}" ] && [ "\$1" = --create ]; then
+  case " \$* " in
+    *" --directory \$STORAGE_PATH "*)
+      $real_tar "\$@" || exit
+      printf "tar: can't open '%s': No such file or directory\\n" "\$TAR_CANT_OPEN" >&2
+      printf 'tar: error exit delayed from previous errors\\n' >&2
+      exit 1
+      ;;
+  esac
+fi
 if [ -n "\${TAR_FAILS:-}" ] && [ "\$1" = --create ]; then
   case " \$* " in
     *' --file - '*)
@@ -232,8 +245,22 @@ if [ -n "\${CP_SERVES:-}" ] && [ "\$1" = "\${CP_FROM:-}" ]; then
 fi
 exec $real_cp "\$@"
 FAKE
+# A .part that goes while find walks the store for the second part (the call
+# with -newer): everything else is listed, and the gone one is said.
+cat > "$work/bin/find" <<FAKE
+#!/bin/sh
+$real_find "\$@" || exit
+case " \$* " in
+  *' -newer '*) ;;
+  *) exit 0 ;;
+esac
+if [ -n "\${FIND_MISSES:-}" ]; then
+  printf 'find: %s: No such file or directory\\n' "\$FIND_MISSES" >&2
+  exit 1
+fi
+FAKE
 chmod +x "$work/bin/pg_dump" "$work/bin/psql" "$work/bin/pg_restore" "$work/bin/age" "$work/bin/tar" \
-  "$work/bin/date" "$work/bin/cp"
+  "$work/bin/date" "$work/bin/cp" "$work/bin/find"
 
 PATH="$work/bin:$PATH"
 PGPASSWORD=probe
@@ -1031,5 +1058,26 @@ if POSTGRES_DB=opengewerk TAR_MISSES=/nirgends sh "$work/bin/backup.sh" > "$work
   exit 1
 fi
 check 'Dateispeicher vor der Datenbank: ohne .part, eine verschwundene Datei geduldet, jeder andere Fehler nicht'
+
+# The other forms of a file that went while it was read: tar could not open
+# it, or find found it gone. Neither ends the backup; another error of find
+# still does.
+POSTGRES_DB=opengewerk TAR_CANT_OPEN="./ab/cd/$(printf 'weg' | sha256sum | cut -d' ' -f1)" \
+  sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
+  echo 'FEHLER: eine Datei, die tar nicht mehr öffnen konnte, beendete die Sicherung'
+  cat "$work/out"
+  exit 1
+}
+POSTGRES_DB=opengewerk FIND_MISSES=./ab/cd/unterwegs.part \
+  sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
+  echo 'FEHLER: ein .part, das während find verschwand, beendete die Sicherung'
+  cat "$work/out"
+  exit 1
+}
+if POSTGRES_DB=opengewerk FIND_MISSES=/nirgends sh "$work/bin/backup.sh" > "$work/out" 2>&1; then
+  echo 'FEHLER: ein anderer Fehler von find ließ die Sicherung durch'
+  exit 1
+fi
+check 'Dateispeicher: eine Datei, die tar nicht mehr öffnen konnte oder find verschwunden fand, beendet die Sicherung nicht'
 
 echo 'Sicherungen: alles in Ordnung.'

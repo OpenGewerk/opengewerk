@@ -274,6 +274,10 @@ export class FileStore implements FileStorage {
 
     if (written !== null && written >= before) {
       await rename(aside, path)
+      // Back as new as now: the put that kept it may have come before the mark
+      // of a backup whose first part was packed while the file lay aside, and
+      // the second part takes only what is newer than the mark (#991).
+      await this.dateAsNow(path)
 
       return false
     }
