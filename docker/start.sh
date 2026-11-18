@@ -82,6 +82,10 @@ if [ -z "${DOCKER_HOST:-}" ] && [ -z "${DOCKER_CONTEXT:-}" ]; then
   fi
 fi
 
+# The version of the engine, held against the minimum. Asked here and once
+# more right before the first container starts: a context whose endpoint was
+# changed meanwhile, under the same name, is caught there.
+engine_new_enough() {
 docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null) ||
   fail 'Docker antwortet nicht. Läuft der Docker-Dienst, und darf dieser Benutzer ihn ansprechen?'
 
@@ -116,6 +120,8 @@ docker_too_old=$(printf '%s\n' "$docker_version" | awk -F. -v minimum="$minimum_
 if [ "$docker_too_old" != 'no' ]; then
   fail "Docker meldet die Fassung \"$docker_version\", $APPLICATION_NAME braucht Docker Engine ab $minimum_docker. Vor 28.0.0 erreichen Rechner im selben Netz Ports, die nur auf 127.0.0.1 veröffentlicht sind, und 28.2.0 bis 28.3.2 öffnen sie nach einem Neuladen von firewalld wieder (CVE-2025-54388); beides führt am Proxy mit TLS vorbei. Docker aktualisieren: https://docs.docker.com/engine/install/"
 fi
+}
+engine_new_enough
 
 if [ -n "$no_context" ]; then
   fail 'Docker nennt keinen Kontext, an dem sich die Engine festhalten ließe. Läuft der Docker-Dienst?'
@@ -204,6 +210,7 @@ case "$version" in
     ;;
 esac
 
+engine_new_enough
 say 'Die Datenbank wird eingerichtet oder auf den neuen Stand gebracht.'
 compose run --rm migrate ||
   fail 'Die Migration ist gescheitert, der Grund steht darüber. Eine laufende Instanz arbeitet unverändert weiter, die Datenbank steht auf dem Stand davor.'

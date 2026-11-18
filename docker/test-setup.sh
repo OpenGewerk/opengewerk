@@ -216,7 +216,8 @@ done
 # would write differently.
 for pair in 'https://OpenGewerk.Example.org https://opengewerk.example.org' \
   'http://LOCALHOST:23700 http://localhost:23700' 'https://192.0.2.10 https://192.0.2.10' \
-  'https://werk_statt.example.org:8443 https://werk_statt.example.org:8443'; do
+  'https://werk_statt.example.org:8443 https://werk_statt.example.org:8443' \
+  'https://werkstatt.0xlab https://werkstatt.0xlab'; do
   given=${pair% *}
   kept=${pair#* }
   rm -f "$work/.env"
@@ -273,7 +274,7 @@ check 'http:// nur für diese Maschine: andere Adressen abgelehnt, localhost, 12
 # the environment first, else from the last line of the .env that sets it,
 # with "export", blanks, quotes, a comment and a carriage return as Compose
 # reads them.
-sed -n '/^compose_value() {/,/^}/p' "$work/setup.sh" > "$work/compose-value.sh"
+sed -n -e '/^compose_lookup() {/,/^}/p' -e '/^compose_value() {/,/^}/p' "$work/setup.sh" > "$work/compose-value.sh"
 test -s "$work/compose-value.sh"
 . "$work/compose-value.sh"
 value_of() {
@@ -298,6 +299,25 @@ printf 'PROBE_PORT=1\nPROBE_PORT=24567\n' > "$work/port.env"
 [ "$(compose_value PROBE_PORT "$work/port.env")" = 24567 ]
 [ "$(PROBE_PORT=24999 compose_value PROBE_PORT "$work/port.env")" = 24999 ]
 [ -z "$(compose_value PROBE_PORT "$work/no-such.env")" ]
+# A value that is another variable is followed as Compose fills it in, and a
+# loop ends instead of hanging.
+printf 'BASE_PORT=24567\nPROBE_PORT=${BASE_PORT}\n' > "$work/port.env"
+[ "$(compose_value PROBE_PORT "$work/port.env")" = 24567 ]
+printf 'PROBE_PORT=$BASE_PORT\nBASE_PORT="24568"\n' > "$work/port.env"
+[ "$(compose_value PROBE_PORT "$work/port.env")" = 24568 ]
+printf 'PROBE_PORT=${MISSING:-24569}\n' > "$work/port.env"
+[ "$(compose_value PROBE_PORT "$work/port.env")" = 24569 ]
+printf 'PROBE_PORT=${MISSING-24570}\n' > "$work/port.env"
+[ "$(compose_value PROBE_PORT "$work/port.env")" = 24570 ]
+printf 'EMPTY=\nPROBE_PORT=${EMPTY:-24571}\n' > "$work/port.env"
+[ "$(compose_value PROBE_PORT "$work/port.env")" = 24571 ]
+printf 'EMPTY=\nPROBE_PORT=${EMPTY-24572}\n' > "$work/port.env"
+[ -z "$(compose_value PROBE_PORT "$work/port.env")" ]
+printf 'PROBE_PORT=${LOOP_A}\nLOOP_A=${LOOP_B}\nLOOP_B=${LOOP_A}\n' > "$work/port.env"
+case "$(compose_value PROBE_PORT "$work/port.env")" in
+  '${LOOP_'*) ;;
+  *) echo 'FEHLER: eine Schleife von Variablen ergab einen Wert'; exit 1 ;;
+esac
 check 'Port aus der .env: so gelesen wie von Docker Compose'
 
 # 10. Another application runs the same script against its own folder

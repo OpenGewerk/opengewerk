@@ -33,7 +33,16 @@ eval "seen=\${${WATCHED:-OPENGEWERK_VERSION}:-}"
 printf '%s|%s\n' "$seen" "$*" >> "$CALLS"
 case "$*" in
   *' exec -T app '*) printf '%s' "${SETUP_NEEDED-false}" ;;
-  "version --format {{.Server.Version}}") printf '%s\n' "${DOCKER_SERVER-28.3.3}" ;;
+  "version --format {{.Server.Version}}")
+    # DOCKER_SERVER_LATER answers every question after the first one, as an
+    # engine swapped meanwhile behind the same context would.
+    if [ -n "${DOCKER_SERVER_LATER:-}" ] && [ -f "$CALLS.version" ]; then
+      printf '%s\n' "$DOCKER_SERVER_LATER"
+    else
+      : > "$CALLS.version"
+      printf '%s\n' "${DOCKER_SERVER-28.3.3}"
+    fi
+    ;;
   'version --format '*)
     echo 'nur {{.Server.Version}} ist die Fassung der Engine' >&2
     exit 1
@@ -51,7 +60,7 @@ PATH="$work/bin:$PATH"
 export CALLS PATH
 # Which engine start.sh talks to is what case 13 checks; nothing of the
 # machine this runs on comes in.
-unset DOCKER_CONTEXT DOCKER_HOST CONTEXT_FAILS CONTEXT_IN_USE DOCKER_SERVER WATCHED SETUP_NEEDED
+unset DOCKER_CONTEXT DOCKER_HOST CONTEXT_FAILS CONTEXT_IN_USE DOCKER_SERVER DOCKER_SERVER_LATER WATCHED SETUP_NEEDED
 
 check() {
   printf 'check: %s\n' "$1"
@@ -358,5 +367,20 @@ printf '%s' "$out" | grep -q 'Docker meldet die Fassung "20.10.24"'
 absent 'compose -f'
 test ! -f "$work/docker/.env"
 check 'Docker: Prüfung und Start im selben Kontext, ein gesetzter Kontext oder DOCKER_HOST bleibt, ohne Kontext kein Start'
+
+# 14. An engine that changed behind the same context between the first
+# check and the first container is asked again: no container starts.
+: > "$CALLS"
+rm -f "$CALLS.version"
+if out=$(DOCKER_SERVER=28.3.3 DOCKER_SERVER_LATER=27.5.1 OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
+  sh "$work/docker/start.sh" < /dev/null 2>&1); then
+  echo 'FEHLER: eine Engine, die zwischendurch zu alt wurde, startete Container'
+  exit 1
+fi
+printf '%s' "$out" | grep -q 'Docker meldet die Fassung "27.5.1"'
+absent 'run --rm migrate'
+absent 'up -d'
+rm -f "$CALLS.version"
+check 'Docker: vor dem ersten Container wird die Engine noch einmal gefragt'
 
 echo 'Startskript: alles in Ordnung.'

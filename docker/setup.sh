@@ -253,21 +253,62 @@ only_here_over_http() {
   esac
 }
 
-# A value the way Docker Compose takes it: from the environment when it is
-# set there, else from the last line of the .env that sets it, "export" and
-# blanks around the = allowed; in quotes what stands between them, a #
+# One variable the way Docker Compose sees it: from the environment when it
+# is set there, else from the last line of the .env that sets it, "export"
+# and blanks around the = allowed; in quotes what stands between them, a #
 # included, without up to a comment after a blank. A carriage return from
-# Windows is no part of it.
-compose_value() {
-  eval "set_here=\${$1+yes}"
-  if [ -n "$set_here" ]; then
-    eval "printf '%s\n' \"\$$1\""
+# Windows is no part of it. Sets compose_set (yes when set at all) and
+# compose_found. The name is one this script made, never one from the file.
+compose_lookup() {
+  eval "compose_set=\${$1+yes}"
+  if [ -n "$compose_set" ]; then
+    eval "compose_found=\$$1"
     return
   fi
-  { grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" "$2" 2>/dev/null || true; } | tail -n 1 |
+  compose_line=$({ grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" "$2" 2>/dev/null || true; } | tail -n 1)
+  compose_found=''
+  [ -n "$compose_line" ] || return 0
+  compose_set=yes
+  compose_found=$(printf '%s\n' "$compose_line" |
     sed -e 's/^[^=]*=//' -e 's/\r$//' -e 's/^[[:space:]]*//' |
     sed -e 's/^"\([^"]*\)".*$/\1/' -e t -e "s/^'\([^']*\)'.*\$/\1/" -e t \
-      -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//'
+      -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//')
+}
+
+# The value Docker Compose takes for a variable. A value that is only another
+# variable ($NAME, ${NAME}, ${NAME:-default}, ${NAME-default}) is followed the
+# way Compose fills it in, six deep at most, without running anything from the
+# file; anything else stays as it is.
+compose_value() {
+  compose_name=$1
+  compose_rounds=0
+  compose_lookup "$compose_name" "$2"
+  compose_result=$compose_found
+  while [ "$compose_rounds" -lt 6 ]; do
+    compose_rounds=$((compose_rounds + 1))
+    case "$compose_result" in
+      '${'*'}') compose_inner=${compose_result#??} compose_inner=${compose_inner%?} ;;
+      '$'*) compose_inner=${compose_result#?} ;;
+      *) break ;;
+    esac
+    case "$compose_inner" in
+      *:-*) compose_name=${compose_inner%%:-*} compose_default=${compose_inner#*:-} compose_kind=empty ;;
+      *-*) compose_name=${compose_inner%%-*} compose_default=${compose_inner#*-} compose_kind=unset ;;
+      *) compose_name=$compose_inner compose_default='' compose_kind='' ;;
+    esac
+    case "$compose_name" in
+      '' | [!A-Za-z_]* | *[!A-Za-z0-9_]*) break ;;
+    esac
+    compose_lookup "$compose_name" "$2"
+    if [ "$compose_kind" = empty ] && [ -z "$compose_found" ]; then
+      compose_result=$compose_default
+    elif [ "$compose_kind" = unset ] && [ -z "$compose_set" ]; then
+      compose_result=$compose_default
+    else
+      compose_result=$compose_found
+    fi
+  done
+  printf '%s\n' "$compose_result"
 }
 
 # The address, the one value nothing here can make up.
@@ -352,12 +393,18 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
           fail "\"$wanted\" nennt die Maschine nicht so, wie ein Browser sie schreibt. Erlaubt sind Buchstaben, Ziffern, Punkt, Bindestrich und Unterstrich, ein Name mit Umlauten in seiner Form mit xn--."
           ;;
       esac
-      # A browser reads a name whose last part is a number, or starts with
-      # 0x, as an IPv4 address and writes it as four plain numbers.
-      case "${host##*.}" in
+      # A browser reads a name whose last part is a number, decimal or 0x and
+      # hex digits, as an IPv4 address and writes it as four plain numbers.
+      last_label=${host##*.}
+      case "$last_label" in
         *[!0-9]*)
-          case "${host##*.}" in
-            0x*) numeric=yes ;;
+          case "$last_label" in
+            0x*)
+              case "${last_label#0x}" in
+                *[!0-9a-f]*) numeric='' ;;
+                *) numeric=yes ;;
+              esac
+              ;;
             *) numeric='' ;;
           esac
           ;;
