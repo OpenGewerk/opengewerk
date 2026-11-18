@@ -222,30 +222,153 @@ if [ -n "$without_push" ]; then
   say "Ohne openssl ließ sich kein Schlüssel für Push-Nachrichten erzeugen. VAPID_PRIVATE_KEY bleibt leer, und $APPLICATION_NAME läuft ohne Push; den Befehl für einen Schlüssel nennt docker/.env.example."
 fi
 
+# Plain http only on this machine (#984). Anywhere else the setup code and
+# every password would cross the network readable, so an address of another
+# host is the one of a reverse proxy with TLS. After a name of this machine
+# comes nothing, or a colon and a port of digits and nothing else: in
+# http://localhost:1@example.org:8080 the host is example.org. This is the
+# early word for the address asked for here; the application holds every
+# entry of TRUSTED_ORIGINS to the same rule when it starts, however the value
+# reached it.
+only_here_over_http() {
+  case "$1" in
+    http://*) ;;
+    *) return 0 ;;
+  esac
+
+  host_and_port=${1#http://}
+
+  case "$host_and_port" in
+    localhost | 127.0.0.1) return 0 ;;
+    localhost:*) port_part=${host_and_port#localhost:} ;;
+    127.0.0.1:*) port_part=${host_and_port#127.0.0.1:} ;;
+    *)
+      fail "\"$1\" beginnt mit http://. So gingen Einrichtungscode und Passwörter lesbar durchs Netz. Die Adresse beginnt mit https://, davor steht ein Reverse Proxy mit TLS, Vorlagen dafür liegen in docker/proxy/. Nur auf dieser Maschine, mit localhost oder 127.0.0.1, geht http://."
+      ;;
+  esac
+
+  case "$port_part" in
+    '' | *[!0-9]*) fail "\"$1\" hat nach dem Namen der Maschine keinen Port aus Ziffern." ;;
+  esac
+}
+
+# The port Docker Compose publishes the application on, asked from Compose
+# itself: the .env, the environment and the variables of Compose count the way
+# they count at the start, and nothing here reads the .env for it. A value
+# compose.yaml requires and Compose finds missing, such as the address being
+# asked for, gets a stand-in for this one question; a value that is set keeps
+# it. Prints the port without leading zeros, or nothing when Compose gives no
+# answer or maps more than one port, or the one it maps is no TCP port. Read
+# from the JSON Compose prints, two blanks to a level: only the "ports" of a
+# service count (in "services", three levels in), each mapping there is one
+# object with a target, its published port and its protocol.
+published_port() {
+  # Names and values have no blanks, so each stand-in is one word. Asked
+  # again with the stand-ins found so far, since a Compose may name only one
+  # missing value at a time; ten rounds at most.
+  missing=''
+  rounds=0
+  while [ "$rounds" -lt 10 ]; do
+    # shellcheck disable=SC2086
+    found=$(env $missing docker compose -f "$here/compose.yaml" config --format json 2>&1 >/dev/null |
+      sed -n 's/.*required variable \([A-Za-z_][A-Za-z0-9_]*\) is missing a value.*/\1=stand-in/p' |
+      sort -u | tr '\n' ' ')
+    [ -n "$found" ] || break
+    missing="$missing$found"
+    rounds=$((rounds + 1))
+  done
+  # shellcheck disable=SC2086
+  config=$(env $missing docker compose -f "$here/compose.yaml" config --format json 2>/dev/null) || return 0
+  printf '%s\n' "$config" | awk '
+    /^  "services": \{$/ { services = 1; next }
+    services && /^  \}/ { services = 0; next }
+    services && /^      "ports": \[$/ { ports = 1; next }
+    ports && /^      \]/ { ports = 0; next }
+    ports && /^        \{$/ { entry = 1; target = 0; value = ""; protocol = "tcp"; next }
+    entry && /^ *"target": *[0-9]/ { target = 1; next }
+    entry && /^ *"published": *"[0-9][0-9]*"/ { value = $0; next }
+    entry && /^ *"protocol": *"/ { protocol = $0; sub(/^ *"protocol": *"/, "", protocol); sub(/".*$/, "", protocol); next }
+    entry && /^        \}/ {
+      entry = 0
+      if (target) { mappings++; if (protocol == "tcp") published = value }
+      next
+    }
+    END {
+      if (mappings == 1 && published != "") {
+        sub(/^ *"published": *"/, "", published)
+        sub(/".*$/, "", published)
+        # Without leading zeros; 0 is no fixed port, Docker picks one then.
+        sub(/^0*/, "", published)
+        if (published != "") print published
+      }
+    }'
+}
+
+# Whether a browser opens port $1, digits without leading zeros: ends with 0
+# from 1 to 65535, with 1 for a bad port of the Fetch standard, which browsers
+# refuse, and with 2 for anything out of range.
+browser_opens() {
+  case "$1" in
+    '' | *[!0-9]*) return 2 ;;
+  esac
+  if [ "${#1}" -gt 5 ] || [ "$1" -gt 65535 ] || [ "$1" -eq 0 ]; then
+    return 2
+  fi
+  case "$1" in
+    1 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 20 | 21 | 22 | 23 | 25 | 37 | 42 | 43 | 53 | 69 | 77 | 79 | 87 | 95 | \
+      101 | 102 | 103 | 104 | 109 | 110 | 111 | 113 | 115 | 117 | 119 | 123 | 135 | 137 | 139 | 143 | 161 | \
+      179 | 389 | 427 | 465 | 512 | 513 | 514 | 515 | 526 | 530 | 531 | 532 | 540 | 548 | 554 | 556 | 563 | \
+      587 | 601 | 636 | 989 | 990 | 993 | 995 | 1719 | 1720 | 1723 | 2049 | 3659 | 4045 | 4190 | 5060 | 5061 | \
+      6000 | 6566 | 6665 | 6666 | 6667 | 6668 | 6669 | 6679 | 6697 | 10080) return 1 ;;
+  esac
+}
+
 # The address, the one value nothing here can make up.
 address=$(grep '^TRUSTED_ORIGINS=' "$env_file" | head -n 1 | cut -d= -f2-)
 
 if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
-  # The port from the .env, else the default Docker Compose falls back to.
-  port=$(grep "^${APPLICATION_PREFIX}_PORT=" "$env_file" | head -n 1 | cut -d= -f2-)
-
-  if [ -z "$port" ]; then
-    port=$(sed -n "s/.*\${${APPLICATION_PREFIX}_PORT:-\([0-9]*\)}.*/\1/p" "$here/compose.yaml" 2>/dev/null | head -n 1)
-  fi
-
   address_variable="${APPLICATION_PREFIX}_ADDRESS"
   eval "wanted=\${${address_variable}:-}"
 
   if [ -z "$wanted" ] && [ -t 0 ]; then
+    # Enter takes this machine on the port Docker Compose publishes, when
+    # Compose names one and a browser opens it; else one has to be entered.
+    port=$(published_port)
+    if [ -n "$port" ] && ! browser_opens "$port"; then
+      port=''
+    fi
     printf '%s: Unter welcher Adresse wird %s im Browser geöffnet?\n' "$APPLICATION_NAME" "$APPLICATION_NAME"
-    printf '  Etwa %s. Leer lassen für http://localhost%s: ' "$APPLICATION_EXAMPLE_ADDRESS" "${port:+:$port}"
-    read -r wanted || wanted=''
-    wanted=${wanted:-http://localhost${port:+:$port}}
+    if [ -n "$port" ]; then
+      printf '  Etwa %s. Leer lassen für http://localhost:%s: ' "$APPLICATION_EXAMPLE_ADDRESS" "$port"
+      # Only an empty line takes the address offered; the end of the input,
+      # Ctrl+D, is no answer and writes nothing.
+      if ! read -r wanted; then
+        printf '\n'
+        fail "Die Frage nach der Adresse blieb ohne Antwort, in docker/.env ist nichts eingetragen. Das Skript noch einmal starten oder $address_variable setzen."
+      fi
+      if [ -z "$wanted" ]; then
+        # Compose is asked once more: a port that changed meanwhile, in the
+        # .env or elsewhere, would not be the one the start publishes.
+        [ "$(published_port)" = "$port" ] ||
+          fail "Der Port, den Docker Compose veröffentlicht, hat sich während der Frage geändert; in docker/.env ist nichts eingetragen. Das Skript bitte noch einmal starten."
+        wanted=http://localhost:$port
+      fi
+    else
+      printf '  Etwa %s: ' "$APPLICATION_EXAMPLE_ADDRESS"
+      read -r wanted || wanted=''
+    fi
   fi
 
   if [ -z "$wanted" ]; then
     fail "In docker/.env fehlt die Adresse, unter der $APPLICATION_NAME erreichbar ist (TRUSTED_ORIGINS). Das Skript einmal im Terminal starten, dann fragt es danach, oder $address_variable setzen."
   fi
+
+  # Something before the name, a user and a password, is no part of an
+  # origin. It is turned away before anything else, without being repeated,
+  # so that no sentence below can show a part of it.
+  case "$wanted" in
+    *@*) fail "Die Adresse hat Angaben vor dem Namen, etwa einen Benutzer oder ein Passwort. Gebraucht wird nur die Adresse, etwa $APPLICATION_EXAMPLE_ADDRESS." ;;
+  esac
 
   # An origin and nothing more: a path or a trailing slash never matches what
   # a browser sends, and the sign in would fail without saying why.
@@ -260,6 +383,96 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
       fail "\"$wanted\" ist keine Adresse mit http:// oder https:// davor."
       ;;
   esac
+
+  # The port written the way a browser sends it in the origin, which the
+  # application compares against: everything after the host is the port, a
+  # number from 1 to 65535 without leading zeros, and the port a scheme has
+  # anyway is left out. Otherwise the application would not start. A port
+  # that browsers refuse to open (the bad ports of the Fetch standard) makes
+  # no address either.
+  scheme=${wanted%%://*}
+  host_and_port=${wanted#*://}
+  case "$host_and_port" in
+    \[\]*) fail "\"$wanted\" nennt keine Maschine." ;;
+    \[*\]*)
+      # No IPv6 address: the application is published on 127.0.0.1 only, so
+      # [::1] reaches nothing, and any other has more than one way to be
+      # written while the application takes only the one a browser sends.
+      fail "\"$wanted\": Eine IPv6-Adresse nimmt die Rückfrage nicht. Auf dieser Maschine ist $APPLICATION_NAME unter localhost oder 127.0.0.1 erreichbar, für eine andere Maschine bitte ihren Namen nehmen, etwa $APPLICATION_EXAMPLE_ADDRESS."
+      ;;
+    \[*) fail "\"$wanted\" nennt keine Maschine." ;;
+    *:*) host=${host_and_port%%:*} port=${host_and_port#*:} given=yes ;;
+    *) host=$host_and_port port='' given='' ;;
+  esac
+  case "$host" in
+    '') fail "\"$wanted\" nennt keine Maschine." ;;
+  esac
+  # The name the way a browser writes it in the origin: in small letters and
+  # only with what a name in the network holds. A name with umlauts goes in
+  # its form with xn--, an IPv4 address only as four plain numbers. Anything
+  # else a browser writes differently, and the application would not start.
+  case "$host" in
+    \[*) ;;
+    *)
+      host=$(printf '%s' "$host" | tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz')
+      case "$host" in
+        *.)
+          fail "\"$wanted\" hat einen Punkt am Ende des Namens. Ein Browser schickt ihn nur mit, wenn er auch in der Adresszeile steht, und die Anwendung startet mit ihm nicht. Bitte ohne den Punkt."
+          ;;
+        *[!a-z0-9._-]* | .* | *..*)
+          fail "\"$wanted\" nennt die Maschine nicht so, wie ein Browser sie schreibt. Erlaubt sind Buchstaben, Ziffern, Punkt, Bindestrich und Unterstrich, ein Name mit Umlauten in seiner Form mit xn--."
+          ;;
+      esac
+      # A browser reads a name whose last part is a number, decimal or 0x and
+      # hex digits, as an IPv4 address and writes it as four plain numbers.
+      last_label=${host##*.}
+      case "$last_label" in
+        *[!0-9]*)
+          case "$last_label" in
+            0x*)
+              case "${last_label#0x}" in
+                *[!0-9a-f]*) numeric='' ;;
+                *) numeric=yes ;;
+              esac
+              ;;
+            *) numeric='' ;;
+          esac
+          ;;
+        *) numeric=yes ;;
+      esac
+      if [ -n "$numeric" ] &&
+        ! printf '%s\n' "$host" | grep -Eq '^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$'; then
+        fail "\"$wanted\" ist keine IPv4-Adresse in der Form, die ein Browser schreibt, etwa 192.0.2.10."
+      fi
+      ;;
+  esac
+  # Whether http may be, first: it says what else to change, whatever the
+  # port is.
+  only_here_over_http "$scheme://$host"
+  case "$given" in
+    yes)
+      digits=$(printf '%s' "$port" | sed 's/^0*\(.\)/\1/')
+      case "$port" in
+        '' | *[!0-9]*) fail "\"$wanted\" hat nach dem Namen der Maschine keinen Port aus Ziffern zwischen 1 und 65535." ;;
+      esac
+      browser_opens "$digits" || case $? in
+        1) fail "\"$wanted\": Port $digits öffnen Browser nicht, sie sperren ihn. Bitte einen anderen Port nehmen." ;;
+        *) fail "\"$wanted\" hat nach dem Namen der Maschine keinen Port aus Ziffern zwischen 1 und 65535." ;;
+      esac
+      case "$scheme:$digits" in
+        http:80 | https:443) wanted="$scheme://$host" ;;
+        *) wanted="$scheme://$host:$digits" ;;
+      esac
+      ;;
+    *) wanted="$scheme://$host" ;;
+  esac
+
+  # The .env as it is now: an address someone put there while the question
+  # waited stays, and nothing is written.
+  now=$(grep '^TRUSTED_ORIGINS=' "$env_file" | head -n 1 | cut -d= -f2-)
+  if [ "$now" != "$address" ]; then
+    fail "In docker/.env steht inzwischen eine andere Adresse. Die Einrichtung lässt sie, wie sie ist, und trägt nichts ein."
+  fi
 
   draft=$(mktemp "$here/.env.XXXXXX")
 

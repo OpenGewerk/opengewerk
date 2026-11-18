@@ -282,6 +282,11 @@ unlock_and_cleanup() {
 trap 'unlock_and_cleanup "$?"' EXIT
 
 echo "  Anwendung wird für die Dauer des Rückspielens ausgesperrt."
+# Is the backup older than the database, she stays so until sh docker/start.sh
+# has migrated, and that one needs Docker Engine 28.3.3 or newer (#985). This
+# container cannot see the engine of the machine, so it is said beforehand.
+echo "  Bleibt sie danach ausgesperrt, gibt ihr erst sh docker/start.sh die Anmeldung"
+echo "  zurück, und das braucht Docker Engine ab 28.3.3."
 lock_application
 
 # --- Restore the database --------------------------------------------------
@@ -600,6 +605,7 @@ if [ "$waiting" -eq 1 ]; then
 	echo "Die Anwendung bleibt ausgesperrt, bis die Migrationen gelaufen sind; das"
 	echo "erledigt der Start, und danach bekommt sie ihre Anmeldung zurück."
 fi
-echo "Jetzt im Ordner der Installation starten, das führt auch die Migrationen aus,"
-echo "wenn die Sicherung von einer älteren Fassung stammt:"
+echo "Jetzt im Ordner der Installation starten; das braucht Docker Engine ab 28.3.3"
+echo "und führt auch die Migrationen aus, wenn die Sicherung von einer älteren"
+echo "Fassung stammt:"
 echo "  sh docker/start.sh"

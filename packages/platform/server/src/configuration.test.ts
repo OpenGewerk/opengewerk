@@ -319,6 +319,92 @@ describe('the configuration', () => {
     ).toThrow(/gültige Adresse/)
   })
 
+  it('takes plain http only for an origin on this machine (#984)', () => {
+    for (const entry of [
+      'http://probewerk.example.de',
+      'http://192.168.1.20:23700',
+      'http://localhost.example.de',
+      'http://127.0.0.2:23700',
+    ]) {
+      expect(() =>
+        readConfiguration(
+          { ...valid, TRUSTED_ORIGINS: `https://probewerk.example.de, ${entry}` },
+          writable,
+        ),
+      ).toThrow(`TRUSTED_ORIGINS enthält "${entry}". Über http:// gingen`)
+    }
+
+    const here = readConfiguration(
+      {
+        ...valid,
+        TRUSTED_ORIGINS:
+          'http://localhost, http://localhost:5173, http://127.0.0.1:23700, http://[::1]:23700',
+      },
+      writable,
+    )
+
+    // Another scheme with an origin of its own is no address of the instance.
+    expect(() =>
+      readConfiguration({ ...valid, TRUSTED_ORIGINS: 'ftp://probewerk.example.de' }, writable),
+    ).toThrow('TRUSTED_ORIGINS enthält "ftp://probewerk.example.de". Erwartet wird')
+
+    expect(here.trustedOrigins).toEqual([
+      'http://localhost',
+      'http://localhost:5173',
+      'http://127.0.0.1:23700',
+      'http://[::1]:23700',
+    ])
+  })
+
+  it('turns away an entry with a user or a password without repeating it', () => {
+    for (const entry of [
+      'https://nutzer-nr7:geheim@probewerk.example.de',
+      'nutzer-nr7:geheim@probewerk.example.de',
+      'https://geheim@',
+      'https://nutzer-nr7:geheim,zweiter-teil@probewerk.example.de',
+    ]) {
+      expect(() =>
+        readConfiguration(
+          { ...valid, TRUSTED_ORIGINS: `https://probewerk.example.de, ${entry}` },
+          writable,
+        ),
+      ).toThrow(/^(?![\s\S]*(?:geheim|zweiter-teil|nutzer-nr7))[\s\S]*Angaben vor dem Namen/)
+    }
+  })
+
+  it('turns away a port browsers refuse to open', () => {
+    for (const entry of [
+      'https://probewerk.example.de:6000',
+      'https://probewerk.example.de:0',
+      'http://localhost:10080',
+    ]) {
+      expect(() =>
+        readConfiguration(
+          { ...valid, TRUSTED_ORIGINS: `https://probewerk.example.de, ${entry}` },
+          writable,
+        ),
+      ).toThrow(`TRUSTED_ORIGINS enthält "${entry}" mit Port`)
+    }
+
+    expect(
+      readConfiguration(
+        { ...valid, TRUSTED_ORIGINS: 'https://probewerk.example.de:8443' },
+        writable,
+      ).trustedOrigins,
+    ).toEqual(['https://probewerk.example.de:8443'])
+  })
+
+  it('turns away a name with a dot at its end, which a browser rarely sends', () => {
+    for (const entry of ['https://probewerk.example.de.', 'http://localhost.:23700']) {
+      expect(() =>
+        readConfiguration(
+          { ...valid, TRUSTED_ORIGINS: `https://probewerk.example.de, ${entry}` },
+          writable,
+        ),
+      ).toThrow(`TRUSTED_ORIGINS enthält "${entry}" mit einem Punkt am Ende des Namens.`)
+    }
+  })
+
   it('takes several origins, because an instance can answer under more than one name', () => {
     const configuration = readConfiguration(
       {

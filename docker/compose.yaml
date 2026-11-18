@@ -115,6 +115,9 @@ services:
     command: ['node', '--enable-source-maps', 'dist/migrate.js']
     environment:
       MIGRATION_DATABASE_URL: postgres://opengewerk_owner:${OPENGEWERK_OWNER_PASSWORD}@postgres:5432/opengewerk
+      # Checked before the first change, by the rule the application holds at
+      # its start (#984): an address it would refuse stops the update here.
+      TRUSTED_ORIGINS: ${TRUSTED_ORIGINS:?TRUSTED_ORIGINS fehlt in der .env-Datei}
     depends_on:
       postgres:
         condition: service_healthy
