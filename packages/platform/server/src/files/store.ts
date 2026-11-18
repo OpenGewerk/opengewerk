@@ -155,11 +155,19 @@ export class FileStore implements FileStorage {
 
       await utimes(temporary, writtenAt, writtenAt)
       await linkUnlessThere(temporary, target)
-    } finally {
+    } catch (error) {
       await rm(temporary, { force: true })
+      throw error
     }
 
-    await this.dateAsNow(target)
+    // The name is in place now, so it is dated before the temporary one goes,
+    // and a failure to remove that one changes nothing about it: a stray
+    // `.part` is taken by the sweep once it is old.
+    try {
+      await this.dateAsNow(target)
+    } finally {
+      await rm(temporary, { force: true }).catch(() => undefined)
+    }
 
     return blob
   }
@@ -288,11 +296,24 @@ export class FileStore implements FileStorage {
     const written = await modified(aside)
 
     if (written !== null && written >= before) {
-      await rename(aside, path)
       // Back as new as now: the put that kept it may have come before the mark
       // of a backup whose first part was packed while the file lay aside, and
-      // the second part takes only what is newer than the mark (#991).
-      await this.dateAsNow(path)
+      // the second part takes only what is newer than the mark (#991). Dated
+      // while it lies aside, so that the name never shows the older time, and
+      // put back even when that fails, so that the name is never lost.
+      let undated: { error: unknown } | undefined
+
+      try {
+        await this.dateAsNow(aside)
+      } catch (error) {
+        undated = { error }
+      }
+
+      await rename(aside, path)
+
+      if (undated !== undefined) {
+        throw undated.error
+      }
 
       return false
     }

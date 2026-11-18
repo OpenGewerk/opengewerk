@@ -133,19 +133,24 @@ describe('the sweep of the file store', () => {
   it('dates a new file from its put, not from its writing (#991)', async () => {
     // A clock that moves on with every reading, an hour each: the file carries
     // the reading after it was put in place, and not the one from before. At
-    // the first reading the name is still free, at the second it is taken.
+    // the first reading the name is still free, at the second it is taken,
+    // and the temporary file is still there: the name is dated before it goes.
     const start = Date.now()
     const bytes = new TextEncoder().encode('Lieferschein')
     const path = join(root, ...pathParts(bytes))
     const there: boolean[] = []
+    const temporary: boolean[] = []
     let readings = 0
     const moving = new FileStore(root, () => {
       there.push(existsSync(path))
+      temporary.push(readdirSync(dirname(path)).some((name) => name.endsWith('.part')))
 
       return new Date(start + ++readings * 60 * 60 * 1000)
     })
 
     await moving.put(bytes)
+
+    expect(temporary).toEqual([true, true])
 
     expect(there).toEqual([false, true])
     expect(Math.abs(statSync(path).mtime.getTime() - (start + 2 * 60 * 60 * 1000))).toBeLessThan(
@@ -265,7 +270,13 @@ describe('the sweep of the file store', () => {
   it('dates a file it puts back as of now (#991)', async () => {
     const sha256 = await oldFile('Zurückgelegt')
     const later = new Date(Date.now() + 2 * 60 * 60 * 1000)
-    const sweeping = new FileStore(root, () => later)
+    const named: boolean[] = []
+    // Dated while it lies aside: the name never shows the older time.
+    const sweeping = new FileStore(root, () => {
+      named.push(existsSync(join(root, sha256.slice(0, 2), sha256.slice(2, 4), sha256)))
+
+      return later
+    })
 
     // Put again between the answer and the move, with the clock of the
     // machine: the sweep puts the file back, and it carries the time of that.
@@ -277,27 +288,37 @@ describe('the sweep of the file store', () => {
 
     const path = join(root, sha256.slice(0, 2), sha256.slice(2, 4), sha256)
 
+    expect(named).toEqual([false])
     expect(Math.abs(statSync(path).mtime.getTime() - later.getTime())).toBeLessThan(2000)
   })
 
   it('goes on with the other files when it cannot date one it puts back (#991)', async () => {
-    // Its hash comes before the other's, so the store meets it first.
-    const kept = await oldFile('Gebraucht')
-    const gone = await oldFile('Verwaist')
+    // The first name the sweep asks about is put again in between, whichever
+    // the store lists first, and dating it fails; the second is taken anyway.
+    await oldFile('Gebraucht')
+    await oldFile('Verwaist')
+
+    let asked: string[] = []
     const failing = new FileStore(root, () => {
       throw new Error('EIO')
     })
 
     await expect(
-      failing.sweep(async () => {
-        await store.put(new TextEncoder().encode('Gebraucht'))
+      failing.sweep(async (names) => {
+        asked = [...names]
+
+        const first = join(root, asked[0].slice(0, 2), asked[0].slice(2, 4), asked[0])
+
+        utimesSync(first, new Date(), new Date())
 
         return new Set<string>()
       }, before()),
     ).rejects.toThrow('EIO')
 
-    expect(new TextDecoder().decode(await store.get(kept))).toBe('Gebraucht')
-    await expect(store.get(gone)).rejects.toThrow(StoredFileMissingError)
+    expect(asked).toHaveLength(2)
+    expect((await store.get(asked[0])).byteLength).toBeGreaterThan(0)
+    await expect(store.get(asked[1])).rejects.toThrow(StoredFileMissingError)
+    expect(everything()).toHaveLength(1)
   })
 
   it('takes out what an unfinished write or sweep left behind once it is old', async () => {

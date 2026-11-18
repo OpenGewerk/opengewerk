@@ -1129,7 +1129,8 @@ linked=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
 rm -rf "$work/linked"
 mkdir "$work/linked"
 tar --extract --gzip --file "$work/backups/$linked" --directory "$work/linked"
-if tar --list --file "$work/linked/storage-late.tar" | grep -q "$swap_hash"; then
+linked_list=$(tar --list --file "$work/linked/storage-late.tar")
+if printf '%s\n' "$linked_list" | grep -q "$swap_hash"; then
   echo 'FEHLER: der untergeschobene Link oder sein Ziel steht im zweiten Teil'
   exit 1
 fi
@@ -1150,7 +1151,8 @@ halved=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
 rm -rf "$work/halved"
 mkdir "$work/halved"
 tar --extract --gzip --file "$work/backups/$halved" --directory "$work/halved"
-if tar --list --file "$work/halved/storage-late.tar" | grep -q "$partial_hash"; then
+halved_list=$(tar --list --file "$work/halved/storage-late.tar")
+if printf '%s\n' "$halved_list" | grep -q "$partial_hash"; then
   echo 'FEHLER: eine halbe Kopie steht im zweiten Teil'
   exit 1
 fi
