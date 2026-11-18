@@ -261,6 +261,27 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
       ;;
   esac
 
+  # Plain http only on this machine (#984). Anywhere else the setup code and
+  # every password would cross the network readable, so the address is the
+  # one of a reverse proxy with TLS. A port is digits and nothing more: in
+  # http://localhost:x@example.org the host is example.org.
+  case "$wanted" in
+    http://*)
+      host_and_port=${wanted#http://}
+      case "$host_and_port" in
+        localhost | 127.0.0.1 | '[::1]') ;;
+        localhost:* | 127.0.0.1:* | '[::1]':*)
+          case "${host_and_port##*:}" in
+            '' | *[!0-9]*) fail "\"$wanted\" hat keinen Port aus Ziffern." ;;
+          esac
+          ;;
+        *)
+          fail "\"$wanted\" beginnt mit http://. So gingen Einrichtungscode und Passwörter lesbar durchs Netz. Die Adresse beginnt mit https://, davor steht ein Reverse Proxy mit TLS, Vorlagen dafür liegen in docker/proxy/. Nur auf dieser Maschine, mit localhost, 127.0.0.1 oder [::1], geht http://."
+          ;;
+      esac
+      ;;
+  esac
+
   draft=$(mktemp "$here/.env.XXXXXX")
 
   while IFS= read -r line || [ -n "$line" ]; do

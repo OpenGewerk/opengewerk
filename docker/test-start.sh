@@ -22,7 +22,8 @@ cp "$source_dir/start.sh" "$source_dir/setup.sh" "$source_dir/.env.example" \
 # Every call as one line: the version it saw in the environment, then the
 # arguments. Which variable holds the version is the prefix of the application
 # that starts, OPENGEWERK_VERSION unless WATCHED names another. "docker compose
-# version" answers like the real one does. The one
+# version" answers like the real one does, and "docker version" with the
+# version of the engine in DOCKER_SERVER, 28.3.3 when it is not set. The one
 # question start.sh asks the running application, whether it still waits for
 # its first run, is answered with SETUP_NEEDED, false when it is not set and
 # nothing at all when it is empty.
@@ -32,6 +33,7 @@ eval "seen=\${${WATCHED:-OPENGEWERK_VERSION}:-}"
 printf '%s|%s\n' "$seen" "$*" >> "$CALLS"
 case "$*" in
   *' exec -T app '*) printf '%s' "${SETUP_NEEDED-false}" ;;
+  'version --format '*) printf '%s\n' "${DOCKER_SERVER-28.3.3}" ;;
 esac
 FAKE
 chmod +x "$work/bin/docker"
@@ -269,5 +271,35 @@ printf '%s' "$out" | grep -qF "cosign verify --certificate-identity $identity"
 absent '^cosign|'
 pulled '0\.6\.0'
 check 'Paket mit Digest ohne cosign: sagt, wie man von Hand prüft'
+
+# 12. The version of the engine (#985): below 28.3.3, or one that cannot be
+# read as numbers, stops the start before anything is pulled, built or set
+# up; 28.3.3 and newer, a suffix of a distribution included, starts.
+for engine in 27.5.1 28.3.2 28.2.0 dev ''; do
+  : > "$CALLS"
+  rm -f "$work/docker/.env"
+  if out=$(DOCKER_SERVER=$engine OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null 2>&1); then
+    printf 'FEHLER: Docker "%s" lief durch\n' "$engine"
+    exit 1
+  fi
+  printf '%s' "$out" | grep -q 'braucht Docker Engine ab'
+  absent 'compose -f'
+  if [ -f "$work/docker/.env" ]; then
+    printf 'FEHLER: mit Docker "%s" wurde erst eingerichtet, dann abgelehnt
+' "$engine"
+    exit 1
+  fi
+done
+check 'Docker unter 28.3.3 oder ohne lesbare Fassung: abgelehnt, bevor etwas geholt oder eingerichtet wird'
+
+for engine in 28.3.3 28.4.0 29.0.0 28.10.1 '29.4.2+dfsg1'; do
+  : > "$CALLS"
+  DOCKER_SERVER=$engine OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null > /dev/null 2>&1 || {
+    printf 'FEHLER: Docker "%s" wurde abgelehnt\n' "$engine"
+    exit 1
+  }
+  grep -q 'compose -f .*compose.yaml up -d --wait' "$CALLS"
+done
+check 'Docker ab 28.3.3 startet'
 
 echo 'Startskript: alles in Ordnung.'

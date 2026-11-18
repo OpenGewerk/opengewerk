@@ -59,6 +59,32 @@ command -v docker >/dev/null 2>&1 ||
 docker compose version >/dev/null 2>&1 ||
   fail 'Docker Compose fehlt. Es gehört zu jeder aktuellen Docker-Installation und heißt "docker compose", ohne Bindestrich.'
 
+# The application is published on 127.0.0.1 only, behind a reverse proxy with
+# TLS (#985). Docker before 28.0.0 lets machines on the same network reach such
+# a port anyway, and 28.2.0 to 28.3.2 open it again when firewalld reloads
+# (CVE-2025-54388): a machine next door would get past the proxy. A version
+# that cannot be read as numbers counts as too old.
+minimum_docker='28.3.3'
+docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null) ||
+  fail 'Docker antwortet nicht. Läuft der Docker-Dienst, und darf dieser Benutzer ihn ansprechen?'
+
+docker_too_old=$(printf '%s\n' "$docker_version" | awk -F. -v minimum="$minimum_docker" '
+  function number(field) { return field ~ /^[0-9]+/ ? field + 0 : -1 }
+  {
+    split(minimum, least, ".")
+    for (i = 1; i <= 3; i++) {
+      have = number($i)
+      if (have < 0) { print "yes"; exit }
+      if (have != least[i] + 0) { print (have < least[i] + 0 ? "yes" : "no"); exit }
+    }
+    print "no"
+    exit
+  }')
+
+if [ "$docker_too_old" != 'no' ]; then
+  fail "Docker meldet die Fassung \"$docker_version\", $APPLICATION_NAME braucht Docker Engine ab $minimum_docker. Ältere Fassungen lassen Rechner im selben Netz an Ports heran, die nur auf 127.0.0.1 veröffentlicht sind, und damit am Proxy mit TLS vorbei (CVE-2025-54388). Docker aktualisieren: https://docs.docker.com/engine/install/"
+fi
+
 sh "$scripts/setup.sh"
 
 compose() {
