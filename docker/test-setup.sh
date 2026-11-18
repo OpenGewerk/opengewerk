@@ -352,6 +352,17 @@ FAKE
   printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=08080 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1
   grep -q 'Leer lassen für http://localhost:8080' "$work/asked.txt"
   grep -qxF 'TRUSTED_ORIGINS=http://localhost:8080' "$work/.env"
+  # The end of the input instead of a line (Ctrl+D) takes nothing.
+  rm -f "$work/.env"
+  if printf '' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=8080 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
+    echo 'FEHLER: das Ende der Eingabe nahm die vorgeschlagene Adresse'
+    exit 1
+  fi
+  grep -q 'blieb ohne Antwort' "$work/asked.txt"
+  if grep -q '^TRUSTED_ORIGINS=http://localhost' "$work/.env"; then
+    echo 'FEHLER: das Ende der Eingabe trug eine Adresse ein'
+    exit 1
+  fi
   rm -f "$work/.env"
   if printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=06000 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
     echo 'FEHLER: ohne Adresse lief die Einrichtung mit Port 06000 durch'

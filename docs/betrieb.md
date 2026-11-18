@@ -284,6 +284,9 @@ verlangt sie `https://`, sonst gingen Einrichtungscode und Passwörter lesbar
 durchs Netz. Steht in einer bestehenden Installation noch eine solche Adresse,
 kommt vor dem Update zuerst TLS an den Reverse Proxy, Vorlagen liegen unter
 `docker/proxy/`, und dann die Adresse mit `https://` in `TRUSTED_ORIGINS`.
+Einen Namen mit einem Punkt am Ende (`https://betrieb.example.`) nimmt die
+Anwendung ebenfalls nicht an, denn ein Browser schickt den Punkt nur mit, wenn
+er auch in der Adresszeile steht; dort steht die Adresse ohne ihn.
 
 Der erste Eintrag aus `TRUSTED_ORIGINS` steht auch auf jedem QR-Etikett einer
 Anlage (#308), gedruckt, für die zehn Jahre, die ein Aufkleber im Zählerschrank

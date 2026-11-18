@@ -313,7 +313,12 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
     printf '%s: Unter welcher Adresse wird %s im Browser geöffnet?\n' "$APPLICATION_NAME" "$APPLICATION_NAME"
     if [ -n "$port" ]; then
       printf '  Etwa %s. Leer lassen für http://localhost:%s: ' "$APPLICATION_EXAMPLE_ADDRESS" "$port"
-      read -r wanted || wanted=''
+      # Only an empty line takes the address offered; the end of the input,
+      # Ctrl+D, is no answer and writes nothing.
+      if ! read -r wanted; then
+        printf '\n'
+        fail "Die Frage nach der Adresse blieb ohne Antwort, in docker/.env ist nichts eingetragen. Das Skript noch einmal starten oder $address_variable setzen."
+      fi
       wanted=${wanted:-http://localhost:$port}
     else
       printf '  Etwa %s: ' "$APPLICATION_EXAMPLE_ADDRESS"
