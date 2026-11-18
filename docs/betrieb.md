@@ -281,7 +281,9 @@ etwa `http://localhost:5173`; die Vorschau kennt sie von selbst.
 Mit `http://` startet die Anwendung nur, wenn die Adresse auf dieser Maschine
 liegt, also `localhost`, `127.0.0.1` oder `[::1]` (#984). Für jede andere
 verlangt sie `https://`, sonst gingen Einrichtungscode und Passwörter lesbar
-durchs Netz.
+durchs Netz. Steht in einer bestehenden Installation noch eine solche Adresse,
+kommt vor dem Update zuerst TLS an den Reverse Proxy, Vorlagen liegen unter
+`docker/proxy/`, und dann die Adresse mit `https://` in `TRUSTED_ORIGINS`.
 
 Der erste Eintrag aus `TRUSTED_ORIGINS` steht auch auf jedem QR-Etikett einer
 Anlage (#308), gedruckt, für die zehn Jahre, die ein Aufkleber im Zählerschrank

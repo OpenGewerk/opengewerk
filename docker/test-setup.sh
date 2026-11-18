@@ -165,6 +165,20 @@ OPENGEWERK_ADDRESS=https://opengewerk.example.org/ sh "$work/setup.sh" < /dev/nu
 grep -q '^TRUSTED_ORIGINS=https://opengewerk.example.org$' "$work/.env"
 check 'Schrägstrich am Ende: weggenommen'
 
+# 9b. The port of the scheme is taken off as well, another port stays.
+for pair in 'http://localhost:80 http://localhost' 'https://opengewerk.example.org:443 https://opengewerk.example.org' \
+  'http://[::1]:80 http://[::1]' 'http://localhost:8080 http://localhost:8080'; do
+  given=${pair% *}
+  kept=${pair#* }
+  rm "$work/.env"
+  OPENGEWERK_ADDRESS=$given sh "$work/setup.sh" < /dev/null > /dev/null 2>&1
+  grep -qxF "TRUSTED_ORIGINS=$kept" "$work/.env" || {
+    printf 'FEHLER: aus %s wurde nicht %s\n' "$given" "$kept"
+    exit 1
+  }
+done
+check 'Port des Schemas: weggenommen, ein anderer bleibt'
+
 # 9a. Plain http only on this machine (#984): every other host, and a port
 # that is no number, is turned away with a sentence that asks for https; the
 # three names of this machine, with and without a port, are taken.

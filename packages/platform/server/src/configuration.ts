@@ -398,6 +398,13 @@ function trustedOrigins(
     // and every password would cross the network readable. Held here, where
     // the value arrives the way Docker Compose or anything else handed it on,
     // and not only where a script reads the .env.
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new ConfigurationError(
+        `TRUSTED_ORIGINS enthält "${entry}". Erwartet wird eine Adresse mit https:// davor, ` +
+          `etwa ${application.exampleOrigin}`,
+      )
+    }
+
     if (parsed.protocol === 'http:' && !thisMachine.has(parsed.hostname)) {
       throw new ConfigurationError(
         `TRUSTED_ORIGINS enthält "${entry}". Über http:// gingen Einrichtungscode und ` +

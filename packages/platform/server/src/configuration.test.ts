@@ -343,6 +343,11 @@ describe('the configuration', () => {
       writable,
     )
 
+    // Another scheme with an origin of its own is no address of the instance.
+    expect(() =>
+      readConfiguration({ ...valid, TRUSTED_ORIGINS: 'ftp://probewerk.example.de' }, writable),
+    ).toThrow('TRUSTED_ORIGINS enthält "ftp://probewerk.example.de". Erwartet wird')
+
     expect(here.trustedOrigins).toEqual([
       'http://localhost',
       'http://localhost:5173',

@@ -282,6 +282,13 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
   # a browser sends, and the sign in would fail without saying why.
   wanted=${wanted%/}
 
+  # Nor the port a scheme has anyway: the origin a browser sends leaves it out,
+  # and the application, which compares against that, would not start.
+  case "$wanted" in
+    http://*:80) wanted=${wanted%:80} ;;
+    https://*:443) wanted=${wanted%:443} ;;
+  esac
+
   case "$wanted" in
     http://*/* | https://*/*)
       fail "\"$wanted\" hat einen Pfad. Gebraucht wird nur die Adresse, etwa $APPLICATION_EXAMPLE_ADDRESS."
