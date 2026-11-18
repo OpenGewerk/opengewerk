@@ -298,26 +298,25 @@ describe('the sweep of the file store', () => {
     await oldFile('Gebraucht')
     await oldFile('Verwaist')
 
-    let asked: string[] = []
+    let first = ''
+    let second = ''
     const failing = new FileStore(root, () => {
       throw new Error('EIO')
     })
 
     await expect(
       failing.sweep(async (names) => {
-        asked = [...names]
+        ;[first = '', second = ''] = names
 
-        const first = join(root, asked[0].slice(0, 2), asked[0].slice(2, 4), asked[0])
-
-        utimesSync(first, new Date(), new Date())
+        utimesSync(join(root, first.slice(0, 2), first.slice(2, 4), first), new Date(), new Date())
 
         return new Set<string>()
       }, before()),
     ).rejects.toThrow('EIO')
 
-    expect(asked).toHaveLength(2)
-    expect((await store.get(asked[0])).byteLength).toBeGreaterThan(0)
-    await expect(store.get(asked[1])).rejects.toThrow(StoredFileMissingError)
+    expect(second).not.toBe('')
+    expect((await store.get(first)).byteLength).toBeGreaterThan(0)
+    await expect(store.get(second)).rejects.toThrow(StoredFileMissingError)
     expect(everything()).toHaveLength(1)
   })
 
