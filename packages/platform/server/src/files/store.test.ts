@@ -11,7 +11,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { FileStore, StoredFileDamagedError, StoredFileMissingError } from './store.js'
 
@@ -120,6 +120,23 @@ describe('the sweep of the file store', () => {
     (...names: string[]) =>
     async (asked: readonly string[]) =>
       new Set(asked.filter((name) => names.includes(name)))
+
+  it('dates a new file from its put, not from its writing (#991)', async () => {
+    // The clock of the put an hour ahead of the clock of the disk: the file
+    // carries the time of its put, which is what a backup holds it to.
+    const later = new Date(Date.now() + 60 * 60 * 1000)
+
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(later)
+    try {
+      const { sha256 } = await store.put(new TextEncoder().encode('Lieferschein'))
+      const path = join(root, sha256.slice(0, 2), sha256.slice(2, 4), sha256)
+
+      expect(Math.abs(statSync(path).mtime.getTime() - later.getTime())).toBeLessThan(2000)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 
   it('keeps a file as new as the last put of the same bytes', async () => {
     const sha256 = await oldFile('Rechnung')

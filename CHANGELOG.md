@@ -27,7 +27,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
-- Eine Sicherung sichert den Dateispeicher um die Datenbank herum: zuerst `storage.tar`, dann den Dump, dann in `storage-late.tar` alles, was der Speicher seit dem Beginn bekam; `restore.sh` spielt beide Teile zurück (#991). Warum: Bisher kam der Speicher erst nach dem Dump, und das tägliche Aufräumen konnte eine Datei, deren letzte Zeile gleich nach dem Dump ging, dazwischen herausnehmen; das Archiv nannte sie dann im Dump und hatte sie nicht. Ein Archiv von vorher hat keinen zweiten Teil und geht zurück wie bisher.
+- Eine Sicherung sichert den Dateispeicher um die Datenbank herum: zuerst `storage.tar`, dann den Dump, dann in `storage-late.tar` alles, was der Speicher seit dem Beginn bekam; `restore.sh` spielt beide Teile zurück (#991). Warum: Bisher kam der Speicher erst nach dem Dump, und das tägliche Aufräumen konnte eine Datei, deren letzte Zeile gleich nach dem Dump ging, dazwischen herausnehmen; das Archiv nannte sie dann im Dump und hatte sie nicht. Ein Archiv von vorher hat keinen zweiten Teil und geht zurück wie bisher. Dazu trägt eine neue Datei im Speicher die Zeit, zu der sie abgelegt wurde, und nicht die, zu der sie geschrieben wurde; sonst fiele eine Datei, die vor der Marke geschrieben und erst danach abgelegt wurde, durch beide Teile.
 - Eine Sicherung einer älteren Fassung geht in eine Datenbank einer neueren zurück, und ein gescheitertes
   Zurückspielen lässt die Datenbank, wie sie war (#988). Warum: `restore.sh` räumte mit `pg_restore --clean` auf, das
   nur verwirft, was im Dump steht. Was spätere Migrationen angelegt hatten, blieb stehen, und der Lauf brach mitten im

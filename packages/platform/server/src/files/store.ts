@@ -137,12 +137,24 @@ export class FileStore implements FileStorage {
       await handle.close()
     }
 
+    // A new file is as new as its put, not as its writing: a backup takes the
+    // store before its dump and everything newer than a mark after it, and a
+    // file written before the mark and put in place after the first part was
+    // packed would be in neither (#991). Dated before the rename, so that the
+    // name never points at an older file, and once more after it.
     try {
+      const writtenAt = new Date()
+
+      await utimes(temporary, writtenAt, writtenAt)
       await rename(temporary, target)
     } catch (error) {
       await rm(temporary, { force: true })
       throw error
     }
+
+    const putAt = new Date()
+
+    await utimes(target, putAt, putAt)
 
     return blob
   }
