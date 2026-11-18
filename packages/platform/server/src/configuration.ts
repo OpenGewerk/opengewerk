@@ -347,17 +347,17 @@ function sessionSecret(application: ServerApplication, environment: Environment)
   return value
 }
 
+/** The names of this machine, written the way `URL.hostname` gives them. */
+const thisMachine = new Set(['localhost', '127.0.0.1', '[::1]'])
+
 /**
  * The addresses a browser may send an authenticated request from.
  *
  * Every entry has to be an origin and nothing more: scheme, host, optional
  * port. A path or a trailing slash never matches what a browser puts in the
  * Origin header, so an entry with one would look configured and protect
- * nothing.
+ * nothing. Plain http only for this machine (#984).
  */
-/** The names of this machine, written the way `URL.hostname` gives them. */
-const thisMachine = new Set(['localhost', '127.0.0.1', '[::1]'])
-
 function trustedOrigins(
   application: ServerApplication,
   environment: Environment,
