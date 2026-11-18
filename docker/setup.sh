@@ -168,9 +168,13 @@ while IFS= read -r line || [ -n "$line" ]; do
       ;;
   esac
   value=${line#*=}
+  # A value begins with a visible character of ASCII, a quote among them.
+  # Compose skips blanks there, and not only space and tab: after a no-break
+  # space, say, a quote would open a value over several lines for Compose that
+  # this check would not see.
   case "$value" in
-    [\ \	]*)
-      fail "docker/.env, Zeile $line_number: bitte als NAME=Wert schreiben, ohne export davor und ohne Leerzeichen um das =."
+    [!!-~]*)
+      fail "docker/.env, Zeile $line_number ($name): der Wert beginnt mit einem Leerzeichen oder einem Zeichen außerhalb von ASCII. Bitte ohne Leerzeichen nach dem = schreiben, ein anderes Zeichen am Anfang in Anführungszeichen."
       ;;
   esac
   # A value in quotes ends on its line: one that goes on would hide the lines
@@ -211,6 +215,16 @@ while IFS= read -r line || [ -n "$line" ]; do
     case "$value" in
       *[!]A-Za-z0-9.:/,_[-]*)
         fail "docker/.env, Zeile $line_number: TRUSTED_ORIGINS bitte nur mit den Adressen schreiben, durch Komma getrennt, ohne Anführungszeichen, Leerzeichen, Kommentar oder \$."
+        ;;
+    esac
+  fi
+  # The version start.sh reads from its line as well (#1001), with its quotes
+  # and comment taken away; a ${...} Compose would fill in, and it would read
+  # another version than the one Compose starts.
+  if [ "$name" = "${APPLICATION_PREFIX}_VERSION" ]; then
+    case "$value" in
+      *\$*)
+        fail "docker/.env, Zeile $line_number: $name bitte ohne \$ schreiben, nur die Fassung, etwa 0.8.0."
         ;;
     esac
   fi

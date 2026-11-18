@@ -78,11 +78,14 @@ Platzhalter aus der Vorlage findet, startet nicht: sie nennt die Variable, nie
 ihren Wert, und verweist auf das Skript.
 
 Jede Zeile der `.env` hat die Form `NAME=Wert`, ohne `export` davor und ohne
-Leerzeichen um das `=`; ein Wert in Anführungszeichen endet auf seiner Zeile,
-hat keinen `\` darin und dahinter höchstens einen Kommentar, und jeder Name
-steht nur einmal da. Gespeichert wird als UTF-8 ohne BOM. `TRUSTED_ORIGINS`
+Leerzeichen um das `=`. Ein Wert beginnt mit einem sichtbaren Zeichen aus
+ASCII; einer, der mit einem Umlaut beginnt, steht in Anführungszeichen. Ein
+Wert in Anführungszeichen endet auf seiner Zeile, hat keinen `\` darin und
+dahinter höchstens einen Kommentar mit einem Leerzeichen davor. Jeder Name
+steht nur einmal da, und gespeichert wird als UTF-8 ohne BOM. `TRUSTED_ORIGINS`
 enthält nur die Adressen, durch Komma getrennt, ohne Anführungszeichen,
-Leerzeichen, Kommentar oder `$`. Docker Compose nimmt auch anderes an, liest
+Leerzeichen, Kommentar oder `$`, und `OPENGEWERK_VERSION` hat kein `$`.
+Docker Compose nimmt auch anderes an, liest
 es aber anders als die Skripte, die dann eine andere Adresse nennen oder sehen
 würden als die, mit der die Anwendung läuft. `sh docker/start.sh` hält deshalb
 bei einer anderen Form an, nennt die Nummer der Zeile, nie ihren Wert, und

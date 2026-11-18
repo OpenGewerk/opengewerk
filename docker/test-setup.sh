@@ -653,7 +653,7 @@ check 'zweite Anwendung: falsches Präfix und fehlende Namen abgelehnt'
 # addresses and commas stop the run with the number of the line, never with a
 # value; the line with the value GEHEIM-1 is where it would show. The file
 # stays as it was to the byte, also when its last line has no line end.
-for case in export blanks blank_after quotes escaped after_quote comment_glued bom twice origins_quoted origins_variable origins_comment; do
+for case in export blanks blank_after vtab_after nbsp_after quotes escaped after_quote comment_glued bom twice origins_quoted origins_variable origins_comment version_variable; do
   rm -f "$work/.env"
   OPENGEWERK_ADDRESS=https://opengewerk.example.org sh "$work/setup.sh" < /dev/null > /dev/null 2>&1
   case "$case" in
@@ -665,7 +665,16 @@ for case in export blanks blank_after quotes escaped after_quote comment_glued b
       expected='bitte als NAME=Wert' ;;
     blank_after)
       printf 'EXTRA_VALUE= GEHEIM-1' >> "$work/.env"
-      expected='bitte als NAME=Wert' ;;
+      expected='der Wert beginnt mit einem Leerzeichen' ;;
+    vtab_after)
+      printf 'EXTRA_VALUE=\013"GEHEIM-1\nOTHER_VALUE=more"\n' >> "$work/.env"
+      expected='der Wert beginnt mit einem Leerzeichen' ;;
+    nbsp_after)
+      printf 'EXTRA_VALUE=\302\240"GEHEIM-1\nOTHER_VALUE=more"\n' >> "$work/.env"
+      expected='der Wert beginnt mit einem Leerzeichen' ;;
+    version_variable)
+      sed -i 's|^OPENGEWERK_VERSION=.*|OPENGEWERK_VERSION=${TAG:-GEHEIM-1}|' "$work/.env"
+      expected='OPENGEWERK_VERSION bitte ohne $' ;;
     quotes)
       printf "EXTRA_VALUE='GEHEIM-1\nOTHER_VALUE=more'\n" >> "$work/.env"
       expected='schließt nicht auf dieser Zeile' ;;
@@ -718,7 +727,7 @@ for case in export blanks blank_after quotes escaped after_quote comment_glued b
     exit 1
   }
 done
-check '.env: export, Leerzeichen um das =, Wert über mehrere Zeilen, \ in Anführungszeichen, doppelter Name und TRUSTED_ORIGINS mit mehr als Adressen halten an, ohne Wert'
+check '.env: export, Leerzeichen um das =, Wert ohne ASCII am Anfang, über mehrere Zeilen oder mit \ in Anführungszeichen, doppelter Name, TRUSTED_ORIGINS mit mehr als Adressen und $ in der Fassung halten an, ohne Wert'
 
 # A carriage return from Windows is read away, comments after blanks stay, and
 # another value may stand in quotes with a comment after it; the example
