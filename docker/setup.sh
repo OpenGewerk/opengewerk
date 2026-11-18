@@ -127,6 +127,12 @@ fi
 
 chmod 600 "$env_file"
 
+# A byte order mark, which some editors on Windows put first, would come
+# before the first name or comment for every check below and not for Compose.
+if [ "$(head -c 3 "$env_file")" = "$(printf '\357\273\277')" ]; then
+  fail "docker/.env, Zeile 1: die Datei beginnt mit einer Byte Order Mark (BOM). Bitte als UTF-8 ohne BOM speichern, in den meisten Editoren unter Kodierung."
+fi
+
 # Every assignment in the .env in the form this script finds the way Docker
 # Compose finds it (#996): NAME=value with the name at the start of the line,
 # and no name twice. Compose takes more, "export", blanks around the =, a
@@ -178,9 +184,23 @@ while IFS= read -r line || [ -n "$line" ]; do
   esac
   if [ -n "$quote" ]; then
     case "$rest" in
-      *\\*) fail "docker/.env, Zeile $line_number ($name): ein Wert in Anführungszeichen mit einem \\ darin geht hier nicht." ;;
       *"$quote"*) ;;
       *) fail "docker/.env, Zeile $line_number ($name): das Anführungszeichen am Anfang des Werts schließt nicht auf dieser Zeile. Ein Wert über mehrere Zeilen geht hier nicht." ;;
+    esac
+    # Up to the first quote of its kind: a backslash right before it would
+    # keep it from closing for Compose; one in a comment after it counts not.
+    case "${rest%%"$quote"*}" in
+      *\\*) fail "docker/.env, Zeile $line_number ($name): ein Wert in Anführungszeichen mit einem \\ darin geht hier nicht." ;;
+    esac
+    # After the closing quote Compose reads on as if a new line began, so
+    # "A=x" B=y sets B as well. Only blanks may follow, and a comment after
+    # one of them.
+    after=${rest#*"$quote"}
+    comment=${after#"${after%%[!\ \	]*}"}
+    case "$comment" in
+      '') ;;
+      \#*) [ "$comment" != "$after" ] || fail "docker/.env, Zeile $line_number ($name): hinter dem schließenden Anführungszeichen darf nur ein Kommentar stehen, mit einem Leerzeichen davor." ;;
+      *) fail "docker/.env, Zeile $line_number ($name): hinter dem schließenden Anführungszeichen darf nur ein Kommentar stehen, mit einem Leerzeichen davor." ;;
     esac
   fi
   # TRUSTED_ORIGINS is read here and in start.sh straight from its line. It
@@ -196,7 +216,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   fi
   case "$names_seen" in
     *" $name "*)
-      fail "docker/.env, Zeile $line_number: $name steht ein zweites Mal in der Datei. Docker Compose nimmt die letzte Zeile, dieses Skript die erste; bitte nur eine behalten."
+      fail "docker/.env, Zeile $line_number: $name steht ein zweites Mal in der Datei. Docker Compose nimmt die letzte dieser Zeilen, mit ihrem Wert läuft die Instanz bisher; bitte nur sie behalten."
       ;;
   esac
   names_seen="$names_seen$name "

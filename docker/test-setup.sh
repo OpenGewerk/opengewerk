@@ -653,7 +653,7 @@ check 'zweite Anwendung: falsches Präfix und fehlende Namen abgelehnt'
 # addresses and commas stop the run with the number of the line, never with a
 # value; the line with the value GEHEIM-1 is where it would show. The file
 # stays as it was to the byte, also when its last line has no line end.
-for case in export blanks blank_after quotes escaped twice origins_quoted origins_variable origins_comment; do
+for case in export blanks blank_after quotes escaped after_quote comment_glued bom twice origins_quoted origins_variable origins_comment; do
   rm -f "$work/.env"
   OPENGEWERK_ADDRESS=https://opengewerk.example.org sh "$work/setup.sh" < /dev/null > /dev/null 2>&1
   case "$case" in
@@ -672,6 +672,17 @@ for case in export blanks blank_after quotes escaped twice origins_quoted origin
     escaped)
       printf '%s\n' 'EXTRA_VALUE="GEHEIM-1\"' 'OTHER_VALUE=more"' >> "$work/.env"
       expected='mit einem \ darin' ;;
+    after_quote)
+      printf '%s\n' 'EXTRA_VALUE="x" TRUSTED_ORIGINS=https://GEHEIM-1.example.org' >> "$work/.env"
+      expected='darf nur ein Kommentar stehen' ;;
+    comment_glued)
+      printf '%s\n' 'EXTRA_VALUE="x"#GEHEIM-1' >> "$work/.env"
+      expected='darf nur ein Kommentar stehen' ;;
+    bom)
+      { printf '\357\273\277'; cat "$work/.env"; } > "$work/.env.bom"
+      mv "$work/.env.bom" "$work/.env"
+      printf 'EXTRA_VALUE=GEHEIM-1\n' >> "$work/.env"
+      expected='Byte Order Mark' ;;
     twice)
       printf 'TRUSTED_ORIGINS=https://GEHEIM-1.example.org\n' >> "$work/.env"
       expected='TRUSTED_ORIGINS steht ein zweites Mal' ;;
@@ -716,7 +727,7 @@ rm -f "$work/.env"
 sh "$work/setup.sh" < /dev/null > /dev/null 2>&1 || true
 sed -e 's/$/\r/' "$work/.env" > "$work/.env.windows"
 printf '   # eingerückter Kommentar\r\n' >> "$work/.env.windows"
-printf 'EXTRA_VALUE="mit Leerzeichen" # Kommentar\r\n' >> "$work/.env.windows"
+printf '%s\r\n' 'EXTRA_VALUE="mit Leerzeichen" # Sicherung unter C:\Backup' >> "$work/.env.windows"
 mv "$work/.env.windows" "$work/.env"
 OPENGEWERK_ADDRESS=https://werkstatt.example.org sh "$work/setup.sh" < /dev/null > "$work/out" 2>&1 || {
   echo 'FEHLER: eine .env aus Windows mit Kommentaren und einem Wert in Anführungszeichen wurde abgelehnt'
