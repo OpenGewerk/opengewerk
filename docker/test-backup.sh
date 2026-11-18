@@ -67,6 +67,10 @@ fi
 if [ -n "${UPTIME_JUMPS:-}" ]; then
   echo '60000.00 120000.00' > "$UPTIME_PATH"
 fi
+# A dump after which two seconds are left of the twelve hours.
+if [ -n "${UPTIME_ALMOST:-}" ]; then
+  echo '43298.00 86596.00' > "$UPTIME_PATH"
+fi
 # A machine whose uptime can no longer be read while the dump runs.
 if [ -n "${UPTIME_GOES:-}" ]; then
   : > "$UPTIME_PATH"
@@ -286,6 +290,13 @@ if [ -n "\${LATE_HASH:-}" ] && [ "\$1" = --create ]; then
       : > "\$LATE_DONE"
       set +e
       ;;
+  esac
+fi
+# A tar of the second part that waits, as busybox tar does on a pipe swapped
+# in between its look at a name and the opening.
+if [ -n "\${TAR_HANGS:-}" ] && [ "\$1" = --create ]; then
+  case " \$* " in
+    *" -T "*) sleep 30 ;;
   esac
 fi
 if [ -n "\${TAR_FAILS:-}" ] && [ "\$1" = --create ]; then
@@ -1388,8 +1399,8 @@ check 'Dateispeicher: ein Fehler ohne Meldung oder neben einer verschwundenen Da
 relinked_text='erst Link, dann Datei'
 relinked_hash=$(hash_of "$relinked_text")
 mkdir -p "$(dirname "$(stored "$relinked_hash")")"
-# The link names its own place in the store, so a list of the first part that
-# took the name of any entry, a link's as well, would hold it as there.
+# busybox lists a link as "name -> target", which the layout never fits, so
+# this case holds without the type filter as well; the pipe below needs it.
 ln -s "./$(stored "$relinked_hash" | sed "s|^$STORAGE_PATH/||")" "$(stored "$relinked_hash")"
 DUMP_UPLOADS="$relinked_text" backed_up 'eine Datei an Stelle eines Links beendete die Sicherung'
 unpacked relinked
@@ -1399,7 +1410,22 @@ printf '%s\n' "$relinked_names" | grep -q "$relinked_hash" || {
   exit 1
 }
 rm -rf "$(dirname "$(stored "$relinked_hash")")"
-check 'Dateispeicher: ein Link im ersten Teil hält die Datei an seiner Stelle nicht aus dem zweiten'
+# A pipe under a name of the store when the first part was packed: busybox
+# lists it under its bare name, so only the type filter keeps it from being
+# held, and the file uploaded in its place during the dump in the second part.
+piped_text='erst Pipe, dann Datei'
+piped_hash=$(hash_of "$piped_text")
+mkdir -p "$(dirname "$(stored "$piped_hash")")"
+mkfifo "$(stored "$piped_hash")"
+DUMP_UPLOADS="$piped_text" backed_up 'eine Datei an Stelle einer Pipe beendete die Sicherung'
+unpacked piped
+piped_names=$(tar --list --file "$work/piped/storage-late.tar")
+printf '%s\n' "$piped_names" | grep -q "$piped_hash" || {
+  echo 'FEHLER: eine Datei, die an Stelle einer Pipe kam, fehlt im zweiten Teil'
+  exit 1
+}
+rm -rf "$(dirname "$(stored "$piped_hash")")"
+check 'Dateispeicher: ein Link oder eine Pipe im ersten Teil hält die Datei an ihrer Stelle nicht aus dem zweiten'
 
 # A file in the first part whose name ends like a stored file after a blank,
 # "./Import ./ab/cd/<hash>": the file uploaded at the true name during the
@@ -1470,5 +1496,56 @@ test "$(ls "$work/backups" | wc -l)" = "$archives_before" || {
   exit 1
 }
 check 'Dateispeicher: nach einem halben Tag bis zum Ende des Lesens bricht die Sicherung ab'
+
+# A tar of the store that waits is ended when the twelve hours are over, and
+# the backup stops without an archive instead of hanging.
+waits_text='wartet'
+echo '100.00 200.00' > "$work/uptime"
+archives_before=$(ls "$work/backups" | wc -l)
+if DUMP_UPLOADS="$waits_text" UPTIME_PATH="$work/uptime" UPTIME_ALMOST=1 TAR_HANGS=1 run_backup; then
+  echo 'FEHLER: eine Sicherung, deren tar wartete, ging durch'
+  exit 1
+fi
+grep -q 'in zwölf Stunden nicht zum Ende' "$work/out" || {
+  echo 'FEHLER: eine Sicherung, deren tar wartete, endete nicht an der Grenze von zwölf Stunden'
+  cat "$work/out"
+  exit 1
+}
+test "$(ls "$work/backups" | wc -l)" = "$archives_before" || {
+  echo 'FEHLER: eine Sicherung, deren tar wartete, hinterließ ein Archiv'
+  exit 1
+}
+rm -rf "$(dirname "$(stored "$(hash_of "$waits_text")")")"
+check 'Dateispeicher: ein tar, das wartet, endet mit den zwölf Stunden'
+
+# A file in an archive whose content is not what its name says, as a link
+# swapped in while tar read the store would leave it: the restore stops and
+# does not leave the file in the store, where the application would read it.
+put_old 'echt' "$(hash_of 'echt')"
+backed_up 'eine Sicherung für die untergeschobene Datei scheiterte'
+forged=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
+rm -rf "$work/forged"
+mkdir -p "$work/forged/first"
+tar --extract --gzip --file "$work/backups/$forged" --directory "$work/forged"
+tar --extract --file "$work/forged/storage.tar" --directory "$work/forged/first"
+forged_name=$(stored "$(hash_of 'echt')" | sed "s|^$STORAGE_PATH/||")
+test -f "$work/forged/first/$forged_name"
+printf 'GEHEIMNIS DES CONTAINERS' > "$work/forged/first/$forged_name"
+tar --create --file "$work/forged/storage.tar" --directory "$work/forged/first" .
+rm -rf "$work/forged/first"
+sum=$(sha256sum "$work/forged/storage.tar" | cut -d' ' -f1)
+sed "s|\"storage.tar\": \"[0-9a-f]*\"|\"storage.tar\": \"$sum\"|" "$work/forged/manifest.json" > "$work/forged/manifest.new"
+mv "$work/forged/manifest.new" "$work/forged/manifest.json"
+tar --create --gzip --file "$work/backups/$forged" --directory "$work/forged" .
+if POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" --skip-origin-check "$forged" > "$work/out" 2>&1; then
+  echo 'FEHLER: ein Archiv mit einer untergeschobenen Datei ließ sich zurückspielen'
+  exit 1
+fi
+grep -q 'passt nicht mehr zu ihrem Namen' "$work/out"
+if [ -e "$STORAGE_PATH/$forged_name" ]; then
+  echo 'FEHLER: die untergeschobene Datei blieb nach dem Rückspielen im Speicher'
+  exit 1
+fi
+check 'Rückspielen: eine Datei, deren Inhalt nicht ihr Name ist, bleibt nicht im Speicher'
 
 echo 'Sicherungen: alles in Ordnung.'

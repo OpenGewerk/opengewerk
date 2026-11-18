@@ -202,6 +202,26 @@ uptime_seconds() {
 	echo "$up"
 }
 
+# tar over the store, within what is left of the twelve hours below. busybox
+# tar looks at a file and opens it after: a name swapped for a pipe in between
+# makes it wait on that pipe for good, and a backup that hangs backs nothing up
+# from then on. Ends the backup when the time runs out. $1 takes what tar
+# says, the sentence here goes to where the backup speaks.
+store_tar() {
+	tar_said=$1
+	shift
+	now=$(uptime_seconds) || exit 1
+	left=$((started + 43200 - now))
+	[ "$left" -gt 0 ] || left=1
+	status=0
+	timeout "$left" tar "$@" 2>"$tar_said" || status=$?
+	if [ "$status" -eq 143 ] || [ "$status" -eq 124 ]; then
+		echo "  Das Lesen des Dateispeichers kam in zwölf Stunden nicht zum Ende, die Sicherung bricht ab." >&2
+		exit 1
+	fi
+	return "$status"
+}
+
 # --- 1. The file store, before the database --------------------------------
 # See the note at the top. Only stored files, as in the second part: a .part
 # or .gone is renamed any moment. A file that is gone by the time tar comes to
@@ -210,8 +230,8 @@ uptime_seconds() {
 # else.
 echo "  Dateispeicher wird gesichert."
 started=$(uptime_seconds)
-if ! tar --create --file "${work}/storage.tar" --directory "$STORAGE_PATH" \
-	--exclude '*.part' --exclude '*.gone' . 2>"${work}/storage.err"; then
+if ! store_tar "${work}/storage.err" --create --file "${work}/storage.tar" --directory "$STORAGE_PATH" \
+	--exclude '*.part' --exclude '*.gone' .; then
 	only_vanished "${work}/storage.err" || exit 1
 fi
 rm -f "${work}/storage.err"
@@ -268,15 +288,16 @@ fi
 names_of "${work}/storage.now" | sort | comm -13 "${work}/storage.first" - >"${work}/storage-late.list"
 
 # Packed straight from the store with tar, which reads no file it was not
-# given and stores a link or a pipe as what it is, and never waits on one.
+# given and stores a link or a pipe it finds as what it is; one swapped in
+# while it reads is what the limit of store_tar is for.
 # Unpacked into a folder of its own, a file stays only when it is a plain file
 # whose name is the SHA-256 of what it holds: a name swapped for a link, a
 # pipe, or a folder swapped for a link to somewhere in this container between
 # find and tar cannot be that.
 mkdir "${work}/storage-late"
 if [ -s "${work}/storage-late.list" ]; then
-	if ! tar --create --no-recursion --file "${work}/storage-late.raw" --directory "$STORAGE_PATH" \
-		-T "${work}/storage-late.list" 2>"${work}/storage-late.err"; then
+	if ! store_tar "${work}/storage-late.err" --create --no-recursion --file "${work}/storage-late.raw" \
+		--directory "$STORAGE_PATH" -T "${work}/storage-late.list"; then
 		only_vanished "${work}/storage-late.err" || exit 1
 	fi
 	tar --extract --no-same-owner --file "${work}/storage-late.raw" --directory "${work}/storage-late"

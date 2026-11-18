@@ -495,8 +495,20 @@ if [ "$expected_files" -gt 0 ]; then
 	# to go looking through the whole store by hand.
 	if ! sha256sum -cs "${work}/expected.sha256"; then
 		echo "Der Inhalt einzelner Dateien passt nicht mehr zu ihrem Namen. In einem" >&2
-		echo "inhaltsadressierten Speicher heißt das, sie sind beschädigt:" >&2
+		echo "inhaltsadressierten Speicher heißt das, sie sind beschädigt oder untergeschoben;" >&2
+		echo "sie werden aus dem Speicher genommen:" >&2
 		sha256sum -c "${work}/expected.sha256" 2>&1 | grep -v ': OK$' >&2 || true
+		# Out of the store before the restore ends: what a link swapped in while
+		# the backup read the store put under a name there can be anything in the
+		# container of the backup, and the application reads the store.
+		sha256sum -c "${work}/expected.sha256" 2>/dev/null | sed -n 's/: FAILED.*$//p' |
+			while IFS= read -r wrong; do
+				rm -f "$wrong"
+			done
+		left_wrong=$(sha256sum -c "${work}/expected.sha256" 2>/dev/null | grep -c ': FAILED' || true)
+		if [ "$left_wrong" -ne 0 ]; then
+			echo "Nicht jede dieser Dateien ließ sich entfernen; sie liegen noch im Speicher." >&2
+		fi
 		exit 1
 	fi
 fi
