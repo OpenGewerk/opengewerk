@@ -39,26 +39,34 @@ compose() {
   docker compose -f "$here/compose.yaml" "$@"
 }
 
-# The port Docker Compose takes for $1, when it is a plain number: from the
-# exported environment first, else from the last line of the .env ($2) that
-# sets it, "export" and blanks around the = allowed, in quotes what stands
-# between them, without quotes up to a comment after a blank, no carriage
-# return from Windows. Prints the number and ends with 0. Ends with 1 when
-# the variable is set nowhere or empty, so that the default in compose.yaml
-# holds, and with 2 when it holds anything else, such as ${...} that Compose
-# fills in from other variables: then nobody here guesses which port it is.
-# A value in quotes that goes on over the next line, which Compose allows,
-# makes every line after it doubtful, so the file then gives no port either.
+# The port Docker Compose takes for $1, only where it is certain without
+# reading the .env the way Compose reads it: from the exported environment
+# when the variable is there, else from the .env ($2) when exactly one line in
+# it names the variable, that line is NAME=digits and nothing more (a
+# carriage return from Windows aside), and no line that is no comment holds a
+# quote, which could begin a value over several lines. Prints the number and
+# ends with 0. Ends with 1 when the variable is empty or named nowhere, so
+# that the default in compose.yaml holds. Ends with 2 in every other case,
+# COMPOSE_ENV_FILES among them, which makes Compose read other files: then
+# nothing here guesses the port.
 plain_port() {
   if printenv "$1" >/dev/null 2>&1; then
     plain=$(printenv "$1")
-  elif grep -Eq "^[^#=]*=[[:space:]]*(\"[^\"]*|'[^']*)\$" "$2" 2>/dev/null; then
+  elif printenv COMPOSE_ENV_FILES >/dev/null 2>&1; then
     return 2
+  elif [ ! -f "$2" ]; then
+    return 1
   else
-    plain=$({ grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" "$2" 2>/dev/null || true; } | tail -n 1 |
-      sed -e 's/^[^=]*=//' -e 's/\r$//' -e 's/^[[:space:]]*//' |
-      sed -e 's/^"\([^"]*\)".*$/\1/' -e t -e "s/^'\([^']*\)'.*\$/\1/" -e t \
-        -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//')
+    plain=$(grep -F "$1" "$2" | sed 's/\r$//')
+    [ -n "$plain" ] || return 1
+    if grep -v '^[[:space:]]*#' "$2" | grep -q "[\"'\`]"; then
+      return 2
+    fi
+    # A second line that names it leaves a line break in $plain: no digits.
+    case "$plain" in
+      "$1="*) plain=${plain#"$1="} ;;
+      *) return 2 ;;
+    esac
   fi
   case "$plain" in
     '') return 1 ;;

@@ -188,13 +188,22 @@ for address in https://:443 http://:8080 'http://[]:80' 'https://[::1'; do
   printf '%s' "$out" | grep -q 'nennt keine Maschine'
 done
 for address in http://localhost:65536 https://opengewerk.example.org:65536 http://localhost:80:80 \
-  https://opengewerk.example.org:999999; do
+  https://opengewerk.example.org:999999 http://localhost:0 https://opengewerk.example.org:00000; do
   rm -f "$work/.env"
   if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
     printf 'FEHLER: %s lief durch\n' "$address"
     exit 1
   fi
-  printf '%s' "$out" | grep -q 'keinen Port aus Ziffern zwischen 0 und 65535'
+  printf '%s' "$out" | grep -q 'keinen Port aus Ziffern zwischen 1 und 65535'
+done
+# A port browsers do not open, in any spelling.
+for address in https://opengewerk.example.org:6000 http://localhost:10080 http://127.0.0.1:0021; do
+  rm -f "$work/.env"
+  if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
+    printf 'FEHLER: %s lief durch\n' "$address"
+    exit 1
+  fi
+  printf '%s' "$out" | grep -q 'öffnen Browser nicht'
 done
 # http to another machine with a port out of range: the first word is about
 # https, so that one run says what to change.
@@ -272,13 +281,13 @@ for address in http://localhost http://localhost:23700 http://127.0.0.1 http://1
 done
 check 'http:// nur für diese Maschine: andere Adressen abgelehnt, localhost und 127.0.0.1 angenommen'
 
-# 9c. The port of the address offered is the one Docker Compose takes, when
-# it is a plain number: from the exported environment first, else from the
-# last line of the .env that sets it, with "export", blanks, quotes, a
-# comment and a carriage return as Compose reads them. Set nowhere or empty
-# (1): the default of compose.yaml holds. Anything else (2), such as ${...}
-# that Compose fills in: no port is guessed. A variable of the shell that is
-# not exported is no part of the environment.
+# 9c. The port of the address offered is the one Docker Compose takes, and
+# only where that is certain: from the exported environment first, else from
+# a .env with one line NAME=digits and no quote outside a comment. Named
+# nowhere or empty (1): the default of compose.yaml holds. Anything else (2),
+# a second line, another way of writing it, ${...}, a quote that could start
+# a value over several lines, COMPOSE_ENV_FILES: no port is offered. A
+# variable of the shell that is not exported is no part of the environment.
 sed -n '/^plain_port() {/,/^}/p' "$work/setup.sh" > "$work/plain-port.sh"
 test -s "$work/plain-port.sh"
 . "$work/plain-port.sh"
@@ -291,11 +300,13 @@ port_of() {
     printf '%s\n' "$?"
   fi
 }
-for pair in 'PROBE_PORT=24567|0 24567' 'PROBE_PORT=24567 # lokal|0 24567' 'PROBE_PORT="24567"|0 24567' \
-  "PROBE_PORT='24567'|0 24567" 'export PROBE_PORT=24567|0 24567' '  PROBE_PORT = 24567|0 24567' \
-  'PROBE_PORT=24567\r|0 24567' 'PROBE_PORT=1\nPROBE_PORT=24567|0 24567' 'PROBE_PORT=|1' 'OTHER=1|1' \
-  'PROBE_PORT="24567 # lokal"|2' 'PROBE_PORT=24567#x|2' 'PROBE_PORT=${BASE_PORT}|2' \
-  'PROBE_PORT=${BASE_PORT:-24569}|2' "PROBE_PORT='\${BASE_PORT}'|2"; do
+for pair in 'PROBE_PORT=24567|0 24567' 'PROBE_PORT=24567\r|0 24567' 'PROBE_PORT=|1' 'OTHER=1|1' \
+  '# "Port" steht unten\nOTHER=1\nPROBE_PORT=24567|0 24567' 'OTHER="x"|1' \
+  'PROBE_PORT=24567 # lokal|2' 'PROBE_PORT="24567"|2' "PROBE_PORT='24567'|2" 'export PROBE_PORT=24567|2' \
+  '  PROBE_PORT = 24567|2' 'PROBE_PORT: 24567|2' 'PROBE_PORT=1\nPROBE_PORT=24567|2' \
+  'PROBE_PORT=24567\n# PROBE_PORT=8080|2' 'PROBE_PORT=24567#x|2' 'PROBE_PORT=${BASE_PORT}|2' \
+  'PROBE_PORT=24567\nOTHER="x"|2' "PROBE_PORT=24567\nOTHER='x'|2" 'PROBE_PORT=24567\nOTHER=`x`|2' \
+  "OTHER='Text \\\\' mit Apostroph\nPROBE_PORT=24567\nEnde'|2"; do
   line=${pair%%|*}
   expected=${pair#*|}
   got=$(port_of "$line")
@@ -323,10 +334,19 @@ plain_port PROBE_PORT "$work/multi.env" > /dev/null || multi_state=$?
 PROBE_PORT=24998
 [ "$(plain_port PROBE_PORT "$work/port.env")" = 24567 ]
 unset PROBE_PORT
+files_state=0
+(
+  export COMPOSE_ENV_FILES=/elsewhere/.env
+  plain_port PROBE_PORT "$work/port.env" > /dev/null
+) || files_state=$?
+[ "$files_state" = 2 ] || {
+  printf 'FEHLER: mit COMPOSE_ENV_FILES ergab die .env %s, nicht 2\n' "$files_state"
+  exit 1
+}
 missing_state=0
 plain_port PROBE_PORT "$work/no-such.env" > /dev/null || missing_state=$?
 [ "$missing_state" = 1 ]
-check 'Port aus der .env: so gelesen wie von Docker Compose'
+check 'Port aus der .env: nur, wo er ohne Auslegung feststeht'
 
 # 10. Another application runs the same script against its own folder
 # (opengewerk-haustechnik#14): its name at the start of every line, its prefix
