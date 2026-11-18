@@ -4,11 +4,16 @@
 #
 # Three things in here are decisions rather than mechanics.
 #
-# 1. THE ORDER IS DATABASE FIRST, FILES SECOND, and it is not interchangeable.
-#    A row points at a file by its hash. Dumping files first would mean that
+# 1. THE FILE STORE IS PACKED AROUND THE DATABASE, once before the dump and
+#    once after it. A row points at a file by its hash. Packed only before,
 #    anything uploaded between the two steps has a row in the dump and no file
-#    in the archive: a restored record pointing at nothing. The other way
-#    round the worst case is a file nobody references, and an unreferenced
+#    in the archive. Packed only after, a file whose last row went after the
+#    dump could be taken by the sweep of the store before tar reached it
+#    (#991), and the dump would name a file the archive lacks. So the store is
+#    packed first, then the database is dumped, and then every file of the
+#    store that the first part does not hold goes into a second, small part.
+#    Which files that are is read from the first part, not from any clock.
+#    The worst case left is a file nobody references, and an unreferenced
 #    file in a content addressed store costs disk and nothing else.
 #
 # 2. IT CONNECTS AS THE SUPERUSER, not as the owner of the tables. Row level
@@ -155,13 +160,103 @@ echo "Sicherung ${name} wird erstellt."
 # busybox sh does not understand $'\t', so the tab is built instead of written.
 tab=$(printf '\t')
 
-# --- 1. The database -------------------------------------------------------
+# Whether what tar or find said about the store is only that files went while
+# it read them: busybox names a path of the store it found gone, in one of
+# three forms, and sums up at the end. Anything else, and a failure that names
+# no gone path at all, is printed and ends the backup.
+only_vanished() {
+	cat >"${work}/vanished.patterns" <<'PATTERNS'
+^tar: \./.*: No such file or directory$
+^tar: can't open '\./.*': No such file or directory$
+^find: \./.*: No such file or directory$
+PATTERNS
+
+	# The status of grep -v itself, not of a pipe into grep -q: that one quits
+	# at the first line, and under pipefail the writer it leaves behind would
+	# turn the answer round as soon as there is more than one. And only its 1,
+	# no other line, is good news; a 2 is a grep that could not read.
+	others=0
+	if grep -q -f "${work}/vanished.patterns" "$1"; then
+		grep -v -f "${work}/vanished.patterns" -e '^tar: error exit delayed from previous errors$' \
+			"$1" >/dev/null || others=$?
+	fi
+	if [ "$others" -ne 1 ]; then
+		echo "  Beim Lesen des Dateispeichers kam ein Fehler, die Sicherung bricht ab:" >&2
+		cat "$1" >&2
+		return 1
+	fi
+}
+
+# Seconds since the machine started, which no change of the clock moves. The
+# path is only ever another one in test-backup.sh.
+uptime_seconds() {
+	up=''
+	read -r up _ <"${UPTIME_PATH:-/proc/uptime}" || true
+	up=${up%.*}
+	case "$up" in
+	'' | *[!0-9]*)
+		echo "  Die Laufzeit der Sicherung lässt sich nicht messen, sie bricht ab." >&2
+		return 1
+		;;
+	esac
+	echo "$up"
+}
+
+# tar over the store, within what is left of the twelve hours below. busybox
+# tar looks at a file and opens it after: a name swapped for a pipe in between
+# makes it wait on that pipe for good, and a backup that hangs backs nothing up
+# from then on. Ends the backup when the time runs out. $1 takes what tar
+# says, the sentence here goes to where the backup speaks.
+store_tar() {
+	tar_said=$1
+	shift
+	left=$(time_left) || exit 1
+	status=0
+	timeout "$left" tar "$@" 2>"$tar_said" || status=$?
+	out_of_time "$status"
+	return "$status"
+}
+
+# Seconds left of the twelve hours, one at least, so that a read started late
+# ends at once.
+time_left() {
+	now=$(uptime_seconds) || return 1
+	left=$((started + 43200 - now))
+	[ "$left" -gt 0 ] || left=1
+	echo "$left"
+}
+
+# Ends the backup when a read of the store was ended by its limit.
+out_of_time() {
+	case "$1" in
+	124 | 143)
+		echo "  Das Lesen des Dateispeichers kam in zwölf Stunden nicht zum Ende, die Sicherung bricht ab." >&2
+		exit 1
+		;;
+	esac
+}
+
+# --- 1. The file store, before the database --------------------------------
+# See the note at the top. Only stored files, as in the second part: a .part
+# or .gone is renamed any moment. A file that is gone by the time tar comes to
+# it was one of those or one the sweep took, which no row names any more, so
+# tar may say "No such file or directory" for a path in the store and nothing
+# else.
+echo "  Dateispeicher wird gesichert."
+started=$(uptime_seconds)
+if ! store_tar "${work}/storage.err" --create --file "${work}/storage.tar" --directory "$STORAGE_PATH" \
+	--exclude '*.part' --exclude '*.gone' .; then
+	only_vanished "${work}/storage.err" || exit 1
+fi
+rm -f "${work}/storage.err"
+
+# --- 2. The database -------------------------------------------------------
 # Custom format, because it restores selectively and compresses on the way.
 echo "  Datenbank wird gesichert."
 pg_dump --host "$POSTGRES_HOST" --username postgres --dbname "$POSTGRES_DB" \
 	--format custom --compress 6 --file "${work}/database.dump"
 
-# --- 2. The heads of the audit chains --------------------------------------
+# --- 3. The heads of the audit chains --------------------------------------
 # Read with the same connection, right after the dump, so the heads describe
 # the state the dump holds.
 echo "  Audit-Ketten werden festgehalten."
@@ -169,19 +264,142 @@ checked_query audit_chains "tenant_id next_sequence head_hash" \
 	"select tenant_id, next_sequence, coalesce(head_hash, '') from only public.audit_chains order by tenant_id" \
 	--field-separator="$tab" >"${work}/audit-chains.tsv" || exit 1
 
-# --- 3. The file store -----------------------------------------------------
-# After the database, never before it. See the note at the top.
-echo "  Dateispeicher wird gesichert."
-tar --create --file "${work}/storage.tar" --directory "$STORAGE_PATH" .
+# --- 4. What the first part does not hold ----------------------------------
+# Every stored file the store holds now and the first part does not: an upload
+# while the backup ran above all, but also one tar did not meet on its way or
+# one the sweep had set aside while tar passed. Read from the first part and
+# not from a clock, so a clock that jumps changes nothing. Only names of the
+# layout of the store, two folders and the hash, so neither a .part, a .gone
+# nor a name somebody made up comes in.
+#
+# A file the sweep takes is one no row names. Whatever the dump names was put
+# before the dump, and the sweep only takes what is older than its grace of a
+# day; so this holds as long as the store is read within less than that, and a
+# backup that has taken half of it by then stops instead, see below.
+echo "  Nachträge im Dateispeicher werden gesichert."
+# The two folders are the first four characters of the hash, as FileStore
+# lays them out; a hash under any other folders is no stored file.
+layout='^\./\([0-9a-f][0-9a-f]\)/\([0-9a-f][0-9a-f]\)/\1\2[0-9a-f]\{60\}$'
 
-# --- 4. The manifest -------------------------------------------------------
+# grep says 1 when no line fits, which here is an empty list and no error.
+names_of() {
+	grep "$layout" "$1" || [ $? -eq 1 ]
+}
+
+# Only plain files of the first part count as held: a link there under a name
+# of the store is not the file a later upload put in its place.
+# The whole name, everything after the five columns before it, and not only
+# its last word: a file named "./Import ./ab/cd/<hash>" is not that hash. Cut
+# from the line as it is, column by column, and not by setting the columns,
+# which would build the line anew and take a blank at the end of the name.
+tar --list --verbose --file "${work}/storage.tar" |
+	awk '$1 ~ /^-/ { name = $0; for (i = 1; i <= 5; i++) sub(/^[^ ]+ +/, "", name); print name }' \
+		>"${work}/storage.names"
+# Every entry of the first part on a line of its own: a name with a line
+# break could let a part of it pass for an entry in the listing above. tar
+# lists every name of the first part starting with "./", so a line that does
+# not is the rest of one, and the only kind of rest that could pass for an
+# entry there, which starts with the type of a file. The store never makes
+# such a name; the backup stops instead of guessing. A rest that starts with
+# "./" passes for no entry in the listing (no type in front), so it is let be.
+odd_lines=$(tar --list --file "${work}/storage.tar" | grep -cv '^\./' || true)
+if [ "$odd_lines" != 0 ]; then
+	echo "  Im Dateispeicher steht ein Name über mehrere Zeilen, den der Speicher nie anlegt;" >&2
+	echo "  die Sicherung bricht ab." >&2
+	exit 1
+fi
+# And nothing in the store but files and folders. A link, a pipe or any other
+# kind of entry is nothing FileStore makes, and the target of a link stands
+# only in the verbose listing, where a line break in it could pass for an
+# entry as well. A line there that starts with neither the type of a file or
+# a folder nor with "./" (the rest of a name, see above) stops the backup.
+odd_kinds=$(tar --list --verbose --file "${work}/storage.tar" | grep -Ecv '^([-d]|\./)' || true)
+if [ "$odd_kinds" != 0 ]; then
+	echo "  Im Dateispeicher liegt etwas, das weder Datei noch Ordner ist, etwa ein Link;" >&2
+	echo "  der Speicher legt so etwas nie an, die Sicherung bricht ab." >&2
+	exit 1
+fi
+names_of "${work}/storage.names" | sort >"${work}/storage.first"
+
+# find looks at every entry before it reads its name, so a .part that goes
+# while it walks makes it say "No such file or directory" as well. It walks
+# within the twelve hours like tar.
+left=$(time_left) || exit 1
+status=0
+(cd "$STORAGE_PATH" && timeout "$left" find . -type f) >"${work}/storage.now" 2>"${work}/storage-late.err" ||
+	status=$?
+out_of_time "$status"
+if [ "$status" -ne 0 ]; then
+	only_vanished "${work}/storage-late.err" || exit 1
+fi
+names_of "${work}/storage.now" | sort | comm -13 "${work}/storage.first" - >"${work}/storage-late.list"
+
+# Packed straight from the store with tar, which reads no file it was not
+# given and stores a link or a pipe it finds as what it is; one swapped in
+# while it reads is what the limit of store_tar is for.
+# Unpacked into a folder of its own, a file stays only when it is a plain file
+# whose name is the SHA-256 of what it holds: a name swapped for a link, a
+# pipe, or a folder swapped for a link to somewhere in this container between
+# find and tar cannot be that.
+mkdir "${work}/storage-late"
+if [ -s "${work}/storage-late.list" ]; then
+	if ! store_tar "${work}/storage-late.err" --create --no-recursion --file "${work}/storage-late.raw" \
+		--directory "$STORAGE_PATH" -T "${work}/storage-late.list"; then
+		only_vanished "${work}/storage-late.err" || exit 1
+	fi
+	tar --extract --no-same-owner --file "${work}/storage-late.raw" --directory "${work}/storage-late"
+	rm -f "${work}/storage-late.raw"
+fi
+# Nothing but files and the two folders above them: a name of the list that
+# had become a folder by the time tar came is packed as an empty folder only
+# (--no-recursion) and goes here with whatever else lies that deep.
+find "${work}/storage-late" ! -type f ! -type d -exec rm -f {} \;
+find "${work}/storage-late" -mindepth 3 -type d -prune -exec rm -rf {} \;
+# find takes a failed rm for a test that did not hold and goes on, so what is
+# left is looked at once more; a find that cannot read ends the backup under
+# set -e, through the assignments.
+left_odd=$(find "${work}/storage-late" ! -type f ! -type d)
+left_deep=$(find "${work}/storage-late" -mindepth 3 -type d)
+if [ -n "$left_odd" ] || [ -n "$left_deep" ]; then
+	echo "  Im zweiten Teil blieb etwas, das keine Datei des Speichers ist, die Sicherung bricht ab." >&2
+	exit 1
+fi
+find "${work}/storage-late" -type f >"${work}/storage-late.files"
+while IFS= read -r copy; do
+	held_hash=$(sha256sum "$copy" | cut -d' ' -f1)
+	held_path=$(printf '%s' "$held_hash" | cut -c1-2)/$(printf '%s' "$held_hash" | cut -c3-4)/$held_hash
+	if [ "${copy#"${work}/storage-late/"}" != "$held_path" ]; then
+		rm -f "$copy"
+	fi
+done <"${work}/storage-late.files"
+tar --create --file "${work}/storage-late.tar" --directory "${work}/storage-late" .
+
+# What the archive holds, counted from its two parts and not from the store,
+# which goes on changing: a .part renamed while find walked it would end the
+# backup here.
+storage_files=$(($(wc -l <"${work}/storage.first") + $(find "${work}/storage-late" -type f | wc -l)))
+
+# The store is read. Did that take half the grace of the sweep or more, the
+# second part may lack a file the sweep took meanwhile; this backup stops.
+read_done=$(uptime_seconds)
+if [ $((read_done - started)) -ge 43200 ]; then
+	echo "  Die Sicherung läuft seit zwölf Stunden oder länger, das Aufräumen des" >&2
+	echo "  Dateispeichers könnte inzwischen Dateien nehmen, die der Dump nennt." >&2
+	echo "  Sie bricht ab; eine Sicherung braucht sonst Minuten." >&2
+	exit 1
+fi
+rm -rf "${work}/storage-late" "${work}/storage-late.files" "${work}/storage-late.list" \
+	"${work}/storage-late.err" "${work}/storage.names" "${work}/storage.first" "${work}/storage.now" \
+	"${work}/vanished.patterns"
+
+# --- 5. The manifest -------------------------------------------------------
 # A checksum per part, so that a restore can tell a damaged archive from a
 # complete one before it touches a running database.
 echo "  Prüfsummen werden berechnet."
 database_hash=$(sha256sum "${work}/database.dump" | cut -d' ' -f1)
 storage_hash=$(sha256sum "${work}/storage.tar" | cut -d' ' -f1)
+late_hash=$(sha256sum "${work}/storage-late.tar" | cut -d' ' -f1)
 chains_hash=$(sha256sum "${work}/audit-chains.tsv" | cut -d' ' -f1)
-storage_files=$(find "$STORAGE_PATH" -type f | wc -l | tr -d ' ')
 chains=$(wc -l <"${work}/audit-chains.tsv" | tr -d ' ')
 server_version=$(superuser_query --command "show server_version")
 
@@ -190,10 +408,11 @@ cat >"${work}/manifest.json" <<JSON
   "name": "${name}",
   "created": "${stamp}",
   "postgres": "${server_version}",
-  "order": "database-then-storage",
+  "order": "storage-database-late",
   "parts": {
     "database.dump": "${database_hash}",
     "storage.tar": "${storage_hash}",
+    "storage-late.tar": "${late_hash}",
     "audit-chains.tsv": "${chains_hash}"
   },
   "storageFiles": ${storage_files},
@@ -201,7 +420,7 @@ cat >"${work}/manifest.json" <<JSON
 }
 JSON
 
-# --- 5. Pack, and encrypt when a key is there ------------------------------
+# --- 6. Pack, and encrypt when a key is there ------------------------------
 # In one stream into the hidden file: the packed archive in the clear exists
 # nowhere, not on the target and not here.
 #
@@ -259,7 +478,7 @@ fi
 mv "$partial" "$archive"
 renamed=true
 
-# --- 6. The record of the archive and the one the office reads -------------
+# --- 7. The record of the archive and the one the office reads -------------
 # Both on the instance, never on the target, and both written under a
 # temporary name and moved into place: the office never reads a record of a
 # backup that is not there, and restore.sh never finds half a line.
@@ -313,7 +532,7 @@ fi
 
 recorded=true
 
-# --- 7. Retention ----------------------------------------------------------
+# --- 8. Retention ----------------------------------------------------------
 # Oldest first, keep the newest BACKUP_KEEP. Sorting by name works because the
 # timestamp is the name and it is written in a sortable shape. Only archives of
 # this prefix count, see names.sh. After the record, so that a retention that

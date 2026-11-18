@@ -162,7 +162,15 @@ esac
 
 rm -f "$copy"
 
-for part in manifest.json database.dump storage.tar audit-chains.tsv; do
+# The second part of the store comes with archives from #991 on, and an
+# archive whose manifest names it, or the order that has it, has to bring it.
+# One from before has neither.
+parts="database.dump storage.tar audit-chains.tsv"
+if grep -q -e '"storage-late.tar"' -e '"order"[[:space:]]*:[[:space:]]*"storage-database-late"' "${work}/manifest.json"; then
+	parts="${parts} storage-late.tar"
+fi
+
+for part in manifest.json $parts; do
 	if [ ! -f "${work}/${part}" ]; then
 		echo "In der Sicherung fehlt ${part}. Sie ist unvollständig." >&2
 		exit 1
@@ -171,7 +179,7 @@ done
 
 # --- Check 1: did the archive arrive whole? --------------------------------
 echo "  Prüfsummen werden geprüft."
-for part in database.dump storage.tar audit-chains.tsv; do
+for part in $parts; do
 	expected=$(sed -n "s/.*\"${part}\": \"\([0-9a-f]*\)\".*/\1/p" "${work}/manifest.json")
 	actual=$(sha256sum "${work}/${part}" | cut -d' ' -f1)
 
@@ -432,6 +440,31 @@ storage_owner=$(stat -c '%u:%g' "$STORAGE_PATH")
 
 find "$STORAGE_PATH" -mindepth 1 -delete
 tar --extract --no-same-owner --file "${work}/storage.tar" --directory "$STORAGE_PATH"
+# The store holds files and their folders and nothing else. A link that came
+# with the first part would take whatever the second part unpacks under its
+# name to wherever it points in this container (#991), and one in either part
+# has no place in the store at all. find takes a failed rm for a test that did
+# not hold and goes on, so what is left is looked at once more; a find that
+# cannot read ends the restore under set -e, through the assignment.
+only_files_in_store() {
+	# Each one it takes is named on a line of its own; a control character in
+	# a name shows as ?.
+	find "$STORAGE_PATH" -mindepth 1 ! -type f ! -type d -exec sh -c 'rm -f "$1" && printf "    entfernt: %s\n" "$(printf "%s" "$1" | tr "\001-\037\177" "?")"' sh {} \;
+	left=$(find "$STORAGE_PATH" -mindepth 1 ! -type f ! -type d)
+	if [ -n "$left" ]; then
+		echo "Im Dateispeicher blieb ein Link oder etwas anderes, das keine Datei ist;" >&2
+		echo "es wird nichts weiter zurückgespielt." >&2
+		exit 1
+	fi
+}
+only_files_in_store
+# What the store got while the backup ran, see backup.sh.
+case " $parts " in
+*" storage-late.tar "*)
+	tar --extract --no-same-owner --file "${work}/storage-late.tar" --directory "$STORAGE_PATH"
+	only_files_in_store
+	;;
+esac
 chown -R "$storage_owner" "$STORAGE_PATH"
 
 # --- Check 2: is every file still the file its name claims? ----------------
@@ -440,13 +473,58 @@ chown -R "$storage_owner" "$STORAGE_PATH"
 # "probably" where this answers "yes".
 echo "  Dateispeicher wird gegen die Hashes geprüft."
 
+# Only what FileStore writes stays in the store: a file two folders deep, each
+# folder two hex characters, its name a SHA-256 in hex. Anything else, another
+# name, another depth, a name with a line break, or what a link swapped in
+# while the backup read the store left under a name of its own, is no stored
+# file. It goes now, before the check below reads names line by line; find
+# hands rm each path whole.
+hex='[0-9a-f]'
+stored_name=''
+hex_count=0
+while [ "$hex_count" -lt 64 ]; do
+	stored_name="${stored_name}${hex}"
+	hex_count=$((hex_count + 1))
+done
+stored_path="./${hex}${hex}/${hex}${hex}/${stored_name}"
+foreign=$(cd "$STORAGE_PATH" && find . -type f ! -path "$stored_path" | wc -l | tr -d ' ')
+(cd "$STORAGE_PATH" && find . -type f ! -path "$stored_path" -exec sh -c 'rm -f "$1" && printf "    entfernt: %s\n" "$(printf "%s" "$1" | tr "\001-\037\177" "?")"' sh {} \;)
+left_foreign=$(cd "$STORAGE_PATH" && find . -type f ! -path "$stored_path")
+if [ -n "$left_foreign" ]; then
+	echo "Im Dateispeicher blieb eine Datei, die keine Datei des Speichers ist;" >&2
+	echo "es wird nichts weiter zurückgespielt." >&2
+	exit 1
+fi
+# And only where FileStore looks for it: the two folders are the first four
+# characters of the name. Every name is hex by now, so the list is read line
+# by line, and without a process for each file.
+(cd "$STORAGE_PATH" && find . -type f) >"${work}/stored.list"
+while IFS= read -r file; do
+	name=${file##*/}
+	after_first=${name#??}
+	after_second=${after_first#??}
+	if [ "$file" != "./${name%"$after_first"}/${after_first%"$after_second"}/${name}" ]; then
+		rm -f "${STORAGE_PATH}/${file#./}" || {
+			echo "Im Dateispeicher blieb eine Datei, die keine Datei des Speichers ist;" >&2
+			echo "es wird nichts weiter zurückgespielt." >&2
+			exit 1
+		}
+		printf '    entfernt: %s\n' "$file"
+		foreign=$((foreign + 1))
+	fi
+done <"${work}/stored.list"
+rm -f "${work}/stored.list"
+if [ "$foreign" -gt 0 ]; then
+	echo "    ${foreign} Datei(en) ohne Namen oder Ort des Speichers entfernt."
+fi
+
 # Built as a checklist and handed to sha256sum, rather than compared in a
 # loop. A loop behind a pipe runs in a subshell, so its counters are gone by
 # the time anybody looks at them, and the check would report nothing while
 # appearing to work. sha256sum -c carries the verdict in its exit code.
 : >"${work}/expected.sha256"
 
-find "$STORAGE_PATH" -type f | while read -r file; do
+find "$STORAGE_PATH" -type f | while IFS= read -r file; do
 	name=$(basename "$file")
 
 	# Only files whose name is a SHA-256 in hex. Anything else is not a stored
@@ -469,8 +547,23 @@ if [ "$expected_files" -gt 0 ]; then
 	# to go looking through the whole store by hand.
 	if ! sha256sum -cs "${work}/expected.sha256"; then
 		echo "Der Inhalt einzelner Dateien passt nicht mehr zu ihrem Namen. In einem" >&2
-		echo "inhaltsadressierten Speicher heißt das, sie sind beschädigt:" >&2
+		echo "inhaltsadressierten Speicher heißt das, sie sind beschädigt oder untergeschoben;" >&2
+		echo "sie werden aus dem Speicher genommen:" >&2
 		sha256sum -c "${work}/expected.sha256" 2>&1 | grep -v ': OK$' >&2 || true
+		# Out of the store before the restore ends: what a link swapped in while
+		# the backup read the store put under a name there can be anything in the
+		# container of the backup, and the application reads the store.
+		# A file rm cannot take is written down and the loop goes on with the
+		# next one; set -e would end it at the first otherwise.
+		: >"${work}/not-removed"
+		sha256sum -c "${work}/expected.sha256" 2>/dev/null | sed -n 's/: FAILED$//p' |
+			while IFS= read -r wrong; do
+				rm -f "$wrong" || printf '%s\n' "$wrong" >>"${work}/not-removed"
+			done
+		if [ -s "${work}/not-removed" ]; then
+			echo "Nicht jede dieser Dateien ließ sich entfernen, diese liegen noch im Speicher:" >&2
+			cat "${work}/not-removed" >&2
+		fi
 		exit 1
 	fi
 fi
