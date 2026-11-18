@@ -1257,6 +1257,26 @@ if [ -n "$(ls -A "$work/outside-restore")" ]; then
 fi
 check 'Rückspielen: ein Link im ersten Teil leitet den zweiten nicht aus dem Speicher hinaus'
 
+# A link that the second part brings itself has no place in the store either.
+late_link_archive() {
+  mkdir late
+  tar --extract --file storage-late.tar --directory late
+  mkdir -p late/ab/cd
+  ln -s /etc late/ab/cd/fremd
+  tar --create --file storage-late.tar --directory late .
+  rm -rf late
+  sum=$(sha256sum storage-late.tar | cut -d' ' -f1)
+  sed "s|\"storage-late.tar\": \"[0-9a-f]*\"|\"storage-late.tar\": \"$sum\"|" manifest.json > manifest.new
+  mv manifest.new manifest.json
+}
+repacked late_link_archive
+taken env BACKUP_PREFIX=opengewerk POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" --skip-origin-check "$ours"
+if [ -n "$(find "$STORAGE_PATH" ! -type f ! -type d)" ]; then
+  echo 'FEHLER: ein Link aus dem zweiten Teil blieb im Speicher'
+  exit 1
+fi
+check 'Rückspielen: auch ein Link aus dem zweiten Teil bleibt nicht im Speicher'
+
 # A file the first part did not hold and that does not lie where the store
 # keeps it, even one named after its own hash, does not come into the second
 # part: only two folders from the hash and then the hash are a stored file.

@@ -437,18 +437,25 @@ find "$STORAGE_PATH" -mindepth 1 -delete
 tar --extract --no-same-owner --file "${work}/storage.tar" --directory "$STORAGE_PATH"
 # The store holds files and their folders and nothing else. A link that came
 # with the first part would take whatever the second part unpacks under its
-# name to wherever it points in this container (#991).
-find "$STORAGE_PATH" -mindepth 1 ! -type f ! -type d -exec rm -f {} \;
-# find takes a failed rm for a test that did not hold and goes on.
-if [ -n "$(find "$STORAGE_PATH" -mindepth 1 ! -type f ! -type d)" ]; then
-	echo "Im Dateispeicher blieb ein Link oder etwas anderes, das keine Datei ist;" >&2
-	echo "es wird nichts weiter zurückgespielt." >&2
-	exit 1
-fi
+# name to wherever it points in this container (#991), and one in either part
+# has no place in the store at all. find takes a failed rm for a test that did
+# not hold and goes on, so what is left is looked at once more; a find that
+# cannot read ends the restore under set -e, through the assignment.
+only_files_in_store() {
+	find "$STORAGE_PATH" -mindepth 1 ! -type f ! -type d -exec rm -f {} \;
+	left=$(find "$STORAGE_PATH" -mindepth 1 ! -type f ! -type d)
+	if [ -n "$left" ]; then
+		echo "Im Dateispeicher blieb ein Link oder etwas anderes, das keine Datei ist;" >&2
+		echo "es wird nichts weiter zurückgespielt." >&2
+		exit 1
+	fi
+}
+only_files_in_store
 # What the store got while the backup ran, see backup.sh.
 case " $parts " in
 *" storage-late.tar "*)
 	tar --extract --no-same-owner --file "${work}/storage-late.tar" --directory "$STORAGE_PATH"
+	only_files_in_store
 	;;
 esac
 chown -R "$storage_owner" "$STORAGE_PATH"

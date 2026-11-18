@@ -288,9 +288,11 @@ fi
 find "${work}/storage-late" ! -type f ! -type d -exec rm -f {} \;
 find "${work}/storage-late" -mindepth 3 -type d -prune -exec rm -rf {} \;
 # find takes a failed rm for a test that did not hold and goes on, so what is
-# left is looked at once more.
-if [ -n "$(find "${work}/storage-late" ! -type f ! -type d)" ] ||
-	[ -n "$(find "${work}/storage-late" -mindepth 3 -type d)" ]; then
+# left is looked at once more; a find that cannot read ends the backup under
+# set -e, through the assignments.
+left_odd=$(find "${work}/storage-late" ! -type f ! -type d)
+left_deep=$(find "${work}/storage-late" -mindepth 3 -type d)
+if [ -n "$left_odd" ] || [ -n "$left_deep" ]; then
 	echo "  Im zweiten Teil blieb etwas, das keine Datei des Speichers ist, die Sicherung bricht ab." >&2
 	exit 1
 fi
