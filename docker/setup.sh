@@ -226,8 +226,10 @@ fi
 # every password would cross the network readable, so an address of another
 # host is the one of a reverse proxy with TLS. After a name of this machine
 # comes nothing, or a colon and a port of digits and nothing else: in
-# http://localhost:1@example.org:8080 the host is example.org. The second
-# argument says where the address stands.
+# http://localhost:1@example.org:8080 the host is example.org. This is the
+# early word for the address asked for here; the application holds every
+# entry of TRUSTED_ORIGINS to the same rule when it starts, however the value
+# reached it.
 only_here_over_http() {
   case "$1" in
     http://*) ;;
@@ -242,12 +244,12 @@ only_here_over_http() {
     127.0.0.1:*) port_part=${host_and_port#127.0.0.1:} ;;
     '[::1]':*) port_part=${host_and_port#'[::1]:'} ;;
     *)
-      fail "\"$1\"$2 beginnt mit http://. So gingen Einrichtungscode und Passwörter lesbar durchs Netz. Die Adresse beginnt mit https://, davor steht ein Reverse Proxy mit TLS, Vorlagen dafür liegen in docker/proxy/. Nur auf dieser Maschine, mit localhost, 127.0.0.1 oder [::1], geht http://."
+      fail "\"$1\" beginnt mit http://. So gingen Einrichtungscode und Passwörter lesbar durchs Netz. Die Adresse beginnt mit https://, davor steht ein Reverse Proxy mit TLS, Vorlagen dafür liegen in docker/proxy/. Nur auf dieser Maschine, mit localhost, 127.0.0.1 oder [::1], geht http://."
       ;;
   esac
 
   case "$port_part" in
-    '' | *[!0-9]*) fail "\"$1\"$2 hat nach dem Namen der Maschine keinen Port aus Ziffern." ;;
+    '' | *[!0-9]*) fail "\"$1\" hat nach dem Namen der Maschine keinen Port aus Ziffern." ;;
   esac
 }
 
@@ -290,7 +292,7 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
       ;;
   esac
 
-  only_here_over_http "$wanted" ''
+  only_here_over_http "$wanted"
 
   draft=$(mktemp "$here/.env.XXXXXX")
 
@@ -304,22 +306,3 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
   replace_env "$draft"
   say "Adresse eingetragen: $wanted"
 fi
-
-# Every entry of the list, the address just entered as much as one set by
-# hand before (#984). Every line with the key, since Docker Compose takes the
-# last one, and the variable from the environment, which it takes over the
-# .env. Each read the way Docker Compose hands it to the application, as
-# start.sh reads the version: a comment after a blank, quotes, blanks and a
-# carriage return from Windows taken off; then split at commas.
-origins=$({
-  grep '^TRUSTED_ORIGINS=' "$env_file" | cut -d= -f2-
-  printf '%s\n' "${TRUSTED_ORIGINS:-}"
-} | sed 's/[[:space:]]#.*//' | tr -d "\r\"' \t" | tr ',' '\n')
-
-while IFS= read -r origin; do
-  if [ -n "$origin" ]; then
-    only_here_over_http "$origin" ' in TRUSTED_ORIGINS'
-  fi
-done <<ORIGINS
-$origins
-ORIGINS

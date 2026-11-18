@@ -355,6 +355,9 @@ function sessionSecret(application: ServerApplication, environment: Environment)
  * Origin header, so an entry with one would look configured and protect
  * nothing.
  */
+/** The names of this machine, written the way `URL.hostname` gives them. */
+const thisMachine = new Set(['localhost', '127.0.0.1', '[::1]'])
+
 function trustedOrigins(
   application: ServerApplication,
   environment: Environment,
@@ -388,6 +391,19 @@ function trustedOrigins(
       throw new ConfigurationError(
         `TRUSTED_ORIGINS darf nur Herkunft enthalten, ohne Pfad und ohne Schrägstrich am ` +
           `Ende. Gelesen wurde "${entry}", gemeint ist vermutlich "${parsed.origin}".`,
+      )
+    }
+
+    // Plain http only on this machine (#984): anywhere else the setup code
+    // and every password would cross the network readable. Held here, where
+    // the value arrives the way Docker Compose or anything else handed it on,
+    // and not only where a script reads the .env.
+    if (parsed.protocol === 'http:' && !thisMachine.has(parsed.hostname)) {
+      throw new ConfigurationError(
+        `TRUSTED_ORIGINS enthält "${entry}". Über http:// gingen Einrichtungscode und ` +
+          'Passwörter lesbar durchs Netz. Die Adresse beginnt mit https://, davor steht ein ' +
+          'Reverse Proxy mit TLS. Nur auf dieser Maschine, mit localhost, 127.0.0.1 oder ' +
+          '[::1], geht http://.',
       )
     }
   }

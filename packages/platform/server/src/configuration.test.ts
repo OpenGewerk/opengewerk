@@ -319,6 +319,38 @@ describe('the configuration', () => {
     ).toThrow(/gültige Adresse/)
   })
 
+  it('takes plain http only for an origin on this machine (#984)', () => {
+    for (const entry of [
+      'http://probewerk.example.de',
+      'http://192.168.1.20:23700',
+      'http://localhost.example.de',
+      'http://127.0.0.2:23700',
+    ]) {
+      expect(() =>
+        readConfiguration(
+          { ...valid, TRUSTED_ORIGINS: `https://probewerk.example.de, ${entry}` },
+          writable,
+        ),
+      ).toThrow(`TRUSTED_ORIGINS enthält "${entry}". Über http:// gingen`)
+    }
+
+    const here = readConfiguration(
+      {
+        ...valid,
+        TRUSTED_ORIGINS:
+          'http://localhost, http://localhost:5173, http://127.0.0.1:23700, http://[::1]:23700',
+      },
+      writable,
+    )
+
+    expect(here.trustedOrigins).toEqual([
+      'http://localhost',
+      'http://localhost:5173',
+      'http://127.0.0.1:23700',
+      'http://[::1]:23700',
+    ])
+  })
+
   it('takes several origins, because an instance can answer under more than one name', () => {
     const configuration = readConfiguration(
       {

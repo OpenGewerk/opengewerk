@@ -188,52 +188,6 @@ for address in http://localhost http://localhost:23700 http://127.0.0.1 http://[
 done
 check 'http:// nur für diese Maschine: andere Adressen abgelehnt, localhost, 127.0.0.1 und [::1] angenommen'
 
-# 9b. An address set by hand before (#984): every entry of the list is held to
-# the same rule, also one behind a comma and blanks, and a list of an https
-# address and the address of Vite on this machine is taken.
-rm -f "$work/.env"
-OPENGEWERK_ADDRESS=https://opengewerk.example.org sh "$work/setup.sh" < /dev/null > /dev/null 2>&1
-sed 's|^TRUSTED_ORIGINS=.*|TRUSTED_ORIGINS=https://opengewerk.example.org, http://192.168.1.20:23700|' \
-  "$work/.env" > "$work/.env.lan"
-mv "$work/.env.lan" "$work/.env"
-if out=$(sh "$work/setup.sh" < /dev/null 2>&1); then
-  echo 'FEHLER: eine http://-Adresse aus der .env lief durch'
-  exit 1
-fi
-printf '%s' "$out" | grep -q '"http://192.168.1.20:23700" in TRUSTED_ORIGINS beginnt mit http://'
-# In quotes, which Docker Compose takes off before the application sees it.
-sed 's|^TRUSTED_ORIGINS=.*|TRUSTED_ORIGINS="http://intranet.example.org"|' "$work/.env" > "$work/.env.quoted"
-mv "$work/.env.quoted" "$work/.env"
-if out=$(sh "$work/setup.sh" < /dev/null 2>&1); then
-  echo 'FEHLER: eine http://-Adresse in Anführungszeichen lief durch'
-  exit 1
-fi
-printf '%s' "$out" | grep -q '"http://intranet.example.org" in TRUSTED_ORIGINS beginnt mit http://'
-# With a comment after a blank, which Docker Compose leaves out as well.
-sed 's|^TRUSTED_ORIGINS=.*|TRUSTED_ORIGINS=https://opengewerk.example.org,http://localhost:5173 # Vite|' \
-  "$work/.env" > "$work/.env.vite"
-mv "$work/.env.vite" "$work/.env"
-sh "$work/setup.sh" < /dev/null > /dev/null 2>&1 || {
-  echo 'FEHLER: https mit der Adresse von Vite auf dieser Maschine wurde abgelehnt'
-  exit 1
-}
-# A second line with the key, which Docker Compose takes over the first.
-printf 'TRUSTED_ORIGINS=http://192.168.1.21:23700\n' >> "$work/.env"
-if out=$(sh "$work/setup.sh" < /dev/null 2>&1); then
-  echo 'FEHLER: eine zweite Zeile mit http:// lief durch'
-  exit 1
-fi
-printf '%s' "$out" | grep -q '"http://192.168.1.21:23700" in TRUSTED_ORIGINS beginnt mit http://'
-grep -v '^TRUSTED_ORIGINS=http://192.168.1.21' "$work/.env" > "$work/.env.one"
-mv "$work/.env.one" "$work/.env"
-# The variable from the environment, which Docker Compose takes over the .env.
-if out=$(TRUSTED_ORIGINS=http://192.168.1.22:23700 sh "$work/setup.sh" < /dev/null 2>&1); then
-  echo 'FEHLER: eine http://-Adresse aus der Umgebung lief durch'
-  exit 1
-fi
-printf '%s' "$out" | grep -q '"http://192.168.1.22:23700" in TRUSTED_ORIGINS beginnt mit http://'
-check 'Adresse aus der .env und der Umgebung: jeder Eintrag geprüft, http:// nur für diese Maschine'
-
 # 10. Another application runs the same script against its own folder
 # (opengewerk-haustechnik#14): its name at the start of every line, its prefix
 # for its own variables, the address of its own template, and nothing of this
