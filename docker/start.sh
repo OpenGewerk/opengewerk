@@ -85,9 +85,11 @@ fi
 # The version of the engine, held against the minimum. Asked here and again
 # right before each step that starts containers: a context whose endpoint was
 # changed meanwhile, under the same name, is caught there.
+# engine_note is said after either sentence, once the migrations have run.
+engine_note=''
 engine_new_enough() {
 docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null) ||
-  fail 'Docker antwortet nicht. Läuft der Docker-Dienst, und darf dieser Benutzer ihn ansprechen?'
+  fail "Docker antwortet nicht. Läuft der Docker-Dienst, und darf dieser Benutzer ihn ansprechen?$engine_note"
 
 docker_too_old=$(printf '%s\n' "$docker_version" | awk -F. -v minimum="$minimum_docker" '
   { original = $0 }
@@ -118,13 +120,13 @@ docker_too_old=$(printf '%s\n' "$docker_version" | awk -F. -v minimum="$minimum_
   }')
 
 if [ "$docker_too_old" != 'no' ]; then
-  fail "Docker meldet die Fassung \"$docker_version\", $APPLICATION_NAME braucht Docker Engine ab $minimum_docker. Vor 28.0.0 erreichen Rechner im selben Netz Ports, die nur auf 127.0.0.1 veröffentlicht sind, und 28.2.0 bis 28.3.2 öffnen sie nach einem Neuladen von firewalld wieder (CVE-2025-54388); beides führt am Proxy mit TLS vorbei. Docker aktualisieren: https://docs.docker.com/engine/install/"
+  fail "Docker meldet die Fassung \"$docker_version\", $APPLICATION_NAME braucht Docker Engine ab $minimum_docker. Vor 28.0.0 erreichen Rechner im selben Netz Ports, die nur auf 127.0.0.1 veröffentlicht sind, und 28.2.0 bis 28.3.2 öffnen sie nach einem Neuladen von firewalld wieder (CVE-2025-54388); beides führt am Proxy mit TLS vorbei. Docker aktualisieren: https://docs.docker.com/engine/install/$engine_note"
 fi
 }
 engine_new_enough
 
 if [ -n "$no_context" ]; then
-  fail 'Docker nennt keinen Kontext, an dem sich die Engine festhalten ließe. Läuft der Docker-Dienst?'
+  fail 'Docker nennt keinen Kontext, an dem sich die Engine für diesen Lauf festhalten ließe, obwohl die Engine antwortet. Das kommt von einer Docker-CLI vor 23.0: sie aktualisieren oder die Engine mit DOCKER_CONTEXT oder DOCKER_HOST ausdrücklich wählen.'
 fi
 
 sh "$scripts/setup.sh"
@@ -238,6 +240,7 @@ SQL
 unlock_after_restore ||
   fail 'Nach dem Zurückspielen ließ sich der Anwendung die Anmeldung nicht zurückgeben, der Grund steht darüber.'
 
+engine_note=' Die Datenbank steht schon auf dem neuen Stand; ein neuer Lauf von sh docker/start.sh mit derselben Fassung startet die Dienste, sobald Docker passt.'
 engine_new_enough
 say "$APPLICATION_NAME startet."
 compose up -d --wait --wait-timeout 300 ||

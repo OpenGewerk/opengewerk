@@ -357,11 +357,11 @@ if docker compose version > /dev/null 2>&1; then
       printf 'FEHLER: Docker Compose nahm compose.yaml mit der zweiten Zuordnung %s nicht an\n' "$second"
       exit 1
     }
-    rm "$work/ports/.env"
     [ -z "$(port_in "$work/ports")" ] || {
       printf 'FEHLER: mit der zweiten Zuordnung %s wurde ein Port angeboten\n' "$second"
       exit 1
     }
+    rm "$work/ports/.env"
   done
   rm -r "$work/ports"
   check 'Port der Adresse: so, wie Docker Compose ihn veröffentlicht'

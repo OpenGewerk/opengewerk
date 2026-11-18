@@ -378,7 +378,7 @@ if out=$(CONTEXT_IN_USE='' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/d
   echo 'FEHLER: ohne lesbaren Kontext lief der Start durch'
   exit 1
 fi
-printf '%s' "$out" | grep -q 'nennt keinen Kontext'
+printf '%s' "$out" | grep -q 'nennt keinen Kontext.*CLI vor 23.0'
 absent 'compose -f'
 # A CLI before 23.0 knows no "context show": the version still speaks first.
 : > "$CALLS"
@@ -405,6 +405,10 @@ if out=$(DOCKER_SERVERS='28.3.3 27.5.1' OPENGEWERK_ADDRESS=http://127.0.0.1:2370
   exit 1
 fi
 printf '%s' "$out" | grep -q 'Docker meldet die Fassung "27.5.1"'
+if printf '%s' "$out" | grep -q 'schon auf dem neuen Stand'; then
+  echo 'FEHLER: vor den Migrationen hieß es, die Datenbank sei schon auf dem neuen Stand'
+  exit 1
+fi
 absent 'run --rm migrate'
 absent 'up -d'
 : > "$CALLS"
@@ -415,6 +419,10 @@ if out=$(DOCKER_SERVERS='28.3.3 28.3.3 27.5.1' OPENGEWERK_ADDRESS=http://127.0.0
   exit 1
 fi
 printf '%s' "$out" | grep -q 'Docker meldet die Fassung "27.5.1"'
+printf '%s' "$out" | grep -q 'schon auf dem neuen Stand' || {
+  echo 'FEHLER: nach den Migrationen sagte die Meldung nicht, dass die Datenbank schon migriert ist'
+  exit 1
+}
 grep -q 'run --rm migrate$' "$CALLS"
 absent 'up -d'
 rm -f "$CALLS.version"

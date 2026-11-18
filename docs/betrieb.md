@@ -290,7 +290,10 @@ wartet, bis keines mehr "Änderungen warten auf dem Gerät" zeigt: Der Browser
 hält den Postausgang je Adresse, unter der neuen sieht er ihn nicht mehr. Die
 alte Adresse bleibt erreichbar, bis das geschafft ist. Danach kommt, wo nötig,
 TLS an den Reverse Proxy, Vorlagen liegen unter `docker/proxy/`, dann die neue
-Adresse in `TRUSTED_ORIGINS`, und erst danach wird wieder erfasst.
+Adresse in `TRUSTED_ORIGINS`, und erst danach wird wieder erfasst. Wer das vor
+dem Update vergisst: Die Migrationen laufen, dann verweigert die Anwendung den
+Start; nach dem Ändern der Adresse startet sie ein neuer Lauf von
+`sh docker/start.sh`.
 
 Der erste Eintrag aus `TRUSTED_ORIGINS` steht auch auf jedem QR-Etikett einer
 Anlage (#308), gedruckt, für die zehn Jahre, die ein Aufkleber im Zählerschrank

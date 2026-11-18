@@ -358,17 +358,17 @@ describe('the configuration', () => {
 
   it('turns away an entry with a user or a password without repeating it', () => {
     for (const entry of [
-      'https://test:geheim@probewerk.example.de',
-      'test:geheim@probewerk.example.de',
+      'https://nutzer-nr7:geheim@probewerk.example.de',
+      'nutzer-nr7:geheim@probewerk.example.de',
       'https://geheim@',
-      'https://test:geheim,zweiter-teil@probewerk.example.de',
+      'https://nutzer-nr7:geheim,zweiter-teil@probewerk.example.de',
     ]) {
       expect(() =>
         readConfiguration(
           { ...valid, TRUSTED_ORIGINS: `https://probewerk.example.de, ${entry}` },
           writable,
         ),
-      ).toThrow(/^(?![\s\S]*(?:geheim|zweiter-teil|test:))[\s\S]*Angaben vor dem Namen/)
+      ).toThrow(/^(?![\s\S]*(?:geheim|zweiter-teil|nutzer-nr7))[\s\S]*Angaben vor dem Namen/)
     }
   })
 
