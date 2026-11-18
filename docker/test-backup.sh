@@ -1232,7 +1232,8 @@ POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" --skip-origin-check "$around" >
   cat "$work/out"
   exit 1
 }
-if [ -n "$(ls -A "$work/outside-restore")" ]; then
+outside_now=$(ls -A "$work/outside-restore")
+if [ -n "$outside_now" ]; then
   echo 'FEHLER: das Rückspielen schrieb durch einen Link aus dem ersten Teil'
   exit 1
 fi
@@ -1251,7 +1252,8 @@ if POSTGRES_DB=opengewerk RM_FAILS_ON="$through_folder" sh "$work/bin/restore.sh
   exit 1
 fi
 grep -q 'blieb ein Link' "$work/out"
-if [ -n "$(ls -A "$work/outside-restore")" ]; then
+outside_now=$(ls -A "$work/outside-restore")
+if [ -n "$outside_now" ]; then
   echo 'FEHLER: das Rückspielen schrieb durch einen Link, den rm nicht nahm'
   exit 1
 fi
@@ -1271,7 +1273,8 @@ late_link_archive() {
 }
 repacked late_link_archive
 taken env BACKUP_PREFIX=opengewerk POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" --skip-origin-check "$ours"
-if [ -n "$(find "$STORAGE_PATH" ! -type f ! -type d)" ]; then
+odd_in_store=$(find "$STORAGE_PATH" ! -type f ! -type d)
+if [ -n "$odd_in_store" ]; then
   echo 'FEHLER: ein Link aus dem zweiten Teil blieb im Speicher'
   exit 1
 fi
@@ -1322,7 +1325,8 @@ for does in vanish link pipe dir folder; do
   unpacked "late-$does"
   mkdir "$work/late-$does/late"
   tar --extract --file "$work/late-$does/storage-late.tar" --directory "$work/late-$does/late"
-  if [ -n "$(find "$work/late-$does/late" ! -type d ! -type f)" ] ||
+  odd_in_late=$(find "$work/late-$does/late" ! -type d ! -type f)
+  if [ -n "$odd_in_late" ] ||
     grep -r -q 'GEHEIMNIS DES CONTAINERS' "$work/late-$does/late" ||
     [ -e "$work/late-$does/late/$(stored "$late_hash" | sed "s|^$STORAGE_PATH/||")" ]; then
     echo "FEHLER: bei $does steht etwas Fremdes oder die veränderte Datei im zweiten Teil"
