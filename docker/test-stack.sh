@@ -44,14 +44,18 @@ compose() {
 # they count at the start, and nothing here reads the .env for it. The values
 # compose.yaml requires get a stand-in for this one question, since the
 # address, one of them, may be what is still missing. Prints the port, or
-# nothing when Compose gives no answer or publishes more than one.
+# nothing when Compose gives no answer or maps more than one port: every
+# mapping, one without a port of its own as well, has a target that is a
+# number, where volumes and secrets have a path.
 published_port() {
   stand_ins=$(grep -o '\${[A-Za-z_][A-Za-z0-9_]*:\{0,1\}?' "$here/compose.yaml" 2>/dev/null |
     sed -e 's/^\${//' -e 's/:\{0,1\}?$/=stand-in/' | sort -u | tr '\n' ' ')
   # Names and values have no blanks, so each stand-in is one word.
   # shellcheck disable=SC2086
-  published=$(env $stand_ins docker compose -f "$here/compose.yaml" config --format json 2>/dev/null |
-    sed -n 's/^[[:space:]]*"published":[[:space:]]*"\([0-9][0-9]*\)".*$/\1/p')
+  config=$(env $stand_ins docker compose -f "$here/compose.yaml" config --format json 2>/dev/null) || return 0
+  mappings=$(printf '%s\n' "$config" | grep -c '^[[:space:]]*"target":[[:space:]]*[0-9]' || true)
+  [ "$mappings" = 1 ] || return 0
+  published=$(printf '%s\n' "$config" | sed -n 's/^[[:space:]]*"published":[[:space:]]*"\([^"]*\)".*$/\1/p')
   case "$published" in
     '' | *[!0-9]*) ;;
     *) printf '%s\n' "$published" ;;

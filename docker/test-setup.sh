@@ -314,10 +314,17 @@ if docker compose version > /dev/null 2>&1; then
   [ "$(port_in "$work/ports")" = 24567 ]
   rm "$work/ports/.env"
   [ "$(port_in "$work/ports")" = 23700 ]
-  awk '{ print } index($0, "${OPENGEWERK_PORT:-23700}:23700") { print "      - '\''127.0.0.1:23701:23701'\''" }' \
-    "$source_dir/compose.yaml" > "$work/ports/compose.yaml"
-  [ "$(grep -c "127.0.0.1:23701:23701" "$work/ports/compose.yaml")" = 1 ]
-  [ -z "$(port_in "$work/ports")" ]
+  # A second mapping of any kind, a range or one without a port of its own
+  # included: no port is offered.
+  for second in '127.0.0.1:23701:23701' '3000' '9000-9005:9000-9005'; do
+    awk -v second="$second" '{ print } index($0, "${OPENGEWERK_PORT:-23700}:23700") { print "      - '\''" second "'\''" }' \
+      "$source_dir/compose.yaml" > "$work/ports/compose.yaml"
+    [ "$(grep -cF "      - '$second'" "$work/ports/compose.yaml")" = 1 ]
+    [ -z "$(port_in "$work/ports")" ] || {
+      printf 'FEHLER: mit der zweiten Zuordnung %s wurde ein Port angeboten\n' "$second"
+      exit 1
+    }
+  done
   rm -r "$work/ports"
   check 'Port der Adresse: so, wie Docker Compose ihn veröffentlicht'
 else
@@ -333,7 +340,7 @@ if command -v script > /dev/null 2>&1; then
 #!/bin/sh
 case "$*" in
   'compose -f '*' config --format json')
-    printf '{\n  "services": {\n    "app": {\n      "ports": [\n        {\n          "published": "%s"\n        }\n      ]\n    }\n  }\n}\n' "$FAKE_PUBLISHED"
+    printf '{\n  "services": {\n    "app": {\n      "ports": [\n        {\n          "target": 23700,\n          "published": "%s"\n        }\n      ]\n    }\n  }\n}\n' "$FAKE_PUBLISHED"
     ;;
   *) exit 1 ;;
 esac
