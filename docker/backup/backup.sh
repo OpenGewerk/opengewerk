@@ -187,6 +187,13 @@ PATTERNS
 	fi
 }
 
+# Seconds since the machine started, which no change of the clock moves. The
+# path is only ever another one in test-backup.sh.
+uptime_seconds() {
+	read -r up _ <"${UPTIME_PATH:-/proc/uptime}"
+	echo "${up%.*}"
+}
+
 # --- 1. The file store, before the database --------------------------------
 # See the note at the top. Only stored files, as in the second part: a .part
 # or .gone is renamed any moment. A file that is gone by the time tar comes to
@@ -194,7 +201,7 @@ PATTERNS
 # tar may say "No such file or directory" for a path in the store and nothing
 # else.
 echo "  Dateispeicher wird gesichert."
-started=$(date +%s)
+started=$(uptime_seconds)
 if ! tar --create --file "${work}/storage.tar" --directory "$STORAGE_PATH" \
 	--exclude '*.part' --exclude '*.gone' . 2>"${work}/storage.err"; then
 	only_vanished "${work}/storage.err" || exit 1
@@ -286,7 +293,7 @@ storage_files=$(($(wc -l <"${work}/storage.first") + $(find "${work}/storage-lat
 
 # The store is read. Did that take half the grace of the sweep or more, the
 # second part may lack a file the sweep took meanwhile; this backup stops.
-if [ $(($(date +%s) - started)) -ge 43200 ]; then
+if [ $(($(uptime_seconds) - started)) -ge 43200 ]; then
 	echo "  Die Sicherung läuft seit zwölf Stunden oder länger, das Aufräumen des" >&2
 	echo "  Dateispeichers könnte inzwischen Dateien nehmen, die der Dump nennt." >&2
 	echo "  Sie bricht ab; eine Sicherung braucht sonst Minuten." >&2

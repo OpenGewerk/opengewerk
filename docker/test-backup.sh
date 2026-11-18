@@ -62,6 +62,10 @@ if [ -n "${DUMP_UPLOADS:-}" ]; then
   rm -f "$uploaded"
   printf '%s' "$DUMP_UPLOADS" > "$uploaded"
 fi
+# A dump that takes more than half a day: the uptime UPTIME_PATH names jumps.
+if [ -n "${UPTIME_JUMPS:-}" ]; then
+  echo '60000.00 120000.00' > "$UPTIME_PATH"
+fi
 # A file named after its own hash that does not lie where the store keeps it.
 if [ -n "${DUMP_ASTRAY:-}" ]; then
   mkdir -p "$STORAGE_PATH/00/00"
@@ -298,17 +302,6 @@ if [ -n "\${FIXED_STAMP:-}" ] && [ "\$*" = '-u +%Y-%m-%dT%H%M%SZ' ]; then
   echo "\$FIXED_STAMP"
   exit 0
 fi
-# A backup that takes longer than half a day: every reading of the seconds
-# after the first is 50000 later.
-if [ -n "\${CLOCK_RUNS_AWAY:-}" ] && [ "\$*" = '+%s' ]; then
-  if [ -f "\$CLOCK_RUNS_AWAY" ]; then
-    echo \$((\$($real_date +%s) + 50000))
-  else
-    : > "\$CLOCK_RUNS_AWAY"
-    $real_date +%s
-  fi
-  exit 0
-fi
 exec $real_date "\$@"
 FAKE
 #
@@ -342,7 +335,7 @@ cat > "$work/bin/grep" <<FAKE
 if [ -n "\${GREP_FAILS:-}" ] && [ "\$1" = -v ]; then
   case "\$*" in
     *vanished.patterns*)
-      [ -z "\${FAKE_MARK:-}" ] || : > "\$FAKE_MARK"
+      : > "\$GREP_MARK"
       echo 'grep: Input/output error' >&2
       exit 2
       ;;
@@ -1304,7 +1297,16 @@ check 'Dateispeicher: eine Datei, die tar nicht mehr öffnen konnte oder find ve
 # that went beside several other errors does not hide them.
 TAR_SILENT=1 refused_at 'ein Fehler von tar ohne Meldung ließ die Sicherung durch'
 TAR_MIXED=1 refused_at 'andere Fehler neben einer verschwundenen Datei ließen die Sicherung durch'
-TAR_MISSES="./$(hash_of 'weg')" GREP_FAILS=1 refused_at 'ein grep, das die Meldungen nicht lesen konnte, ließ die Sicherung durch'
+rm -f "$work/grep-mark"
+if TAR_MISSES="./$(hash_of 'weg')" GREP_FAILS=1 GREP_MARK="$work/grep-mark" run_backup; then
+  echo 'FEHLER: ein grep, das die Meldungen nicht lesen konnte, ließ die Sicherung durch'
+  exit 1
+fi
+test -f "$work/grep-mark" || {
+  echo 'FEHLER: grep -v wurde nie gefragt, der Fall wurde nicht geprüft'
+  cat "$work/out"
+  exit 1
+}
 check 'Dateispeicher: ein Fehler ohne Meldung oder neben einer verschwundenen Datei beendet die Sicherung'
 
 # A link that stood under a name of the store when the first part was packed,
@@ -1345,9 +1347,9 @@ check 'Dateispeicher: eine neue Datei, die sich nicht lesen lässt, beendet die 
 # A backup that has taken more than half a day by the time it read the store
 # stops and writes no archive: the sweep could by then have taken a file the
 # dump names.
-rm -f "$work/clock-read"
+echo '100.00 200.00' > "$work/uptime"
 archives_before=$(ls "$work/backups" | wc -l)
-if CLOCK_RUNS_AWAY="$work/clock-read" run_backup; then
+if UPTIME_PATH="$work/uptime" UPTIME_JUMPS=1 run_backup; then
   echo 'FEHLER: eine Sicherung, die länger als einen halben Tag lief, ging durch'
   exit 1
 fi
