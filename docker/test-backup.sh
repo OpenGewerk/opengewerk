@@ -243,6 +243,8 @@ if [ -n "\${LATE_HASH:-}" ] && [ "\$1" = --create ]; then
   case " \$* " in
     *" -T "*)
       late=\$STORAGE_PATH/\$(printf '%s' "\$LATE_HASH" | cut -c1-2)/\$(printf '%s' "\$LATE_HASH" | cut -c3-4)/\$LATE_HASH
+      # Every step has to work, or LATE_DONE is not written and the case fails.
+      set -e
       case "\$LATE_DOES" in
         vanish) rm -f "\$late" ;;
         link)
@@ -265,6 +267,7 @@ if [ -n "\${LATE_HASH:-}" ] && [ "\$1" = --create ]; then
           ;;
       esac
       : > "\$LATE_DONE"
+      set +e
       ;;
   esac
 fi
@@ -343,6 +346,7 @@ cat > "$work/bin/sha256sum" <<FAKE
 #!/bin/sh
 if [ -n "\${SHA_FAILS:-}" ] && [ "\$(basename "\${1:-}")" = "\$SHA_FAILS" ]; then
   echo "sha256sum: \$1: I/O error" >&2
+  : > "\$SHA_FAILED"
   exit 1
 fi
 exec $real_sha256sum "\$@"
@@ -1177,7 +1181,11 @@ for part in storage.tar storage-late.tar; do
   mv "$work/through/manifest.new" "$work/through/manifest.json"
 done
 tar --create --gzip --file "$work/backups/$around" --directory "$work/through" .
-POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" --skip-origin-check "$around" > "$work/out" 2>&1 || true
+POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" --skip-origin-check "$around" > "$work/out" 2>&1 || {
+  echo 'FEHLER: das Rückspielen des Archivs mit dem Link scheiterte'
+  cat "$work/out"
+  exit 1
+}
 if [ -n "$(ls -A "$work/outside-restore")" ]; then
   echo 'FEHLER: das Rückspielen schrieb durch einen Link aus dem ersten Teil'
   exit 1
@@ -1311,10 +1319,15 @@ check 'Dateispeicher: ein Link im ersten Teil hält die Datei an seiner Stelle n
 # second part without it.
 unread_text='nicht lesbar'
 unread_hash=$(hash_of "$unread_text")
-if DUMP_UPLOADS="$unread_text" SHA_FAILS="$unread_hash" run_backup; then
+rm -f "$work/sha-failed"
+if DUMP_UPLOADS="$unread_text" SHA_FAILS="$unread_hash" SHA_FAILED="$work/sha-failed" run_backup; then
   echo 'FEHLER: eine Datei, die sha256sum nicht lesen konnte, fehlte still im zweiten Teil'
   exit 1
 fi
+test -f "$work/sha-failed" || {
+  echo 'FEHLER: sha256sum las die Datei nie, der Fall wurde nicht geprüft'
+  exit 1
+}
 rm -rf "$(dirname "$(stored "$unread_hash")")"
 check 'Dateispeicher: eine neue Datei, die sich nicht lesen lässt, beendet die Sicherung'
 

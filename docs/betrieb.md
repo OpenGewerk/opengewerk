@@ -551,9 +551,10 @@ Das Ergebnis ist ein Archiv mit vier Teilen und einem Manifest:
 
 **Datenbank und Dateien liegen im selben Lauf, und der Dateispeicher wird um
 die Datenbank herum gesichert** (#991). Ein Beleg zeigt per Hash auf eine Datei.
-Würden die Dateien nur vorher gesichert, hätte alles, was zwischen den beiden
-Schritten hochgeladen wird, eine Zeile im Dump und keine Datei im Archiv: eine
-zurückgespielte Rechnung, die auf nichts zeigt. Würden sie nur nachher
+Würden die Dateien nur vorher gesichert, könnte der Dump eine Zeile für eine
+Datei enthalten, die erst zwischen den beiden Schritten hochgeladen wurde, und
+das Archiv hätte die Datei nicht: eine zurückgespielte Rechnung, die auf nichts
+zeigt. Würden sie nur nachher
 gesichert, könnte das Aufräumen (siehe unten) eine Datei, deren letzte Zeile
 gleich nach dem Dump ging, herausnehmen, bevor die Sicherung sie liest. Deshalb
 kommt zuerst der Dateispeicher in `storage.tar`, dann die Datenbank, dann
