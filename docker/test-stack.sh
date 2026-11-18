@@ -39,55 +39,34 @@ compose() {
   docker compose -f "$here/compose.yaml" "$@"
 }
 
-# The port Docker Compose takes for $1, only where it is certain without
-# reading the .env the way Compose reads it: from the exported environment
-# when the variable is there, else from the .env ($2) when exactly one line in
-# it that is no comment names the variable, that line is NAME=digits and
-# nothing more (a carriage return from Windows aside), and no line that is no
-# comment holds a quote, which could begin a value over several lines. Prints
-# the number and ends with 0. Ends with 1 when the variable is empty or named
-# nowhere, so that the default in compose.yaml holds. Ends with 2 in every
-# other case, and whenever the environment holds a variable of Compose
-# (COMPOSE_ENV_FILES, COMPOSE_DISABLE_ENV_FILE and the others), which can make
-# it read other files or none: then nothing here guesses the port.
-plain_port() {
-  if printenv "$1" >/dev/null 2>&1; then
-    plain=$(printenv "$1")
-  elif printenv | grep -q '^COMPOSE_'; then
-    return 2
-  elif [ ! -f "$2" ]; then
-    return 1
-  else
-    plain=$(grep -v '^[[:space:]]*#' "$2" | grep -F "$1" | sed 's/\r$//')
-    [ -n "$plain" ] || return 1
-    if grep -v '^[[:space:]]*#' "$2" | grep -q "[\"'\`]"; then
-      return 2
-    fi
-    # A second line that names it leaves a line break in $plain: no digits.
-    case "$plain" in
-      "$1="*) plain=${plain#"$1="} ;;
-      *) return 2 ;;
-    esac
-  fi
-  case "$plain" in
-    '') return 1 ;;
-    *[!0-9]*) return 2 ;;
+# The port Docker Compose publishes the application on, asked from Compose
+# itself: the .env, the environment and the variables of Compose count the way
+# they count at the start, and nothing here reads the .env for it. The values
+# compose.yaml requires get a stand-in for this one question, since the
+# address, one of them, may be what is still missing. Prints the port, or
+# nothing when Compose gives no answer or publishes more than one.
+published_port() {
+  stand_ins=$(grep -o '\${[A-Za-z_][A-Za-z0-9_]*:\{0,1\}?' "$here/compose.yaml" 2>/dev/null |
+    sed -e 's/^\${//' -e 's/:\{0,1\}?$/=stand-in/' | sort -u | tr '\n' ' ')
+  # Names and values have no blanks, so each stand-in is one word.
+  # shellcheck disable=SC2086
+  published=$(env $stand_ins docker compose -f "$here/compose.yaml" config --format json 2>/dev/null |
+    sed -n 's/^[[:space:]]*"published":[[:space:]]*"\([0-9][0-9]*\)".*$/\1/p')
+  case "$published" in
+    '' | *[!0-9]*) ;;
+    *) printf '%s\n' "$published" ;;
   esac
-  printf '%s\n' "$plain"
 }
 
-# The port on this machine: the one Docker Compose takes, else its default in
-# compose.yaml, read the way setup.sh reads it. A port that is not certain
-# stops the test with a sentence instead of testing some other port.
+# The port on this machine, the one Docker Compose publishes, asked the way
+# setup.sh asks. Without an answer the test stops with a sentence instead of
+# testing some other port.
 port() {
-  found=$(plain_port "${APPLICATION_PREFIX}_PORT" "$here/.env") || case $? in
-    1) found=$(sed -n "s/.*\${${APPLICATION_PREFIX}_PORT:-\([0-9]*\)}.*/\1/p" "$here/compose.yaml" | head -n 1) ;;
-    *)
-      echo "FEHLER: Welchen Port Docker Compose für ${APPLICATION_PREFIX}_PORT nimmt, steht nicht sicher fest. test-stack.sh braucht ihn als einzige Zeile ${APPLICATION_PREFIX}_PORT=Zahl in der .env, ohne Anführungszeichen außerhalb der Kommentare, oder exportiert, und keine Variable COMPOSE_... in der Umgebung." >&2
-      exit 1
-      ;;
-  esac
-
+  found=$(published_port)
+  if [ -z "$found" ]; then
+    echo "FEHLER: Docker Compose nennt für $here/compose.yaml keinen einzelnen veröffentlichten Port (docker compose config)." >&2
+    exit 1
+  fi
   printf '%s\n' "$found"
 }
 

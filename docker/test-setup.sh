@@ -281,85 +281,63 @@ for address in http://localhost http://localhost:23700 http://127.0.0.1 http://1
 done
 check 'http:// nur für diese Maschine: andere Adressen abgelehnt, localhost und 127.0.0.1 angenommen'
 
-# 9c. The port of the address offered is the one Docker Compose takes, and
-# only where that is certain: from the exported environment first, else from
-# a .env with one line NAME=digits outside the comments and no quote outside
-# them. Named nowhere or empty (1): the default of compose.yaml holds.
-# Anything else (2), a second line, another way of writing it, ${...}, a quote
-# that could start a value over several lines, a variable of Compose in the
-# environment: no port is offered. A variable of the shell that is not
-# exported is no part of the environment.
-sed -n '/^plain_port() {/,/^}/p' "$work/setup.sh" > "$work/plain-port.sh"
-test -s "$work/plain-port.sh"
-. "$work/plain-port.sh"
-unset PROBE_PORT
-port_of() {
-  printf '%b' "$1" > "$work/port.env"
-  if got=$(plain_port PROBE_PORT "$work/port.env"); then
-    printf '0 %s\n' "$got"
-  else
-    printf '%s\n' "$?"
-  fi
-}
-for pair in 'PROBE_PORT=24567|0 24567' 'PROBE_PORT=24567\r|0 24567' 'PROBE_PORT=|1' 'OTHER=1|1' \
-  '# "Port" steht unten\nOTHER=1\nPROBE_PORT=24567|0 24567' 'OTHER="x"|1' \
-  'PROBE_PORT=24567 # lokal|2' 'PROBE_PORT="24567"|2' "PROBE_PORT='24567'|2" 'export PROBE_PORT=24567|2' \
-  '  PROBE_PORT = 24567|2' 'PROBE_PORT: 24567|2' 'PROBE_PORT=1\nPROBE_PORT=24567|2' \
-  'PROBE_PORT=24567\n# PROBE_PORT=8080|0 24567' '  # PROBE_PORT=1\nPROBE_PORT=24567|0 24567' 'PROBE_PORT=24567#x|2' 'PROBE_PORT=${BASE_PORT}|2' \
-  'PROBE_PORT=24567\nOTHER="x"|2' "PROBE_PORT=24567\nOTHER='x'|2" 'PROBE_PORT=24567\nOTHER=`x`|2' \
-  "OTHER='Text \\\\' mit Apostroph\nPROBE_PORT=24567\nEnde'|2"; do
-  line=${pair%%|*}
-  expected=${pair#*|}
-  got=$(port_of "$line")
-  [ "$got" = "$expected" ] || {
-    printf 'FEHLER: aus "%s" wurde "%s", nicht "%s"\n' "$line" "$got" "$expected"
-    exit 1
+# 9c. The port of the address offered is the one Docker Compose publishes,
+# asked from Compose itself: the exported environment before the .env, a
+# value over several lines and COMPOSE_DISABLE_ENV_FILE as Compose takes
+# them, the values compose.yaml requires replaced by a stand-in, since the
+# address is still missing then. A second published port offers none. Needs
+# Docker Compose, which the CI has.
+if docker compose version > /dev/null 2>&1; then
+  sed -n '/^published_port() {/,/^}/p' "$work/setup.sh" > "$work/published-port.sh"
+  test -s "$work/published-port.sh"
+  mkdir "$work/ports"
+  cp "$source_dir/compose.yaml" "$work/ports/compose.yaml"
+  port_in() {
+    (
+      here=$1
+      . "$work/published-port.sh"
+      published_port
+    )
   }
-done
-printf 'PROBE_PORT=24567\n' > "$work/port.env"
-[ "$(PROBE_PORT=24999 plain_port PROBE_PORT "$work/port.env")" = 24999 ]
-empty_state=0
-PROBE_PORT='' plain_port PROBE_PORT "$work/port.env" > /dev/null || empty_state=$?
-[ "$empty_state" = 1 ] || {
-  printf 'FEHLER: ein leerer Port aus der Umgebung ergab %s, nicht 1\n' "$empty_state"
-  exit 1
-}
-# A value over several lines: no port is read from the file at all.
-printf "OTHER='erste Zeile\nexport PROBE_PORT=24999'\nPROBE_PORT=24567\n" > "$work/multi.env"
-multi_state=0
-plain_port PROBE_PORT "$work/multi.env" > /dev/null || multi_state=$?
-[ "$multi_state" = 2 ] || {
-  printf 'FEHLER: ein Wert über mehrere Zeilen ergab %s, nicht 2\n' "$multi_state"
-  exit 1
-}
-PROBE_PORT=24998
-[ "$(plain_port PROBE_PORT "$work/port.env")" = 24567 ]
-unset PROBE_PORT
-for compose_variable in COMPOSE_ENV_FILES COMPOSE_DISABLE_ENV_FILE COMPOSE_PROFILES; do
-  files_state=0
-  (
-    export "$compose_variable=1"
-    plain_port PROBE_PORT "$work/port.env" > /dev/null
-  ) || files_state=$?
-  [ "$files_state" = 2 ] || {
-    printf 'FEHLER: mit %s ergab die .env %s, nicht 2\n' "$compose_variable" "$files_state"
-    exit 1
-  }
-done
-missing_state=0
-plain_port PROBE_PORT "$work/no-such.env" > /dev/null || missing_state=$?
-[ "$missing_state" = 1 ]
-check 'Port aus der .env: nur, wo er ohne Auslegung feststeht'
+  printf 'OPENGEWERK_PORT=24567\n' > "$work/ports/.env"
+  [ "$(port_in "$work/ports")" = 24567 ]
+  [ "$(OPENGEWERK_PORT=24999 port_in "$work/ports")" = 24999 ]
+  [ "$(COMPOSE_DISABLE_ENV_FILE=1 port_in "$work/ports")" = 23700 ]
+  printf "OPENGEWERK_PORT=24567\nNOTE='erste Zeile\nOPENGEWERK_PORT=24999\nletzte'\n" > "$work/ports/.env"
+  [ "$(port_in "$work/ports")" = 24567 ]
+  rm "$work/ports/.env"
+  [ "$(port_in "$work/ports")" = 23700 ]
+  awk '{ print } index($0, "${OPENGEWERK_PORT:-23700}:23700") { print "      - '\''127.0.0.1:23701:23701'\''" }' \
+    "$source_dir/compose.yaml" > "$work/ports/compose.yaml"
+  [ "$(grep -c "127.0.0.1:23701:23701" "$work/ports/compose.yaml")" = 1 ]
+  [ -z "$(port_in "$work/ports")" ]
+  rm -r "$work/ports"
+  check 'Port der Adresse: so, wie Docker Compose ihn veröffentlicht'
+else
+  echo 'Hinweis: ohne Docker Compose bleibt der Port der vorgeschlagenen Adresse ungeprüft.'
+fi
 
 # 9d. The question in a terminal: Enter takes the address with the port
-# Docker Compose takes, and a port browsers refuse is not offered at all.
+# Docker Compose publishes, and a port browsers refuse is not offered at all.
+# A stand-in for docker answers the question for the port.
 if command -v script > /dev/null 2>&1; then
+  mkdir "$work/fake"
+  cat > "$work/fake/docker" <<'FAKE'
+#!/bin/sh
+case "$*" in
+  'compose -f '*' config --format json')
+    printf '{\n  "services": {\n    "app": {\n      "ports": [\n        {\n          "published": "%s"\n        }\n      ]\n    }\n  }\n}\n' "$FAKE_PUBLISHED"
+    ;;
+  *) exit 1 ;;
+esac
+FAKE
+  chmod +x "$work/fake/docker"
   rm -f "$work/.env"
-  printf '\n' | OPENGEWERK_PORT=8080 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1
+  printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=8080 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1
   grep -q 'Leer lassen für http://localhost:8080' "$work/asked.txt"
   grep -qxF 'TRUSTED_ORIGINS=http://localhost:8080' "$work/.env"
   rm -f "$work/.env"
-  if printf '\n' | OPENGEWERK_PORT=6000 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
+  if printf '\n' | PATH="$work/fake:$PATH" FAKE_PUBLISHED=6000 script -q -e -c "sh '$work/setup.sh'" /dev/null > "$work/asked.txt" 2>&1; then
     echo 'FEHLER: ohne Adresse lief die Einrichtung mit Port 6000 durch'
     exit 1
   fi
@@ -368,6 +346,7 @@ if command -v script > /dev/null 2>&1; then
     cat "$work/asked.txt"
     exit 1
   fi
+  rm -r "$work/fake"
   check 'Rückfrage im Terminal: Enter nimmt den Port von Docker Compose, einen gesperrten bietet sie nicht an'
 else
   echo 'Hinweis: ohne "script" bleibt die Rückfrage im Terminal ungeprüft.'
