@@ -1,7 +1,12 @@
 #!/bin/sh
 # Starts an instance: the first time, every time after, and after an update.
 #
-# First the .env, through setup.sh: on the first start every secret is made
+# First the engine (#985): Docker Engine 28.3.3 or newer, the context held for
+# the whole run, and the same engine from this check to the start, asked again
+# before each step that starts containers. Below it nothing is pulled, built
+# or set up, and no .env is made.
+#
+# Then the .env, through setup.sh: on the first start every secret is made
 # and the address asked for, later only what a newer version brought is
 # added. No value is printed, only names.
 #
