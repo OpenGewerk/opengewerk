@@ -327,7 +327,7 @@ FAKE
 cat > "$work/bin/find" <<FAKE
 #!/bin/sh
 $real_find "\$@" || exit
-[ "\$1" = . ] || exit 0
+[ "\$1" = . ] || [ "\$1" = "\$STORAGE_PATH" ] || exit 0
 if [ -n "\${FIND_MISSES:-}" ]; then
   [ -z "\${FAKE_MARK:-}" ] || : > "\$FAKE_MARK"
   printf 'find: %s: No such file or directory\\n' "\$FIND_MISSES" >&2
@@ -1351,7 +1351,7 @@ if CLOCK_RUNS_AWAY="$work/clock-read" run_backup; then
   echo 'FEHLER: eine Sicherung, die länger als einen halben Tag lief, ging durch'
   exit 1
 fi
-grep -q 'seit mehr als zwölf Stunden' "$work/out"
+grep -q 'seit zwölf Stunden oder länger' "$work/out"
 test "$(ls "$work/backups" | wc -l)" = "$archives_before" || {
   echo 'FEHLER: eine Sicherung, die zu lange lief, hinterließ ein Archiv'
   exit 1

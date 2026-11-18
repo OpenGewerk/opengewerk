@@ -279,10 +279,15 @@ while IFS= read -r copy; do
 done <"${work}/storage-late.files"
 tar --create --file "${work}/storage-late.tar" --directory "${work}/storage-late" .
 
+# What the archive holds, counted from its two parts and not from the store,
+# which goes on changing: a .part renamed while find walked it would end the
+# backup here.
+storage_files=$(($(wc -l <"${work}/storage.first") + $(find "${work}/storage-late" -type f | wc -l)))
+
 # The store is read. Did that take half the grace of the sweep or more, the
 # second part may lack a file the sweep took meanwhile; this backup stops.
-if [ $(($(date +%s) - started)) -gt 43200 ]; then
-	echo "  Die Sicherung läuft seit mehr als zwölf Stunden, das Aufräumen des" >&2
+if [ $(($(date +%s) - started)) -ge 43200 ]; then
+	echo "  Die Sicherung läuft seit zwölf Stunden oder länger, das Aufräumen des" >&2
 	echo "  Dateispeichers könnte inzwischen Dateien nehmen, die der Dump nennt." >&2
 	echo "  Sie bricht ab; eine Sicherung braucht sonst Minuten." >&2
 	exit 1
@@ -299,7 +304,6 @@ database_hash=$(sha256sum "${work}/database.dump" | cut -d' ' -f1)
 storage_hash=$(sha256sum "${work}/storage.tar" | cut -d' ' -f1)
 late_hash=$(sha256sum "${work}/storage-late.tar" | cut -d' ' -f1)
 chains_hash=$(sha256sum "${work}/audit-chains.tsv" | cut -d' ' -f1)
-storage_files=$(find "$STORAGE_PATH" -type f | wc -l | tr -d ' ')
 chains=$(wc -l <"${work}/audit-chains.tsv" | tr -d ' ')
 server_version=$(superuser_query --command "show server_version")
 
