@@ -501,13 +501,16 @@ if [ "$expected_files" -gt 0 ]; then
 		# Out of the store before the restore ends: what a link swapped in while
 		# the backup read the store put under a name there can be anything in the
 		# container of the backup, and the application reads the store.
+		# A file rm cannot take is written down and the loop goes on with the
+		# next one; set -e would end it at the first otherwise.
+		: >"${work}/not-removed"
 		sha256sum -c "${work}/expected.sha256" 2>/dev/null | sed -n 's/: FAILED.*$//p' |
 			while IFS= read -r wrong; do
-				rm -f "$wrong"
+				rm -f "$wrong" || printf '%s\n' "$wrong" >>"${work}/not-removed"
 			done
-		left_wrong=$(sha256sum -c "${work}/expected.sha256" 2>/dev/null | grep -c ': FAILED' || true)
-		if [ "$left_wrong" -ne 0 ]; then
-			echo "Nicht jede dieser Dateien ließ sich entfernen; sie liegen noch im Speicher." >&2
+		if [ -s "${work}/not-removed" ]; then
+			echo "Nicht jede dieser Dateien ließ sich entfernen, diese liegen noch im Speicher:" >&2
+			cat "${work}/not-removed" >&2
 		fi
 		exit 1
 	fi

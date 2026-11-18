@@ -1542,10 +1542,21 @@ if POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" --skip-origin-check "$forged
   exit 1
 fi
 grep -q 'passt nicht mehr zu ihrem Namen' "$work/out"
-if [ -e "$STORAGE_PATH/$forged_name" ]; then
+if [ -e "$STORAGE_PATH/$forged_name" ] || grep -q 'ließ sich entfernen' "$work/out"; then
   echo 'FEHLER: die untergeschobene Datei blieb nach dem Rückspielen im Speicher'
   exit 1
 fi
+# One rm cannot take is named, and the restore still stops.
+if POSTGRES_DB=opengewerk RM_FAILS_ON="$(hash_of 'echt')" sh "$work/bin/restore.sh" --skip-origin-check "$forged" \
+  > "$work/out" 2>&1; then
+  echo 'FEHLER: ein Archiv mit einer untergeschobenen Datei, die rm nicht nahm, ließ sich zurückspielen'
+  exit 1
+fi
+grep -q 'Nicht jede dieser Dateien ließ sich entfernen' "$work/out" && grep -q "$forged_name" "$work/out" || {
+  echo 'FEHLER: eine untergeschobene Datei, die rm nicht nahm, wurde nicht genannt'
+  cat "$work/out"
+  exit 1
+}
 check 'Rückspielen: eine Datei, deren Inhalt nicht ihr Name ist, bleibt nicht im Speicher'
 
 echo 'Sicherungen: alles in Ordnung.'
