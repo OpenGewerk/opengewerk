@@ -404,9 +404,11 @@ test ! -f "$work/docker/.env"
 check 'Docker: Prüfung und Start im selben Kontext, ein gesetzter Kontext oder DOCKER_HOST bleibt, ohne Kontext kein Start'
 
 # 14. An engine that changed behind the same context between the checks is
-# asked again before each step that starts containers: too old before the
-# migrations, nothing starts; too old only before the start, the migrations
-# ran and the application does not start.
+# asked again before each step that starts containers and right after the
+# migrations: too old before the migrations, nothing starts; too old right
+# after them, the login of a restore does not come back; too old only before
+# the start, the migrations ran and the login came back, but the application
+# does not start.
 : > "$CALLS"
 rm -f "$CALLS.engine"
 if out=$(DOCKER_SERVERS='28.3.3 27.5.1' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
@@ -425,7 +427,7 @@ absent 'up -d'
 rm -f "$CALLS.engine"
 if out=$(DOCKER_SERVERS='28.3.3 28.3.3 27.5.1' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
   sh "$work/docker/start.sh" < /dev/null 2>&1); then
-  echo 'FEHLER: eine Engine, die vor dem Start zu alt wurde, startete die Anwendung'
+  echo 'FEHLER: eine Engine, die nach den Migrationen zu alt wurde, startete die Anwendung'
   exit 1
 fi
 printf '%s' "$out" | grep -q 'Docker meldet die Fassung "27.5.1"'
@@ -434,6 +436,18 @@ printf '%s' "$out" | grep -q 'schon auf dem neuen Stand' || {
   exit 1
 }
 grep -q 'run --rm migrate$' "$CALLS"
+absent 'exec -T postgres psql'
+absent 'up -d'
+: > "$CALLS"
+rm -f "$CALLS.engine"
+if out=$(DOCKER_SERVERS='28.3.3 28.3.3 28.3.3 27.5.1' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
+  sh "$work/docker/start.sh" < /dev/null 2>&1); then
+  echo 'FEHLER: eine Engine, die erst vor dem Start zu alt wurde, startete die Anwendung'
+  exit 1
+fi
+printf '%s' "$out" | grep -q 'Docker meldet die Fassung "27.5.1".*schon auf dem neuen Stand'
+grep -q 'run --rm migrate$' "$CALLS"
+grep -q 'exec -T postgres psql' "$CALLS"
 absent 'up -d'
 rm -f "$CALLS.engine"
 check 'Docker: vor jedem Schritt, der Container startet, wird die Engine noch einmal gefragt'
@@ -463,6 +477,18 @@ grep -q 'run --rm migrate$' "$CALLS"
 # Asked right after the migrations, so the login of a restore does not come
 # back on the other engine either.
 absent 'exec -T postgres psql'
+absent 'up -d'
+# And once more before the start: an engine swapped only then gets no
+# container either.
+: > "$CALLS"
+rm -f "$CALLS.engine"
+if out=$(DOCKER_IDS='erste erste erste zweite' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
+  sh "$work/docker/start.sh" < /dev/null 2>&1); then
+  echo 'FEHLER: eine andere Engine erst vor dem Start startete die Anwendung'
+  exit 1
+fi
+printf '%s' "$out" | grep -q 'eine andere Engine.*schon auf dem neuen Stand'
+grep -q 'exec -T postgres psql' "$CALLS"
 absent 'up -d'
 : > "$CALLS"
 rm -f "$CALLS.engine"
