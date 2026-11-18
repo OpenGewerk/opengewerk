@@ -190,8 +190,16 @@ PATTERNS
 # Seconds since the machine started, which no change of the clock moves. The
 # path is only ever another one in test-backup.sh.
 uptime_seconds() {
-	read -r up _ <"${UPTIME_PATH:-/proc/uptime}"
-	echo "${up%.*}"
+	up=''
+	read -r up _ <"${UPTIME_PATH:-/proc/uptime}" || true
+	up=${up%.*}
+	case "$up" in
+	'' | *[!0-9]*)
+		echo "  Die Laufzeit der Sicherung lässt sich nicht messen, sie bricht ab." >&2
+		return 1
+		;;
+	esac
+	echo "$up"
 }
 
 # --- 1. The file store, before the database --------------------------------
@@ -293,7 +301,8 @@ storage_files=$(($(wc -l <"${work}/storage.first") + $(find "${work}/storage-lat
 
 # The store is read. Did that take half the grace of the sweep or more, the
 # second part may lack a file the sweep took meanwhile; this backup stops.
-if [ $(($(uptime_seconds) - started)) -ge 43200 ]; then
+read_done=$(uptime_seconds)
+if [ $((read_done - started)) -ge 43200 ]; then
 	echo "  Die Sicherung läuft seit zwölf Stunden oder länger, das Aufräumen des" >&2
 	echo "  Dateispeichers könnte inzwischen Dateien nehmen, die der Dump nennt." >&2
 	echo "  Sie bricht ab; eine Sicherung braucht sonst Minuten." >&2

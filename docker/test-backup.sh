@@ -66,6 +66,10 @@ fi
 if [ -n "${UPTIME_JUMPS:-}" ]; then
   echo '60000.00 120000.00' > "$UPTIME_PATH"
 fi
+# A machine whose uptime can no longer be read while the dump runs.
+if [ -n "${UPTIME_GOES:-}" ]; then
+  : > "$UPTIME_PATH"
+fi
 # A file named after its own hash that does not lie where the store keeps it.
 if [ -n "${DUMP_ASTRAY:-}" ]; then
   mkdir -p "$STORAGE_PATH/00/00"
@@ -1356,6 +1360,17 @@ fi
 grep -q 'seit zwölf Stunden oder länger' "$work/out"
 test "$(ls "$work/backups" | wc -l)" = "$archives_before" || {
   echo 'FEHLER: eine Sicherung, die zu lange lief, hinterließ ein Archiv'
+  exit 1
+}
+# And one whose uptime cannot be read by then stops as well, without archive.
+echo '100.00 200.00' > "$work/uptime"
+if UPTIME_PATH="$work/uptime" UPTIME_GOES=1 run_backup; then
+  echo 'FEHLER: eine Sicherung ohne messbare Laufzeit ging durch'
+  exit 1
+fi
+grep -q 'lässt sich nicht messen' "$work/out"
+test "$(ls "$work/backups" | wc -l)" = "$archives_before" || {
+  echo 'FEHLER: eine Sicherung ohne messbare Laufzeit hinterließ ein Archiv'
   exit 1
 }
 check 'Dateispeicher: nach einem halben Tag bis zum Ende des Lesens bricht die Sicherung ab'
