@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto'
 import {
+  existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -9,7 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -26,6 +28,13 @@ let store: FileStore
 
 const contents = new TextEncoder().encode('%PDF-1.7 Probe 2026-0001')
 const hash = createHash('sha256').update(contents).digest('hex')
+
+/** Where the store keeps bytes: two folders from the hash, then the hash. */
+function pathParts(bytes: Uint8Array): string[] {
+  const sha256 = createHash('sha256').update(bytes).digest('hex')
+
+  return [sha256.slice(0, 2), sha256.slice(2, 4), sha256]
+}
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'file-store-'))
@@ -123,19 +132,85 @@ describe('the sweep of the file store', () => {
 
   it('dates a new file from its put, not from its writing (#991)', async () => {
     // A clock that moves on with every reading, an hour each: the file carries
-    // the reading after its rename, the moment it was put in place, and not
-    // the one from before it.
+    // the reading after it was put in place, and not the one from before. At
+    // the first reading the name is still free, at the second it is taken.
     const start = Date.now()
+    const bytes = new TextEncoder().encode('Lieferschein')
+    const path = join(root, ...pathParts(bytes))
+    const there: boolean[] = []
     let readings = 0
-    const moving = new FileStore(root, () => new Date(start + ++readings * 60 * 60 * 1000))
+    const moving = new FileStore(root, () => {
+      there.push(existsSync(path))
 
-    const { sha256 } = await moving.put(new TextEncoder().encode('Lieferschein'))
-    const path = join(root, sha256.slice(0, 2), sha256.slice(2, 4), sha256)
+      return new Date(start + ++readings * 60 * 60 * 1000)
+    })
 
-    expect(readings).toBe(2)
+    await moving.put(bytes)
+
+    expect(there).toEqual([false, true])
     expect(Math.abs(statSync(path).mtime.getTime() - (start + 2 * 60 * 60 * 1000))).toBeLessThan(
       2000,
     )
+  })
+
+  it('leaves a file a second put of the same bytes placed meanwhile (#991)', async () => {
+    // The other put comes while this one dates its temporary file: the name
+    // keeps its file, and both puts date it as of now.
+    const bytes = new TextEncoder().encode('Lieferschein')
+    const path = join(root, ...pathParts(bytes))
+    let other: number | undefined
+    const racing = new FileStore(root, () => {
+      if (other === undefined) {
+        mkdirSync(dirname(path), { recursive: true })
+        writeFileSync(path, bytes)
+        other = statSync(path).ino
+      }
+
+      return new Date()
+    })
+
+    await racing.put(bytes)
+
+    expect(statSync(path).ino).toBe(other)
+    expect(readdirSync(dirname(path))).toEqual([basename(path)])
+  })
+
+  it('dates a file in place once more when the first try fails (#991)', async () => {
+    // The clock stands in for a passing error of the file system: it fails
+    // at the second reading, the first after the file is in place.
+    const bytes = new TextEncoder().encode('Lieferschein')
+    let readings = 0
+    const flaky = new FileStore(root, () => {
+      readings += 1
+
+      if (readings === 2) {
+        throw new Error('EIO')
+      }
+
+      return new Date()
+    })
+
+    await expect(flaky.put(bytes)).resolves.toMatchObject({ sizeBytes: bytes.byteLength })
+    expect(readings).toBe(3)
+  })
+
+  it('keeps a file in place when it cannot be dated, and says so (#991)', async () => {
+    const bytes = new TextEncoder().encode('Lieferschein')
+    const path = join(root, ...pathParts(bytes))
+    let readings = 0
+    const broken = new FileStore(root, () => {
+      readings += 1
+
+      if (readings > 1) {
+        throw new Error('EIO')
+      }
+
+      return new Date()
+    })
+
+    await expect(broken.put(bytes)).rejects.toThrow('EIO')
+    expect(readFileSync(path)).toEqual(Buffer.from(bytes))
+    expect(readdirSync(dirname(path))).toEqual([basename(path)])
   })
 
   it('keeps a file as new as the last put of the same bytes', async () => {

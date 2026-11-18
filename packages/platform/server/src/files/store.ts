@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
   access,
+  link,
   mkdir,
   open,
   readdir,
@@ -108,7 +109,7 @@ export class FileStore implements FileStorage {
    * Stores bytes and says under which name.
    *
    * Written to a temporary name beside the target, flushed to the disk, and
-   * then renamed into place, so that the name only ever points at a complete
+   * then linked into place, so that the name only ever points at a complete
    * file. A crash halfway leaves a stray `.part` file, which the restore check
    * ignores because its name is no hash, and not a truncated file under a
    * name that claims otherwise.
@@ -122,9 +123,7 @@ export class FileStore implements FileStorage {
       // Put again: the file is as new as this put, so that the sweep of the
       // store, which only takes what is older than its grace, leaves it
       // alone while the row that will name it is still being written (#657).
-      const now = this.clock()
-
-      await utimes(target, now, now)
+      await this.dateAsNow(target)
 
       return blob
     }
@@ -144,23 +143,47 @@ export class FileStore implements FileStorage {
     // A new file is as new as its put, not as its writing: a backup takes the
     // store before its dump and everything newer than a mark after it, and a
     // file written before the mark and put in place after the first part was
-    // packed would be in neither (#991). Dated before the rename, so that the
-    // name never points at an older file, and once more after it.
+    // packed would be in neither (#991). Dated before it is put in place, so
+    // that the name never points at an older file, and once more after it.
+    //
+    // Put in place with a link and not a rename: a rename replaces a file a
+    // second put of the same bytes placed meanwhile, and the name would point
+    // at the older date of this one. A link leaves that file where it is, and
+    // this put is a put again: either way the name is dated as of now below.
     try {
       const writtenAt = this.clock()
 
       await utimes(temporary, writtenAt, writtenAt)
-      await rename(temporary, target)
-    } catch (error) {
+      await linkUnlessThere(temporary, target)
+    } finally {
       await rm(temporary, { force: true })
-      throw error
     }
 
-    const putAt = this.clock()
-
-    await utimes(target, putAt, putAt)
+    await this.dateAsNow(target)
 
     return blob
+  }
+
+  /**
+   * Dates a file in the store as of now, tried three times: the file is in
+   * place and may already be named by a row of another put, so a passing
+   * error of the file system is no reason to give up on it, and a lasting one
+   * leaves it where it is and is reported.
+   */
+  private async dateAsNow(path: string): Promise<void> {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        const now = this.clock()
+
+        await utimes(path, now, now)
+
+        return
+      } catch (error) {
+        if (attempt >= 3) {
+          throw error
+        }
+      }
+    }
   }
 
   /**
@@ -312,6 +335,17 @@ async function modified(path: string): Promise<Date | null> {
     }
 
     throw error
+  }
+}
+
+/** Gives a file a second name, unless that name is taken already. */
+async function linkUnlessThere(from: string, to: string): Promise<void> {
+  try {
+    await link(from, to)
+  } catch (error) {
+    if ((error as { code?: unknown }).code !== 'EEXIST') {
+      throw error
+    }
   }
 }
 

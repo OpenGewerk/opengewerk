@@ -163,9 +163,10 @@ esac
 rm -f "$copy"
 
 # The second part of the store comes with archives from #991 on, and an
-# archive whose manifest names it has to bring it. One from before has none.
+# archive whose manifest names it, or the order that has it, has to bring it.
+# One from before has neither.
 parts="database.dump storage.tar audit-chains.tsv"
-if grep -q '"storage-late.tar"' "${work}/manifest.json"; then
+if grep -q -e '"storage-late.tar"' -e '"order": "storage-database-late"' "${work}/manifest.json"; then
 	parts="${parts} storage-late.tar"
 fi
 

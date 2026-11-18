@@ -184,6 +184,13 @@ if [ -n "\${STORAGE_FAILS:-}" ] && [ "\$1" = --extract ]; then
     *storage.tar*) exit 1 ;;
   esac
 fi
+# A file of the store that is gone by the time tar comes to it: tar names a
+# path that is not there, which is what it says for a file that vanished.
+if [ -n "\${TAR_MISSES:-}" ] && [ "\$1" = --create ]; then
+  case " \$* " in
+    *" --directory \$STORAGE_PATH "*) exec $real_tar "\$@" "\$TAR_MISSES" ;;
+  esac
+fi
 if [ -n "\${TAR_FAILS:-}" ] && [ "\$1" = --create ]; then
   case " \$* " in
     *' --file - '*)
@@ -470,9 +477,21 @@ check 'Manifest: ein Teil ohne Prüfsumme und ein fehlender Teil werden abgelehn
 
 # An archive from before #991 has no second part, and its manifest names none:
 # it goes back as it did.
-before_991() {
+# An archive whose order has the second part, with the part and its checksum
+# taken out, is not one from before.
+without_the_late_part() {
   rm storage-late.tar
   without_its_checksum storage-late.tar
+}
+repacked without_the_late_part
+refused 'In der Sicherung fehlt storage-late.tar' env POSTGRES_DB=opengewerk \
+  sh "$work/bin/restore.sh" --skip-origin-check "$ours"
+check 'Manifest: die Reihenfolge mit zweitem Teil verlangt ihn, auch ohne seine Prüfsumme'
+
+before_991() {
+  without_the_late_part
+  sed 's/"order": "storage-database-late"/"order": "database-then-storage"/' manifest.json > manifest.new
+  mv manifest.new manifest.json
 }
 repacked before_991
 taken env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" --skip-origin-check "$ours"
@@ -987,5 +1006,30 @@ POSTGRES_DB=opengewerk DUMP_UPLOADS="$gone_text" CP_VANISHES="$gone_hash" \
   exit 1
 }
 check 'Dateispeicher um die Datenbank: eine Datei, die gerade verschwindet, beendet die Sicherung nicht'
+
+# The first part, packed while the store is in use: a write under way stays
+# out of it, a file the sweep takes while tar runs does not end the backup,
+# and any other error of tar still does.
+printf 'halb' > "$STORAGE_PATH/liegengeblieben.part"
+POSTGRES_DB=opengewerk TAR_MISSES="./$(printf 'weg' | sha256sum | cut -d' ' -f1)" \
+  sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
+  echo 'FEHLER: eine Datei, die während tar verschwand, beendete die Sicherung'
+  cat "$work/out"
+  exit 1
+}
+first=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
+rm -rf "$work/first"
+mkdir "$work/first"
+tar --extract --gzip --file "$work/backups/$first" --directory "$work/first"
+if tar --list --file "$work/first/storage.tar" | grep -q 'liegengeblieben.part'; then
+  echo 'FEHLER: ein Schreibvorgang, der noch lief, steht im ersten Teil'
+  exit 1
+fi
+rm -f "$STORAGE_PATH/liegengeblieben.part"
+if POSTGRES_DB=opengewerk TAR_MISSES=/nirgends sh "$work/bin/backup.sh" > "$work/out" 2>&1; then
+  echo 'FEHLER: ein anderer Fehler von tar beim ersten Teil ließ die Sicherung durch'
+  exit 1
+fi
+check 'Dateispeicher vor der Datenbank: ohne .part, eine verschwundene Datei geduldet, jeder andere Fehler nicht'
 
 echo 'Sicherungen: alles in Ordnung.'

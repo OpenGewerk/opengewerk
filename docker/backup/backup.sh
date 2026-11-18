@@ -162,12 +162,24 @@ tab=$(printf '\t')
 # --- 1. The file store, before the database --------------------------------
 # See the note at the top. The mark is set a second before tar starts: a file
 # written in the second of the mark goes into this part, and one written while
-# or after tar runs has a later time and goes into the second part.
+# or after tar runs has a later time and goes into the second part. Only
+# stored files, as in the second part: a .part or .gone is renamed any moment.
+# A file that is gone by the time tar comes to it was one of those or one the
+# sweep took, which no row names any more, so tar may say "No such file or
+# directory" for a path in the store and nothing else.
 echo "  Dateispeicher wird gesichert."
 mark="${work}/storage.mark"
 : >"$mark"
 sleep 1
-tar --create --file "${work}/storage.tar" --directory "$STORAGE_PATH" .
+if ! tar --create --file "${work}/storage.tar" --directory "$STORAGE_PATH" \
+	--exclude '*.part' --exclude '*.gone' . 2>"${work}/storage.err"; then
+	if grep -v -e '^tar: \./.*: No such file or directory$' \
+		-e '^tar: error exit delayed from previous errors$' "${work}/storage.err" | grep -q .; then
+		cat "${work}/storage.err" >&2
+		exit 1
+	fi
+fi
+rm -f "${work}/storage.err"
 
 # --- 2. The database -------------------------------------------------------
 # Custom format, because it restores selectively and compresses on the way.
