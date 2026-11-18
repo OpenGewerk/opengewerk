@@ -280,6 +280,26 @@ describe('the sweep of the file store', () => {
     expect(Math.abs(statSync(path).mtime.getTime() - later.getTime())).toBeLessThan(2000)
   })
 
+  it('goes on with the other files when it cannot date one it puts back (#991)', async () => {
+    // Its hash comes before the other's, so the store meets it first.
+    const kept = await oldFile('Gebraucht')
+    const gone = await oldFile('Verwaist')
+    const failing = new FileStore(root, () => {
+      throw new Error('EIO')
+    })
+
+    await expect(
+      failing.sweep(async () => {
+        await store.put(new TextEncoder().encode('Gebraucht'))
+
+        return new Set<string>()
+      }, before()),
+    ).rejects.toThrow('EIO')
+
+    expect(new TextDecoder().decode(await store.get(kept))).toBe('Gebraucht')
+    await expect(store.get(gone)).rejects.toThrow(StoredFileMissingError)
+  })
+
   it('takes out what an unfinished write or sweep left behind once it is old', async () => {
     const sha256 = await oldFile('Daneben')
     const folder = join(root, sha256.slice(0, 2), sha256.slice(2, 4))

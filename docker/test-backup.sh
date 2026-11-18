@@ -237,11 +237,35 @@ FAKE
 # copied and the archive again right after.
 cat > "$work/bin/cp" <<FAKE
 #!/bin/sh
+# The source of a copy is the one but last argument, whatever options came.
+eval "source=\\\${\$((\$# - 1))}"
 # A file renamed between find and cp: its source is gone when cp comes.
 if [ -n "\${CP_VANISHES:-}" ]; then
   case "\$*" in
     *"\$CP_VANISHES"*)
-      rm -f "\$2"
+      rm -f "\$source"
+      exec $real_cp "\$@"
+      ;;
+  esac
+fi
+# A copy that fails halfway while its source goes: half a file is left.
+if [ -n "\${CP_PARTIAL:-}" ]; then
+  case "\$*" in
+    *"\$CP_PARTIAL"*)
+      eval "target=\\\${\$#}"
+      printf 'halb' > "\$target"
+      rm -f "\$source"
+      exit 1
+      ;;
+  esac
+fi
+# A file swapped for a link between find and cp, the way a process that may
+# write to the store could do it: the name now points at CP_SWAP_TARGET.
+if [ -n "\${CP_SWAPS:-}" ]; then
+  case "\$*" in
+    *"\$CP_SWAPS"*)
+      ln -s "\$CP_SWAP_TARGET" "\$source.link"
+      mv -f "\$source.link" "\$source"
       exec $real_cp "\$@"
       ;;
   esac
@@ -1089,6 +1113,48 @@ if POSTGRES_DB=opengewerk FIND_MISSES=/nirgends sh "$work/bin/backup.sh" > "$wor
   exit 1
 fi
 check 'Dateispeicher: eine Datei, die tar nicht mehr öffnen konnte oder find verschwunden fand, beendet die Sicherung nicht'
+
+# A name swapped for a link between find and cp brings neither the link nor
+# the file it points at into the archive (CWE-59).
+printf 'GEHEIMNIS DES CONTAINERS' > "$work/secret"
+swap_text='gleich ein Link'
+swap_hash=$(printf '%s' "$swap_text" | sha256sum | cut -d' ' -f1)
+POSTGRES_DB=opengewerk DUMP_UPLOADS="$swap_text" CP_SWAPS="$swap_hash" CP_SWAP_TARGET="$work/secret" \
+  sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
+  echo 'FEHLER: ein untergeschobener Link beendete die Sicherung'
+  cat "$work/out"
+  exit 1
+}
+linked=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
+rm -rf "$work/linked"
+mkdir "$work/linked"
+tar --extract --gzip --file "$work/backups/$linked" --directory "$work/linked"
+if tar --list --file "$work/linked/storage-late.tar" | grep -q "$swap_hash"; then
+  echo 'FEHLER: der untergeschobene Link oder sein Ziel steht im zweiten Teil'
+  exit 1
+fi
+rm -f "$STORAGE_PATH/$swap_hash"
+check 'Dateispeicher: ein untergeschobener Link bringt weder sich noch sein Ziel ins Archiv'
+
+# A copy that failed halfway while its source went leaves nothing behind
+# that is packed.
+partial_text='halb kopiert'
+partial_hash=$(printf '%s' "$partial_text" | sha256sum | cut -d' ' -f1)
+POSTGRES_DB=opengewerk DUMP_UPLOADS="$partial_text" CP_PARTIAL="$partial_hash" \
+  sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
+  echo 'FEHLER: eine halbe Kopie einer verschwundenen Datei beendete die Sicherung'
+  cat "$work/out"
+  exit 1
+}
+halved=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
+rm -rf "$work/halved"
+mkdir "$work/halved"
+tar --extract --gzip --file "$work/backups/$halved" --directory "$work/halved"
+if tar --list --file "$work/halved/storage-late.tar" | grep -q "$partial_hash"; then
+  echo 'FEHLER: eine halbe Kopie steht im zweiten Teil'
+  exit 1
+fi
+check 'Dateispeicher: eine halbe Kopie einer verschwundenen Datei kommt nicht ins Archiv'
 
 # A failure of tar that names no gone file is no file that went.
 if POSTGRES_DB=opengewerk TAR_SILENT=1 sh "$work/bin/backup.sh" > "$work/out" 2>&1; then

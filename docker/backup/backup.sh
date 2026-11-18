@@ -227,10 +227,18 @@ if ! (cd "$STORAGE_PATH" && find . -type f -newer "$mark" ! -name '*.part' ! -na
 	>"${work}/storage-late.list" 2>"${work}/storage-late.err"; then
 	only_vanished "${work}/storage-late.err" || exit 1
 fi
+# Copied as what it is: a name swapped for a link between find and cp stays
+# a link, which is then taken out, and never brings the file it points at,
+# one of this container perhaps, into the archive.
 while IFS= read -r file; do
 	mkdir -p "${work}/storage-late/$(dirname "$file")"
-	cp -p "${STORAGE_PATH}/${file}" "${work}/storage-late/${file}" || [ ! -e "${STORAGE_PATH}/${file}" ]
+	cp -P -p "${STORAGE_PATH}/${file}" "${work}/storage-late/${file}" || {
+		# Whatever cp left of a failed copy goes, so no half file is packed.
+		rm -f "${work}/storage-late/${file}"
+		[ ! -e "${STORAGE_PATH}/${file}" ]
+	}
 done <"${work}/storage-late.list"
+find "${work}/storage-late" ! -type f ! -type d -exec rm -f {} \;
 rm -f "${work}/storage-late.list" "${work}/storage-late.err"
 tar --create --file "${work}/storage-late.tar" --directory "${work}/storage-late" .
 rm -rf "${work}/storage-late" "$mark" "${work}/vanished.patterns"

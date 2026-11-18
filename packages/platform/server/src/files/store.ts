@@ -240,16 +240,31 @@ export class FileStore implements FileStorage {
     }
 
     let removed = 0
+    // One file the sweep cannot finish stops none of the others: the first
+    // error is reported once every candidate went through.
+    let failure: { error: unknown } | undefined
 
     for (let start = 0; start < old.length; start += 1000) {
       const batch = old.slice(start, start + 1000)
       const kept = await held(batch)
 
       for (const name of batch) {
-        if (!kept.has(name) && (await this.takeOut(name, before))) {
-          removed += 1
+        if (kept.has(name)) {
+          continue
+        }
+
+        try {
+          if (await this.takeOut(name, before)) {
+            removed += 1
+          }
+        } catch (error) {
+          failure ??= { error }
         }
       }
+    }
+
+    if (failure !== undefined) {
+      throw failure.error
     }
 
     return removed
