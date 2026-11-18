@@ -356,6 +356,17 @@ describe('the configuration', () => {
     ])
   })
 
+  it('turns away a name with a dot at its end, which a browser rarely sends', () => {
+    for (const entry of ['https://probewerk.example.de.', 'http://localhost.:23700']) {
+      expect(() =>
+        readConfiguration(
+          { ...valid, TRUSTED_ORIGINS: `https://probewerk.example.de, ${entry}` },
+          writable,
+        ),
+      ).toThrow(`TRUSTED_ORIGINS enthält "${entry}" mit einem Punkt am Ende des Namens.`)
+    }
+  })
+
   it('takes several origins, because an instance can answer under more than one name', () => {
     const configuration = readConfiguration(
       {

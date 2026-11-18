@@ -405,6 +405,17 @@ function trustedOrigins(
       )
     }
 
+    // A browser sends the dot at the end of a name only when it stands in the
+    // address bar as well, so such an entry would almost never match. The
+    // setup script turns it away for the same reason.
+    if (parsed.hostname.endsWith('.')) {
+      throw new ConfigurationError(
+        `TRUSTED_ORIGINS enthält "${entry}" mit einem Punkt am Ende des Namens. Ein Browser ` +
+          'schickt ihn nur mit, wenn er auch in der Adresszeile steht; gemeint ist die Adresse ' +
+          'ohne ihn.',
+      )
+    }
+
     if (parsed.protocol === 'http:' && !thisMachine.has(parsed.hostname)) {
       throw new ConfigurationError(
         `TRUSTED_ORIGINS enthält "${entry}". Über http:// gingen Einrichtungscode und ` +

@@ -365,7 +365,10 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
     *)
       host=$(printf '%s' "$host" | tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz')
       case "$host" in
-        *[!a-z0-9._-]* | .* | *. | *..*)
+        *.)
+          fail "\"$wanted\" hat einen Punkt am Ende des Namens. Ein Browser schickt ihn nur mit, wenn er auch in der Adresszeile steht, und die Anwendung startet mit ihm nicht. Bitte ohne den Punkt."
+          ;;
+        *[!a-z0-9._-]* | .* | *..*)
           fail "\"$wanted\" nennt die Maschine nicht so, wie ein Browser sie schreibt. Erlaubt sind Buchstaben, Ziffern, Punkt, Bindestrich und Unterstrich, ein Name mit Umlauten in seiner Form mit xn--."
           ;;
       esac

@@ -238,7 +238,8 @@ for pair in 'https://OpenGewerk.Example.org https://opengewerk.example.org' \
   }
 done
 for pair in 'https://bücher.example.org|nicht so, wie ein Browser' 'https://user@example.org|nicht so, wie ein Browser' \
-  'https://example.org.|nicht so, wie ein Browser' 'https://example.org?x|nicht so, wie ein Browser' \
+  'https://example.org.|Punkt am Ende des Namens' 'http://127.0.0.1.:23700|Punkt am Ende des Namens' \
+  'https://example.org?x|nicht so, wie ein Browser' \
   'https://example.org#x|nicht so, wie ein Browser' 'https://a..example.org|nicht so, wie ein Browser' \
   'https://127.1|keine IPv4-Adresse' 'https://0x7f.0.0.1|keine IPv4-Adresse' \
   'https://192.0.2.010|keine IPv4-Adresse' 'https://256.1.1.1|keine IPv4-Adresse' 'https://example.0x10|keine IPv4-Adresse'; do
@@ -299,6 +300,12 @@ if docker compose version > /dev/null 2>&1; then
       published_port
     )
   }
+  # What the environment of whoever runs the test holds for Compose stays out
+  # of these cases; the two that test it set it themselves.
+  unset OPENGEWERK_PORT
+  for compose_variable in $(printenv | sed -n 's/^\(COMPOSE_[A-Za-z0-9_]*\)=.*/\1/p'); do
+    unset "$compose_variable"
+  done
   printf 'OPENGEWERK_PORT=24567\n' > "$work/ports/.env"
   [ "$(port_in "$work/ports")" = 24567 ]
   [ "$(OPENGEWERK_PORT=24999 port_in "$work/ports")" = 24999 ]
@@ -341,8 +348,10 @@ FAKE
     echo 'FEHLER: ohne Adresse lief die Einrichtung mit Port 6000 durch'
     exit 1
   fi
-  if grep -q 'Leer lassen\|sperren' "$work/asked.txt"; then
-    echo 'FEHLER: Port 6000 wurde als Adresse angeboten'
+  if grep -q 'Leer lassen\|sperren' "$work/asked.txt" ||
+    ! grep -q 'Unter welcher Adresse' "$work/asked.txt" ||
+    ! grep -q 'fehlt die Adresse' "$work/asked.txt"; then
+    echo 'FEHLER: Port 6000 wurde als Adresse angeboten, oder die Rückfrage endete aus einem anderen Grund'
     cat "$work/asked.txt"
     exit 1
   fi
