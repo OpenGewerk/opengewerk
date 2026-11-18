@@ -253,15 +253,29 @@ only_here_over_http() {
   esac
 }
 
+# A value the way Docker Compose takes it: from the environment when it is
+# set there, else from the last line of the .env that sets it, "export" and
+# blanks around the = allowed; in quotes what stands between them, a #
+# included, without up to a comment after a blank. A carriage return from
+# Windows is no part of it.
+compose_value() {
+  eval "set_here=\${$1+yes}"
+  if [ -n "$set_here" ]; then
+    eval "printf '%s\n' \"\$$1\""
+    return
+  fi
+  { grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" "$2" 2>/dev/null || true; } | tail -n 1 |
+    sed -e 's/^[^=]*=//' -e 's/\r$//' -e 's/^[[:space:]]*//' |
+    sed -e 's/^"\([^"]*\)".*$/\1/' -e t -e "s/^'\([^']*\)'.*\$/\1/" -e t \
+      -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//'
+}
+
 # The address, the one value nothing here can make up.
 address=$(grep '^TRUSTED_ORIGINS=' "$env_file" | head -n 1 | cut -d= -f2-)
 
 if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
-  # The port from the .env, else the default Docker Compose falls back to.
-  # Read the way start.sh reads the version: a comment after a blank, quotes,
-  # blanks and a carriage return from Windows are no part of the port.
-  port=$(grep "^${APPLICATION_PREFIX}_PORT=" "$env_file" | head -n 1 | cut -d= -f2- |
-    sed 's/[[:space:]]#.*//' | tr -d "\r\"' ")
+  # The port Docker Compose will take, else its default in compose.yaml.
+  port=$(compose_value "${APPLICATION_PREFIX}_PORT" "$env_file")
 
   if [ -z "$port" ]; then
     port=$(sed -n "s/.*\${${APPLICATION_PREFIX}_PORT:-\([0-9]*\)}.*/\1/p" "$here/compose.yaml" 2>/dev/null | head -n 1)
@@ -307,6 +321,11 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
       # nothing or a colon and the port.
       host=${host_and_port%%]*}]
       rest=${host_and_port#*]}
+      [ "$host" != '[]' ] || fail "\"$wanted\" nennt keine Maschine."
+      # Any other IPv6 address has more than one way to be written, and the
+      # application takes only the one a browser sends; a name has one.
+      [ "$host" = '[::1]' ] ||
+        fail "\"$wanted\": Von den IPv6-Adressen nimmt die Rückfrage nur [::1]. Für eine andere Maschine bitte ihren Namen nehmen, etwa $APPLICATION_EXAMPLE_ADDRESS."
       case "$rest" in
         '') port='' given='' ;;
         :*) port=${rest#:} given=yes ;;
@@ -319,6 +338,36 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
   esac
   case "$host" in
     '' | '[]') fail "\"$wanted\" nennt keine Maschine." ;;
+  esac
+  # The name the way a browser writes it in the origin: in small letters and
+  # only with what a name in the network holds. A name with umlauts goes in
+  # its form with xn--, an IPv4 address only as four plain numbers. Anything
+  # else a browser writes differently, and the application would not start.
+  case "$host" in
+    \[*) ;;
+    *)
+      host=$(printf '%s' "$host" | tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz')
+      case "$host" in
+        *[!a-z0-9._-]* | .* | *. | *..*)
+          fail "\"$wanted\" nennt die Maschine nicht so, wie ein Browser sie schreibt. Erlaubt sind Buchstaben, Ziffern, Punkt, Bindestrich und Unterstrich, ein Name mit Umlauten in seiner Form mit xn--."
+          ;;
+      esac
+      # A browser reads a name whose last part is a number, or starts with
+      # 0x, as an IPv4 address and writes it as four plain numbers.
+      case "${host##*.}" in
+        *[!0-9]*)
+          case "${host##*.}" in
+            0x*) numeric=yes ;;
+            *) numeric='' ;;
+          esac
+          ;;
+        *) numeric=yes ;;
+      esac
+      if [ -n "$numeric" ] &&
+        ! printf '%s\n' "$host" | grep -Eq '^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$'; then
+        fail "\"$wanted\" ist keine IPv4-Adresse in der Form, die ein Browser schreibt, etwa 192.0.2.10."
+      fi
+      ;;
   esac
   # Whether http may be, first: it says what else to change, whatever the
   # port is.
@@ -337,6 +386,7 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
         *) wanted="$scheme://$host:$digits" ;;
       esac
       ;;
+    *) wanted="$scheme://$host" ;;
   esac
 
   draft=$(mktemp "$here/.env.XXXXXX")

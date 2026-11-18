@@ -204,6 +204,46 @@ if out=$(OPENGEWERK_ADDRESS=http://opengewerk.example.org:65536 sh "$work/setup.
   exit 1
 fi
 printf '%s' "$out" | grep -q 'beginnt mit https://'
+for address in 'https://[2001:0db8::1]:443' 'https://[2001:db8::1]' 'http://[fe80::1]:8080'; do
+  rm -f "$work/.env"
+  if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
+    printf 'FEHLER: %s lief durch\n' "$address"
+    exit 1
+  fi
+  printf '%s' "$out" | grep -q 'Von den IPv6-Adressen nimmt die Rückfrage nur \[::1\]'
+done
+# The name as a browser writes it: in small letters, and nothing a browser
+# would write differently.
+for pair in 'https://OpenGewerk.Example.org https://opengewerk.example.org' \
+  'http://LOCALHOST:23700 http://localhost:23700' 'https://192.0.2.10 https://192.0.2.10' \
+  'https://werk_statt.example.org:8443 https://werk_statt.example.org:8443'; do
+  given=${pair% *}
+  kept=${pair#* }
+  rm -f "$work/.env"
+  OPENGEWERK_ADDRESS=$given sh "$work/setup.sh" < /dev/null > /dev/null 2>&1
+  grep -qxF "TRUSTED_ORIGINS=$kept" "$work/.env" || {
+    printf 'FEHLER: aus %s wurde nicht %s\n' "$given" "$kept"
+    exit 1
+  }
+done
+for pair in 'https://bücher.example.org|nicht so, wie ein Browser' 'https://user@example.org|nicht so, wie ein Browser' \
+  'https://example.org.|nicht so, wie ein Browser' 'https://example.org?x|nicht so, wie ein Browser' \
+  'https://example.org#x|nicht so, wie ein Browser' 'https://a..example.org|nicht so, wie ein Browser' \
+  'https://127.1|keine IPv4-Adresse' 'https://0x7f.0.0.1|keine IPv4-Adresse' \
+  'https://192.0.2.010|keine IPv4-Adresse' 'https://256.1.1.1|keine IPv4-Adresse' 'https://example.0x10|keine IPv4-Adresse'; do
+  address=${pair%%|*}
+  said=${pair#*|}
+  rm -f "$work/.env"
+  if out=$(OPENGEWERK_ADDRESS=$address sh "$work/setup.sh" < /dev/null 2>&1); then
+    printf 'FEHLER: %s lief durch\n' "$address"
+    exit 1
+  fi
+  printf '%s' "$out" | grep -q "$said" || {
+    printf 'FEHLER: %s ohne den Satz "%s"\n' "$address" "$said"
+    printf '%s\n' "$out"
+    exit 1
+  }
+done
 check 'Port des Schemas: weggenommen, führende Nullen weg, ein anderer bleibt, keiner über 65535 und keiner doppelt'
 
 # 9a. Plain http only on this machine (#984): every other host, and a port
@@ -228,6 +268,37 @@ for address in http://localhost http://localhost:23700 http://127.0.0.1 http://[
   grep -qxF "TRUSTED_ORIGINS=$address" "$work/.env"
 done
 check 'http:// nur für diese Maschine: andere Adressen abgelehnt, localhost, 127.0.0.1 und [::1] angenommen'
+
+# 9c. The port of the address offered is the one Docker Compose takes: from
+# the environment first, else from the last line of the .env that sets it,
+# with "export", blanks, quotes, a comment and a carriage return as Compose
+# reads them.
+sed -n '/^compose_value() {/,/^}/p' "$work/setup.sh" > "$work/compose-value.sh"
+test -s "$work/compose-value.sh"
+. "$work/compose-value.sh"
+value_of() {
+  printf '%s\n' "$1" > "$work/port.env"
+  compose_value PROBE_PORT "$work/port.env"
+}
+unset PROBE_PORT
+for pair in 'PROBE_PORT=24567|24567' 'PROBE_PORT=24567 # lokal|24567' 'PROBE_PORT="24567"|24567' \
+  'PROBE_PORT="24567 # lokal"|24567 # lokal' "PROBE_PORT='24567'|24567" 'export PROBE_PORT=24567|24567' \
+  '  PROBE_PORT = 24567|24567' 'PROBE_PORT=24567#x|24567#x' 'PROBE_PORT=|'; do
+  line=${pair%%|*}
+  expected=${pair#*|}
+  got=$(value_of "$line")
+  [ "$got" = "$expected" ] || {
+    printf 'FEHLER: aus "%s" wurde "%s", nicht "%s"\n' "$line" "$got" "$expected"
+    exit 1
+  }
+done
+printf 'PROBE_PORT=24567\r\n' > "$work/port.env"
+[ "$(compose_value PROBE_PORT "$work/port.env")" = 24567 ]
+printf 'PROBE_PORT=1\nPROBE_PORT=24567\n' > "$work/port.env"
+[ "$(compose_value PROBE_PORT "$work/port.env")" = 24567 ]
+[ "$(PROBE_PORT=24999 compose_value PROBE_PORT "$work/port.env")" = 24999 ]
+[ -z "$(compose_value PROBE_PORT "$work/no-such.env")" ]
+check 'Port aus der .env: so gelesen wie von Docker Compose'
 
 # 10. Another application runs the same script against its own folder
 # (opengewerk-haustechnik#14): its name at the start of every line, its prefix

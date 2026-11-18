@@ -39,14 +39,27 @@ compose() {
   docker compose -f "$here/compose.yaml" "$@"
 }
 
-# The port on this machine: from the .env once there is one, else the default
-# Docker Compose falls back to, read the way setup.sh reads it.
-port() {
-  found=''
-
-  if [ -f "$here/.env" ]; then
-    found=$(grep "^${APPLICATION_PREFIX}_PORT=" "$here/.env" | head -n 1 | cut -d= -f2-)
+# A value the way Docker Compose takes it: from the environment when it is
+# set there, else from the last line of the .env that sets it, "export" and
+# blanks around the = allowed; in quotes what stands between them, a #
+# included, without up to a comment after a blank. A carriage return from
+# Windows is no part of it.
+compose_value() {
+  eval "set_here=\${$1+yes}"
+  if [ -n "$set_here" ]; then
+    eval "printf '%s\n' \"\$$1\""
+    return
   fi
+  { grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" "$2" 2>/dev/null || true; } | tail -n 1 |
+    sed -e 's/^[^=]*=//' -e 's/\r$//' -e 's/^[[:space:]]*//' |
+    sed -e 's/^"\([^"]*\)".*$/\1/' -e t -e "s/^'\([^']*\)'.*\$/\1/" -e t \
+      -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//'
+}
+
+# The port on this machine: the one Docker Compose takes, else its default in
+# compose.yaml, read the way setup.sh reads it.
+port() {
+  found=$(compose_value "${APPLICATION_PREFIX}_PORT" "$here/.env")
 
   if [ -z "$found" ]; then
     found=$(sed -n "s/.*\${${APPLICATION_PREFIX}_PORT:-\([0-9]*\)}.*/\1/p" "$here/compose.yaml" | head -n 1)
