@@ -1,19 +1,15 @@
 import { createHash } from 'node:crypto'
 import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
-  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -30,13 +26,6 @@ let store: FileStore
 
 const contents = new TextEncoder().encode('%PDF-1.7 Probe 2026-0001')
 const hash = createHash('sha256').update(contents).digest('hex')
-
-/** Where the store keeps bytes: two folders from the hash, then the hash. */
-function pathParts(bytes: Uint8Array): string[] {
-  const sha256 = createHash('sha256').update(bytes).digest('hex')
-
-  return [sha256.slice(0, 2), sha256.slice(2, 4), sha256]
-}
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'file-store-'))
@@ -132,116 +121,6 @@ describe('the sweep of the file store', () => {
     async (asked: readonly string[]) =>
       new Set(asked.filter((name) => names.includes(name)))
 
-  it('dates a new file from its put, not from its writing (#991)', async () => {
-    // A clock that moves on with every reading, an hour each: the file carries
-    // the reading after it was put in place, and not the one from before. At
-    // the first reading the name is still free, at the second it is taken,
-    // and the temporary file is still there: the name is dated before it goes.
-    const start = Date.now()
-    const bytes = new TextEncoder().encode('Lieferschein')
-    const path = join(root, ...pathParts(bytes))
-    const there: boolean[] = []
-    const temporary: boolean[] = []
-    let readings = 0
-    const moving = new FileStore(root, () => {
-      there.push(existsSync(path))
-      temporary.push(readdirSync(dirname(path)).some((name) => name.endsWith('.part')))
-
-      return new Date(start + ++readings * 60 * 60 * 1000)
-    })
-
-    await moving.put(bytes)
-
-    expect(temporary).toEqual([true, true])
-
-    expect(there).toEqual([false, true])
-    expect(Math.abs(statSync(path).mtime.getTime() - (start + 2 * 60 * 60 * 1000))).toBeLessThan(
-      2000,
-    )
-  })
-
-  it('leaves a file a second put of the same bytes placed meanwhile (#991)', async () => {
-    // The other put comes while this one dates its temporary file: the name
-    // keeps its file, and both puts date it as of now.
-    const bytes = new TextEncoder().encode('Lieferschein')
-    const path = join(root, ...pathParts(bytes))
-    let other: number | undefined
-    const racing = new FileStore(root, () => {
-      if (other === undefined) {
-        mkdirSync(dirname(path), { recursive: true })
-        writeFileSync(path, bytes)
-        other = statSync(path).ino
-      }
-
-      return new Date()
-    })
-
-    await racing.put(bytes)
-
-    expect(statSync(path).ino).toBe(other)
-    expect(readdirSync(dirname(path))).toEqual([basename(path)])
-  })
-
-  // Windows makes links only with rights a test does not have; the CI runs it.
-  it.skipIf(process.platform === 'win32')(
-    'dates a link at a name of the store and not what it points at (#991)',
-    async () => {
-      const bytes = new TextEncoder().encode('Lieferschein')
-      const path = join(root, ...pathParts(bytes))
-      const outside = join(root, '..', `outside-${basename(root)}`)
-      const week = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-
-      writeFileSync(outside, bytes)
-      utimesSync(outside, week, week)
-      mkdirSync(dirname(path), { recursive: true })
-      symlinkSync(outside, path)
-
-      await store.put(bytes)
-
-      expect(Math.abs(statSync(outside).mtime.getTime() - week.getTime())).toBeLessThan(2000)
-      expect(lstatSync(path).isSymbolicLink()).toBe(true)
-      rmSync(outside, { force: true })
-    },
-  )
-
-  it('dates a file in place once more when the first try fails (#991)', async () => {
-    // The clock stands in for a passing error of the file system: it fails
-    // at the second reading, the first after the file is in place.
-    const bytes = new TextEncoder().encode('Lieferschein')
-    let readings = 0
-    const flaky = new FileStore(root, () => {
-      readings += 1
-
-      if (readings === 2) {
-        throw new Error('EIO')
-      }
-
-      return new Date()
-    })
-
-    await expect(flaky.put(bytes)).resolves.toMatchObject({ sizeBytes: bytes.byteLength })
-    expect(readings).toBe(3)
-  })
-
-  it('keeps a file in place when it cannot be dated, and says so (#991)', async () => {
-    const bytes = new TextEncoder().encode('Lieferschein')
-    const path = join(root, ...pathParts(bytes))
-    let readings = 0
-    const broken = new FileStore(root, () => {
-      readings += 1
-
-      if (readings > 1) {
-        throw new Error('EIO')
-      }
-
-      return new Date()
-    })
-
-    await expect(broken.put(bytes)).rejects.toThrow('EIO')
-    expect(readFileSync(path)).toEqual(Buffer.from(bytes))
-    expect(readdirSync(dirname(path))).toEqual([basename(path)])
-  })
-
   it('keeps a file as new as the last put of the same bytes', async () => {
     const sha256 = await oldFile('Rechnung')
     const path = join(root, sha256.slice(0, 2), sha256.slice(2, 4), sha256)
@@ -288,122 +167,6 @@ describe('the sweep of the file store', () => {
 
     expect(removed).toBe(0)
     expect(new TextDecoder().decode(await store.get(sha256))).toBe('Noch einmal')
-    expect(everything()).toEqual([`${sha256.slice(0, 2)}/${sha256.slice(2, 4)}/${sha256}`])
-  })
-
-  it('dates a file it puts back as of now (#991)', async () => {
-    const sha256 = await oldFile('Zurückgelegt')
-    const later = new Date(Date.now() + 2 * 60 * 60 * 1000)
-    const named: boolean[] = []
-    // Dated while it lies aside: the name never shows the older time.
-    const sweeping = new FileStore(root, () => {
-      named.push(existsSync(join(root, sha256.slice(0, 2), sha256.slice(2, 4), sha256)))
-
-      return later
-    })
-
-    // Put again between the answer and the move, with the clock of the
-    // machine: the sweep puts the file back, and it carries the time of that.
-    await sweeping.sweep(async () => {
-      await store.put(new TextEncoder().encode('Zurückgelegt'))
-
-      return new Set<string>()
-    }, before())
-
-    const path = join(root, sha256.slice(0, 2), sha256.slice(2, 4), sha256)
-
-    expect(named).toEqual([false])
-    expect(Math.abs(statSync(path).mtime.getTime() - later.getTime())).toBeLessThan(2000)
-  })
-
-  it('goes on with the other files when it cannot date one it puts back (#991)', async () => {
-    // The first name the sweep asks about is put again in between, whichever
-    // the store lists first, and dating it fails; the second is taken anyway.
-    await oldFile('Gebraucht')
-    await oldFile('Verwaist')
-
-    let first = ''
-    let second = ''
-    const failing = new FileStore(root, () => {
-      throw new Error('EIO')
-    })
-
-    await expect(
-      failing.sweep(async (names) => {
-        ;[first = '', second = ''] = names
-
-        utimesSync(join(root, first.slice(0, 2), first.slice(2, 4), first), new Date(), new Date())
-
-        return new Set<string>()
-      }, before()),
-    ).rejects.toThrow('EIO')
-
-    expect(second).not.toBe('')
-    expect((await store.get(first)).byteLength).toBeGreaterThan(0)
-    await expect(store.get(second)).rejects.toThrow(StoredFileMissingError)
-    expect(everything()).toHaveLength(1)
-  })
-
-  it('reports the first error when a later batch gets no answer (#991)', async () => {
-    // More than a batch of old files: in the first batch one is put again
-    // and cannot be dated, the second batch gets no answer at all.
-    const week = new Date(Date.now() - 7 * day)
-
-    for (let index = 0; index <= 1000; index += 1) {
-      const sha256 = createHash('sha256').update(`Altlast ${index}`).digest('hex')
-      const folder = join(root, sha256.slice(0, 2), sha256.slice(2, 4))
-
-      mkdirSync(folder, { recursive: true })
-      writeFileSync(join(folder, sha256), `Altlast ${index}`)
-      utimesSync(join(folder, sha256), week, week)
-    }
-
-    let batches = 0
-    const failing = new FileStore(root, () => {
-      throw new Error('EIO')
-    })
-
-    await expect(
-      failing.sweep(async (names) => {
-        batches += 1
-
-        if (batches > 1) {
-          throw new Error('held down')
-        }
-
-        const [first = ''] = names
-
-        utimesSync(join(root, first.slice(0, 2), first.slice(2, 4), first), new Date(), new Date())
-
-        return new Set<string>()
-      }, before()),
-    ).rejects.toThrow('EIO')
-
-    expect(batches).toBe(2)
-    expect(everything()).toHaveLength(2)
-  })
-
-  it('leaves a file another put placed while it lay aside (#991)', async () => {
-    const sha256 = await oldFile('Inzwischen neu')
-    const path = join(root, sha256.slice(0, 2), sha256.slice(2, 4), sha256)
-    let other: number | undefined
-    // While the file lies aside and is dated, a put places the same bytes.
-    const sweeping = new FileStore(root, () => {
-      if (other === undefined) {
-        writeFileSync(path, 'Inzwischen neu')
-        other = statSync(path).ino
-      }
-
-      return new Date()
-    })
-
-    await sweeping.sweep(async () => {
-      await store.put(new TextEncoder().encode('Inzwischen neu'))
-
-      return new Set<string>()
-    }, before())
-
-    expect(statSync(path).ino).toBe(other)
     expect(everything()).toEqual([`${sha256.slice(0, 2)}/${sha256.slice(2, 4)}/${sha256}`])
   })
 

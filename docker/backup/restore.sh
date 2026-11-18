@@ -435,6 +435,10 @@ storage_owner=$(stat -c '%u:%g' "$STORAGE_PATH")
 
 find "$STORAGE_PATH" -mindepth 1 -delete
 tar --extract --no-same-owner --file "${work}/storage.tar" --directory "$STORAGE_PATH"
+# The store holds files and their folders and nothing else. A link that came
+# with the first part would take whatever the second part unpacks under its
+# name to wherever it points in this container (#991).
+find "$STORAGE_PATH" -mindepth 1 ! -type f ! -type d -exec rm -f {} \;
 # What the store got while the backup ran, see backup.sh.
 case " $parts " in
 *" storage-late.tar "*)

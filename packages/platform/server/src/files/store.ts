@@ -1,8 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
   access,
-  link,
-  lutimes,
   mkdir,
   open,
   readdir,
@@ -90,11 +88,7 @@ function hashOf(bytes: Uint8Array): string {
  * class is ever asked. A hash on its own opens nothing.
  */
 export class FileStore implements FileStorage {
-  /** The clock defaults to the one of the machine; a test passes one it can move. */
-  constructor(
-    private readonly root: string,
-    private readonly clock: () => Date = () => new Date(),
-  ) {}
+  constructor(private readonly root: string) {}
 
   private pathOf(sha256: string): string {
     // Refused rather than joined. A name that is not a hash could walk out
@@ -110,7 +104,7 @@ export class FileStore implements FileStorage {
    * Stores bytes and says under which name.
    *
    * Written to a temporary name beside the target, flushed to the disk, and
-   * then linked into place, so that the name only ever points at a complete
+   * then renamed into place, so that the name only ever points at a complete
    * file. A crash halfway leaves a stray `.part` file, which the restore check
    * ignores because its name is no hash, and not a truncated file under a
    * name that claims otherwise.
@@ -124,7 +118,9 @@ export class FileStore implements FileStorage {
       // Put again: the file is as new as this put, so that the sweep of the
       // store, which only takes what is older than its grace, leaves it
       // alone while the row that will name it is still being written (#657).
-      await this.dateAsNow(target)
+      const now = new Date()
+
+      await utimes(target, now, now)
 
       return blob
     }
@@ -141,60 +137,14 @@ export class FileStore implements FileStorage {
       await handle.close()
     }
 
-    // A new file is as new as its put, not as its writing: a backup takes the
-    // store before its dump and everything newer than a mark after it, and a
-    // file written before the mark and put in place after the first part was
-    // packed would be in neither (#991). Dated before it is put in place, so
-    // that the name never points at an older file, and once more after it.
-    //
-    // Put in place with a link and not a rename: a rename replaces a file a
-    // second put of the same bytes placed meanwhile, and the name would point
-    // at the older date of this one. A link leaves that file where it is, and
-    // this put is a put again: either way the name is dated as of now below.
     try {
-      const writtenAt = this.clock()
-
-      await utimes(temporary, writtenAt, writtenAt)
-      await linkUnlessThere(temporary, target)
+      await rename(temporary, target)
     } catch (error) {
       await rm(temporary, { force: true })
       throw error
     }
 
-    // The name is in place now, so it is dated before the temporary one goes,
-    // and a failure to remove that one changes nothing about it: a stray
-    // `.part` is taken by the sweep once it is old.
-    try {
-      await this.dateAsNow(target)
-    } finally {
-      await rm(temporary, { force: true }).catch(() => undefined)
-    }
-
     return blob
-  }
-
-  /**
-   * Dates a file in the store as of now, tried three times: the file is in
-   * place and may already be named by a row of another put, so a passing
-   * error of the file system is no reason to give up on it, and a lasting one
-   * leaves it where it is and is reported.
-   */
-  private async dateAsNow(path: string): Promise<void> {
-    for (let attempt = 1; ; attempt += 1) {
-      try {
-        const now = this.clock()
-
-        // The name itself and never what it might point at: a link at a name
-        // of the store is none of its files.
-        await lutimes(path, now, now)
-
-        return
-      } catch (error) {
-        if (attempt >= 3) {
-          throw error
-        }
-      }
-    }
   }
 
   /**
@@ -251,40 +201,16 @@ export class FileStore implements FileStorage {
     }
 
     let removed = 0
-    // One file the sweep cannot finish stops none of the others: the first
-    // error is reported once every candidate went through.
-    let failure: { error: unknown } | undefined
 
     for (let start = 0; start < old.length; start += 1000) {
       const batch = old.slice(start, start + 1000)
-      let kept: ReadonlySet<string>
-
-      // Without an answer nothing of this batch goes, and the others are
-      // still asked; an error from before stays the one reported.
-      try {
-        kept = await held(batch)
-      } catch (error) {
-        failure ??= { error }
-        continue
-      }
+      const kept = await held(batch)
 
       for (const name of batch) {
-        if (kept.has(name)) {
-          continue
-        }
-
-        try {
-          if (await this.takeOut(name, before)) {
-            removed += 1
-          }
-        } catch (error) {
-          failure ??= { error }
+        if (!kept.has(name) && (await this.takeOut(name, before))) {
+          removed += 1
         }
       }
-    }
-
-    if (failure !== undefined) {
-      throw failure.error
     }
 
     return removed
@@ -308,27 +234,7 @@ export class FileStore implements FileStorage {
     const written = await modified(aside)
 
     if (written !== null && written >= before) {
-      // Back as new as now: the put that kept it may have come before the mark
-      // of a backup whose first part was packed while the file lay aside, and
-      // the second part takes only what is newer than the mark (#991). Dated
-      // while it lies aside, so that the name never shows the older time, and
-      // put back even when that fails, so that the name is never lost.
-      let undated: { error: unknown } | undefined
-
-      try {
-        await this.dateAsNow(aside)
-      } catch (error) {
-        undated = { error }
-      }
-
-      // Back under its name unless a put placed the same bytes there meanwhile;
-      // then that file stays, newer as it is, and this one goes.
-      await linkUnlessThere(aside, path)
-      await rm(aside, { force: true })
-
-      if (undated !== undefined) {
-        throw undated.error
-      }
+      await rename(aside, path)
 
       return false
     }
@@ -390,17 +296,6 @@ async function modified(path: string): Promise<Date | null> {
     }
 
     throw error
-  }
-}
-
-/** Gives a file a second name, unless that name is taken already. */
-async function linkUnlessThere(from: string, to: string): Promise<void> {
-  try {
-    await link(from, to)
-  } catch (error) {
-    if ((error as { code?: unknown }).code !== 'EEXIST') {
-      throw error
-    }
   }
 }
 

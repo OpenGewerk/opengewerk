@@ -49,12 +49,22 @@ cat > "$work/bin/pg_dump" <<'FAKE'
 #!/bin/sh
 # While the dump runs, the sweep of the store may take a file whose last row
 # just went, and somebody may upload one (#991).
+# Where the store keeps a file: two folders from its hash, then the hash.
+stored() {
+  printf '%s/%s/%s/%s' "$STORAGE_PATH" "$(printf '%s' "$1" | cut -c1-2)" "$(printf '%s' "$1" | cut -c3-4)" "$1"
+}
 if [ -n "${DUMP_SWEEPS:-}" ]; then
-  rm -f "$STORAGE_PATH/$DUMP_SWEEPS"
+  rm -f "$(stored "$DUMP_SWEEPS")"
 fi
 if [ -n "${DUMP_UPLOADS:-}" ]; then
-  mkdir -p "$STORAGE_PATH/${DUMP_UPLOAD_FOLDER:-.}"
-  printf '%s' "$DUMP_UPLOADS" > "$STORAGE_PATH/${DUMP_UPLOAD_FOLDER:-.}/$(printf '%s' "$DUMP_UPLOADS" | sha256sum | cut -d' ' -f1)"
+  uploaded=$(stored "$(printf '%s' "$DUMP_UPLOADS" | sha256sum | cut -d' ' -f1)")
+  mkdir -p "$(dirname "$uploaded")"
+  printf '%s' "$DUMP_UPLOADS" > "$uploaded"
+fi
+# A file named after its own hash that does not lie where the store keeps it.
+if [ -n "${DUMP_ASTRAY:-}" ]; then
+  mkdir -p "$STORAGE_PATH/zz/zz"
+  printf '%s' "$DUMP_ASTRAY" > "$STORAGE_PATH/zz/zz/$(printf '%s' "$DUMP_ASTRAY" | sha256sum | cut -d' ' -f1)"
 fi
 # A write still under way, which is no stored file yet.
 if [ -n "${DUMP_WRITES:-}" ]; then
@@ -224,6 +234,34 @@ if [ -n "\${TAR_CANT_OPEN:-}" ] && [ "\$1" = --create ]; then
       ;;
   esac
 fi
+# Between find and the tar of the second part (the one with -T), the file
+# LATE_HASH names goes, is swapped for a link to LATE_TARGET or a pipe, or its
+# folder is swapped for a link to LATE_TARGET, as a process that may write to
+# the store could do it. LATE_DONE is written once it happened.
+if [ -n "\${LATE_HASH:-}" ] && [ "\$1" = --create ]; then
+  case " \$* " in
+    *" -T "*)
+      late=\$STORAGE_PATH/\$(printf '%s' "\$LATE_HASH" | cut -c1-2)/\$(printf '%s' "\$LATE_HASH" | cut -c3-4)/\$LATE_HASH
+      case "\$LATE_DOES" in
+        vanish) rm -f "\$late" ;;
+        link)
+          ln -s "\$LATE_TARGET" "\$late.link"
+          mv -f "\$late.link" "\$late"
+          ;;
+        pipe)
+          rm -f "\$late"
+          mkfifo "\$late"
+          ;;
+        folder)
+          printf 'GEHEIMNIS DES CONTAINERS' > "\$LATE_TARGET/\$LATE_HASH"
+          mv "\$(dirname "\$late")" "\$(dirname "\$late").moved"
+          ln -s "\$LATE_TARGET" "\$(dirname "\$late")"
+          ;;
+      esac
+      : > "\$LATE_DONE"
+      ;;
+  esac
+fi
 if [ -n "\${TAR_FAILS:-}" ] && [ "\$1" = --create ]; then
   case " \$* " in
     *' --file - '*)
@@ -243,6 +281,17 @@ if [ -n "\${FIXED_STAMP:-}" ] && [ "\$*" = '-u +%Y-%m-%dT%H%M%SZ' ]; then
   echo "\$FIXED_STAMP"
   exit 0
 fi
+# A backup that takes longer than half a day: every reading of the seconds
+# after the first is 50000 later.
+if [ -n "\${CLOCK_RUNS_AWAY:-}" ] && [ "\$*" = '+%s' ]; then
+  if [ -f "\$CLOCK_RUNS_AWAY" ]; then
+    echo \$((\$($real_date +%s) + 50000))
+  else
+    : > "\$CLOCK_RUNS_AWAY"
+    $real_date +%s
+  fi
+  exit 0
+fi
 exec $real_date "\$@"
 FAKE
 #
@@ -251,74 +300,34 @@ FAKE
 # copied and the archive again right after.
 cat > "$work/bin/cp" <<FAKE
 #!/bin/sh
-# The source of a copy is the one but last argument, whatever options came.
-eval "source=\\\${\$((\$# - 1))}"
-# A file renamed between find and cp: its source is gone when cp comes.
-if [ -n "\${CP_VANISHES:-}" ]; then
-  case "\$*" in
-    *"\$CP_VANISHES"*)
-      rm -f "\$source"
-      : > "\$CP_VANISHED_MARK"
-      exec $real_cp "\$@"
-      ;;
-  esac
-fi
-# A copy that fails halfway while its source goes: half a file is left.
-if [ -n "\${CP_PARTIAL:-}" ]; then
-  case "\$*" in
-    *"\$CP_PARTIAL"*)
-      eval "target=\\\${\$#}"
-      printf 'halb' > "\$target"
-      rm -f "\$source"
-      exit 1
-      ;;
-  esac
-fi
-# A file swapped for a link between find and cp, the way a process that may
-# write to the store could do it: the name now points at CP_SWAP_TARGET.
-# The folder of a file swapped for a link between find and cp: the name is
-# the same, the file behind it one of CP_DIR_TARGET.
-if [ -n "\${CP_DIR_SWAPS:-}" ]; then
-  case "\$*" in
-    *"\$CP_DIR_SWAPS"*)
-      folder=\$(dirname "\$source")
-      printf 'GEHEIMNIS DES CONTAINERS' > "\$CP_DIR_TARGET/\$(basename "\$source")"
-      mv "\$folder" "\$folder.moved"
-      ln -s "\$CP_DIR_TARGET" "\$folder"
-      exec $real_cp "\$@"
-      ;;
-  esac
-fi
-if [ -n "\${CP_SWAPS:-}" ]; then
-  case "\$*" in
-    *"\$CP_SWAPS"*)
-      ln -s "\$CP_SWAP_TARGET" "\$source.link"
-      mv -f "\$source.link" "\$source"
-      exec $real_cp "\$@"
-      ;;
-  esac
-fi
 if [ -n "\${CP_SERVES:-}" ] && [ "\$1" = "\${CP_FROM:-}" ]; then
   exec $real_cp "\$CP_SERVES" "\$2"
 fi
 exec $real_cp "\$@"
 FAKE
-# A .part that goes while find walks the store for the second part (the call
-# with -newer): everything else is listed, and the gone one is said.
+# A .part that goes while find walks the store for the second part (the walk
+# that starts at "."): everything else is listed, and the gone one is said.
 cat > "$work/bin/find" <<FAKE
 #!/bin/sh
 $real_find "\$@" || exit
-case " \$* " in
-  *' -newer '*) ;;
-  *) exit 0 ;;
-esac
+[ "\$1" = . ] || exit 0
 if [ -n "\${FIND_MISSES:-}" ]; then
   printf 'find: %s: No such file or directory\\n' "\$FIND_MISSES" >&2
   exit 1
 fi
 FAKE
+# sha256sum as it is, unless SHA_FAILS names a file it is asked to read.
+real_sha256sum=$(command -v sha256sum)
+cat > "$work/bin/sha256sum" <<FAKE
+#!/bin/sh
+if [ -n "\${SHA_FAILS:-}" ] && [ "\$(basename "\${1:-}")" = "\$SHA_FAILS" ]; then
+  echo "sha256sum: \$1: I/O error" >&2
+  exit 1
+fi
+exec $real_sha256sum "\$@"
+FAKE
 chmod +x "$work/bin/pg_dump" "$work/bin/psql" "$work/bin/pg_restore" "$work/bin/age" "$work/bin/tar" \
-  "$work/bin/date" "$work/bin/cp" "$work/bin/find"
+  "$work/bin/date" "$work/bin/cp" "$work/bin/find" "$work/bin/sha256sum"
 
 PATH="$work/bin:$PATH"
 PGPASSWORD=probe
@@ -1040,89 +1049,195 @@ check 'Strom: eine zweite Sicherung in derselben Sekunde lässt die erste, wie s
 # sweep takes a file whose last row went after the dump, and somebody uploads
 # a file. The archive holds both, the old one in the part from before the
 # dump and the new one in the part after it, and a restore brings both back.
-old_text='abgelegt vor der Sicherung'
-old_hash=$(printf '%s' "$old_text" | sha256sum | cut -d' ' -f1)
-new_text='abgelegt während der Sicherung'
-new_hash=$(printf '%s' "$new_text" | sha256sum | cut -d' ' -f1)
-printf '%s' "$old_text" > "$STORAGE_PATH/$old_hash"
-
-POSTGRES_DB=opengewerk DUMP_SWEEPS="$old_hash" DUMP_UPLOADS="$new_text" DUMP_WRITES=unterwegs.part \
-  sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
-  cat "$work/out"
-  exit 1
+# A file that was there all along is in the first part and not again in the
+# second.
+stored() {
+  printf '%s/%s/%s/%s' "$STORAGE_PATH" "$(printf '%s' "$1" | cut -c1-2)" "$(printf '%s' "$1" | cut -c3-4)" "$1"
 }
+put_old() {
+  mkdir -p "$(dirname "$(stored "$2")")"
+  printf '%s' "$1" > "$(stored "$2")"
+}
+hash_of() {
+  printf '%s' "$1" | sha256sum | cut -d' ' -f1
+}
+# The archive the last backup named, unpacked into $work/$1.
+unpacked() {
+  name=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
+  rm -rf "${work:?}/$1"
+  mkdir "$work/$1"
+  tar --extract --gzip --file "$work/backups/$name" --directory "$work/$1"
+}
+# Each backup here under a name of its own: several run within a second.
+stamp_number=0
+run_backup() {
+  stamp_number=$((stamp_number + 1))
+  FIXED_STAMP=$(printf '2031-01-01T%06dZ' "$stamp_number") POSTGRES_DB=opengewerk \
+    sh "$work/bin/backup.sh" > "$work/out" 2>&1
+}
+backed_up() {
+  run_backup || {
+    echo "FEHLER: $1"
+    cat "$work/out"
+    exit 1
+  }
+}
+
+old_text='abgelegt vor der Sicherung'
+old_hash=$(hash_of "$old_text")
+kept_text='liegt die ganze Zeit da'
+kept_hash=$(hash_of "$kept_text")
+new_text='abgelegt während der Sicherung'
+new_hash=$(hash_of "$new_text")
+put_old "$old_text" "$old_hash"
+put_old "$kept_text" "$kept_hash"
+
+DUMP_SWEEPS="$old_hash" DUMP_UPLOADS="$new_text" DUMP_WRITES=unterwegs.part \
+  backed_up 'die Sicherung um die Datenbank scheiterte'
 around=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
-rm -rf "$work/around"
-mkdir "$work/around"
-tar --extract --gzip --file "$work/backups/$around" --directory "$work/around"
+unpacked around
 grep -q '"storage-late.tar"' "$work/around/manifest.json"
-tar --list --file "$work/around/storage.tar" | grep -q "$old_hash" || {
+first_names=$(tar --list --file "$work/around/storage.tar")
+late_names=$(tar --list --file "$work/around/storage-late.tar")
+printf '%s\n' "$first_names" | grep -q "$old_hash" || {
   echo 'FEHLER: die Datei, die das Aufräumen während der Sicherung nahm, fehlt im Archiv'
   exit 1
 }
-tar --list --file "$work/around/storage-late.tar" | grep -q "$new_hash" || {
+printf '%s\n' "$late_names" | grep -q "$new_hash" || {
   echo 'FEHLER: die Datei, die während der Sicherung kam, fehlt im Archiv'
   exit 1
 }
-if tar --list --file "$work/around/storage-late.tar" | grep -q 'unterwegs.part'; then
-  echo 'FEHLER: ein Schreibvorgang, der noch lief, steht im zweiten Teil'
+if printf '%s\n' "$late_names" | grep -q -e 'unterwegs.part' -e "$kept_hash"; then
+  echo 'FEHLER: im zweiten Teil steht ein Schreibvorgang oder eine Datei aus dem ersten'
   exit 1
 fi
+for leftover in vanished.patterns storage.err storage.names storage.first storage.now \
+  storage-late.list storage-late.err storage-late.files storage-late.raw storage-late; do
+  if [ -e "$work/around/$leftover" ]; then
+    echo "FEHLER: die Arbeitsdatei $leftover steht im Archiv"
+    exit 1
+  fi
+done
 
 taken env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$around"
-test "$(cat "$STORAGE_PATH/$old_hash")" = "$old_text" || {
+test "$(cat "$(stored "$old_hash")")" = "$old_text" || {
   echo 'FEHLER: das Rückspielen brachte die genommene Datei nicht zurück'
   exit 1
 }
-test "$(cat "$STORAGE_PATH/$new_hash")" = "$new_text" || {
+test "$(cat "$(stored "$new_hash")")" = "$new_text" || {
   echo 'FEHLER: das Rückspielen brachte die Datei aus dem zweiten Teil nicht zurück'
   exit 1
 }
 check 'Dateispeicher um die Datenbank: genommene und neue Datei im Archiv und nach dem Rückspielen'
 
-# A file that is gone between find and cp, renamed or set aside the moment the
-# second part comes to it, does not end the backup of the night.
-gone_text='umbenannt, bevor cp kam'
-gone_hash=$(printf '%s' "$gone_text" | sha256sum | cut -d' ' -f1)
-rm -f "$work/cp-vanished"
-POSTGRES_DB=opengewerk DUMP_UPLOADS="$gone_text" CP_VANISHES="$gone_hash" CP_VANISHED_MARK="$work/cp-vanished" \
-  sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
-  echo 'FEHLER: eine Datei, die zwischen find und cp verschwand, beendete die Sicherung'
+# An archive whose first part holds a link where a folder belongs and whose
+# second part holds a file under that folder: the restore puts the file into
+# the store and nothing through the link.
+mkdir -p "$work/outside-restore"
+through_text='durch den Link'
+through_hash=$(hash_of "$through_text")
+through_folder=$(dirname "$(stored "$through_hash")" | sed "s|^$STORAGE_PATH/||")
+rm -rf "$work/through"
+mkdir -p "$work/through/first" "$work/through/late"
+tar --extract --gzip --file "$work/backups/$around" --directory "$work/through"
+tar --extract --file "$work/through/storage.tar" --directory "$work/through/first"
+mkdir -p "$work/through/first/$(dirname "$through_folder")"
+rm -rf "${work:?}/through/first/$through_folder"
+ln -s "$work/outside-restore" "$work/through/first/$through_folder"
+tar --create --file "$work/through/storage.tar" --directory "$work/through/first" .
+tar --extract --file "$work/through/storage-late.tar" --directory "$work/through/late"
+mkdir -p "$work/through/late/$through_folder"
+printf '%s' "$through_text" > "$work/through/late/$through_folder/$through_hash"
+tar --create --file "$work/through/storage-late.tar" --directory "$work/through/late" .
+rm -rf "$work/through/first" "$work/through/late"
+for part in storage.tar storage-late.tar; do
+  sum=$(sha256sum "$work/through/$part" | cut -d' ' -f1)
+  sed "s|\"$part\": \"[0-9a-f]*\"|\"$part\": \"$sum\"|" "$work/through/manifest.json" > "$work/through/manifest.new"
+  mv "$work/through/manifest.new" "$work/through/manifest.json"
+done
+tar --create --gzip --file "$work/backups/$around" --directory "$work/through" .
+POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" --skip-origin-check "$around" > "$work/out" 2>&1 || true
+if [ -n "$(ls -A "$work/outside-restore")" ]; then
+  echo 'FEHLER: das Rückspielen schrieb durch einen Link aus dem ersten Teil'
+  exit 1
+fi
+if [ -L "$STORAGE_PATH/$through_folder" ] || [ ! -f "$STORAGE_PATH/$through_folder/$through_hash" ]; then
+  echo 'FEHLER: die Datei aus dem zweiten Teil liegt nicht im Speicher, der Fall wurde nicht geprüft'
   cat "$work/out"
   exit 1
-}
-test -f "$work/cp-vanished" || {
-  echo 'FEHLER: die Datei verschwand nicht, der Fall wurde nicht geprüft'
+fi
+check 'Rückspielen: ein Link im ersten Teil leitet den zweiten nicht aus dem Speicher hinaus'
+
+# A file the first part did not hold and that does not lie where the store
+# keeps it, even one named after its own hash, does not come into the second
+# part: only two folders from the hash and then the hash are a stored file.
+astray_text='am falschen Ort'
+astray_hash=$(hash_of "$astray_text")
+DUMP_ASTRAY="$astray_text" backed_up 'eine Datei am falschen Ort beendete die Sicherung'
+unpacked madeup
+madeup_names=$(tar --list --file "$work/madeup/storage-late.tar")
+if printf '%s\n' "$madeup_names" | grep -q "$astray_hash"; then
+  echo 'FEHLER: eine Datei, die nicht nach ihrem Hash liegt, steht im zweiten Teil'
   exit 1
-}
-check 'Dateispeicher um die Datenbank: eine Datei, die gerade verschwindet, beendet die Sicherung nicht'
+fi
+rm -rf "$STORAGE_PATH/zz"
+check 'Dateispeicher: nur Dateien, die nach ihrem Hash liegen, kommen in den zweiten Teil'
+
+# What may happen to a new file between find and the tar of the second part.
+# It goes: the backup goes on. It becomes a link, a pipe, or its folder a
+# link into this container: the backup goes on, does not wait on the pipe,
+# and neither the link, the pipe nor the file behind it is in the archive.
+printf 'GEHEIMNIS DES CONTAINERS' > "$work/secret"
+mkdir -p "$work/outside"
+late_number=0
+for does in vanish link pipe folder; do
+  late_number=$((late_number + 1))
+  late_text="gleich verändert: $does"
+  late_hash=$(hash_of "$late_text")
+  case "$does" in
+    folder) target="$work/outside" ;;
+    *) target="$work/secret" ;;
+  esac
+  rm -f "$work/late-done"
+  DUMP_UPLOADS="$late_text" LATE_HASH="$late_hash" LATE_DOES="$does" LATE_TARGET="$target" \
+    LATE_DONE="$work/late-done" FIXED_STAMP="2031-02-01T0000${late_number}0Z" \
+    timeout 120 sh -c 'POSTGRES_DB=opengewerk sh "$1/bin/backup.sh"' sh "$work" > "$work/out" 2>&1 || {
+    echo "FEHLER: die Sicherung endete bei $does nicht ordentlich"
+    cat "$work/out"
+    exit 1
+  }
+  test -f "$work/late-done" || {
+    echo "FEHLER: bei $does geschah nichts, der Fall wurde nicht geprüft"
+    exit 1
+  }
+  unpacked "late-$does"
+  mkdir "$work/late-$does/late"
+  tar --extract --file "$work/late-$does/storage-late.tar" --directory "$work/late-$does/late"
+  if [ -n "$(find "$work/late-$does/late" ! -type d ! -type f)" ] ||
+    grep -r -q 'GEHEIMNIS DES CONTAINERS' "$work/late-$does/late" ||
+    [ -e "$work/late-$does/late/$(stored "$late_hash" | sed "s|^$STORAGE_PATH/||")" ]; then
+    echo "FEHLER: bei $does steht etwas Fremdes oder die veränderte Datei im zweiten Teil"
+    exit 1
+  fi
+  late_folder=$(dirname "$(stored "$late_hash")")
+  rm -rf "$late_folder" "$late_folder.moved" "$(dirname "$late_folder")"
+done
+check 'Dateispeicher: verschwunden, Link, Pipe oder Ordner als Link zwischen find und tar, nichts Fremdes im Archiv'
 
 # The first part, packed while the store is in use: a write under way stays
 # out of it, a file the sweep takes while tar runs does not end the backup,
 # and any other error of tar still does.
 printf 'halb' > "$STORAGE_PATH/liegengeblieben.part"
-POSTGRES_DB=opengewerk TAR_MISSES="./$(printf 'weg' | sha256sum | cut -d' ' -f1)" \
-  sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
-  echo 'FEHLER: eine Datei, die während tar verschwand, beendete die Sicherung'
-  cat "$work/out"
-  exit 1
-}
-first=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
-rm -rf "$work/first"
-mkdir "$work/first"
-tar --extract --gzip --file "$work/backups/$first" --directory "$work/first"
-first_list=$(tar --list --file "$work/first/storage.tar")
-if printf '%s\n' "$first_list" | grep -q 'liegengeblieben.part'; then
+TAR_MISSES="./$(hash_of 'weg')" backed_up 'eine Datei, die während tar verschwand, beendete die Sicherung'
+unpacked first
+if tar --list --file "$work/first/storage.tar" | grep -q 'liegengeblieben.part'; then
   echo 'FEHLER: ein Schreibvorgang, der noch lief, steht im ersten Teil'
   exit 1
 fi
-if [ -e "$work/first/vanished.patterns" ] || [ -e "$work/first/storage.err" ]; then
-  echo 'FEHLER: eine Arbeitsdatei der Sicherung steht im Archiv'
-  exit 1
-fi
+tar --list --file "$work/first/storage.tar" > /dev/null
 rm -f "$STORAGE_PATH/liegengeblieben.part"
-if POSTGRES_DB=opengewerk TAR_MISSES=/nirgends sh "$work/bin/backup.sh" > "$work/out" 2>&1; then
-  echo 'FEHLER: ein anderer Fehler von tar beim ersten Teil ließ die Sicherung durch'
+if TAR_MISSES=/nirgends run_backup; then
+  echo 'FEHLER: ein anderer Fehler von tar ließ die Sicherung durch'
   exit 1
 fi
 check 'Dateispeicher vor der Datenbank: ohne .part, eine verschwundene Datei geduldet, jeder andere Fehler nicht'
@@ -1130,104 +1245,45 @@ check 'Dateispeicher vor der Datenbank: ohne .part, eine verschwundene Datei ged
 # The other forms of a file that went while it was read: tar could not open
 # it, or find found it gone. Neither ends the backup; another error of find
 # still does.
-POSTGRES_DB=opengewerk TAR_CANT_OPEN="./ab/cd/$(printf 'weg' | sha256sum | cut -d' ' -f1)" \
-  sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
-  echo 'FEHLER: eine Datei, die tar nicht mehr öffnen konnte, beendete die Sicherung'
-  cat "$work/out"
-  exit 1
-}
-POSTGRES_DB=opengewerk FIND_MISSES=./ab/cd/unterwegs.part \
-  sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
-  echo 'FEHLER: ein .part, das während find verschwand, beendete die Sicherung'
-  cat "$work/out"
-  exit 1
-}
-if POSTGRES_DB=opengewerk FIND_MISSES=/nirgends sh "$work/bin/backup.sh" > "$work/out" 2>&1; then
+TAR_CANT_OPEN="./ab/cd/$(hash_of 'weg')" backed_up 'eine Datei, die tar nicht mehr öffnen konnte, beendete die Sicherung'
+FIND_MISSES=./ab/cd/unterwegs.part backed_up 'ein .part, das während find verschwand, beendete die Sicherung'
+if FIND_MISSES=/nirgends run_backup; then
   echo 'FEHLER: ein anderer Fehler von find ließ die Sicherung durch'
   exit 1
 fi
 check 'Dateispeicher: eine Datei, die tar nicht mehr öffnen konnte oder find verschwunden fand, beendet die Sicherung nicht'
 
-# A name swapped for a link between find and cp brings neither the link nor
-# the file it points at into the archive (CWE-59).
-printf 'GEHEIMNIS DES CONTAINERS' > "$work/secret"
-swap_text='gleich ein Link'
-swap_hash=$(printf '%s' "$swap_text" | sha256sum | cut -d' ' -f1)
-POSTGRES_DB=opengewerk DUMP_UPLOADS="$swap_text" CP_SWAPS="$swap_hash" CP_SWAP_TARGET="$work/secret" \
-  sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
-  echo 'FEHLER: ein untergeschobener Link beendete die Sicherung'
-  cat "$work/out"
-  exit 1
-}
-linked=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
-rm -rf "$work/linked"
-mkdir "$work/linked"
-tar --extract --gzip --file "$work/backups/$linked" --directory "$work/linked"
-linked_list=$(tar --list --file "$work/linked/storage-late.tar")
-if printf '%s\n' "$linked_list" | grep -q "$swap_hash"; then
-  echo 'FEHLER: der untergeschobene Link oder sein Ziel steht im zweiten Teil'
-  exit 1
-fi
-rm -f "$STORAGE_PATH/$swap_hash"
-check 'Dateispeicher: ein untergeschobener Link bringt weder sich noch sein Ziel ins Archiv'
-
-# The same with the folder of the file swapped for a link: what cp then finds
-# behind the name is no file of the store and stays out.
-mkdir -p "$work/outside"
-folder_text='Ordner gleich ein Link'
-folder_hash=$(printf '%s' "$folder_text" | sha256sum | cut -d' ' -f1)
-POSTGRES_DB=opengewerk DUMP_UPLOADS="$folder_text" DUMP_UPLOAD_FOLDER=ef/gh CP_DIR_SWAPS="$folder_hash" \
-  CP_DIR_TARGET="$work/outside" sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
-  echo 'FEHLER: ein untergeschobener Ordner beendete die Sicherung'
-  cat "$work/out"
-  exit 1
-}
-rm -rf "$STORAGE_PATH/ef"
-redirected=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
-rm -rf "$work/redirected"
-mkdir "$work/redirected"
-tar --extract --gzip --file "$work/backups/$redirected" --directory "$work/redirected"
-mkdir "$work/redirected/late"
-tar --extract --file "$work/redirected/storage-late.tar" --directory "$work/redirected/late"
-if grep -r -q 'GEHEIMNIS DES CONTAINERS' "$work/redirected/late"; then
-  echo 'FEHLER: eine Datei hinter einem untergeschobenen Ordner steht im zweiten Teil'
-  exit 1
-fi
-check 'Dateispeicher: auch ein untergeschobener Ordner bringt keine fremde Datei ins Archiv'
-
-# A copy that failed halfway while its source went leaves nothing behind
-# that is packed.
-partial_text='halb kopiert'
-partial_hash=$(printf '%s' "$partial_text" | sha256sum | cut -d' ' -f1)
-POSTGRES_DB=opengewerk DUMP_UPLOADS="$partial_text" CP_PARTIAL="$partial_hash" \
-  sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
-  echo 'FEHLER: eine halbe Kopie einer verschwundenen Datei beendete die Sicherung'
-  cat "$work/out"
-  exit 1
-}
-halved=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
-rm -rf "$work/halved"
-mkdir "$work/halved"
-tar --extract --gzip --file "$work/backups/$halved" --directory "$work/halved"
-halved_list=$(tar --list --file "$work/halved/storage-late.tar")
-if printf '%s\n' "$halved_list" | grep -q "$partial_hash"; then
-  echo 'FEHLER: eine halbe Kopie steht im zweiten Teil'
-  exit 1
-fi
-check 'Dateispeicher: eine halbe Kopie einer verschwundenen Datei kommt nicht ins Archiv'
-
-# A failure of tar that names no gone file is no file that went.
-if POSTGRES_DB=opengewerk TAR_SILENT=1 sh "$work/bin/backup.sh" > "$work/out" 2>&1; then
+# A failure of tar that names no gone file is no file that went, and a file
+# that went beside several other errors does not hide them.
+if TAR_SILENT=1 run_backup; then
   echo 'FEHLER: ein Fehler von tar ohne Meldung ließ die Sicherung durch'
   exit 1
 fi
-check 'Dateispeicher: ein Fehler von tar ohne Meldung beendet die Sicherung'
-
-# A file that went beside several other errors: the others end the backup.
-if POSTGRES_DB=opengewerk TAR_MIXED=1 sh "$work/bin/backup.sh" > "$work/out" 2>&1; then
+if TAR_MIXED=1 run_backup; then
   echo 'FEHLER: andere Fehler neben einer verschwundenen Datei ließen die Sicherung durch'
   exit 1
 fi
-check 'Dateispeicher: mehrere andere Fehler neben einer verschwundenen Datei beenden die Sicherung'
+check 'Dateispeicher: ein Fehler ohne Meldung oder neben einer verschwundenen Datei beendet die Sicherung'
+
+# A new file sha256sum cannot read ends the backup instead of leaving the
+# second part without it.
+unread_text='nicht lesbar'
+unread_hash=$(hash_of "$unread_text")
+if DUMP_UPLOADS="$unread_text" SHA_FAILS="$unread_hash" run_backup; then
+  echo 'FEHLER: eine Datei, die sha256sum nicht lesen konnte, fehlte still im zweiten Teil'
+  exit 1
+fi
+rm -rf "$(dirname "$(stored "$unread_hash")")"
+check 'Dateispeicher: eine neue Datei, die sich nicht lesen lässt, beendet die Sicherung'
+
+# A backup that has taken more than half a day stops before the second part:
+# the sweep could by then take a file the dump names.
+rm -f "$work/clock-read"
+if CLOCK_RUNS_AWAY="$work/clock-read" run_backup; then
+  echo 'FEHLER: eine Sicherung, die länger als einen halben Tag lief, ging durch'
+  exit 1
+fi
+grep -q 'seit mehr als zwölf Stunden' "$work/out"
+check 'Dateispeicher: nach einem halben Tag bricht die Sicherung vor dem zweiten Teil ab'
 
 echo 'Sicherungen: alles in Ordnung.'

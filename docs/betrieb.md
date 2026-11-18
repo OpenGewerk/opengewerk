@@ -545,7 +545,7 @@ Das Ergebnis ist ein Archiv mit vier Teilen und einem Manifest:
 | --- | --- |
 | `database.dump` | die Datenbank, `pg_dump` im Custom-Format |
 | `storage.tar` | der inhaltsadressierte Dateispeicher |
-| `storage-late.tar` | was der Dateispeicher bekam, während die Sicherung lief |
+| `storage-late.tar` | jede Datei, die der Dateispeicher nach dem Dump hat und `storage.tar` nicht |
 | `audit-chains.tsv` | je Mandant der Kopf der Audit-Hashkette |
 | `manifest.json` | Zeitstempel, PostgreSQL-Version und eine Prüfsumme je Teil |
 
@@ -557,9 +557,12 @@ zurückgespielte Rechnung, die auf nichts zeigt. Würden sie nur nachher
 gesichert, könnte das Aufräumen (siehe unten) eine Datei, deren letzte Zeile
 gleich nach dem Dump ging, herausnehmen, bevor die Sicherung sie liest. Deshalb
 kommt zuerst der Dateispeicher in `storage.tar`, dann die Datenbank, dann
-alles, was der Speicher seit dem Beginn bekam, in `storage-late.tar`. Der
-schlimmste Fall ist eine Datei, auf die niemand verweist, und die kostet
-Plattenplatz und sonst nichts. Ein Archiv von vor dieser Änderung hat keinen
+jede Datei, die der Speicher jetzt hat und `storage.tar` nicht, in
+`storage-late.tar`. Welche das sind, liest die Sicherung aus dem ersten Teil,
+nicht aus einer Uhr. Der schlimmste Fall ist eine Datei, auf die niemand
+verweist, und die kostet Plattenplatz und sonst nichts. Das gilt, solange eine
+Sicherung kürzer läuft als die Frist des Aufräumens; nach zwölf Stunden bricht
+sie deshalb ab. Ein Archiv von vor dieser Änderung hat keinen
 späten Teil und geht wie bisher zurück.
 
 **Eine Datei, auf die niemand mehr verweist, geht nach einem Tag** (#657). Einmal

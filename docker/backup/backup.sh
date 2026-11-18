@@ -10,8 +10,9 @@
 #    in the archive. Packed only after, a file whose last row went after the
 #    dump could be taken by the sweep of the store before tar reached it
 #    (#991), and the dump would name a file the archive lacks. So the store is
-#    packed first, then the database is dumped, and then every file written
-#    since a mark set before the first pack goes into a second, small part.
+#    packed first, then the database is dumped, and then every file of the
+#    store that the first part does not hold goes into a second, small part.
+#    Which files that are is read from the first part, not from any clock.
 #    The worst case left is a file nobody references, and an unreferenced
 #    file in a content addressed store costs disk and nothing else.
 #
@@ -182,17 +183,13 @@ PATTERNS
 }
 
 # --- 1. The file store, before the database --------------------------------
-# See the note at the top. The mark is set a second before tar starts: a file
-# written in the second of the mark goes into this part, and one written while
-# or after tar runs has a later time and goes into the second part. Only
-# stored files, as in the second part: a .part or .gone is renamed any moment.
-# A file that is gone by the time tar comes to it was one of those or one the
-# sweep took, which no row names any more, so tar may say "No such file or
-# directory" for a path in the store and nothing else.
+# See the note at the top. Only stored files, as in the second part: a .part
+# or .gone is renamed any moment. A file that is gone by the time tar comes to
+# it was one of those or one the sweep took, which no row names any more, so
+# tar may say "No such file or directory" for a path in the store and nothing
+# else.
 echo "  Dateispeicher wird gesichert."
-mark="${work}/storage.mark"
-: >"$mark"
-sleep 1
+started=$(date +%s)
 if ! tar --create --file "${work}/storage.tar" --directory "$STORAGE_PATH" \
 	--exclude '*.part' --exclude '*.gone' . 2>"${work}/storage.err"; then
 	only_vanished "${work}/storage.err" || exit 1
@@ -213,45 +210,70 @@ checked_query audit_chains "tenant_id next_sequence head_hash" \
 	"select tenant_id, next_sequence, coalesce(head_hash, '') from only public.audit_chains order by tenant_id" \
 	--field-separator="$tab" >"${work}/audit-chains.tsv" || exit 1
 
-# --- 4. What the store got since the mark ---------------------------------
-# Every file written after the mark, an upload while the backup ran above all.
-# Copied first and packed as a folder, so that a part with no file in it is
-# still a valid archive. Only stored files: a write still under way as .part
-# or a file set aside as .gone is renamed any moment, and neither is a file a
-# row names. A file gone between find and cp was one of those, or one the
-# sweep took, which is old and in the first part; a new file is younger than
-# the grace of the sweep and stays.
+# --- 4. What the first part does not hold ----------------------------------
+# Every stored file the store holds now and the first part does not: an upload
+# while the backup ran above all, but also one tar did not meet on its way or
+# one the sweep had set aside while tar passed. Read from the first part and
+# not from a clock, so a clock that jumps changes nothing. Only names of the
+# layout of the store, two folders and the hash, so neither a .part, a .gone
+# nor a name somebody made up comes in.
+#
+# A file the sweep takes is one no row names. Whatever the dump names was put
+# before the dump, and the sweep only takes what is older than its grace of a
+# day; so this holds as long as the backup takes less than that, and a backup
+# that has taken half of it stops instead.
+if [ $(($(date +%s) - started)) -gt 43200 ]; then
+	echo "  Die Sicherung läuft seit mehr als zwölf Stunden, das Aufräumen des" >&2
+	echo "  Dateispeichers könnte inzwischen Dateien nehmen, die der Dump nennt." >&2
+	echo "  Sie bricht ab; eine Sicherung braucht sonst Minuten." >&2
+	exit 1
+fi
+
 echo "  Nachträge im Dateispeicher werden gesichert."
+layout='^\./[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{64}$'
+
+# grep says 1 when no line fits, which here is an empty list and no error.
+names_of() {
+	grep -E "$layout" "$1" || [ $? -eq 1 ]
+}
+
+tar --list --file "${work}/storage.tar" >"${work}/storage.names"
+names_of "${work}/storage.names" | sort >"${work}/storage.first"
+
 # find looks at every entry before it reads its name, so a .part that goes
 # while it walks makes it say "No such file or directory" as well.
-mkdir "${work}/storage-late"
-if ! (cd "$STORAGE_PATH" && find . -type f -newer "$mark" ! -name '*.part' ! -name '*.gone') \
-	>"${work}/storage-late.list" 2>"${work}/storage-late.err"; then
+if ! (cd "$STORAGE_PATH" && find . -type f) >"${work}/storage.now" 2>"${work}/storage-late.err"; then
 	only_vanished "${work}/storage-late.err" || exit 1
 fi
-# Copied as what it is: a name swapped for a link between find and cp stays
-# a link, which is then taken out, and never brings the file it points at,
-# one of this container perhaps, into the archive. A folder on the way may be
-# swapped for a link as well, and cp follows that one; so a copy stays only
-# when its name is the SHA-256 of what it holds, which a file from anywhere
-# else cannot be.
-while IFS= read -r file; do
-	mkdir -p "${work}/storage-late/$(dirname "$file")"
-	cp -P -p "${STORAGE_PATH}/${file}" "${work}/storage-late/${file}" || {
-		# Whatever cp left of a failed copy goes, so no half file is packed.
-		rm -f "${work}/storage-late/${file}"
-		[ ! -e "${STORAGE_PATH}/${file}" ]
-	}
-	copy="${work}/storage-late/${file}"
-	if [ -f "$copy" ] && [ ! -L "$copy" ] &&
-		[ "$(sha256sum <"$copy" | cut -d' ' -f1)" != "$(basename "$file")" ]; then
+names_of "${work}/storage.now" | sort | comm -13 "${work}/storage.first" - >"${work}/storage-late.list"
+
+# Packed straight from the store with tar, which reads no file it was not
+# given and stores a link or a pipe as what it is, and never waits on one.
+# Unpacked into a folder of its own, a file stays only when it is a plain file
+# whose name is the SHA-256 of what it holds: a name swapped for a link, a
+# pipe, or a folder swapped for a link to somewhere in this container between
+# find and tar cannot be that.
+mkdir "${work}/storage-late"
+if [ -s "${work}/storage-late.list" ]; then
+	if ! tar --create --file "${work}/storage-late.raw" --directory "$STORAGE_PATH" \
+		-T "${work}/storage-late.list" 2>"${work}/storage-late.err"; then
+		only_vanished "${work}/storage-late.err" || exit 1
+	fi
+	tar --extract --no-same-owner --file "${work}/storage-late.raw" --directory "${work}/storage-late"
+	rm -f "${work}/storage-late.raw"
+fi
+find "${work}/storage-late" ! -type f ! -type d -exec rm -f {} \;
+find "${work}/storage-late" -type f >"${work}/storage-late.files"
+while IFS= read -r copy; do
+	held_hash=$(sha256sum "$copy" | cut -d' ' -f1)
+	if [ "$held_hash" != "$(basename "$copy")" ]; then
 		rm -f "$copy"
 	fi
-done <"${work}/storage-late.list"
-find "${work}/storage-late" ! -type f ! -type d -exec rm -f {} \;
-rm -f "${work}/storage-late.list" "${work}/storage-late.err"
+done <"${work}/storage-late.files"
 tar --create --file "${work}/storage-late.tar" --directory "${work}/storage-late" .
-rm -rf "${work}/storage-late" "$mark" "${work}/vanished.patterns"
+rm -rf "${work}/storage-late" "${work}/storage-late.files" "${work}/storage-late.list" \
+	"${work}/storage-late.err" "${work}/storage.names" "${work}/storage.first" "${work}/storage.now" \
+	"${work}/vanished.patterns"
 
 # --- 5. The manifest -------------------------------------------------------
 # A checksum per part, so that a restore can tell a damaged archive from a
