@@ -295,6 +295,17 @@ names_of() {
 tar --list --verbose --file "${work}/storage.tar" |
 	awk '$1 ~ /^-/ { name = $0; for (i = 1; i <= 5; i++) sub(/^[^ ]+ +/, "", name); print name }' \
 		>"${work}/storage.names"
+# Every entry of the first part on a line of its own: a name with a line
+# break could let a part of it pass for an entry in the listing above. tar
+# lists every name of the first part starting with "./", so a line that does
+# not is the rest of one. The store never makes such a name; the backup stops
+# instead of guessing.
+odd_lines=$(tar --list --file "${work}/storage.tar" | grep -cv '^\./' || true)
+if [ "$odd_lines" != 0 ]; then
+	echo "  Im Dateispeicher steht ein Name über mehrere Zeilen, den der Speicher nie anlegt;" >&2
+	echo "  die Sicherung bricht ab." >&2
+	exit 1
+fi
 names_of "${work}/storage.names" | sort >"${work}/storage.first"
 
 # find looks at every entry before it reads its name, so a .part that goes

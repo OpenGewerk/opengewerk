@@ -1470,6 +1470,33 @@ printf '%s\n' "$trailing_names" | grep -q "^\./$(stored "$trailing_hash" | sed "
 rm -rf "$(dirname "$(stored "$trailing_hash")")"
 check 'Dateispeicher: ein Name mit Leerzeichen im ersten Teil hält keine Datei aus dem zweiten'
 
+# A name with a line break whose second line reads like an entry of the
+# listing, for a file uploaded under that hash during the dump: the backup
+# stops instead of taking the file for held.
+broken_text='Zeilenumbruch im Namen'
+broken_hash=$(hash_of "$broken_text")
+broken_tail=$(stored "$broken_hash" | sed "s|^$STORAGE_PATH/||")
+# A name can hold no slash, so the line break sits in the first folder, and
+# the rest of the path follows below it.
+broken_path="$STORAGE_PATH/x
+-rw-r--r-- 0/0 1 2031-01-01 00:00:00 ./$broken_tail"
+mkdir -p "$(dirname "$broken_path")"
+printf 'x' > "$broken_path"
+archives_before=$(ls "$work/backups" | wc -l)
+if DUMP_UPLOADS="$broken_text" run_backup; then
+  echo 'FEHLER: ein Name über mehrere Zeilen im Speicher ließ die Sicherung durch'
+  exit 1
+fi
+grep -q 'Name über mehrere Zeilen' "$work/out" || {
+  echo 'FEHLER: ein Name über mehrere Zeilen beendete die Sicherung nicht an seiner Stelle'
+  cat "$work/out"
+  exit 1
+}
+test "$(ls "$work/backups" | wc -l)" = "$archives_before"
+"$real_rm" -rf "$STORAGE_PATH/x
+-rw-r--r-- 0" "$(dirname "$(stored "$broken_hash")")"
+check 'Dateispeicher: ein Name über mehrere Zeilen beendet die Sicherung'
+
 # A link or pipe in the second part that rm could not take ends the backup.
 pipe_text='Pipe, die bleibt'
 pipe_hash=$(hash_of "$pipe_text")
@@ -1617,6 +1644,13 @@ if [ -n "$left_secret" ]; then
   exit 1
 fi
 grep -q 'ohne Namen oder Ort des Speichers entfernt' "$work/out"
+grep -q "entfernt: \./$forged_dir/umgebung\$" "$work/out" &&
+  grep -q "entfernt: \./$forged_dir/zeile?umbruch\$" "$work/out" &&
+  grep -q "entfernt: \./00/00/$astray_hash\$" "$work/out" || {
+  echo 'FEHLER: das Rückspielen nannte nicht jeden Eintrag, den es entfernte'
+  cat "$work/out"
+  exit 1
+}
 if [ -e "$STORAGE_PATH/00/00/$astray_hash" ]; then
   echo 'FEHLER: eine Datei am falschen Ort blieb nach dem Rückspielen im Speicher'
   exit 1

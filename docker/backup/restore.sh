@@ -447,7 +447,9 @@ tar --extract --no-same-owner --file "${work}/storage.tar" --directory "$STORAGE
 # not hold and goes on, so what is left is looked at once more; a find that
 # cannot read ends the restore under set -e, through the assignment.
 only_files_in_store() {
-	find "$STORAGE_PATH" -mindepth 1 ! -type f ! -type d -exec rm -f {} \;
+	# Each one it takes is named on a line of its own; a control character in
+	# a name shows as ?.
+	find "$STORAGE_PATH" -mindepth 1 ! -type f ! -type d -exec sh -c 'rm -f "$1" && printf "    entfernt: %s\n" "$(printf "%s" "$1" | tr "\001-\037\177" "?")"' sh {} \;
 	left=$(find "$STORAGE_PATH" -mindepth 1 ! -type f ! -type d)
 	if [ -n "$left" ]; then
 		echo "Im Dateispeicher blieb ein Link oder etwas anderes, das keine Datei ist;" >&2
@@ -486,7 +488,7 @@ while [ "$hex_count" -lt 64 ]; do
 done
 stored_path="./${hex}${hex}/${hex}${hex}/${stored_name}"
 foreign=$(cd "$STORAGE_PATH" && find . -type f ! -path "$stored_path" | wc -l | tr -d ' ')
-(cd "$STORAGE_PATH" && find . -type f ! -path "$stored_path" -exec rm -f {} \;)
+(cd "$STORAGE_PATH" && find . -type f ! -path "$stored_path" -exec sh -c 'rm -f "$1" && printf "    entfernt: %s\n" "$(printf "%s" "$1" | tr "\001-\037\177" "?")"' sh {} \;)
 left_foreign=$(cd "$STORAGE_PATH" && find . -type f ! -path "$stored_path")
 if [ -n "$left_foreign" ]; then
 	echo "Im Dateispeicher blieb eine Datei, die keine Datei des Speichers ist;" >&2
@@ -507,6 +509,7 @@ while IFS= read -r file; do
 			echo "es wird nichts weiter zurückgespielt." >&2
 			exit 1
 		}
+		printf '    entfernt: %s\n' "$file"
 		foreign=$((foreign + 1))
 	fi
 done <"${work}/stored.list"

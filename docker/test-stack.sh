@@ -701,10 +701,13 @@ skips-empty)
 seed)
   sql "insert into tenants (id, name) values ('$first_tenant', 'Nord GmbH'), ('$second_tenant', 'Süd GmbH');"
 
-  # Content addressed, so a file name has to be the hash of what is in it.
-  # The restore checks exactly that, and a file written any other way would
-  # make it fail for the wrong reason.
-  compose exec -T app sh -c 'for text in eins zwei drei; do hash=$(printf "%s" "$text" | sha256sum | cut -d" " -f1); printf "%s" "$text" > "$STORAGE_PATH/$hash"; done'
+  # Content addressed, so a file name has to be the hash of what is in it, and
+  # it lies where FileStore keeps it. The restore checks exactly that and takes
+  # out what lies anywhere else, so a file written any other way would make it
+  # fail for the wrong reason.
+  for text in eins zwei drei; do
+    store_file "$text" > /dev/null
+  done
 
   records_for_backup
 
