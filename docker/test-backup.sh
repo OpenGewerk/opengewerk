@@ -1606,6 +1606,18 @@ grep -q 'Nicht jede dieser Dateien ließ sich entfernen' "$work/out" && grep -q 
   cat "$work/out"
   exit 1
 }
+# A file that is no stored file and rm cannot take stops the restore before
+# the check of the hashes.
+if POSTGRES_DB=opengewerk RM_FAILS_ON=umgebung sh "$work/bin/restore.sh" --skip-origin-check "$forged" \
+  > "$work/out" 2>&1; then
+  echo 'FEHLER: eine fremde Datei, die rm nicht nahm, ließ das Rückspielen durch'
+  exit 1
+fi
+grep -q 'blieb eine Datei, die keine Datei des Speichers ist' "$work/out" || {
+  echo 'FEHLER: eine fremde Datei, die rm nicht nahm, beendete das Rückspielen nicht an ihrer Stelle'
+  cat "$work/out"
+  exit 1
+}
 check 'Rückspielen: eine Datei, deren Inhalt nicht ihr Name ist, bleibt nicht im Speicher'
 
 echo 'Sicherungen: alles in Ordnung.'
