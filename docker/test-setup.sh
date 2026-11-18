@@ -271,63 +271,50 @@ for address in http://localhost http://localhost:23700 http://127.0.0.1 http://1
 done
 check 'http:// nur für diese Maschine: andere Adressen abgelehnt, localhost und 127.0.0.1 angenommen'
 
-# 9c. The port of the address offered is the one Docker Compose takes: from
-# the environment first, else from the last line of the .env that sets it,
-# with "export", blanks, quotes, a comment and a carriage return as Compose
-# reads them.
-sed -n -e '/^compose_lookup() {/,/^}/p' -e '/^compose_value() {/,/^}/p' "$work/setup.sh" > "$work/compose-value.sh"
-test -s "$work/compose-value.sh"
-. "$work/compose-value.sh"
-value_of() {
-  printf '%s\n' "$1" > "$work/port.env"
-  compose_value PROBE_PORT "$work/port.env"
-}
+# 9c. The port of the address offered is the one Docker Compose takes, when
+# it is a plain number: from the exported environment first, else from the
+# last line of the .env that sets it, with "export", blanks, quotes, a
+# comment and a carriage return as Compose reads them. Set nowhere or empty
+# (1): the default of compose.yaml holds. Anything else (2), such as ${...}
+# that Compose fills in: no port is guessed. A variable of the shell that is
+# not exported is no part of the environment.
+sed -n '/^plain_port() {/,/^}/p' "$work/setup.sh" > "$work/plain-port.sh"
+test -s "$work/plain-port.sh"
+. "$work/plain-port.sh"
 unset PROBE_PORT
-for pair in 'PROBE_PORT=24567|24567' 'PROBE_PORT=24567 # lokal|24567' 'PROBE_PORT="24567"|24567' \
-  'PROBE_PORT="24567 # lokal"|24567 # lokal' "PROBE_PORT='24567'|24567" 'export PROBE_PORT=24567|24567' \
-  '  PROBE_PORT = 24567|24567' 'PROBE_PORT=24567#x|24567#x' 'PROBE_PORT=|'; do
+port_of() {
+  printf '%b' "$1" > "$work/port.env"
+  if got=$(plain_port PROBE_PORT "$work/port.env"); then
+    printf '0 %s\n' "$got"
+  else
+    printf '%s\n' "$?"
+  fi
+}
+for pair in 'PROBE_PORT=24567|0 24567' 'PROBE_PORT=24567 # lokal|0 24567' 'PROBE_PORT="24567"|0 24567' \
+  "PROBE_PORT='24567'|0 24567" 'export PROBE_PORT=24567|0 24567' '  PROBE_PORT = 24567|0 24567' \
+  'PROBE_PORT=24567\r|0 24567' 'PROBE_PORT=1\nPROBE_PORT=24567|0 24567' 'PROBE_PORT=|1' 'OTHER=1|1' \
+  'PROBE_PORT="24567 # lokal"|2' 'PROBE_PORT=24567#x|2' 'PROBE_PORT=${BASE_PORT}|2' \
+  'PROBE_PORT=${BASE_PORT:-24569}|2' "PROBE_PORT='\${BASE_PORT}'|2"; do
   line=${pair%%|*}
   expected=${pair#*|}
-  got=$(value_of "$line")
+  got=$(port_of "$line")
   [ "$got" = "$expected" ] || {
     printf 'FEHLER: aus "%s" wurde "%s", nicht "%s"\n' "$line" "$got" "$expected"
     exit 1
   }
 done
-printf 'PROBE_PORT=24567\r\n' > "$work/port.env"
-[ "$(compose_value PROBE_PORT "$work/port.env")" = 24567 ]
-printf 'PROBE_PORT=1\nPROBE_PORT=24567\n' > "$work/port.env"
-[ "$(compose_value PROBE_PORT "$work/port.env")" = 24567 ]
-[ "$(PROBE_PORT=24999 compose_value PROBE_PORT "$work/port.env")" = 24999 ]
-[ -z "$(compose_value PROBE_PORT "$work/no-such.env")" ]
-# A value that is another variable is followed as Compose fills it in, and a
-# loop ends instead of hanging.
-printf 'BASE_PORT=24567\nPROBE_PORT=${BASE_PORT}\n' > "$work/port.env"
-[ "$(compose_value PROBE_PORT "$work/port.env")" = 24567 ]
-# A line below the one that names it is not there yet when Compose reads it.
-printf 'PROBE_PORT=$BASE_PORT\nBASE_PORT="24568"\n' > "$work/port.env"
-[ -z "$(compose_value PROBE_PORT "$work/port.env")" ]
-printf 'BASE_PORT=24567\nPROBE_PORT=${BASE_PORT}\nBASE_PORT=24568\n' > "$work/port.env"
-[ "$(compose_value PROBE_PORT "$work/port.env")" = 24567 ]
-# In single quotes, and from the environment, nothing is filled in.
-printf "BASE_PORT=24567\nPROBE_PORT='\${BASE_PORT}'\n" > "$work/port.env"
-[ "$(compose_value PROBE_PORT "$work/port.env")" = '${BASE_PORT}' ]
-printf 'BASE_PORT=24567\n' > "$work/port.env"
-[ "$(PROBE_PORT='${BASE_PORT}' compose_value PROBE_PORT "$work/port.env")" = '${BASE_PORT}' ]
-printf 'PROBE_PORT=${MISSING:-24569}\n' > "$work/port.env"
-[ "$(compose_value PROBE_PORT "$work/port.env")" = 24569 ]
-printf 'PROBE_PORT=${MISSING-24570}\n' > "$work/port.env"
-[ "$(compose_value PROBE_PORT "$work/port.env")" = 24570 ]
-printf 'EMPTY=\nPROBE_PORT=${EMPTY:-24571}\n' > "$work/port.env"
-[ "$(compose_value PROBE_PORT "$work/port.env")" = 24571 ]
-printf 'EMPTY=\nPROBE_PORT=${EMPTY-24572}\n' > "$work/port.env"
-[ -z "$(compose_value PROBE_PORT "$work/port.env")" ]
-# Variables that name each other: each sees only the lines above it, so the
-# chain ends empty, as with Compose, and never runs in a circle.
-printf 'LOOP_A=${LOOP_B}\nLOOP_B=${LOOP_A}\nPROBE_PORT=${LOOP_B}\n' > "$work/port.env"
-[ -z "$(compose_value PROBE_PORT "$work/port.env")" ]
-printf 'LOOP_B=24573\nLOOP_A=${LOOP_B}\nLOOP_B=${LOOP_A}\nPROBE_PORT=${LOOP_B}\n' > "$work/port.env"
-[ "$(compose_value PROBE_PORT "$work/port.env")" = 24573 ]
+printf 'PROBE_PORT=24567\n' > "$work/port.env"
+[ "$(PROBE_PORT=24999 plain_port PROBE_PORT "$work/port.env")" = 24999 ]
+if PROBE_PORT='' plain_port PROBE_PORT "$work/port.env" > /dev/null; then
+  echo 'FEHLER: ein leerer Port aus der Umgebung galt als Zahl'
+  exit 1
+fi
+PROBE_PORT=24998
+[ "$(plain_port PROBE_PORT "$work/port.env")" = 24567 ]
+unset PROBE_PORT
+missing_state=0
+plain_port PROBE_PORT "$work/no-such.env" > /dev/null || missing_state=$?
+[ "$missing_state" = 1 ]
 check 'Port aus der .env: so gelesen wie von Docker Compose'
 
 # 10. Another application runs the same script against its own folder

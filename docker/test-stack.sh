@@ -39,87 +39,41 @@ compose() {
   docker compose -f "$here/compose.yaml" "$@"
 }
 
-# One variable the way Docker Compose sees it: from the environment when it
-# is set there, else from the last line of the .env before line $3 (the whole
-# file without it) that sets it, "export" and blanks around the = allowed; in
-# quotes what stands between them, a # included, without up to a comment
-# after a blank. A carriage return from Windows is no part of it. Sets
-# compose_set (yes when set at all), compose_found, compose_at (the line it
-# came from) and compose_plain (yes when Compose fills nothing into it: a
-# value from the environment or in single quotes). The name is one this
-# script made or checked, never one taken unchecked from the file.
-compose_lookup() {
-  compose_at=0
-  compose_plain=''
-  eval "compose_set=\${$1+yes}"
-  if [ -n "$compose_set" ]; then
-    eval "compose_found=\$$1"
-    compose_plain=yes
-    return
+# The port Docker Compose takes for $1, when it is a plain number: from the
+# exported environment first, else from the last line of the .env ($2) that
+# sets it, "export" and blanks around the = allowed, in quotes what stands
+# between them, without quotes up to a comment after a blank, no carriage
+# return from Windows. Prints the number and ends with 0. Ends with 1 when
+# the variable is set nowhere or empty, so that the default in compose.yaml
+# holds, and with 2 when it holds anything else, such as ${...} that Compose
+# fills in from other variables: then nobody here guesses which port it is.
+plain_port() {
+  if printenv "$1" >/dev/null 2>&1; then
+    plain=$(printenv "$1")
+  else
+    plain=$({ grep -E "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" "$2" 2>/dev/null || true; } | tail -n 1 |
+      sed -e 's/^[^=]*=//' -e 's/\r$//' -e 's/^[[:space:]]*//' |
+      sed -e 's/^"\([^"]*\)".*$/\1/' -e t -e "s/^'\([^']*\)'.*\$/\1/" -e t \
+        -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//')
   fi
-  compose_line=$({ grep -nE "^[[:space:]]*(export[[:space:]]+)?$1[[:space:]]*=" "$2" 2>/dev/null || true; } |
-    awk -F: -v before="${3:-0}" 'before == 0 || $1 + 0 < before + 0' | tail -n 1)
-  compose_found=''
-  [ -n "$compose_line" ] || return 0
-  compose_set=yes
-  compose_at=${compose_line%%:*}
-  compose_raw=$(printf '%s\n' "${compose_line#*:}" | sed -e 's/^[^=]*=//' -e 's/\r$//' -e 's/^[[:space:]]*//')
-  case "$compose_raw" in
-    "'"*) compose_plain=yes ;;
+  case "$plain" in
+    '') return 1 ;;
+    *[!0-9]*) return 2 ;;
   esac
-  compose_found=$(printf '%s\n' "$compose_raw" |
-    sed -e 's/^"\([^"]*\)".*$/\1/' -e t -e "s/^'\([^']*\)'.*\$/\1/" -e t \
-      -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//')
-}
-
-# The value Docker Compose takes for a variable. A value that is only another
-# variable ($NAME, ${NAME}, ${NAME:-default}, ${NAME-default}) is followed the
-# way Compose fills it in: from the environment or from a line above the one
-# that names it, six deep at most, without running anything from the file.
-# Anything else, and a value Compose fills nothing into, stays as it is.
-compose_value() {
-  compose_name=$1
-  compose_rounds=0
-  compose_lookup "$compose_name" "$2"
-  compose_result=$compose_found
-  while [ "$compose_rounds" -lt 6 ] && [ -z "$compose_plain" ]; do
-    compose_rounds=$((compose_rounds + 1))
-    compose_from_line=$compose_at
-    case "$compose_result" in
-      '${'*'}') compose_inner=${compose_result#??} compose_inner=${compose_inner%?} ;;
-      '$'*) compose_inner=${compose_result#?} ;;
-      *) break ;;
-    esac
-    case "$compose_inner" in
-      *:-*) compose_name=${compose_inner%%:-*} compose_default=${compose_inner#*:-} compose_kind=empty ;;
-      *-*) compose_name=${compose_inner%%-*} compose_default=${compose_inner#*-} compose_kind=unset ;;
-      *) compose_name=$compose_inner compose_default='' compose_kind='' ;;
-    esac
-    case "$compose_name" in
-      '' | [!A-Za-z_]* | *[!A-Za-z0-9_]*) break ;;
-    esac
-    compose_lookup "$compose_name" "$2" "$compose_from_line"
-    if [ "$compose_kind" = empty ] && [ -z "$compose_found" ]; then
-      compose_result=$compose_default
-      compose_plain=yes
-    elif [ "$compose_kind" = unset ] && [ -z "$compose_set" ]; then
-      compose_result=$compose_default
-      compose_plain=yes
-    else
-      compose_result=$compose_found
-    fi
-  done
-  printf '%s\n' "$compose_result"
+  printf '%s\n' "$plain"
 }
 
 # The port on this machine: the one Docker Compose takes, else its default in
-# compose.yaml, read the way setup.sh reads it.
+# compose.yaml, read the way setup.sh reads it. A port that is no plain number
+# stops the test with a sentence instead of testing some other port.
 port() {
-  found=$(compose_value "${APPLICATION_PREFIX}_PORT" "$here/.env")
-
-  if [ -z "$found" ]; then
-    found=$(sed -n "s/.*\${${APPLICATION_PREFIX}_PORT:-\([0-9]*\)}.*/\1/p" "$here/compose.yaml" | head -n 1)
-  fi
+  found=$(plain_port "${APPLICATION_PREFIX}_PORT" "$here/.env") || case $? in
+    1) found=$(sed -n "s/.*\${${APPLICATION_PREFIX}_PORT:-\([0-9]*\)}.*/\1/p" "$here/compose.yaml" | head -n 1) ;;
+    *)
+      echo "FEHLER: ${APPLICATION_PREFIX}_PORT ist keine einfache Zahl; test-stack.sh braucht den Port als Zahl." >&2
+      exit 1
+      ;;
+  esac
 
   printf '%s\n' "$found"
 }
