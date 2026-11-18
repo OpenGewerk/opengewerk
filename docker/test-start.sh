@@ -275,7 +275,7 @@ check 'Paket mit Digest ohne cosign: sagt, wie man von Hand prüft'
 # 12. The version of the engine (#985): below 28.3.3, or one that cannot be
 # read as numbers, stops the start before anything is pulled, built or set
 # up; 28.3.3 and newer, a suffix of a distribution included, starts.
-for engine in 27.5.1 28.3.2 28.2.0 dev 28.4.dev ''; do
+for engine in 27.5.1 28.3.2 28.2.0 dev 28.4.dev 28.3.3-rc.1 '28.3.3~rc1' ''; do
   : > "$CALLS"
   rm -f "$work/docker/.env"
   if out=$(DOCKER_SERVER=$engine OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null 2>&1); then
@@ -292,7 +292,7 @@ for engine in 27.5.1 28.3.2 28.2.0 dev 28.4.dev ''; do
 done
 check 'Docker unter 28.3.3 oder ohne lesbare Fassung: abgelehnt, bevor etwas geholt oder eingerichtet wird'
 
-for engine in 28.3.3 28.4.0 29.0.0 28.10.1 '29.4.2+dfsg1'; do
+for engine in 28.3.3 28.4.0 29.0.0 28.10.1 '29.4.2+dfsg1' 28.3.3+ds1 29.0.0-rc.1; do
   : > "$CALLS"
   DOCKER_SERVER=$engine OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null > /dev/null 2>&1 || {
     printf 'FEHLER: Docker "%s" wurde abgelehnt\n' "$engine"

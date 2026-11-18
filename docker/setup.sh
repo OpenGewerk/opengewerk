@@ -306,14 +306,19 @@ if [ -z "$address" ] || [ "$address" = "$example_address" ]; then
 fi
 
 # Every entry of the list, the address just entered as much as one set by
-# hand before (#984). Read the way the application reads it: split at commas,
-# blanks around an entry and a carriage return from Windows taken off.
-origins=$(grep '^TRUSTED_ORIGINS=' "$env_file" | head -n 1 | cut -d= -f2- | tr ',' '\n')
+# hand before (#984). Every line with the key, since Docker Compose takes the
+# last one, and the variable from the environment, which it takes over the
+# .env. Each read the way Docker Compose hands it to the application, as
+# start.sh reads the version: a comment after a blank, quotes, blanks and a
+# carriage return from Windows taken off; then split at commas.
+origins=$({
+  grep '^TRUSTED_ORIGINS=' "$env_file" | cut -d= -f2-
+  printf '%s\n' "${TRUSTED_ORIGINS:-}"
+} | sed 's/[[:space:]]#.*//' | tr -d "\r\"' \t" | tr ',' '\n')
 
 while IFS= read -r origin; do
-  origin=$(printf '%s' "$origin" | tr -d ' \t\r')
   if [ -n "$origin" ]; then
-    only_here_over_http "$origin" ' in TRUSTED_ORIGINS in docker/.env'
+    only_here_over_http "$origin" ' in TRUSTED_ORIGINS'
   fi
 done <<ORIGINS
 $origins

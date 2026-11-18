@@ -80,7 +80,9 @@ docker_too_old=$(printf '%s\n' "$docker_version" | awk -F. -v minimum="$minimum_
       have = number($i)
       if (have != least[i] + 0) { print (have < least[i] + 0 ? "yes" : "no"); exit }
     }
-    print "no"
+    # The minimum itself, but a pre-release of it (28.3.3-rc.1, or 28.3.3~rc1
+    # in a Debian package), comes before the release that has the fix.
+    print ($3 ~ /^[0-9]+[-~]/ ? "yes" : "no")
     exit
   }')
 

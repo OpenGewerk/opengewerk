@@ -200,15 +200,39 @@ if out=$(sh "$work/setup.sh" < /dev/null 2>&1); then
   echo 'FEHLER: eine http://-Adresse aus der .env lief durch'
   exit 1
 fi
-printf '%s' "$out" | grep -q '"http://192.168.1.20:23700" in TRUSTED_ORIGINS in docker/.env beginnt mit http://'
-sed 's|^TRUSTED_ORIGINS=.*|TRUSTED_ORIGINS=https://opengewerk.example.org,http://localhost:5173|' \
+printf '%s' "$out" | grep -q '"http://192.168.1.20:23700" in TRUSTED_ORIGINS beginnt mit http://'
+# In quotes, which Docker Compose takes off before the application sees it.
+sed 's|^TRUSTED_ORIGINS=.*|TRUSTED_ORIGINS="http://intranet.example.org"|' "$work/.env" > "$work/.env.quoted"
+mv "$work/.env.quoted" "$work/.env"
+if out=$(sh "$work/setup.sh" < /dev/null 2>&1); then
+  echo 'FEHLER: eine http://-Adresse in Anführungszeichen lief durch'
+  exit 1
+fi
+printf '%s' "$out" | grep -q '"http://intranet.example.org" in TRUSTED_ORIGINS beginnt mit http://'
+# With a comment after a blank, which Docker Compose leaves out as well.
+sed 's|^TRUSTED_ORIGINS=.*|TRUSTED_ORIGINS=https://opengewerk.example.org,http://localhost:5173 # Vite|' \
   "$work/.env" > "$work/.env.vite"
 mv "$work/.env.vite" "$work/.env"
 sh "$work/setup.sh" < /dev/null > /dev/null 2>&1 || {
   echo 'FEHLER: https mit der Adresse von Vite auf dieser Maschine wurde abgelehnt'
   exit 1
 }
-check 'Adresse aus der .env: jeder Eintrag geprüft, http:// nur für diese Maschine'
+# A second line with the key, which Docker Compose takes over the first.
+printf 'TRUSTED_ORIGINS=http://192.168.1.21:23700\n' >> "$work/.env"
+if out=$(sh "$work/setup.sh" < /dev/null 2>&1); then
+  echo 'FEHLER: eine zweite Zeile mit http:// lief durch'
+  exit 1
+fi
+printf '%s' "$out" | grep -q '"http://192.168.1.21:23700" in TRUSTED_ORIGINS beginnt mit http://'
+grep -v '^TRUSTED_ORIGINS=http://192.168.1.21' "$work/.env" > "$work/.env.one"
+mv "$work/.env.one" "$work/.env"
+# The variable from the environment, which Docker Compose takes over the .env.
+if out=$(TRUSTED_ORIGINS=http://192.168.1.22:23700 sh "$work/setup.sh" < /dev/null 2>&1); then
+  echo 'FEHLER: eine http://-Adresse aus der Umgebung lief durch'
+  exit 1
+fi
+printf '%s' "$out" | grep -q '"http://192.168.1.22:23700" in TRUSTED_ORIGINS beginnt mit http://'
+check 'Adresse aus der .env und der Umgebung: jeder Eintrag geprüft, http:// nur für diese Maschine'
 
 # 10. Another application runs the same script against its own folder
 # (opengewerk-haustechnik#14): its name at the start of every line, its prefix
