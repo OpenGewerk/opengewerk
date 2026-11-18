@@ -15,8 +15,10 @@ trap 'rm -rf "$work"' EXIT
 cp "$source_dir/setup.sh" "$source_dir/.env.example" "$source_dir/application.env" "$work/"
 
 # What the environment of whoever runs the test holds for the address, the
-# port and Compose stays out; the cases that need one set it themselves.
-unset OPENGEWERK_ADDRESS OPENGEWERK_PORT
+# port, Compose and the stand-in for docker below stays out; the cases that
+# need one set it themselves.
+unset OPENGEWERK_ADDRESS OPENGEWERK_PORT FAKE_JSON FAKE_PUBLISHED FAKE_LATER FAKE_OPERATOR FAKE_ENV FAKE_MISSING \
+  FAKE_COUNT
 for compose_variable in $(printenv | sed -n 's/^\(COMPOSE_[A-Za-z0-9_]*\)=.*/\1/p'); do
   unset "$compose_variable"
 done
@@ -332,6 +334,17 @@ if docker compose version > /dev/null 2>&1; then
   [ "$(port_in "$work/ports")" = 24567 ]
   rm "$work/ports/.env"
   [ "$(port_in "$work/ports")" = 23700 ]
+  # The migrate step gets the address as Compose hands it on, so that it
+  # refuses one the application would before the first change (#984).
+  grep -o '\${[A-Za-z_][A-Za-z0-9_]*:?' "$source_dir/compose.yaml" | sed -e 's/^\${//' -e 's/:?$/=set/' |
+    sort -u > "$work/ports/.env"
+  docker compose -f "$work/ports/compose.yaml" config --format json |
+    awk '/^    "migrate": \{$/ { migrate = 1; next } migrate && /^    \}/ { migrate = 0 }
+      migrate && /^ *"TRUSTED_ORIGINS": "set"/ { found = 1 } END { exit !found }' || {
+    echo 'FEHLER: der Schritt migrate bekommt TRUSTED_ORIGINS nicht'
+    exit 1
+  }
+  rm "$work/ports/.env"
   # A port given through a value compose.yaml requires: the value set counts,
   # and without it none is offered.
   sed 's/\${OPENGEWERK_PORT:-23700}/${OPENGEWERK_PORT:?Port fehlt}/' "$source_dir/compose.yaml" > "$work/ports/compose.yaml"
@@ -437,6 +450,30 @@ rm -f "$FAKE_COUNT"
 }
 rm -f "$FAKE_COUNT"
 [ "$(PATH="$work/fake:$PATH" FAKE_PUBLISHED=08080 port_in "$work")" = 8080 ]
+# A mapping over UDP alone gives no port for a browser.
+udp='{
+  "services": {
+    "app": {
+      "ports": [
+        {
+          "mode": "ingress",
+          "host_ip": "127.0.0.1",
+          "target": 23700,
+          "published": "8080",
+          "protocol": "udp"
+        }
+      ]
+    }
+  }
+}'
+rm -f "$FAKE_COUNT"
+[ -z "$(PATH="$work/fake:$PATH" FAKE_JSON=$udp port_in "$work")" ] || {
+  echo 'FEHLER: eine Zuordnung über UDP gab einen Port'
+  exit 1
+}
+tcp=$(printf '%s\n' "$udp" | sed 's/"udp"/"tcp"/')
+rm -f "$FAKE_COUNT"
+[ "$(PATH="$work/fake:$PATH" FAKE_JSON=$tcp port_in "$work")" = 8080 ]
 # Port 0, in any spelling, is no fixed port: Docker picks one then.
 for nothing in 0 000; do
   rm -f "$FAKE_COUNT"

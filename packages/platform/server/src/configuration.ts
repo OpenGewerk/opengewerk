@@ -371,7 +371,7 @@ const badPorts = new Set([
  * Origin header, so an entry with one would look configured and protect
  * nothing. Plain http only for this machine (#984).
  */
-function trustedOrigins(
+export function trustedOrigins(
   application: ServerApplication,
   environment: Environment,
 ): readonly string[] {

@@ -45,10 +45,10 @@ compose() {
 # compose.yaml requires and Compose finds missing, such as the address being
 # asked for, gets a stand-in for this one question; a value that is set keeps
 # it. Prints the port without leading zeros, or nothing when Compose gives no
-# answer or maps more than one port. Read from the JSON Compose prints, two
-# blanks to a level: only the "ports" of a service count (in "services",
-# three levels in), each mapping there has a target, and its published port
-# stands right after it.
+# answer or maps more than one port, or the one it maps is no TCP port. Read
+# from the JSON Compose prints, two blanks to a level: only the "ports" of a
+# service count (in "services", three levels in), each mapping there is one
+# object with a target, its published port and its protocol.
 published_port() {
   # Names and values have no blanks, so each stand-in is one word. Asked
   # again with the stand-ins found so far, since a Compose may name only one
@@ -71,9 +71,15 @@ published_port() {
     services && /^  \}/ { services = 0; next }
     services && /^      "ports": \[$/ { ports = 1; next }
     ports && /^      \]/ { ports = 0; next }
-    ports && /^ *"target": *[0-9]/ { mappings++; right_after = 1; next }
-    right_after && /^ *"published": *"[0-9][0-9]*"/ { published = $0 }
-    { right_after = 0 }
+    ports && /^        \{$/ { entry = 1; target = 0; value = ""; protocol = "tcp"; next }
+    entry && /^ *"target": *[0-9]/ { target = 1; next }
+    entry && /^ *"published": *"[0-9][0-9]*"/ { value = $0; next }
+    entry && /^ *"protocol": *"/ { protocol = $0; sub(/^ *"protocol": *"/, "", protocol); sub(/".*$/, "", protocol); next }
+    entry && /^        \}/ {
+      entry = 0
+      if (target) { mappings++; if (protocol == "tcp") published = value }
+      next
+    }
     END {
       if (mappings == 1 && published != "") {
         sub(/^ *"published": *"/, "", published)

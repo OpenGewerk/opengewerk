@@ -91,8 +91,14 @@ fi
 engine_note=''
 engine_id=''
 engine_new_enough() {
-docker_version=$(docker version --format '{{.Server.Version}}' 2>/dev/null) ||
+# Version and ID from one answer, so that both are of the same engine.
+engine=$(docker info --format '{{.ServerVersion}}|{{.ID}}' 2>/dev/null) ||
   fail "Docker antwortet nicht. Läuft der Docker-Dienst, und darf dieser Benutzer ihn ansprechen?$engine_note"
+docker_version=${engine%%|*}
+case "$engine" in
+  *'|'*) current_id=${engine#*|} ;;
+  *) current_id='' ;;
+esac
 
 docker_too_old=$(printf '%s\n' "$docker_version" | awk -F. -v minimum="$minimum_docker" '
   { original = $0 }
@@ -126,7 +132,6 @@ if [ "$docker_too_old" != 'no' ]; then
   fail "Docker meldet die Fassung \"$docker_version\", $APPLICATION_NAME braucht Docker Engine ab $minimum_docker. Vor 28.0.0 erreichen Rechner im selben Netz Ports, die nur auf 127.0.0.1 veröffentlicht sind, und 28.2.0 bis 28.3.2 öffnen sie nach einem Neuladen von firewalld wieder (CVE-2025-54388); beides führt am Proxy mit TLS vorbei. Docker aktualisieren: https://docs.docker.com/engine/install/$engine_note"
 fi
 
-current_id=$(docker info --format '{{.ID}}' 2>/dev/null) || current_id=''
 if [ -z "$current_id" ]; then
   fail "Docker nennt keine Kennung seiner Engine (docker info), an der sich prüfen ließe, dass der ganze Lauf mit derselben spricht.$engine_note"
 elif [ -z "$engine_id" ]; then

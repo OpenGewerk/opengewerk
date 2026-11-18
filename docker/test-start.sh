@@ -22,8 +22,8 @@ cp "$source_dir/start.sh" "$source_dir/setup.sh" "$source_dir/.env.example" \
 # Every call as one line: the version it saw in the environment, then the
 # arguments. Which variable holds the version is the prefix of the application
 # that starts, OPENGEWERK_VERSION unless WATCHED names another. "docker compose
-# version" answers like the real one does, and "docker version" with the
-# version of the engine in DOCKER_SERVER, 28.3.3 when it is not set. The one
+# version" answers like the real one does, and "docker info" with the version
+# of the engine in DOCKER_SERVER, 28.3.3 when it is not set, and its ID. The one
 # question start.sh asks the running application, whether it still waits for
 # its first run, is answered with SETUP_NEEDED, false when it is not set and
 # nothing at all when it is empty.
@@ -33,30 +33,28 @@ eval "seen=\${${WATCHED:-OPENGEWERK_VERSION}:-}"
 printf '%s|%s\n' "$seen" "$*" >> "$CALLS"
 case "$*" in
   *' exec -T app '*) printf '%s' "${SETUP_NEEDED-false}" ;;
-  "version --format {{.Server.Version}}")
-    # DOCKER_SERVERS answers the questions in turn, the last one for every
+  "info --format {{.ServerVersion}}|{{.ID}}")
+    # The engine answers its version and its ID at once. DOCKER_SERVERS and
+    # DOCKER_IDS answer the questions in turn, the last one for every
     # question after, as an engine swapped meanwhile behind the same context
-    # would; else DOCKER_SERVER answers all of them.
+    # would; else DOCKER_SERVER and DOCKER_ID answer all of them.
+    echo asked >> "$CALLS.engine"
+    asked=$(wc -l < "$CALLS.engine")
     if [ -n "${DOCKER_SERVERS:-}" ]; then
-      echo asked >> "$CALLS.version"
-      printf '%s\n' "$DOCKER_SERVERS" | awk -v n="$(wc -l < "$CALLS.version")" '{ print (n <= NF ? $n : $NF) }'
+      server=$(printf '%s\n' "$DOCKER_SERVERS" | awk -v n="$asked" '{ print (n <= NF ? $n : $NF) }')
     else
-      printf '%s\n' "${DOCKER_SERVER-28.3.3}"
+      server=${DOCKER_SERVER-28.3.3}
     fi
-    ;;
-  'version --format '*)
-    echo 'nur {{.Server.Version}} ist die Fassung der Engine' >&2
-    exit 1
-    ;;
-  'info --format {{.ID}}')
-    # DOCKER_IDS answers in turn like DOCKER_SERVERS, else one engine with
-    # the ID in DOCKER_ID; an empty one says nothing.
     if [ -n "${DOCKER_IDS:-}" ]; then
-      echo asked >> "$CALLS.id"
-      printf '%s\n' "$DOCKER_IDS" | awk -v n="$(wc -l < "$CALLS.id")" '{ print (n <= NF ? $n : $NF) }'
+      id=$(printf '%s\n' "$DOCKER_IDS" | awk -v n="$asked" '{ print (n <= NF ? $n : $NF) }')
     else
-      printf '%s\n' "${DOCKER_ID-engine-1}"
+      id=${DOCKER_ID-engine-1}
     fi
+    printf '%s|%s\n' "$server" "$id"
+    ;;
+  'info --format '* | 'version --format '*)
+    echo 'nur {{.ServerVersion}}|{{.ID}} fragt start.sh' >&2
+    exit 1
     ;;
   'context show')
     [ -z "${CONTEXT_FAILS:-}" ] || exit 1
@@ -338,18 +336,19 @@ check 'Docker ab 28.3.3 startet'
 # (at the beginning, before the migrations and before the start), was asked
 # with $1 in the watched variable, and no other.
 every_version_question_in() {
-  all_questions=$(grep -c '|version --format {{.Server.Version}}$' "$CALLS" || true)
-  these=$(grep -c "^$1|version --format {{.Server.Version}}\$" "$CALLS" || true)
+  all_questions=$(grep -c '|info --format {{.ServerVersion}}|{{.ID}}$' "$CALLS" || true)
+  these=$(grep -c "^$1|info --format {{.ServerVersion}}|{{.ID}}\$" "$CALLS" || true)
   [ "$all_questions" -eq 3 ] && [ "$these" -eq 3 ] || {
     printf 'FEHLER: %s von %s Fragen nach der Engine liefen mit "%s"\n' "$these" "$all_questions" "$1"
     cat "$CALLS"
     exit 1
   }
-  # And every other call of docker after the context was read, pull, run and
-  # up among them, with the same. Before it only "compose version" runs, which
-  # asks the local plugin and no engine; cosign is no call of docker.
-  elsewhere=$(awk -v prefix="$1|" 'read && !/^cosign[|]/ && index($0, prefix) != 1 { n++ }
-    /[|]context show$/ { read = 1 }
+  # And every other call of docker that talks to an engine, pull, run and up
+  # among them, with the same, whether the context was read or set before.
+  # "compose version" asks the local plugin and "context show" the CLI, not
+  # an engine; cosign is no call of docker.
+  elsewhere=$(awk -v prefix="$1|" '!/^cosign[|]/ && !/[|]compose version$/ && !/[|]context show$/ &&
+    index($0, prefix) != 1 { n++ }
     END { print n + 0 }' "$CALLS")
   [ "$elsewhere" -eq 0 ] || {
     printf 'FEHLER: %s Aufrufe von docker liefen nicht mit "%s"\n' "$elsewhere" "$1"
@@ -409,7 +408,7 @@ check 'Docker: Prüfung und Start im selben Kontext, ein gesetzter Kontext oder 
 # migrations, nothing starts; too old only before the start, the migrations
 # ran and the application does not start.
 : > "$CALLS"
-rm -f "$CALLS.version"
+rm -f "$CALLS.engine"
 if out=$(DOCKER_SERVERS='28.3.3 27.5.1' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
   sh "$work/docker/start.sh" < /dev/null 2>&1); then
   echo 'FEHLER: eine Engine, die vor den Migrationen zu alt wurde, startete Container'
@@ -423,7 +422,7 @@ fi
 absent 'run --rm migrate'
 absent 'up -d'
 : > "$CALLS"
-rm -f "$CALLS.version"
+rm -f "$CALLS.engine"
 if out=$(DOCKER_SERVERS='28.3.3 28.3.3 27.5.1' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
   sh "$work/docker/start.sh" < /dev/null 2>&1); then
   echo 'FEHLER: eine Engine, die vor dem Start zu alt wurde, startete die Anwendung'
@@ -436,14 +435,14 @@ printf '%s' "$out" | grep -q 'schon auf dem neuen Stand' || {
 }
 grep -q 'run --rm migrate$' "$CALLS"
 absent 'up -d'
-rm -f "$CALLS.version"
+rm -f "$CALLS.engine"
 check 'Docker: vor jedem Schritt, der Container startet, wird die Engine noch einmal gefragt'
 
 # 15. Another engine behind the same context, new enough as well: before the
 # migrations nothing starts, after them the application does not start on
 # it; an engine without an ID starts nothing.
 : > "$CALLS"
-rm -f "$CALLS.id"
+rm -f "$CALLS.engine"
 if out=$(DOCKER_IDS='erste zweite' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
   sh "$work/docker/start.sh" < /dev/null 2>&1); then
   echo 'FEHLER: eine andere Engine vor den Migrationen bekam Container'
@@ -453,7 +452,7 @@ printf '%s' "$out" | grep -q 'eine andere Engine'
 absent 'run --rm migrate'
 absent 'up -d'
 : > "$CALLS"
-rm -f "$CALLS.id"
+rm -f "$CALLS.engine"
 if out=$(DOCKER_IDS='erste erste zweite' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 \
   sh "$work/docker/start.sh" < /dev/null 2>&1); then
   echo 'FEHLER: eine andere Engine nach den Migrationen startete die Anwendung'
@@ -463,14 +462,14 @@ printf '%s' "$out" | grep -q 'eine andere Engine.*schon auf dem neuen Stand'
 grep -q 'run --rm migrate$' "$CALLS"
 absent 'up -d'
 : > "$CALLS"
-rm -f "$CALLS.id"
+rm -f "$CALLS.engine"
 if out=$(DOCKER_ID='' OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null 2>&1); then
   echo 'FEHLER: eine Engine ohne Kennung bekam Container'
   exit 1
 fi
 printf '%s' "$out" | grep -q 'keine Kennung seiner Engine'
 absent 'run --rm migrate'
-rm -f "$CALLS.id"
+rm -f "$CALLS.engine"
 check 'Docker: dieselbe Engine vom ersten Blick bis zum Start'
 
 echo 'Startskript: alles in Ordnung.'

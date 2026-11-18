@@ -291,9 +291,9 @@ hält den Postausgang je Adresse, unter der neuen sieht er ihn nicht mehr. Die
 alte Adresse bleibt erreichbar, bis das geschafft ist. Danach kommt, wo nötig,
 TLS an den Reverse Proxy, Vorlagen liegen unter `docker/proxy/`, dann die neue
 Adresse in `TRUSTED_ORIGINS`, und erst danach wird wieder erfasst. Wer das vor
-dem Update vergisst: Die Migrationen laufen, dann verweigert die Anwendung den
-Start; nach dem Ändern der Adresse startet sie ein neuer Lauf von
-`sh docker/start.sh`. Steht `TRUSTED_ORIGINS` auch in der Umgebung der Shell,
+dem Update vergisst, dem bricht schon die Migration ab, vor der ersten Änderung,
+und die Datenbank bleibt auf dem Stand davor; nach dem Ändern der Adresse läuft
+`sh docker/start.sh` durch. Steht `TRUSTED_ORIGINS` auch in der Umgebung der Shell,
 gilt dieser Wert vor der `.env` und ist dort ebenso zu ändern.
 
 Der erste Eintrag aus `TRUSTED_ORIGINS` steht auch auf jedem QR-Etikett einer
