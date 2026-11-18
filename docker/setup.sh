@@ -142,99 +142,105 @@ fi
 # secret below it, and Compose took that one. Such a file stops the run with
 # the number of the line, and with the name where it is one, never with a
 # value, which can be a secret. Blank lines and comments, also after blanks,
-# stay as they are; quotes closed on their line, a comment after the value
-# and a carriage return from Windows are read away where a value is read.
-carriage_return=$(printf '\r')
-line_number=0
-names_seen=' '
-while IFS= read -r line || [ -n "$line" ]; do
-  line_number=$((line_number + 1))
-  line=${line%"$carriage_return"}
-  # Empty, or nothing but blanks.
-  case "$line" in
-    *[!\ \	]*) ;;
-    *) continue ;;
-  esac
-  case "${line#"${line%%[!\ \	]*}"}" in
-    \#*) continue ;;
-  esac
-  case "$line" in
-    *=*) name=${line%%=*} ;;
-    *) fail "docker/.env, Zeile $line_number: keine Zeile der Form NAME=Wert." ;;
-  esac
-  case "$name" in
-    '' | [!A-Za-z_]* | *[!A-Za-z0-9_]*)
-      fail "docker/.env, Zeile $line_number: bitte als NAME=Wert schreiben, ohne export davor und ohne Leerzeichen um das =."
-      ;;
-  esac
-  value=${line#*=}
-  # A value begins with a visible character of ASCII, a quote among them.
-  # Compose skips blanks there, and not only space and tab: after a no-break
-  # space, say, a quote would open a value over several lines for Compose that
-  # this check would not see.
-  case "$value" in
-    [!!-~]*)
-      fail "docker/.env, Zeile $line_number ($name): der Wert beginnt mit einem Leerzeichen oder einem Zeichen außerhalb von ASCII. Bitte ohne Leerzeichen nach dem = schreiben, ein anderes Zeichen am Anfang in Anführungszeichen."
-      ;;
-  esac
-  # A value in quotes ends on its line: one that goes on would hide the lines
-  # after it from Compose, not from this script. A backslash before a quote
-  # keeps it from closing the value, for Compose and not for this check, so a
-  # value in quotes has no backslash at all.
-  case "$value" in
-    \"*) rest=${value#\"} quote='"' ;;
-    \'*) rest=${value#\'} quote="'" ;;
-    *) rest='' quote='' ;;
-  esac
-  if [ -n "$quote" ]; then
-    case "$rest" in
-      *"$quote"*) ;;
-      *) fail "docker/.env, Zeile $line_number ($name): das Anführungszeichen am Anfang des Werts schließt nicht auf dieser Zeile. Ein Wert über mehrere Zeilen geht hier nicht." ;;
+# stay as they are, and a carriage return from Windows is read away.
+#
+# In a subshell under the C locale: the ranges in the patterns below are
+# ranges of bytes then, whichever shell runs this and in whichever locale.
+# bash 4 under de_DE.UTF-8, say, reads a range by its order of letters.
+(
+  LC_ALL=C
+  carriage_return=$(printf '\r')
+  line_number=0
+  names_seen=' '
+  while IFS= read -r line || [ -n "$line" ]; do
+    line_number=$((line_number + 1))
+    line=${line%"$carriage_return"}
+    # Empty, or nothing but blanks.
+    case "$line" in
+      *[!\ \	]*) ;;
+      *) continue ;;
     esac
-    # Up to the first quote of its kind: a backslash right before it would
-    # keep it from closing for Compose; one in a comment after it counts not.
-    case "${rest%%"$quote"*}" in
-      *\\*) fail "docker/.env, Zeile $line_number ($name): ein Wert in Anführungszeichen mit einem \\ darin geht hier nicht." ;;
+    case "${line#"${line%%[!\ \	]*}"}" in
+      \#*) continue ;;
     esac
-    # After the closing quote Compose reads on as if a new line began, so
-    # "A=x" B=y sets B as well. Only blanks may follow, and a comment after
-    # one of them.
-    after=${rest#*"$quote"}
-    comment=${after#"${after%%[!\ \	]*}"}
-    case "$comment" in
-      '') ;;
-      \#*) [ "$comment" != "$after" ] || fail "docker/.env, Zeile $line_number ($name): hinter dem schließenden Anführungszeichen darf nur ein Kommentar stehen, mit einem Leerzeichen davor." ;;
-      *) fail "docker/.env, Zeile $line_number ($name): hinter dem schließenden Anführungszeichen darf nur ein Kommentar stehen, mit einem Leerzeichen davor." ;;
+    case "$line" in
+      *=*) name=${line%%=*} ;;
+      *) fail "docker/.env, Zeile $line_number: keine Zeile der Form NAME=Wert." ;;
     esac
-  fi
-  # TRUSTED_ORIGINS is read here and in start.sh straight from its line. It
-  # stands there in the one form whose text is the value Docker Compose takes:
-  # addresses and commas, and nothing Compose takes away or fills in, such as
-  # quotes, a comment or a ${...}.
-  if [ "$name" = TRUSTED_ORIGINS ]; then
-    case "$value" in
-      *[!]A-Za-z0-9.:/,_[-]*)
-        fail "docker/.env, Zeile $line_number: TRUSTED_ORIGINS bitte nur mit den Adressen schreiben, durch Komma getrennt, ohne Anführungszeichen, Leerzeichen, Kommentar oder \$."
+    case "$name" in
+      '' | [!A-Za-z_]* | *[!A-Za-z0-9_]*)
+        fail "docker/.env, Zeile $line_number: bitte als NAME=Wert schreiben, ohne export davor und ohne Leerzeichen um das =."
         ;;
     esac
-  fi
-  # The version start.sh reads from its line as well (#1001), with its quotes
-  # and comment taken away; a ${...} Compose would fill in, and it would read
-  # another version than the one Compose starts.
-  if [ "$name" = "${APPLICATION_PREFIX}_VERSION" ]; then
+    value=${line#*=}
+    # A value begins with a visible character of ASCII, a quote among them.
+    # Compose skips blanks there, and not only space and tab: after a no-break
+    # space, say, a quote would open a value over several lines for Compose that
+    # this check would not see.
     case "$value" in
-      *\$*)
-        fail "docker/.env, Zeile $line_number: $name bitte ohne \$ schreiben, nur die Fassung, etwa 0.8.0."
+      [!!-~]*)
+        fail "docker/.env, Zeile $line_number ($name): der Wert beginnt mit einem Leerzeichen oder einem Zeichen außerhalb von ASCII. Bitte ohne Leerzeichen nach dem = schreiben, ein anderes Zeichen am Anfang in Anführungszeichen."
         ;;
     esac
-  fi
-  case "$names_seen" in
-    *" $name "*)
-      fail "docker/.env, Zeile $line_number: $name steht ein zweites Mal in der Datei. Docker Compose nimmt die letzte dieser Zeilen, mit ihrem Wert läuft die Instanz bisher; bitte nur sie behalten."
-      ;;
-  esac
-  names_seen="$names_seen$name "
-done < "$env_file"
+    # A value in quotes ends on its line: one that goes on would hide the lines
+    # after it from Compose, not from this script. A backslash before a quote
+    # keeps it from closing the value, for Compose and not for this check, so a
+    # value in quotes has no backslash at all.
+    case "$value" in
+      \"*) rest=${value#\"} quote='"' ;;
+      \'*) rest=${value#\'} quote="'" ;;
+      *) rest='' quote='' ;;
+    esac
+    if [ -n "$quote" ]; then
+      case "$rest" in
+        *"$quote"*) ;;
+        *) fail "docker/.env, Zeile $line_number ($name): das Anführungszeichen am Anfang des Werts schließt nicht auf dieser Zeile. Ein Wert über mehrere Zeilen geht hier nicht." ;;
+      esac
+      # Up to the first quote of its kind: a backslash right before it would
+      # keep it from closing for Compose; one in a comment after it counts not.
+      case "${rest%%"$quote"*}" in
+        *\\*) fail "docker/.env, Zeile $line_number ($name): ein Wert in Anführungszeichen mit einem \\ darin geht hier nicht." ;;
+      esac
+      # After the closing quote Compose reads on as if a new line began, so
+      # "A=x" B=y sets B as well. Only blanks may follow, and a comment after
+      # one of them.
+      after=${rest#*"$quote"}
+      comment=${after#"${after%%[!\ \	]*}"}
+      case "$comment" in
+        '') ;;
+        \#*) [ "$comment" != "$after" ] || fail "docker/.env, Zeile $line_number ($name): hinter dem schließenden Anführungszeichen darf nur ein Kommentar stehen, mit einem Leerzeichen davor." ;;
+        *) fail "docker/.env, Zeile $line_number ($name): hinter dem schließenden Anführungszeichen darf nur ein Kommentar stehen, mit einem Leerzeichen davor." ;;
+      esac
+    fi
+    # TRUSTED_ORIGINS is read here and in start.sh straight from its line. It
+    # stands there in the one form whose text is the value Docker Compose takes:
+    # addresses and commas, and nothing Compose takes away or fills in, such as
+    # quotes, a comment or a ${...}.
+    if [ "$name" = TRUSTED_ORIGINS ]; then
+      case "$value" in
+        *[!]A-Za-z0-9.:/,_[-]*)
+          fail "docker/.env, Zeile $line_number: TRUSTED_ORIGINS bitte nur mit den Adressen schreiben, durch Komma getrennt, ohne Anführungszeichen, Leerzeichen, Kommentar oder \$."
+          ;;
+      esac
+    fi
+    # The version start.sh reads from its line as well (#1001), with its quotes
+    # and comment taken away; a ${...} Compose would fill in, and it would read
+    # another version than the one Compose starts.
+    if [ "$name" = "${APPLICATION_PREFIX}_VERSION" ]; then
+      case "$value" in
+        *\$*)
+          fail "docker/.env, Zeile $line_number: $name bitte ohne \$ schreiben, nur die Fassung, etwa 0.8.0."
+          ;;
+      esac
+    fi
+    case "$names_seen" in
+      *" $name "*)
+        fail "docker/.env, Zeile $line_number: $name steht ein zweites Mal in der Datei. Docker Compose nimmt die letzte dieser Zeilen, mit ihrem Wert läuft die Instanz bisher; bitte nur sie behalten."
+        ;;
+    esac
+    names_seen="$names_seen$name "
+  done < "$env_file"
+) || exit 1
 
 # A last line without a line end would swallow the first line appended below.
 # Only now, after the checks above, so that a file they stop stays as it was.
