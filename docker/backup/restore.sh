@@ -568,7 +568,11 @@ if ! PGPASSWORD="$OPENGEWERK_OWNER_PASSWORD" PGOPTIONS="-c client_min_messages=w
 	psql --host "$POSTGRES_HOST" --username opengewerk_owner --dbname "$POSTGRES_DB" \
 	--no-psqlrc --quiet --tuples-only --no-align --single-transaction --set ON_ERROR_STOP=1 \
 	--file "${work}/empty.sql" --file "${work}/database.sql" >"${work}/played.txt"; then
-	transaction=$(sed -n 's/^restore-transaction \([0-9][0-9]*\)$/\1/p' "${work}/played.txt" | head -n 1)
+	# sed reads the number alone and stops at the first one. Through a pipe only
+	# the status of its last command would count, and a sed that a second stop
+	# ended would read as a transaction that never began. As it is, a failed
+	# lookup ends the run here, and the application stays locked.
+	transaction=$(sed -n '/^restore-transaction [0-9][0-9]*$/{s/^restore-transaction //p;q;}' "${work}/played.txt")
 	# Without its number the transaction never began, and nothing changed.
 	# The number is what the first statement returns, and psql writes each
 	# result out before it sends the next statement, so it stands in the file

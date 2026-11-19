@@ -430,18 +430,20 @@ fi
 exec $real_wc "\$@"
 FAKE
 chmod +x "$work/bin/wc"
-# head as it is, unless HEAD_FAILS is set: then a head -n 1 that reads stdin
-# fails, the way one a second Ctrl+C reached would end.
-real_head=$(command -v head)
-cat > "$work/bin/head" <<FAKE
+# sed as it is, unless SED_FAILS is set: then the sed that looks up the number
+# of the transaction fails without output, the way one a second Ctrl+C reached
+# would end.
+real_sed=$(command -v sed)
+cat > "$work/bin/sed" <<FAKE
 #!/bin/sh
-if [ -n "\${HEAD_FAILS:-}" ] && [ "\$*" = '-n 1' ]; then
-  cat > /dev/null
-  exit 1
+if [ -n "\${SED_FAILS:-}" ]; then
+  case "\$*" in
+    *restore-transaction*) exit 1 ;;
+  esac
 fi
-exec $real_head "\$@"
+exec $real_sed "\$@"
 FAKE
-chmod +x "$work/bin/head"
+chmod +x "$work/bin/sed"
 # grep as it is, unless GREP_FAILS is set: then the grep -v that holds what
 # tar or find said against the gone files cannot read.
 real_grep=$(command -v grep)
@@ -1065,10 +1067,11 @@ check 'Rückspielen: scheitert es nach der Datenbank, bleibt die Anwendung ausge
 
 # From the play of the dump on, only the answer of the database that the
 # transaction was aborted, or a transaction that never began, gives the login
-# back (#1007). A head that fails while the number is looked up, the way one a
+# back (#1007). A sed that fails while the number is looked up, the way one a
 # second Ctrl+C reached would end, ends the run before the database is asked,
-# and the application stays locked.
-halfway PLAY_FAILS=1 XACT_STATUS=aborted HEAD_FAILS=1
+# and the application stays locked: its failure is not taken for a transaction
+# that never began.
+halfway PLAY_FAILS=1 XACT_STATUS=aborted SED_FAILS=1
 grep -q '^restore-as ' "$CALLS" || {
   echo 'FEHLER: der Dump wurde nicht eingespielt, der Fall wurde nicht geprüft'
   cat "$work/out"
