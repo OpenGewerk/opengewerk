@@ -85,6 +85,11 @@ if [ -n "${DUMP_HANGS:-}" ]; then
   echo "$$" > "$DUMP_HANGS"
   exec sleep "${DUMP_HANGS_FOR:-600}"
 fi
+# A dump that fails.
+if [ -n "${DUMP_FAILS:-}" ]; then
+  echo 'pg_dump: error: connection lost' >&2
+  exit 1
+fi
 # A file named after its own hash that does not lie where the store keeps it.
 if [ -n "${DUMP_ASTRAY:-}" ]; then
   mkdir -p "$STORAGE_PATH/00/00"
@@ -399,10 +404,12 @@ fi
 # A target that stopped answering: rm of a hidden file right below
 # RM_BLOCKS_UNDER waits two minutes first, and TERM does not end that wait.
 # Old archives the backup takes away when there are too many are not hidden.
+# RM_BLOCKS_MARK is made when that wait begins.
 if [ -n "\${RM_BLOCKS_UNDER:-}" ]; then
   case "\$*" in
     *"\$RM_BLOCKS_UNDER"/.*)
       trap '' TERM
+      [ -z "\${RM_BLOCKS_MARK:-}" ] || : > "\$RM_BLOCKS_MARK"
       sleep 120
       ;;
   esac
@@ -1821,6 +1828,29 @@ for phase in backup pause; do
     exit 1
   fi
 done
+# A TERM that reaches a backup which already cleans up, after a failure of its
+# own and on a target slow to answer, does not end that clean up: the backup
+# still gives up on the target after its 35 seconds and names the file.
+rm -f "$work/rm-blocks"
+TMPDIR="$work/run-tmp" DUMP_FAILS=1 RM_BLOCKS_UNDER="$work/backups" RM_BLOCKS_MARK="$work/rm-blocks" \
+  FIXED_STAMP=2031-03-01T000020Z POSTGRES_DB=opengewerk \
+  "$real_timeout" -s KILL 150 setsid sh "$work/bin/backup.sh" > "$work/out" 2>&1 &
+cleaning_pid=$!
+waited=0
+until [ -e "$work/rm-blocks" ] || [ "$waited" -ge 30 ]; do
+  sleep 1
+  waited=$((waited + 1))
+done
+kill -s TERM -- "-$cleaning_pid" 2>/dev/null || true
+wait "$cleaning_pid" || true
+left_on_target=$(ls -A "$work/backups" | grep '^\..*-2031-03-01T000020Z\.' || true)
+if [ ! -e "$work/rm-blocks" ] || [ -z "$left_on_target" ] ||
+  ! grep -qF "sie bleibt dort liegen: $work/backups/$left_on_target" "$work/out"; then
+  echo 'FEHLER: ein TERM brach das Aufräumen einer Sicherung ab'
+  cat "$work/out"
+  exit 1
+fi
+rm -f "$work/backups/$left_on_target"
 check 'Zeitplan: ein Anhalten erreicht die laufende Sicherung mit allem, was sie gestartet hat, und endet in der Pause sofort'
 
 # A file in an archive whose content is not what its name says, as a link

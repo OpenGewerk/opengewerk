@@ -309,6 +309,9 @@ services:
     # target such as a share that belongs to somebody else, FOWNER for setting
     # the times and modes of what it restores there.
     cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    # A stop ends a backup by hand through its trap, and its clean up may wait
+    # up to 35 seconds on a target that does not answer (#999, #1004).
+    stop_grace_period: 2m
     environment: &backup-environment
       POSTGRES_HOST: postgres
       POSTGRES_DB: opengewerk
