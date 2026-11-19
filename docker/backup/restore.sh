@@ -350,6 +350,41 @@ fi
 
 echo "    ${files} Datei(en) in der Sicherung, ${expected_files} davon gegen ihren Hash geprüft."
 
+# --- Who the store belongs to ----------------------------------------------
+# The store belongs to the user of the application, and an application that
+# still runs, which the documented way rules out but nothing here can see, can
+# change what is in it at any moment: put a link where a folder was between a
+# look at the folder and the step that follows, say. Root, going by paths in
+# the store, would follow that link out of it and delete, write or hand over
+# files of this container, the archives among them. So what this restore does
+# in the store runs with the rights of the store's owner, and a link takes it
+# only where the application could go itself.
+#
+# The owner empties only folders it may write. One that belongs to someone
+# else, root after a copy that failed halfway before #1000 say, would end the
+# restore with the database already replaced; it is turned away here, while
+# nothing has changed yet.
+mkdir -p "$STORAGE_PATH"
+# Read before anything is copied, from the store itself, which carries the
+# owner the application runs as.
+storage_owner=$(stat -c '%u:%g' "$STORAGE_PATH")
+storage_uid=${storage_owner%%:*}
+if [ "$storage_uid" != 0 ]; then
+	find "$STORAGE_PATH" -mindepth 1 -type d \( ! -user "$storage_uid" -o ! -perm -300 \) \
+		>"${work}/foreign-folders"
+	if [ -s "${work}/foreign-folders" ]; then
+		echo "Im Dateispeicher liegen Ordner, die sein Eigentümer (${storage_owner}) nicht leeren darf:" >&2
+		head -n 3 "${work}/foreign-folders" | tr "\001-\011\013-\037\177" "?" | sed 's/^/  /' >&2
+		echo "Das Rückspielen leert und füllt den Speicher mit dessen Rechten. Es wird nichts" >&2
+		echo "zurückgespielt, Datenbank und Dateispeicher bleiben, wie sie sind. Bei angehaltener" >&2
+		echo "Anwendung geben diese Befehle den Speicher seinem Eigentümer zurück, danach das" >&2
+		echo "Rückspielen noch einmal laufen lassen:" >&2
+		echo "  docker compose -f docker/compose.yaml --profile backup run --rm backup chown -R ${storage_owner} ${STORAGE_PATH}" >&2
+		echo "  docker compose -f docker/compose.yaml --profile backup run --rm backup chmod -R u+rwX ${STORAGE_PATH}" >&2
+		exit 1
+	fi
+fi
+
 # --- Lock the application out for the duration ------------------------------
 # Counting open connections was the first attempt at this and it protects
 # against nothing: the pool closes an idle connection after a few seconds, so
@@ -634,23 +669,22 @@ level_after=$(migration_level)
 # What check 2 let through, from the folder it checked: nothing that goes into
 # the store now is read from the archive.
 echo "  Dateispeicher wird zurückgespielt."
-mkdir -p "$STORAGE_PATH"
-
-# Read before anything is copied. This container runs as root, the
-# application does not, so files restored with root's ownership would be
-# readable and undeletable for the very process that needs them. The
-# directory itself already carries the right owner, so it is the one to ask.
-storage_owner=$(stat -c '%u:%g' "$STORAGE_PATH")
-
-find "$STORAGE_PATH" -mindepth 1 -delete
-# The checked folder gets that owner before the copy, which cp -a carries
-# over and sets on the store itself at its end, also when it fails halfway, a
-# full disk say. Root's would stay on the store then, and the next restore,
-# the one the message asks for, would read it here and hand the whole store
-# to root (#1000).
-chown -R "$storage_owner" "$staged"
-cp -a "${staged}/." "$STORAGE_PATH/"
-chown -R "$storage_owner" "$STORAGE_PATH"
+# With the rights of the store's owner, see above. Root reads the checked
+# folder, which lies in this container where the application cannot reach it,
+# and the owner unpacks it into the store: every file it writes is its own,
+# also when the copy fails halfway, a full disk say, so the next restore, the
+# one the message asks for, finds the owner on the store (#1000). umask 0
+# keeps the modes the files have in the archive, as a copy by root did.
+gosu "$storage_owner" find "$STORAGE_PATH" -mindepth 1 -delete
+# Through a pipe only the status of its last command counts; a tar that fails
+# while it reads says so in a file.
+pack_failed="${work}/pack-failed"
+{ tar --create --file - --directory "$staged" . || : >"$pack_failed"; } |
+	gosu "$storage_owner" sh -c 'umask 0 && exec tar --extract --no-same-owner --file - --directory "$1"' \
+		sh "$STORAGE_PATH"
+if [ -e "$pack_failed" ]; then
+	exit 1
+fi
 rm -rf "$staged"
 
 # --- Check 3: is the audit log the same log? -------------------------------

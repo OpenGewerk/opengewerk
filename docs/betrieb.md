@@ -766,8 +766,8 @@ zuerst eingehängt, und wer mit der Vorgabe, dem Volume `backups`, gesichert und
 die Archive von Hand kopiert hat, legt die Kopien in ein Verzeichnis und trägt
 dessen absoluten Pfad als `BACKUP_TARGET` ein. Das Volume der neuen Maschine ist
 leer, und `restore.sh` sucht ein Archiv nur dort. Dann startet die Instanz einmal leer, damit es den
-Dateispeicher gibt und er dem Benutzer der Anwendung gehört: `restore.sh` gibt
-den zurückgespielten Dateien den Eigentümer dieses Ordners, und legte erst die
+Dateispeicher gibt und er dem Benutzer der Anwendung gehört: `restore.sh` leert
+und füllt diesen Ordner mit den Rechten seines Eigentümers, und legte erst die
 Sicherung das Volume an, gehörte er root. Danach spielt
 
 ```bash
@@ -863,6 +863,17 @@ steht also auf null, während die Anwendung läuft. Stattdessen bekommt
 werden beendet, und der Eigentümer, der zurückspielt, und der Superuser, der
 prüft, sind davon nicht betroffen. Die gesamte Datenbank zu sperren ginge
 nicht, das schlösse auch sie aus.
+
+**Im Dateispeicher arbeitet das Rückspielen mit den Rechten seines Eigentümers**,
+dem Benutzer der Anwendung, nicht als root. Ob die Anwendung wirklich angehalten
+ist, sieht `restore.sh` nicht. Liefe sie noch, könnte sie zwischen zwei
+Schritten einen Ordner gegen einen Link tauschen, und root folgte ihm aus dem
+Speicher hinaus, zu den Archiven etwa. Mit den Rechten des Eigentümers führt ein
+solcher Link nur dorthin, wohin die Anwendung selbst darf. Leeren kann der
+Eigentümer nur Ordner, die ihm gehören und die er beschreiben darf. Liegt ein
+anderer im Speicher, etwa einer, der nach einem halben Kopieren vor #1000 root
+gehört, lehnt `restore.sh` das Rückspielen ab, bevor sich etwas ändert, und
+nennt die Befehle, die den Speicher seinem Eigentümer zurückgeben.
 
 ## Die Sicherung als Zeuge für das Audit-Log
 
