@@ -1841,7 +1841,10 @@ until [ -e "$work/rm-blocks" ] || [ "$waited" -ge 30 ]; do
   sleep 1
   waited=$((waited + 1))
 done
-kill -s TERM -- "-$cleaning_pid" 2>/dev/null || true
+kill -s TERM -- "-$cleaning_pid" || {
+  echo 'FEHLER: das TERM erreichte die aufräumende Sicherung nicht, der Fall wurde nicht geprüft'
+  exit 1
+}
 wait "$cleaning_pid" || true
 left_on_target=$(ls -A "$work/backups" | grep '^\..*-2031-03-01T000020Z\.' || true)
 if [ ! -e "$work/rm-blocks" ] || [ -z "$left_on_target" ] ||
