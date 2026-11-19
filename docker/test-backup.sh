@@ -220,11 +220,6 @@ cat > "$work/bin/tar" <<FAKE
 if [ -n "\${SWAP_FROM:-}" ] && [ "\$1" = --extract ]; then
   cp "\$SWAP_FROM" "\$SWAP_ONTO"
 fi
-if [ -n "\${STORAGE_FAILS:-}" ] && [ "\$1" = --extract ]; then
-  case "\$*" in
-    *storage.tar*) exit 1 ;;
-  esac
-fi
 # A file of the store that is gone by the time tar comes to it: tar names a
 # path that is not there, which is what it says for a file that vanished.
 if [ -n "\${TAR_MISSES:-}" ] && [ "\$1" = --create ]; then
@@ -343,6 +338,17 @@ cat > "$work/bin/cp" <<FAKE
 #!/bin/sh
 if [ -n "\${CP_SERVES:-}" ] && [ "\$1" = "\${CP_FROM:-}" ]; then
   exec $real_cp "\$CP_SERVES" "\$2"
+fi
+# A store that the checked files do not all reach, the way a full disk ends
+# the copy: cp copies and still fails, and the restore fails after the
+# database is replaced.
+if [ -n "\${STORAGE_FAILS:-}" ]; then
+  case " \$* " in
+    *" \$STORAGE_PATH/ "*)
+      $real_cp "\$@"
+      exit 1
+      ;;
+  esac
 fi
 exec $real_cp "\$@"
 FAKE
@@ -823,12 +829,40 @@ halfway() {
     exit 1
   }
 }
+# The store belongs to the user of the application, and after a copy that
+# failed it still does, every file of it, so that the next restore, the one
+# the message asks for, keeps that owner (#1000). The archive for that holds
+# a file in the store, so that there is a file the copy has written.
+filled_text='im Speicher beim Kopieren'
+filled_hash=$(printf '%s' "$filled_text" | sha256sum | cut -d' ' -f1)
+filled_dir="$STORAGE_PATH/$(printf '%s' "$filled_hash" | cut -c1-2)"
+mkdir -p "$filled_dir/$(printf '%s' "$filled_hash" | cut -c3-4)"
+printf '%s' "$filled_text" > "$filled_dir/$(printf '%s' "$filled_hash" | cut -c3-4)/$filled_hash"
+POSTGRES_DB=opengewerk FIXED_STAMP=2031-04-01T000000Z sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
+  cat "$work/out"
+  exit 1
+}
+ours_kept=$ours
+ours=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
+chown -R 1000:1000 "$STORAGE_PATH"
 halfway STORAGE_FAILS=1
+ours=$ours_kept
 grep -q 'bleibt ausgesperrt' "$work/out" || {
   echo 'FEHLER: die Meldung sagt nicht, dass die Anwendung ausgesperrt bleibt'
   cat "$work/out"
   exit 1
 }
+if [ ! -f "$filled_dir/$(printf '%s' "$filled_hash" | cut -c3-4)/$filled_hash" ]; then
+  echo 'FEHLER: das gescheiterte Kopieren schrieb keine Datei, der Fall wurde nicht geprüft'
+  exit 1
+fi
+if [ "$(stat -c '%u:%g' "$STORAGE_PATH")" != 1000:1000 ] || [ -n "$(find "$STORAGE_PATH" ! -user 1000 | head -n 1)" ]; then
+  echo 'FEHLER: nach einem gescheiterten Kopieren gehört der Dateispeicher nicht mehr dem Benutzer der Anwendung'
+  ls -lnR "$STORAGE_PATH"
+  exit 1
+fi
+rm -rf "$filled_dir"
+chown -R 0:0 "$STORAGE_PATH"
 if grep -q 'alter role opengewerk_app login' "$CALLS"; then
   echo 'FEHLER: nach einem halben Rückspielen bekam die Anwendung ihre Anmeldung zurück'
   exit 1
@@ -1880,8 +1914,10 @@ rm -f "$work/backups/$left_on_target"
 check 'Zeitplan: ein Anhalten erreicht die laufende Sicherung mit allem, was sie gestartet hat, und endet in der Pause sofort'
 
 # A file in an archive whose content is not what its name says, as a link
-# swapped in while tar read the store would leave it: the restore stops and
-# does not leave the file in the store, where the application would read it.
+# swapped in while tar read the store or a disk that broke would leave it: the
+# restore stops before anything changes (#1000). The application is not
+# locked out, the dump is not played, and the store holds what it held, file
+# for file, without the forged one, where the application would read it.
 put_old 'echt' "$(hash_of 'echt')"
 backed_up 'eine Sicherung für die untergeschobene Datei scheiterte'
 forged=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
@@ -1910,13 +1946,28 @@ sum=$(sha256sum "$work/forged/storage.tar" | cut -d' ' -f1)
 sed "s|\"storage.tar\": \"[0-9a-f]*\"|\"storage.tar\": \"$sum\"|" "$work/forged/manifest.json" > "$work/forged/manifest.new"
 mv "$work/forged/manifest.new" "$work/forged/manifest.json"
 tar --create --gzip --file "$work/backups/$forged" --directory "$work/forged" .
+# The store, file for file with its content, before the restore.
+store_state() {
+  (cd "$STORAGE_PATH" && find . -type f | sort | while IFS= read -r file; do sha256sum "$file"; done) | cksum
+}
+store_before=$(store_state)
+: > "$CALLS"
 if POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" --skip-origin-check "$forged" > "$work/out" 2>&1; then
   echo 'FEHLER: ein Archiv mit einer untergeschobenen Datei ließ sich zurückspielen'
   exit 1
 fi
-grep -q 'passt nicht mehr zu ihrem Namen' "$work/out"
-if [ -e "$STORAGE_PATH/$forged_name" ] || grep -q 'ließ sich entfernen' "$work/out"; then
-  echo 'FEHLER: die untergeschobene Datei blieb nach dem Rückspielen im Speicher'
+grep -q 'passt nicht mehr zu ihrem Namen' "$work/out" && grep -q 'bleiben, wie sie sind' "$work/out" || {
+  echo 'FEHLER: das Rückspielen eines Archivs mit einer untergeschobenen Datei endete nicht an der Prüfung der Hashes'
+  cat "$work/out"
+  exit 1
+}
+if grep -q -e 'alter role opengewerk_app nologin' -e 'restore-as' "$CALLS"; then
+  echo 'FEHLER: vor der Prüfung der Hashes wurde die Anwendung ausgesperrt oder die Datenbank zurückgespielt'
+  cat "$CALLS"
+  exit 1
+fi
+if [ "$(store_state)" != "$store_before" ]; then
+  echo 'FEHLER: das abgelehnte Archiv veränderte den Dateispeicher'
   exit 1
 fi
 left_secret=$(grep -rl 'GEHEIMNIS DES CONTAINERS' "$STORAGE_PATH" || true)
@@ -1936,17 +1987,6 @@ if [ -e "$STORAGE_PATH/00/00/$astray_hash" ]; then
   echo 'FEHLER: eine Datei am falschen Ort blieb nach dem Rückspielen im Speicher'
   exit 1
 fi
-# One rm cannot take is named, and the restore still stops.
-if POSTGRES_DB=opengewerk RM_FAILS_ON="$(hash_of 'echt')" sh "$work/bin/restore.sh" --skip-origin-check "$forged" \
-  > "$work/out" 2>&1; then
-  echo 'FEHLER: ein Archiv mit einer untergeschobenen Datei, die rm nicht nahm, ließ sich zurückspielen'
-  exit 1
-fi
-grep -q 'Nicht jede dieser Dateien ließ sich entfernen' "$work/out" && grep -q "$forged_name" "$work/out" || {
-  echo 'FEHLER: eine untergeschobene Datei, die rm nicht nahm, wurde nicht genannt'
-  cat "$work/out"
-  exit 1
-}
 # A file that is no stored file and rm cannot take stops the restore before
 # the check of the hashes.
 if POSTGRES_DB=opengewerk RM_FAILS_ON=umgebung sh "$work/bin/restore.sh" --skip-origin-check "$forged" \
@@ -1959,6 +1999,6 @@ grep -q 'blieb eine Datei, die keine Datei des Speichers ist' "$work/out" || {
   cat "$work/out"
   exit 1
 }
-check 'Rückspielen: eine Datei, deren Inhalt nicht ihr Name ist, bleibt nicht im Speicher'
+check 'Rückspielen: eine Datei, deren Inhalt nicht ihr Name ist, hält an, bevor sich Datenbank oder Speicher ändern'
 
 echo 'Sicherungen: alles in Ordnung.'
