@@ -598,6 +598,23 @@ Sicherung den Speicher schneller liest, als die Frist des Aufräumens dauert;
 ist sie danach schon zwölf Stunden unterwegs, bricht sie deshalb ab. Ein Archiv von vor dieser Änderung hat keinen
 späten Teil und geht wie bisher zurück.
 
+**Eine Sicherung läuft höchstens zwölf Stunden** (#999). Bleibt ein Teil
+hängen, etwa `pg_dump` hinter einer Sperre oder das Schreiben auf ein Ziel,
+das nicht mehr antwortet, endet die Sicherung zwölf Stunden nach ihrem Start
+mit allem, was sie gestartet hat, und räumt auf wie nach jedem anderen Fehler.
+Die geplante Sicherung versucht es in der nächsten Nacht wieder. Dafür braucht
+sie eine eigene Prozessgruppe: Die geplante und eine mit
+`docker compose --profile backup run --rm backup backup.sh` gestartete haben
+eine. Ruft ein eigenes Skript `backup.sh` in einem Container auf, gilt nur die
+Grenze für das Lesen des Dateispeichers. Antwortet das Ziel auch beim
+Aufräumen nicht mehr, gibt die Sicherung dort nach spätestens 35 Sekunden auf
+und nennt die versteckte Datei, die liegen bleibt. Ein Prozess, der im Kernel
+ununterbrechbar auf ein Laufwerk wartet, etwa beim Zurückschreiben auf ein
+NFS-Laufwerk mit `hard`, das nicht mehr antwortet, endet weder mit TERM noch mit
+KILL; dann endet die Sicherung erst, wenn das Laufwerk wieder antwortet. Die
+Uhrzeit fragt der Zeitplan mit Grenzen ab (#1003): Hängt die Datenbank an einer
+Sperre, gilt 02:30.
+
 **Eine Datei, auf die niemand mehr verweist, geht nach einem Tag** (#657). Einmal
 am Tag nimmt die Anwendung die Bytes jeder Datei aus dem Speicher, die kein
 Betrieb mehr hält und die seit einem Tag niemand abgelegt hat, dazu Reste
@@ -616,7 +633,9 @@ sehen darf als alles, ist keine.
 im Container, nur für root lesbar, und gehen in einem Strom gepackt und
 verschlüsselt in eine verborgene Datei auf dem Ziel, die erst am Ende den Namen
 eines Archivs bekommt. Scheitert ein Schritt, auch age, bleibt auf dem Ziel
-nichts liegen, kein halbes Archiv und keine Teile im Klartext. Platz braucht die
+nichts liegen, kein halbes Archiv und keine Teile im Klartext. Die eine
+Ausnahme ist ein Ziel, das auch beim Aufräumen nicht mehr antwortet: Dann
+bleibt die verborgene Datei dort, und die Sicherung nennt sie (#999). Platz braucht die
 Sicherung dafür im Container, also dort, wo Docker seine Container hält, etwa so
 viel wie Dump und Dateispeicher zusammen; `TMPDIR` im Dienst verlegt das. Die
 Archive auf dem Ziel sind nur für ihren Besitzer lesbar, wer sie von dort

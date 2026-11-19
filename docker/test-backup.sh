@@ -43,7 +43,8 @@ real_timeout=$(command -v timeout)
 mkdir -p "$work/bin" "$work/storage" "$work/backups" "$work/status" "$work/tmp"
 cp "$source_dir/backup/backup.sh" "$source_dir/backup/restore.sh" \
   "$source_dir/backup/verify.sh" "$source_dir/backup/names.sh" \
-  "$source_dir/backup/archive-checks.sh" "$source_dir/backup/superuser-reads.sh" "$work/bin/"
+  "$source_dir/backup/archive-checks.sh" "$source_dir/backup/superuser-reads.sh" \
+  "$source_dir/backup/schedule.sh" "$work/bin/"
 
 # A dump with something in it, a database without audit chains and a server
 # with a version; whatever else the scripts ask is answered with nothing.
@@ -75,6 +76,14 @@ fi
 # A machine whose uptime can no longer be read while the dump runs.
 if [ -n "${UPTIME_GOES:-}" ]; then
   : > "$UPTIME_PATH"
+fi
+# A dump that waits for good, after the twelve hours are over, as one behind
+# a lock would: it notes its process and becomes a sleep of ten minutes, or
+# of DUMP_HANGS_FOR seconds.
+if [ -n "${DUMP_HANGS:-}" ]; then
+  [ -n "${UPTIME_GOES:-}" ] || echo '43400.00 86800.00' > "$UPTIME_PATH"
+  echo "$$" > "$DUMP_HANGS"
+  exec sleep "${DUMP_HANGS_FOR:-600}"
 fi
 # A file named after its own hash that does not lie where the store keeps it.
 if [ -n "${DUMP_ASTRAY:-}" ]; then
@@ -384,6 +393,17 @@ if [ -n "\${RM_FAILS_ON:-}" ]; then
       [ -z "\${FAKE_MARK:-}" ] || : > "\$FAKE_MARK"
       echo "rm: \$*: I/O error" >&2
       exit 1
+      ;;
+  esac
+fi
+# A target that stopped answering: rm of a hidden file right below
+# RM_BLOCKS_UNDER waits two minutes first, and TERM does not end that wait.
+# Old archives the backup takes away when there are too many are not hidden.
+if [ -n "\${RM_BLOCKS_UNDER:-}" ]; then
+  case "\$*" in
+    *"\$RM_BLOCKS_UNDER"/.*)
+      trap '' TERM
+      sleep 120
       ;;
   esac
 fi
@@ -1592,6 +1612,161 @@ grep -q -- "tar --create --file .*/storage.tar --directory $STORAGE_PATH " "$wor
 }
 rm -rf "$(dirname "$(stored "$(hash_of "$limited_text")")")"
 check 'Dateispeicher: beide tar über den Speicher laufen mit der Zeitgrenze'
+
+# The whole backup has a limit as well (#999). In a process group of its own,
+# as schedule.sh starts it, a dump that waits for good ends after the twelve
+# hours with everything the backup started: the dump is gone, and neither an
+# archive, a hidden file on the target nor a part in TMPDIR is left. A time
+# that can no longer be read ends it the same way.
+# The names of the processes still alive in process group $1.
+alive_in_group() {
+  for stat_file in /proc/[0-9]*/stat; do
+    stat_line=$(cat "$stat_file" 2>/dev/null) || continue
+    process_name=${stat_line#*(}
+    process_name=${process_name%%)*}
+    # shellcheck disable=SC2086
+    set -- "$1" ${stat_line##*) }
+    if [ "$4" = "$1" ] && [ "$2" != Z ]; then
+      printf '%s\n' "$process_name"
+    fi
+  done
+}
+mkdir -p "$work/run-tmp"
+for unread in '' 1; do
+  echo '100.00 200.00' > "$work/uptime"
+  rm -f "$work/dump-pid"
+  targets_before=$(ls -A "$work/backups" | wc -l)
+  run_status=0
+  # The dump waits ninety seconds and the watcher looks every five: a backup
+  # that ends only after thirty was not ended by its limit but by the dump.
+  run_started=$(date +%s)
+  TMPDIR="$work/run-tmp" DUMP_HANGS="$work/dump-pid" DUMP_HANGS_FOR=90 UPTIME_PATH="$work/uptime" \
+    UPTIME_GOES="$unread" FIXED_STAMP="2031-03-01T00000${unread:-0}Z" POSTGRES_DB=opengewerk \
+    "$real_timeout" -s KILL 120 setsid sh "$work/bin/backup.sh" > "$work/out" 2>&1 || run_status=$?
+  run_seconds=$(($(date +%s) - run_started))
+  case "$unread" in
+    1) said='lässt sich nicht messen' ;;
+    *) said='Die Sicherung kam in zwölf Stunden nicht zum Ende' ;;
+  esac
+  if [ "$run_status" -eq 0 ] || [ "$run_seconds" -ge 30 ] || ! grep -q "$said" "$work/out"; then
+    echo "FEHLER: eine Sicherung, deren Dump wartete, endete nicht an ihrer Grenze (Status $run_status nach $run_seconds Sekunden)"
+    cat "$work/out"
+    exit 1
+  fi
+  dump_pid=$(cat "$work/dump-pid")
+  if kill -0 "$dump_pid" 2>/dev/null; then
+    echo 'FEHLER: der wartende Dump lief nach dem Ende der Sicherung weiter'
+    exit 1
+  fi
+  if [ "$(ls -A "$work/backups" | wc -l)" != "$targets_before" ] || [ -n "$(ls -A "$work/run-tmp")" ]; then
+    echo 'FEHLER: eine Sicherung, die an ihrer Grenze endete, ließ etwas zurück'
+    ls -A "$work/backups" "$work/run-tmp"
+    exit 1
+  fi
+done
+# A target that no longer answers when the backup cleans up keeps it there
+# for half a minute and no longer: the hidden file stays and is named.
+echo '100.00 200.00' > "$work/uptime"
+run_status=0
+run_started=$(date +%s)
+TMPDIR="$work/run-tmp" DUMP_HANGS="$work/dump-pid" DUMP_HANGS_FOR=90 UPTIME_PATH="$work/uptime" \
+  RM_BLOCKS_UNDER="$work/backups" FIXED_STAMP=2031-03-01T000003Z POSTGRES_DB=opengewerk \
+  "$real_timeout" -s KILL 150 setsid sh "$work/bin/backup.sh" > "$work/out" 2>&1 || run_status=$?
+run_seconds=$(($(date +%s) - run_started))
+left_on_target=$(ls -A "$work/backups" | grep '^\..*-2031-03-01T000003Z\.' || true)
+if [ "$run_status" -eq 0 ] || [ "$run_seconds" -ge 60 ] || [ -z "$left_on_target" ] ||
+  ! grep -qF "diese Datei blieb dort liegen: $work/backups/$left_on_target" "$work/out"; then
+  echo "FEHLER: eine Sicherung, deren Ziel beim Aufräumen nicht antwortete, endete nicht (Status $run_status nach $run_seconds Sekunden)"
+  cat "$work/out"
+  exit 1
+fi
+rm -f "$work/backups/$left_on_target"
+# Started from a shell, in that shell's process group, the backup has no
+# watcher: its TERM would end the shell as well. The dump that waits eight
+# seconds past the twelve hours ends the backup at the check after it, and the
+# shell around it lives on.
+echo '100.00 200.00' > "$work/uptime"
+rm -f "$work/outer-lives"
+TMPDIR="$work/run-tmp" DUMP_HANGS="$work/dump-pid" DUMP_HANGS_FOR=8 UPTIME_PATH="$work/uptime" \
+  FIXED_STAMP=2031-03-01T000005Z POSTGRES_DB=opengewerk \
+  "$real_timeout" 60 setsid sh -c 'sh "$1/bin/backup.sh"; echo lives > "$1/outer-lives"' sh "$work" \
+  > "$work/out" 2>&1 || true
+if ! test -f "$work/outer-lives" || grep -q 'Die Sicherung kam in zwölf Stunden nicht zum Ende' "$work/out"; then
+  echo 'FEHLER: eine Sicherung ohne eigene Prozessgruppe beendete die Shell, aus der sie lief'
+  cat "$work/out"
+  exit 1
+fi
+grep -q 'seit zwölf Stunden oder länger' "$work/out" || {
+  echo 'FEHLER: die Sicherung ohne eigene Prozessgruppe endete nicht an der Prüfung nach dem Dump'
+  cat "$work/out"
+  exit 1
+}
+# A backup that ends in time takes its watcher along, and once its archive has
+# its name it asks the target for no hidden file any more: a target that would
+# not answer that does not hold it up.
+echo '100.00 200.00' > "$work/uptime"
+watched_text='mit Wächter'
+run_started=$(date +%s)
+UPTIME_PATH="$work/uptime" DUMP_UPLOADS="$watched_text" RM_BLOCKS_UNDER="$work/backups" \
+  FIXED_STAMP=2031-03-01T000010Z POSTGRES_DB=opengewerk \
+  setsid sh "$work/bin/backup.sh" > "$work/out" 2>&1 &
+backup_pid=$!
+wait "$backup_pid" || {
+  echo 'FEHLER: eine Sicherung in einer eigenen Prozessgruppe scheiterte'
+  cat "$work/out"
+  exit 1
+}
+if [ $(($(date +%s) - run_started)) -ge 25 ]; then
+  echo 'FEHLER: eine Sicherung wartete nach ihrem Ende noch auf das Ziel'
+  cat "$work/out"
+  exit 1
+fi
+if alive_in_group "$backup_pid" | grep -qvx sleep; then
+  echo 'FEHLER: nach der Sicherung lief ihr Wächter weiter'
+  alive_in_group "$backup_pid"
+  exit 1
+fi
+rm -rf "$(dirname "$(stored "$(hash_of "$watched_text")")")"
+# And schedule.sh starts it in a group of its own: a stand-in for backup.sh
+# notes whether it leads one, and ends the schedule.
+mkdir -p "$work/schedule-bin"
+cat > "$work/schedule-bin/backup.sh" <<'FAKE'
+#!/bin/sh
+stat_line=$(cat "/proc/$$/stat")
+# shellcheck disable=SC2086
+set -- ${stat_line##*) }
+if [ "$3" = "$$" ]; then
+  echo leads > "$SCHEDULE_MARK"
+else
+  echo shares > "$SCHEDULE_MARK"
+fi
+kill "$PPID"
+FAKE
+chmod +x "$work/schedule-bin/backup.sh"
+# Its psql notes the settings of the session it would ask with.
+cat > "$work/schedule-bin/psql" <<'FAKE'
+#!/bin/sh
+printf '%s|%s\n' "${PGOPTIONS:-}" "${PGCONNECT_TIMEOUT:-}" >> "$SCHEDULE_PSQL"
+FAKE
+chmod +x "$work/schedule-bin/psql"
+rm -f "$work/schedule-mark" "$work/schedule-psql"
+SCHEDULE_MARK="$work/schedule-mark" SCHEDULE_PSQL="$work/schedule-psql" BACKUP_STATUS_PATH="$work/schedule-status" \
+  POSTGRES_HOST=postgres POSTGRES_DB=opengewerk PATH="$work/schedule-bin:$PATH" \
+  "$real_timeout" 60 sh "$work/bin/schedule.sh" > "$work/out" 2>&1 || true
+[ "$(cat "$work/schedule-mark" 2>/dev/null)" = leads ] || {
+  echo 'FEHLER: schedule.sh startete die Sicherung nicht in einer eigenen Prozessgruppe'
+  cat "$work/out"
+  exit 1
+}
+# The question for the time waits for a lock, the select and the connection
+# within limits (#1003), every time it is asked.
+if ! test -s "$work/schedule-psql" ||
+  grep -vxF -- '-c search_path=pg_catalog -c lock_timeout=30s -c statement_timeout=60s|30' "$work/schedule-psql" | grep -q .; then
+  echo 'FEHLER: schedule.sh fragte die Uhrzeit ohne Grenze für Sperre, Abfrage und Verbindung'
+  cat "$work/schedule-psql"
+  exit 1
+fi
+check 'Sicherung als Ganzes: nach zwölf Stunden endet sie mit allem, was sie gestartet hat, und lässt nichts zurück'
 
 # A file in an archive whose content is not what its name says, as a link
 # swapped in while tar read the store would leave it: the restore stops and

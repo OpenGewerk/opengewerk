@@ -19,9 +19,11 @@
 # waits for this one, so nobody puts a view in its place in between, not even
 # the owner at the same moment.
 
+# SUPERUSER_LIMITS takes more settings of the session, such as a lock_timeout,
+# for a caller that must not wait without end.
 superuser_query() {
-	PGOPTIONS='-c search_path=pg_catalog' psql --host "$POSTGRES_HOST" --username postgres \
-		--dbname "$POSTGRES_DB" --tuples-only --no-align --quiet "$@"
+	PGOPTIONS="-c search_path=pg_catalog${SUPERUSER_LIMITS:+ $SUPERUSER_LIMITS}" psql --host "$POSTGRES_HOST" \
+		--username postgres --dbname "$POSTGRES_DB" --tuples-only --no-align --quiet "$@"
 }
 
 # checked_query <table> "<column> ..." <select> [<option of psql> ...]

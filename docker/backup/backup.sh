@@ -33,7 +33,8 @@
 # (opengewerk-haustechnik#360). The parts are written inside this container,
 # readable by nobody but root, and packed and encrypted in one stream into a
 # hidden file on the target, which gets the name of an archive at the very
-# end. Whatever fails before that takes the hidden file and the parts with it.
+# end. Whatever fails before that takes the hidden file and the parts with it,
+# unless the target no longer answers by then: the file stays and is named.
 # Only then is the name and the SHA-256 of the archive recorded on the
 # instance, which restore.sh and verify.sh hold every archive to, see
 # archive-checks.sh.
@@ -61,6 +62,69 @@ scheduled=false
 if [ "${1:-}" = "--scheduled" ]; then
 	scheduled=true
 fi
+
+# Seconds since the machine started, which no change of the clock moves. The
+# path is only ever another one in test-backup.sh.
+uptime_seconds() {
+	up=''
+	read -r up _ <"${UPTIME_PATH:-/proc/uptime}" || true
+	up=${up%.*}
+	case "$up" in
+	'' | *[!0-9]*)
+		echo "  Die Laufzeit der Sicherung lässt sich nicht messen, sie bricht ab." >&2
+		return 1
+		;;
+	esac
+	echo "$up"
+}
+
+# Whether this script leads a process group of its own: the third field of
+# its stat after the name, which stands in brackets and may hold blanks.
+leads_its_group() {
+	stat=$(cat "/proc/$$/stat") || return 1
+	# shellcheck disable=SC2086
+	set -- ${stat##*) }
+	[ "${3:-}" = "$$" ]
+}
+
+# --- The limit of the whole backup (#999) -----------------------------------
+# No part of a backup may wait for good: a pg_dump behind a lock, a target
+# that stops answering, and schedule.sh, which waits for the backup, would
+# make none on any night after. Twelve hours after the start a watcher sends
+# TERM to the process group of the backup. Every part it started ends with
+# it, pg_dump, tar and age included, and the trap below takes what is not
+# published yet, as after any other failure; a time that can no longer be
+# read ends it the same way. The group has to be the backup's own, as it is
+# when schedule.sh starts it through setsid and in a container of its own
+# (docker compose run). Started from a shell without job control the group is
+# that shell's, and the backup runs without the watcher, with the twelve hours
+# for each read of the store below.
+started=$(uptime_seconds) || exit 1
+watcher=''
+if leads_its_group; then
+	(
+		while sleep 5; do
+			if ! now=$(uptime_seconds); then
+				kill -s TERM 0
+			fi
+			if [ $((now - started)) -ge 43200 ]; then
+				echo "  Die Sicherung kam in zwölf Stunden nicht zum Ende und wird mit allem beendet, was sie gestartet hat." >&2
+				kill -s TERM 0
+			fi
+		done
+	) &
+	watcher=$!
+fi
+
+# The watcher ends with the script, before the cleanup below takes over and
+# with it.
+stop_watcher() {
+	if [ -n "$watcher" ]; then
+		kill "$watcher" 2>/dev/null || true
+	fi
+}
+trap stop_watcher EXIT
+trap 'exit 1' HUP INT TERM
 
 : "${POSTGRES_HOST:=postgres}"
 : "${POSTGRES_DB:=opengewerk}"
@@ -138,16 +202,28 @@ counter=''
 # the target, neither a half archive nor a whole one nobody recorded: a backup
 # directory holding a file that looks like a backup and is none is worse than
 # one holding nothing. A signal ends the script through the same way out.
+#
+# On the target within 35 seconds: a target that stopped answering keeps rm
+# waiting there, and once the watcher has ended the backup nothing would end
+# that wait (#999). TERM after half a minute, KILL five seconds later for an
+# rm that does not end on TERM. The file is named then, for whoever cleans up.
+remove_from_target() {
+	if [ -n "$1" ] && ! timeout -k 5 30 rm -f "$1"; then
+		echo "  Das Ziel antwortete nicht, diese Datei blieb dort liegen: $1" >&2
+	fi
+}
 cleanup() {
+	stop_watcher
+
 	for reader in $hasher $counter; do
 		kill "$reader" 2>/dev/null || true
 	done
 
 	rm -rf "$work" "$measured"
-	rm -f "$partial"
+	remove_from_target "$partial"
 
 	if [ "$renamed" = true ] && [ "$recorded" = false ]; then
-		rm -f "$archive"
+		remove_from_target "$archive"
 	fi
 }
 trap cleanup EXIT
@@ -187,22 +263,7 @@ PATTERNS
 	fi
 }
 
-# Seconds since the machine started, which no change of the clock moves. The
-# path is only ever another one in test-backup.sh.
-uptime_seconds() {
-	up=''
-	read -r up _ <"${UPTIME_PATH:-/proc/uptime}" || true
-	up=${up%.*}
-	case "$up" in
-	'' | *[!0-9]*)
-		echo "  Die Laufzeit der Sicherung lässt sich nicht messen, sie bricht ab." >&2
-		return 1
-		;;
-	esac
-	echo "$up"
-}
-
-# tar over the store, within what is left of the twelve hours below. busybox
+# tar over the store, within what is left of the twelve hours above. busybox
 # tar looks at a file and opens it after: a name swapped for a pipe in between
 # makes it wait on that pipe for good, and a backup that hangs backs nothing up
 # from then on. Ends the backup when the time runs out. $1 takes what tar
@@ -243,7 +304,6 @@ out_of_time() {
 # tar may say "No such file or directory" for a path in the store and nothing
 # else.
 echo "  Dateispeicher wird gesichert."
-started=$(uptime_seconds)
 if ! store_tar "${work}/storage.err" --create --file "${work}/storage.tar" --directory "$STORAGE_PATH" \
 	--exclude '*.part' --exclude '*.gone' .; then
 	only_vanished "${work}/storage.err" || exit 1
@@ -477,6 +537,9 @@ fi
 
 mv "$partial" "$archive"
 renamed=true
+# The archive has its name now; under the hidden one there is nothing left
+# for cleanup to take off the target, where it might wait.
+partial=''
 
 # --- 7. The record of the archive and the one the office reads -------------
 # Both on the instance, never on the target, and both written under a
