@@ -51,6 +51,33 @@ umask 077
 stopped=''
 trap 'stopped=1; exit 1' HUP INT TERM
 
+# The folders of this run, made once the archive is found.
+work=''
+held=''
+cleanup() {
+	# Once it cleans up it finishes that: a second stop would end the run
+	# halfway and leave the unpacked archive behind. What it starts here
+	# ignores the signal as well.
+	trap '' HUP INT TERM
+	rm -rf ${work:+"$work"} ${held:+"$held"}
+	if [ -n "$stopped" ]; then
+		echo "Das Rückspielen wurde angehalten." >&2
+	fi
+}
+# Until the application is locked out further below, a run that ends has
+# changed nothing. The documented way stops the application and the nightly
+# backup first and chains the start to this run with &&, so after a run that
+# fails nothing starts them again (#1010): it says how.
+leave_untouched() {
+	if [ "$1" -ne 0 ]; then
+		echo "" >&2
+		echo "Datenbank und Dateispeicher sind unverändert. Wurden Anwendung und nächtliche" >&2
+		echo "Sicherung dafür angehalten, startet sh docker/start.sh sie wieder, auf dem Stand von vorher." >&2
+	fi
+	cleanup
+}
+trap 'leave_untouched "$?"' EXIT
+
 : "${POSTGRES_HOST:=postgres}"
 : "${POSTGRES_DB:=opengewerk}"
 : "${STORAGE_PATH:=/var/lib/opengewerk/storage}"
@@ -135,17 +162,6 @@ echo "Sicherung: $(basename "$archive")"
 
 work=$(mktemp -d)
 held=$(mktemp -d)
-cleanup() {
-	# Once it cleans up it finishes that: a second stop would end the run
-	# halfway and leave the unpacked archive behind. What it starts here
-	# ignores the signal as well.
-	trap '' HUP INT TERM
-	rm -rf "$work" "$held"
-	if [ -n "$stopped" ]; then
-		echo "Das Rückspielen wurde angehalten." >&2
-	fi
-}
-trap cleanup EXIT
 
 # --- Where it comes from ---------------------------------------------------
 # Before it is decrypted or unpacked, see archive-checks.sh. The archive is

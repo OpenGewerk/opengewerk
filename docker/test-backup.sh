@@ -1046,6 +1046,13 @@ halfway() {
     printf 'FEHLER: die Anwendung wurde nicht ausgesperrt: %s\n' "$*"
     exit 1
   }
+  # Once the application is locked out, the run no longer says that nothing
+  # changed.
+  if grep -q 'Datenbank und Dateispeicher sind unverändert' "$work/out"; then
+    printf 'FEHLER: nach dem Aussperren hieß es, nichts habe sich geändert: %s\n' "$*"
+    cat "$work/out"
+    exit 1
+  fi
 }
 # The store belongs to the user of the application, and after a copy that
 # failed it still does, every file of it, so that the next restore, the one
@@ -1179,6 +1186,20 @@ mkdir "$STORAGE_PATH/fremd"
 refused 'nicht leeren darf' env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
 grep -q "run --rm backup chown -R 1000:1000 $STORAGE_PATH\$" "$work/out" || {
   echo 'FEHLER: die Ablehnung nennt nicht den Befehl, der den Speicher seinem Eigentümer zurückgibt'
+  cat "$work/out"
+  exit 1
+}
+# Turned away before anything changed, the run says how the application and
+# the nightly backup, stopped for it, start again (#1010). The same for a
+# refusal before the run has a folder of its own.
+grep -q 'startet sh docker/start.sh sie wieder, auf dem Stand von vorher' "$work/out" || {
+  echo 'FEHLER: eine Ablehnung vor dem Aussperren sagt nicht, wie die Instanz wieder startet'
+  cat "$work/out"
+  exit 1
+}
+refused 'gibt es nicht' env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" opengewerk-nicht-da.tar.gz
+grep -q 'startet sh docker/start.sh sie wieder, auf dem Stand von vorher' "$work/out" || {
+  echo 'FEHLER: eine Ablehnung vor dem Arbeitsordner sagt nicht, wie die Instanz wieder startet'
   cat "$work/out"
   exit 1
 }
