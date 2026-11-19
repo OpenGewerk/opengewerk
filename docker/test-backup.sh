@@ -1136,7 +1136,9 @@ if [ "$(stat -c '%u %a' "$filled_file")" != '1000 644' ] || [ -n "$(find "$STORA
 fi
 # A pack of the checked folder that misses a file still ends the copy in the
 # store with all the rest; the restore fails all the same, and the application
-# stays locked.
+# stays locked. The file the restore before wrote goes first, so that the one
+# found afterwards is the one this copy wrote.
+rm -rf "$filled_dir"
 restore_status=0
 env POSTGRES_DB=opengewerk PACK_MISSES=./nicht-da sh "$work/bin/restore.sh" "$ours_filled" \
   > "$work/out" 2>&1 || restore_status=$?
