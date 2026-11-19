@@ -311,11 +311,11 @@ services:
     cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
     # A stop sends SIGINT, the stop signal of the postgres image, to the first
     # process of the container alone, which sees it only once the step under
-    # way ends, pg_dump or tar; its clean up may then wait up to 35 seconds on
-    # a target that does not answer (#999, #1004). A step longer than the
-    # grace period still ends with the KILL after it, before any clean up:
-    # Ctrl+C reaches every step at once (#1007).
-    stop_grace_period: 2m
+    # way ends, pg_dump, tar or the play of the dump. A step longer than the
+    # grace period ends with the KILL after it, before any clean up; Ctrl+C
+    # reaches every step at once. A longer grace period would not do here: a
+    # stop during the play of the dump could then give a restore that has
+    # replaced the database the login back (#1007).
     environment: &backup-environment
       POSTGRES_HOST: postgres
       POSTGRES_DB: opengewerk
