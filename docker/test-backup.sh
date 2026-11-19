@@ -379,6 +379,22 @@ if [ -n "\${FIND_MISSES:-}" ]; then
   exit 1
 fi
 FAKE
+# wc as it is, unless WC_FAILS_AT is set: then the Nth count of lines read
+# from stdin (wc -l) fails without a number, counted in WC_COUNT.
+real_wc=$(command -v wc)
+cat > "$work/bin/wc" <<FAKE
+#!/bin/sh
+if [ -n "\${WC_FAILS_AT:-}" ] && [ "\$*" = -l ]; then
+  wc_number=\$((\$(cat "\$WC_COUNT" 2>/dev/null || echo 0) + 1))
+  echo "\$wc_number" > "\$WC_COUNT"
+  if [ "\$wc_number" = "\$WC_FAILS_AT" ]; then
+    echo 'wc: standard input: I/O error' >&2
+    exit 1
+  fi
+fi
+exec $real_wc "\$@"
+FAKE
+chmod +x "$work/bin/wc"
 # grep as it is, unless GREP_FAILS is set: then the grep -v that holds what
 # tar or find said against the gone files cannot read.
 real_grep=$(command -v grep)
@@ -840,6 +856,24 @@ fi
 }
 if grep -q -e 'alter role opengewerk_app nologin' -e 'restore-as' "$CALLS"; then
   echo 'FEHLER: nach einer abgebrochenen Liste des Speichers wurde ausgesperrt oder eingespielt'
+  exit 1
+fi
+# And a count of the checklist that fails: the second "wc -l" of a restore is
+# that count, and the check of the hashes must not go by a number it lacks.
+: > "$CALLS"
+rm -f "$work/wc-count"
+if WC_FAILS_AT=2 WC_COUNT="$work/wc-count" POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours" \
+  > "$work/out" 2>&1; then
+  echo 'FEHLER: ein Rückspielen lief durch, obwohl sich die Prüfliste nicht zählen ließ'
+  exit 1
+fi
+[ "$(cat "$work/wc-count" 2>/dev/null)" = 2 ] || {
+  echo 'FEHLER: die Zählung der Prüfliste wurde nicht erreicht, der Fall wurde nicht geprüft'
+  cat "$work/out"
+  exit 1
+}
+if grep -q -e 'alter role opengewerk_app nologin' -e 'restore-as' "$CALLS"; then
+  echo 'FEHLER: nach einer Zählung der Prüfliste, die scheiterte, wurde ausgesperrt oder eingespielt'
   exit 1
 fi
 

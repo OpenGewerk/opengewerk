@@ -307,11 +307,15 @@ while IFS= read -r file; do
 	printf '%s  %s\n' "${file##*/}" "$file"
 done <"${work}/staged.list" >"${work}/expected.sha256"
 
-expected_files=$(wc -l <"${work}/expected.sha256" | tr -d ' ')
-files=$(wc -l <"${work}/staged.list" | tr -d ' ')
+# Counted without a pipe, whose status would be that of its last command, and
+# the check below goes by whether the checklist has anything in it, not by a
+# number: a count that fails would leave no number, and an empty one would
+# skip the check (#1000).
+expected_files=$(wc -l <"${work}/expected.sha256")
+files=$(wc -l <"${work}/staged.list")
 rm -f "${work}/staged.list"
 
-if [ "$expected_files" -gt 0 ]; then
+if [ -s "${work}/expected.sha256" ]; then
 	# -s rather than --quiet: this runs on busybox, which has the short option
 	# and not the long one. On failure the same check runs again without it,
 	# because "something is broken" without naming the file leaves an operator
