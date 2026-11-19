@@ -49,10 +49,17 @@ configured_time() {
 	# Only from the table the application made: after a restore it could be a
 	# view that runs what it calls as postgres. psql ends with 3 where a
 	# check refuses it, and that is said here, with the fallback that holds
-	# instead; a database that does not answer only means the fallback.
-	if value=$(checked_query instance_settings "id backup_time" \
-		"select to_char(backup_time, 'HH24:MI') from only public.instance_settings where id = 1" \
-		2>"$time_errors"); then
+	# instead; a database that does not answer only means the fallback. Within
+	# limits, for the lock, the select and the connection: a lock held on the
+	# table, by a migration hanging in its transaction, say, would keep the
+	# schedule waiting without end and make no backup at all (#1003).
+	if value=$(
+		SUPERUSER_LIMITS='-c lock_timeout=30s -c statement_timeout=60s' PGCONNECT_TIMEOUT=30
+		export SUPERUSER_LIMITS PGCONNECT_TIMEOUT
+		checked_query instance_settings "id backup_time" \
+			"select to_char(backup_time, 'HH24:MI') from only public.instance_settings where id = 1" \
+			2>"$time_errors"
+	); then
 		:
 	elif [ "$?" -eq 3 ]; then
 		cat "$time_errors" >&2
@@ -120,7 +127,9 @@ while true; do
 	if [ "$last" -lt "$due" ] && [ "$attempted" -lt "$due" ]; then
 		attempted=$due
 
-		if ! backup.sh --scheduled; then
+		# In a process group of its own, which the limit of twelve hours in
+		# backup.sh ends as a whole (#999); setsid keeps the status.
+		if ! setsid backup.sh --scheduled; then
 			echo "Die geplante Sicherung ist fehlgeschlagen, der nächste Versuch folgt zum nächsten Termin." >&2
 		fi
 	fi
