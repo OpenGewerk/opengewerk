@@ -640,10 +640,8 @@ sie (#999). Das ist die verborgene Datei oder, wenn die Sicherung erst nach dem
 Umbenennen scheiterte, das Archiv unter seinem Namen. Wird der Dienst
 `backup-schedule` angehalten, während eine Sicherung läuft, etwa bei einem
 Update, räumt sie vorher auf, auch wenn sie das schon tut; Docker wartet darauf
-bis zu zwei Minuten (#1004). Eine Sicherung von Hand im Dienst `backup` bricht
-man mit Strg+C ab: `docker stop` erreicht sie dort erst nach dem laufenden
-Schritt, und dauert der länger als zehn Sekunden, endet sie ohne Aufräumen
-(#1007). Platz braucht die
+bis zu zwei Minuten (#1004). Für eine Sicherung von Hand im Dienst `backup` gilt
+dasselbe, mit Strg+C wie mit `docker stop` (#1007). Platz braucht die
 Sicherung dafür im Container, also dort, wo Docker seine Container hält, etwa so
 viel wie Dump und Dateispeicher zusammen; `TMPDIR` im Dienst verlegt das. Die
 Archive auf dem Ziel sind nur für ihren Besitzer lesbar, wer sie von dort
@@ -817,7 +815,10 @@ Anweisung, beim Leeren oder beim
 Einspielen, steht die Datenbank da wie vorher, und die Anwendung bekommt ihre
 Anmeldung zurück. Scheitert der Lauf erst danach, beim Kopieren des
 Dateispeichers oder an der Prüfung der Audit-Ketten, bleibt sie ausgesperrt, und
-die Meldung sagt das. Ebenso, wenn
+die Meldung sagt das. Ein Anhalten mit Strg+C oder `docker stop` endet genauso:
+Der laufende Schritt bricht ab, ein abgebrochenes Einspielen fragt die Datenbank
+noch nach dem Ausgang, und die Anwendung bekommt ihre Anmeldung nur zurück, wenn
+die Datenbank nicht ersetzt ist (#1007). Ebenso bleibt sie ausgesperrt, wenn
 sie schon vor dem Lauf ausgesperrt war, weil ein früherer nicht durchlief. Ein
 Lauf, der durchgeht, gibt die Anmeldung zurück oder überlässt das dem Start,
 siehe unten; wer den Stand nach einem Fehler trotzdem so nehmen will, gibt sie

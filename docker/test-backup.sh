@@ -155,12 +155,27 @@ case "$*" in
     fi
     ;;
 esac
-# The call that plays the dump fails after the transaction named its number,
-# the way a connection lost after the COMMIT went out looks to psql.
-if [ -n "${PLAY_FAILS:-}" ]; then
+# The call that plays the dump takes three seconds, for a stop to reach a
+# restore while it plays (#1007). PLAY_SLOW is a file it writes once the
+# transaction has named its number: the process that started it and its
+# process group.
+if [ -n "${PLAY_SLOW:-}" ]; then
   case " $* " in
     *" --single-transaction "*)
       echo 'restore-transaction 42'
+      play_stat=$(sed 's/.*) //' "/proc/$$/stat")
+      printf '%s %s\n' "$PPID" "$(echo "$play_stat" | cut -d' ' -f3)" > "$PLAY_SLOW"
+      sleep 3
+      ;;
+  esac
+fi
+# The call that plays the dump fails after the transaction named its number,
+# the way a connection lost after the COMMIT went out looks to psql; with
+# PLAY_FAILS=early before it began, as a refused connection fails.
+if [ -n "${PLAY_FAILS:-}" ]; then
+  case " $* " in
+    *" --single-transaction "*)
+      [ "$PLAY_FAILS" = early ] || echo 'restore-transaction 42'
       exit 1
       ;;
   esac
@@ -219,6 +234,14 @@ cat > "$work/bin/tar" <<FAKE
 #!/bin/sh
 if [ -n "\${SWAP_FROM:-}" ] && [ "\$1" = --extract ]; then
   cp "\$SWAP_FROM" "\$SWAP_ONTO"
+fi
+# A tar that unpacks takes three seconds, for a stop to reach a check while it
+# unpacks (#1007). TAR_EXTRACT_SLOW is a file it writes first: the process
+# that started it and its process group.
+if [ -n "\${TAR_EXTRACT_SLOW:-}" ] && [ "\$1" = --extract ]; then
+  tar_stat=\$(sed 's/.*) //' "/proc/\$\$/stat")
+  printf '%s %s\\n' "\$PPID" "\$(echo "\$tar_stat" | cut -d' ' -f3)" > "\$TAR_EXTRACT_SLOW"
+  sleep 3
 fi
 # A file of the store that is gone by the time tar comes to it: tar names a
 # path that is not there, which is what it says for a file that vanished.
@@ -395,6 +418,18 @@ fi
 exec $real_wc "\$@"
 FAKE
 chmod +x "$work/bin/wc"
+# head as it is, unless HEAD_FAILS is set: then a head -n 1 that reads stdin
+# fails, the way one a second Ctrl+C reached would end.
+real_head=$(command -v head)
+cat > "$work/bin/head" <<FAKE
+#!/bin/sh
+if [ -n "\${HEAD_FAILS:-}" ] && [ "\$*" = '-n 1' ]; then
+  cat > /dev/null
+  exit 1
+fi
+exec $real_head "\$@"
+FAKE
+chmod +x "$work/bin/head"
 # grep as it is, unless GREP_FAILS is set: then the grep -v that holds what
 # tar or find said against the gone files cannot read.
 real_grep=$(command -v grep)
@@ -974,7 +1009,156 @@ grep -q 'alter role opengewerk_app login' "$CALLS" || {
   echo 'FEHLER: nach einer abgebrochenen Transaktion blieb die Anwendung ausgesperrt'
   exit 1
 }
+# psql fails before the transaction named its number: it never began, and
+# the application gets its login back without the database being asked.
+halfway PLAY_FAILS=early XACT_STATUS=committed
+if grep -q 'pg_xact_status' "$CALLS"; then
+  echo 'FEHLER: nach einer Transaktion ohne Nummer wurde die Datenbank gefragt'
+  exit 1
+fi
+grep -q 'alter role opengewerk_app login' "$CALLS" || {
+  echo 'FEHLER: nach einer Transaktion, die nie begann, blieb die Anwendung ausgesperrt'
+  exit 1
+}
 check 'Rückspielen: scheitert es nach der Datenbank, bleibt die Anwendung ausgesperrt, davor nicht'
+
+# From the play of the dump on, only the answer of the database that the
+# transaction was aborted, or a transaction that never began, gives the login
+# back (#1007). A head that fails while the number is looked up, the way one a
+# second Ctrl+C reached would end, ends the run before the database is asked,
+# and the application stays locked.
+halfway PLAY_FAILS=1 XACT_STATUS=aborted HEAD_FAILS=1
+grep -q '^restore-as ' "$CALLS" || {
+  echo 'FEHLER: der Dump wurde nicht eingespielt, der Fall wurde nicht geprüft'
+  cat "$work/out"
+  exit 1
+}
+if grep -q 'pg_xact_status' "$CALLS"; then
+  echo 'FEHLER: das Nachschlagen der Transaktion scheiterte nicht, der Fall wurde nicht geprüft'
+  exit 1
+fi
+if grep -q 'alter role opengewerk_app login' "$CALLS"; then
+  echo 'FEHLER: ohne Antwort der Datenbank bekam die Anwendung ihre Anmeldung zurück'
+  exit 1
+fi
+grep -q 'bleibt ausgesperrt' "$work/out" || {
+  echo 'FEHLER: die Meldung sagt nicht, dass die Anwendung ausgesperrt bleibt'
+  cat "$work/out"
+  exit 1
+}
+check 'Rückspielen: ab dem Einspielen gibt nur ein bestätigter Abbruch die Anmeldung zurück'
+
+# 8b2. A stop, docker stop or Ctrl+C, while a restore plays the dump or a
+# check unpacks the archive (#1007). The init of the service hands the SIGINT
+# to the whole process group: psql ends, the database says the transaction
+# was aborted, and the application gets its login back. A SIGINT for the
+# script alone, while psql goes on, is noticed once the play ended: the
+# database is replaced then, the store is not touched, and the application
+# stays locked. Either way the run says it was stopped and leaves nothing in
+# TMPDIR; a check leaves no unpacked chains.
+#
+# Sends SIGINT once the mark file $1 is there, to the process that started the
+# fake ("script") or to its process group ("group"). The group has to be one
+# that script leads, a group of its own, or the test would signal itself.
+interrupt_when_marked() {
+  waited=0
+  until [ -s "$1" ] || [ "$waited" -ge 300 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -s "$1" ] || return 0
+  read -r marked_script marked_group < "$1"
+  if [ "$2" = group ]; then
+    if [ "$marked_group" != "$marked_script" ]; then
+      echo 'not a group of its own' > "$1.refused"
+      return 0
+    fi
+    kill -s INT "-$marked_group"
+  else
+    kill -s INT "$marked_script"
+  fi
+}
+# Runs the restore with the play that takes its time, signals it as $1 says
+# and runs the rest as the environment of the restore.
+stopped_restore() {
+  signalled=$1
+  shift
+  rm -rf "$work/play-mark" "$work/play-mark.refused" "$work/stop-tmp"
+  mkdir -p "$work/stop-tmp"
+  : > "$CALLS"
+  interrupt_when_marked "$work/play-mark" "$signalled" &
+  interrupter=$!
+  restore_status=0
+  if [ "$signalled" = group ]; then
+    env POSTGRES_DB=opengewerk PLAY_SLOW="$work/play-mark" TMPDIR="$work/stop-tmp" "$@" \
+      setsid sh "$work/bin/restore.sh" "$ours" > "$work/out" 2>&1 || restore_status=$?
+  else
+    env POSTGRES_DB=opengewerk PLAY_SLOW="$work/play-mark" TMPDIR="$work/stop-tmp" "$@" \
+      sh "$work/bin/restore.sh" "$ours" > "$work/out" 2>&1 || restore_status=$?
+  fi
+  wait "$interrupter" || true
+  if [ ! -s "$work/play-mark" ] || [ -e "$work/play-mark.refused" ]; then
+    echo "FEHLER: das Einspielen wurde nicht erreicht oder nicht angehalten ($signalled), der Fall wurde nicht geprüft"
+    cat "$work/out"
+    exit 1
+  fi
+  if [ "$restore_status" -eq 0 ] || ! grep -q 'Das Rückspielen wurde angehalten' "$work/out"; then
+    echo "FEHLER: ein angehaltenes Rückspielen lief durch oder sagte es nicht ($signalled, Status $restore_status)"
+    cat "$work/out"
+    exit 1
+  fi
+  if grep -q 'Dateispeicher wird zurückgespielt' "$work/out"; then
+    echo "FEHLER: nach dem Anhalten wurde der Dateispeicher noch zurückgespielt ($signalled)"
+    exit 1
+  fi
+  if [ -n "$(ls -A "$work/stop-tmp")" ]; then
+    echo "FEHLER: ein angehaltenes Rückspielen ließ Teile im Container liegen ($signalled)"
+    ls -A "$work/stop-tmp"
+    exit 1
+  fi
+}
+stopped_restore script
+grep -q '^restore-as ' "$CALLS" || {
+  echo 'FEHLER: der Dump wurde nicht eingespielt, der Fall wurde nicht geprüft'
+  exit 1
+}
+if grep -q 'alter role opengewerk_app login' "$CALLS" || ! grep -q 'schon zurückgespielt' "$work/out"; then
+  echo 'FEHLER: nach einem Anhalten hinter dem Einspielen bekam die Anwendung ihre Anmeldung zurück'
+  cat "$work/out"
+  exit 1
+fi
+stopped_restore group XACT_STATUS=aborted
+grep -q "pg_xact_status('42'::xid8)" "$CALLS" || {
+  echo 'FEHLER: nach einem Anhalten beim Einspielen wurde nicht nach dem Ausgang der Transaktion gefragt'
+  cat "$work/out"
+  exit 1
+}
+grep -q 'alter role opengewerk_app login' "$CALLS" || {
+  echo 'FEHLER: nach einem Anhalten mit abgebrochener Transaktion blieb die Anwendung ausgesperrt'
+  cat "$work/out"
+  exit 1
+}
+# A check, stopped while it unpacks.
+rm -rf "$work/extract-mark" "$work/extract-mark.refused" "$work/stop-tmp"
+mkdir -p "$work/stop-tmp"
+interrupt_when_marked "$work/extract-mark" group &
+interrupter=$!
+verify_status=0
+TMPDIR="$work/stop-tmp" TAR_EXTRACT_SLOW="$work/extract-mark" POSTGRES_DB=opengewerk \
+  setsid sh "$work/bin/verify.sh" "$ours" > "$work/out" 2>&1 || verify_status=$?
+wait "$interrupter" || true
+if [ ! -s "$work/extract-mark" ] || [ -e "$work/extract-mark.refused" ]; then
+  echo 'FEHLER: die Prüfung kam nicht zum Auspacken oder wurde nicht angehalten, der Fall wurde nicht geprüft'
+  cat "$work/out"
+  exit 1
+fi
+if [ "$verify_status" -eq 0 ] || [ -n "$(ls -A "$work/stop-tmp")" ]; then
+  echo "FEHLER: eine angehaltene Prüfung lief durch oder ließ Ausgepacktes liegen (Status $verify_status)"
+  ls -A "$work/stop-tmp"
+  cat "$work/out"
+  exit 1
+fi
+check 'Anhalten: Rückspielen und Prüfen enden auf ihrem Weg hinaus, das Rückspielen gibt die Anmeldung nur ohne ersetzte Datenbank zurück'
 
 # 8c. A backup from an earlier version than the database it replaces: the
 # restore goes through, and the application stays locked with the note
