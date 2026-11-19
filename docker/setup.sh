@@ -133,6 +133,12 @@ fi
 
 chmod 600 "$env_file"
 
+# A NUL byte, which no editor writes, the shell drops from a line and Compose
+# keeps in it: the checks below would read another line than Compose does.
+if [ $(($(tr -d '\000' < "$env_file" | wc -c))) -ne $(($(wc -c < "$env_file"))) ]; then
+  fail "docker/.env enthält ein Nullbyte (NUL). Bitte die Datei in einem Editor neu als UTF-8 speichern."
+fi
+
 # A byte order mark, which some editors on Windows put first, would come
 # before the first name or comment for every check below and not for Compose.
 if [ "$(head -c 3 "$env_file")" = "$(printf '\357\273\277')" ]; then

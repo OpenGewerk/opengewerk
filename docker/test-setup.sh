@@ -732,6 +732,26 @@ for case in export blanks blank_after vtab_after nbsp_after quotes escaped after
 done
 check '.env: export, Leerzeichen um das =, Wert ohne ASCII am Anfang, über mehrere Zeilen oder mit \ in Anführungszeichen, doppelter Name, TRUSTED_ORIGINS mit mehr als Adressen und $ in der Fassung halten an, ohne Wert'
 
+# A NUL byte, which the shell drops from a line and Compose keeps, stops the
+# run as well, and the file stays as it was.
+rm -f "$work/.env"
+OPENGEWERK_ADDRESS=https://opengewerk.example.org sh "$work/setup.sh" < /dev/null > /dev/null 2>&1
+printf 'EXTRA_VALUE=0.8.0\000GEHEIM-1\n' >> "$work/.env"
+before=$(cksum < "$work/.env")
+if out=$(sh "$work/setup.sh" < /dev/null 2>&1); then
+  echo 'FEHLER: eine .env mit einem Nullbyte lief durch'
+  exit 1
+fi
+printf '%s' "$out" | grep -q 'Nullbyte' || {
+  printf 'FEHLER: eine .env mit einem Nullbyte aus einem anderen Grund abgelehnt: %s\n' "$out"
+  exit 1
+}
+[ "$(cksum < "$work/.env")" = "$before" ] || {
+  echo 'FEHLER: eine .env mit einem Nullbyte wurde trotzdem geändert'
+  exit 1
+}
+check '.env: ein Nullbyte hält an, die Datei bleibt'
+
 # A carriage return from Windows is read away, comments after blanks stay, and
 # another value may stand in quotes with a comment after it; the example
 # address with a carriage return is the example address all the same.

@@ -160,12 +160,15 @@ compose() {
 # The version that runs, read the way Docker Compose reads it: from the
 # environment, else from the .env, else the default in compose.yaml. A value
 # edited by hand may carry a comment, quotes or, from Windows, a carriage
-# return, none of which belongs to a version.
+# return, none of which belongs to a version. Under the C locale, as setup.sh
+# checks the line: under UTF-8 sed would not take a comment as a whole that
+# holds a byte from another encoding, and a part of it would stay behind.
 version_variable="${APPLICATION_PREFIX}_VERSION"
 eval "pinned=\${${version_variable}:-}"
 
 if [ -z "$pinned" ]; then
-  pinned=$(sed -n "s/^${version_variable}=//p" "$here/.env" | head -n 1 | sed 's/[[:space:]]#.*//' | tr -d "\r\"' ")
+  pinned=$(LC_ALL=C sed -n "s/^${version_variable}=//p" "$here/.env" | head -n 1 |
+    LC_ALL=C sed 's/[[:space:]]#.*//' | LC_ALL=C tr -d "\r\"' ")
 fi
 
 shipped=$(sed -n "s/.*${version_variable}:-\([^}]*\)}.*/\1/p" "$here/compose.yaml" | head -n 1)

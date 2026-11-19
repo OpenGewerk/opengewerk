@@ -145,6 +145,22 @@ start
 pulled '0\.2\.2'
 check 'Anführungszeichen, Kommentar und Zeilenende aus Windows gehören nicht zur Fassung'
 
+# A comment in another encoding than UTF-8 after the version, read by a shell
+# under UTF-8: it goes as a whole all the same. The line of 3b comes back
+# after, written whole, since a sed under UTF-8 would not replace this one.
+printf 'OPENGEWERK_VERSION=0.2.3 # f\374r den Test\n' > "$work/docker/.env.line"
+grep -v '^OPENGEWERK_VERSION=' "$work/docker/.env" >> "$work/docker/.env.line"
+mv "$work/docker/.env.line" "$work/docker/.env"
+LC_ALL=C.UTF-8
+export LC_ALL
+start
+unset LC_ALL
+pulled '0\.2\.3'
+printf 'OPENGEWERK_VERSION="0.2.2" # pinned\r\n' > "$work/docker/.env.line"
+grep -v '^OPENGEWERK_VERSION=' "$work/docker/.env" >> "$work/docker/.env.line"
+mv "$work/docker/.env.line" "$work/docker/.env"
+check 'ein Kommentar in einer anderen Kodierung gehört auch unter UTF-8 nicht zur Fassung'
+
 # 4. And the environment over the .env, as Docker Compose has it.
 : > "$CALLS"
 OPENGEWERK_VERSION=0.4.0 OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null > /dev/null 2>&1
