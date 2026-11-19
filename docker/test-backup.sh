@@ -1675,7 +1675,7 @@ TMPDIR="$work/run-tmp" DUMP_HANGS="$work/dump-pid" DUMP_HANGS_FOR=90 UPTIME_PATH
 run_seconds=$(($(date +%s) - run_started))
 left_on_target=$(ls -A "$work/backups" | grep '^\..*-2031-03-01T000003Z\.' || true)
 if [ "$run_status" -eq 0 ] || [ "$run_seconds" -ge 60 ] || [ -z "$left_on_target" ] ||
-  ! grep -qF "diese Datei blieb dort liegen: $work/backups/$left_on_target" "$work/out"; then
+  ! grep -qF "sie bleibt dort liegen: $work/backups/$left_on_target" "$work/out"; then
   echo "FEHLER: eine Sicherung, deren Ziel beim Aufräumen nicht antwortete, endete nicht (Status $run_status nach $run_seconds Sekunden)"
   cat "$work/out"
   exit 1

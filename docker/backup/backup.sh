@@ -34,7 +34,8 @@
 # readable by nobody but root, and packed and encrypted in one stream into a
 # hidden file on the target, which gets the name of an archive at the very
 # end. Whatever fails before that takes the hidden file and the parts with it,
-# unless the target no longer answers by then: the file stays and is named.
+# unless removing it fails there, on a target that no longer answers, say:
+# the file stays and is named.
 # Only then is the name and the SHA-256 of the archive recorded on the
 # instance, which restore.sh and verify.sh hold every archive to, see
 # archive-checks.sh.
@@ -206,10 +207,12 @@ counter=''
 # On the target within 35 seconds: a target that stopped answering keeps rm
 # waiting there, and once the watcher has ended the backup nothing would end
 # that wait (#999). TERM after half a minute, KILL five seconds later for an
-# rm that does not end on TERM. The file is named then, for whoever cleans up.
+# rm that does not end on TERM. A file rm cannot take, for that or another
+# reason (a target that turned read-only, say), is named, for whoever cleans
+# up: the hidden one, or the archive when the backup failed after renaming it.
 remove_from_target() {
 	if [ -n "$1" ] && ! timeout -k 5 30 rm -f "$1"; then
-		echo "  Das Ziel antwortete nicht, diese Datei blieb dort liegen: $1" >&2
+		echo "  Auf dem Ziel ließ sich diese Datei nicht entfernen, sie bleibt dort liegen: $1" >&2
 	fi
 }
 cleanup() {

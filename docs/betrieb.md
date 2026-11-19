@@ -608,7 +608,7 @@ sie eine eigene Prozessgruppe: Die geplante und eine mit
 eine. Ruft ein eigenes Skript `backup.sh` in einem Container auf, gilt nur die
 Grenze für das Lesen des Dateispeichers. Antwortet das Ziel auch beim
 Aufräumen nicht mehr, gibt die Sicherung dort nach spätestens 35 Sekunden auf
-und nennt die versteckte Datei, die liegen bleibt. Ein Prozess, der im Kernel
+und nennt die Datei, die liegen bleibt. Ein Prozess, der im Kernel
 ununterbrechbar auf ein Laufwerk wartet, etwa beim Zurückschreiben auf ein
 NFS-Laufwerk mit `hard`, das nicht mehr antwortet, endet weder mit TERM noch mit
 KILL; dann endet die Sicherung erst, wenn das Laufwerk wieder antwortet. Die
@@ -633,9 +633,11 @@ sehen darf als alles, ist keine.
 im Container, nur für root lesbar, und gehen in einem Strom gepackt und
 verschlüsselt in eine verborgene Datei auf dem Ziel, die erst am Ende den Namen
 eines Archivs bekommt. Scheitert ein Schritt, auch age, bleibt auf dem Ziel
-nichts liegen, kein halbes Archiv und keine Teile im Klartext. Die eine
-Ausnahme ist ein Ziel, das auch beim Aufräumen nicht mehr antwortet: Dann
-bleibt die verborgene Datei dort, und die Sicherung nennt sie (#999). Platz braucht die
+nichts liegen, kein halbes Archiv und keine Teile im Klartext. Die Ausnahme
+ist ein Aufräumen, das auf dem Ziel scheitert, etwa weil es nicht mehr antwortet
+oder nur noch lesbar ist: Dann bleibt die Datei dort, und die Sicherung nennt
+sie (#999). Das ist die verborgene Datei oder, wenn die Sicherung erst nach dem
+Umbenennen scheiterte, das Archiv unter seinem Namen. Platz braucht die
 Sicherung dafür im Container, also dort, wo Docker seine Container hält, etwa so
 viel wie Dump und Dateispeicher zusammen; `TMPDIR` im Dienst verlegt das. Die
 Archive auf dem Ziel sind nur für ihren Besitzer lesbar, wer sie von dort
