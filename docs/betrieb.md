@@ -89,8 +89,8 @@ auf Wunsch in Anführungszeichen, ohne `$` und ohne Tabulator.
 Docker Compose nimmt auch anderes an, liest
 es aber anders als die Skripte, die dann eine andere Adresse nennen oder sehen
 würden als die, mit der die Anwendung läuft. `sh docker/start.sh` hält deshalb
-bei einer anderen Form an, nennt die Nummer der Zeile, nie ihren Wert, und
-lässt die Datei, wie sie ist (#996).
+bei einer anderen Form an, nennt die Nummer der Zeile (bei einem Nullbyte nur
+die Datei), nie ihren Wert, und lässt die Datei, wie sie ist (#996).
 
 **Eingestellt wird in der Oberfläche, nicht in der `.env`.** Briefkopf, Steuern,
 Mailserver und alles, was ein Betrieb sonst festlegt, stehen im Büro. In der
