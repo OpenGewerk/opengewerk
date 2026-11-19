@@ -107,6 +107,51 @@ if [ "${1:-}" = "--time" ]; then
 	exit 0
 fi
 
+# A stop of the service (docker stop, compose down, an update) sends this
+# script, the first process of its container, the stop signal of the image:
+# SIGINT, from the postgres image. Without a trap the kernel drops that
+# signal for PID 1, and the KILL after the grace period ends a backup under
+# way before it cleans up: the hidden file on the target and the parts in the
+# container would stay (#1004). So TERM goes on to the process group of the
+# backup, which cleans up as after any other failure,
+# and this script ends once it has. The backup and the pause between checks
+# run behind a wait, which a trap interrupts at once; a command in the
+# foreground would hold the trap until it ends. A TERM between the start of
+# the backup and the line that keeps its process waits for that line, and
+# then for the group of the backup, so that it does not end this script with
+# a backup it has not reached.
+backup=''
+starting=false
+stopping=false
+stop() {
+	stopping=true
+	if [ "$starting" = true ]; then
+		return
+	fi
+	if [ -n "$backup" ]; then
+		echo "Der Dienst wird angehalten, die laufende Sicherung räumt auf." >&2
+		# To its group, which exists once setsid ran in the child. Before that
+		# the child may still carry the handler of this script, which would
+		# only note the signal and lose it with the exec. So the group is
+		# waited for, five seconds at most, and the process alone gets the
+		# signal when it never comes. Without "--": the kill of busybox sh
+		# takes the group as -PID only.
+		tries=0
+		until kill -s TERM "-$backup" 2>/dev/null; do
+			kill -0 "$backup" 2>/dev/null || break
+			tries=$((tries + 1))
+			if [ "$tries" -ge 50 ]; then
+				kill -s TERM "$backup" 2>/dev/null || true
+				break
+			fi
+			sleep 0.1
+		done
+		wait "$backup" 2>/dev/null || true
+	fi
+	exit 143
+}
+trap stop TERM INT HUP
+
 at=$(configured_time)
 
 echo "Geplante Sicherung: jeden Tag um ${at} Uhr (${TZ:-UTC}), und nachgeholt, wenn die letzte vor dem letzten Termin lag."
@@ -129,10 +174,21 @@ while true; do
 
 		# In a process group of its own, which the limit of twelve hours in
 		# backup.sh ends as a whole (#999); setsid keeps the status.
-		if ! setsid backup.sh --scheduled; then
+		starting=true
+		setsid backup.sh --scheduled &
+		backup=$!
+		starting=false
+		if [ "$stopping" = true ]; then
+			stop
+		fi
+		status=0
+		wait "$backup" || status=$?
+		backup=''
+		if [ "$status" -ne 0 ]; then
 			echo "Die geplante Sicherung ist fehlgeschlagen, der nächste Versuch folgt zum nächsten Termin." >&2
 		fi
 	fi
 
-	sleep 300
+	sleep 300 &
+	wait $! || true
 done

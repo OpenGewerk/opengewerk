@@ -85,6 +85,11 @@ if [ -n "${DUMP_HANGS:-}" ]; then
   echo "$$" > "$DUMP_HANGS"
   exec sleep "${DUMP_HANGS_FOR:-600}"
 fi
+# A dump that fails.
+if [ -n "${DUMP_FAILS:-}" ]; then
+  echo 'pg_dump: error: connection lost' >&2
+  exit 1
+fi
 # A file named after its own hash that does not lie where the store keeps it.
 if [ -n "${DUMP_ASTRAY:-}" ]; then
   mkdir -p "$STORAGE_PATH/00/00"
@@ -399,10 +404,12 @@ fi
 # A target that stopped answering: rm of a hidden file right below
 # RM_BLOCKS_UNDER waits two minutes first, and TERM does not end that wait.
 # Old archives the backup takes away when there are too many are not hidden.
+# RM_BLOCKS_MARK is made when that wait begins.
 if [ -n "\${RM_BLOCKS_UNDER:-}" ]; then
   case "\$*" in
     *"\$RM_BLOCKS_UNDER"/.*)
       trap '' TERM
+      [ -z "\${RM_BLOCKS_MARK:-}" ] || : > "\$RM_BLOCKS_MARK"
       sleep 120
       ;;
   esac
@@ -1767,6 +1774,110 @@ if ! test -s "$work/schedule-psql" ||
   exit 1
 fi
 check 'Sicherung als Ganzes: nach zwölf Stunden endet sie mit allem, was sie gestartet hat, und lässt nichts zurück'
+
+# A stop of the service reaches a backup under way (#1004): schedule.sh passes
+# TERM on to the group of the backup, waits until it has cleaned up and ends.
+# In the pause between two checks it ends at once. The stand-in for backup.sh
+# notes that it started, that it cleaned up, which takes it two seconds, and
+# the process it started.
+mkdir -p "$work/stop-bin"
+cat > "$work/stop-bin/backup.sh" <<'FAKE'
+#!/bin/sh
+trap 'sleep 2; echo cleaned > "$STOP_MARK"; exit 1' TERM
+echo "$$" > "$STOP_PID"
+echo started > "$STOP_MARK"
+if [ -n "${STOP_HANGS:-}" ]; then
+  sleep 120 &
+  echo "$!" > "$STOP_CHILD"
+  wait $!
+fi
+FAKE
+cp "$work/schedule-bin/psql" "$work/stop-bin/psql"
+chmod +x "$work/stop-bin/backup.sh" "$work/stop-bin/psql"
+for phase in backup pause; do
+  rm -f "$work/stop-mark" "$work/stop-child" "$work/stop-pid"
+  hangs=''
+  expected=started
+  if [ "$phase" = backup ]; then
+    hangs=1
+    expected=cleaned
+  fi
+  STOP_MARK="$work/stop-mark" STOP_PID="$work/stop-pid" STOP_CHILD="$work/stop-child" STOP_HANGS="$hangs" \
+    SCHEDULE_PSQL="$work/stop-psql" \
+    BACKUP_STATUS_PATH="$work/stop-status-$phase" POSTGRES_HOST=postgres POSTGRES_DB=opengewerk \
+    PATH="$work/stop-bin:$PATH" sh "$work/bin/schedule.sh" > "$work/out" 2>&1 &
+  schedule_pid=$!
+  waited=0
+  until [ -s "$work/stop-mark" ] || [ "$waited" -ge 20 ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  [ -s "$work/stop-mark" ] || {
+    echo "FEHLER: die Sicherung des Zeitplans begann nicht, der Fall $phase wurde nicht geprüft"
+    cat "$work/out"
+    exit 1
+  }
+  # In the pause, once the stand-in has ended and the schedule has taken its
+  # status, which ends its process for good.
+  if [ "$phase" = pause ]; then
+    waited=0
+    while kill -0 "$(cat "$work/stop-pid")" 2>/dev/null; do
+      [ "$waited" -lt 50 ] || {
+        echo 'FEHLER: die Sicherung des Zeitplans endete nicht, die Pause wurde nicht geprüft'
+        exit 1
+      }
+      sleep 0.2
+      waited=$((waited + 1))
+    done
+  fi
+  stop_started=$(date +%s)
+  kill -s TERM "$schedule_pid"
+  stop_status=0
+  wait "$schedule_pid" || stop_status=$?
+  stop_seconds=$(($(date +%s) - stop_started))
+  if [ "$stop_status" -ne 143 ] || [ "$stop_seconds" -ge 10 ] ||
+    [ "$(cat "$work/stop-mark" 2>/dev/null)" != "$expected" ]; then
+    echo "FEHLER: ein Anhalten des Zeitplans erreichte die Sicherung nicht ($phase: Status $stop_status nach $stop_seconds Sekunden, $(cat "$work/stop-mark" 2>/dev/null))"
+    cat "$work/out"
+    exit 1
+  fi
+  if [ "$phase" = backup ] && kill -0 "$(cat "$work/stop-child")" 2>/dev/null; then
+    echo 'FEHLER: nach dem Anhalten lief ein Prozess der Sicherung weiter'
+    exit 1
+  fi
+done
+# A TERM that reaches a backup which already cleans up, after a failure of its
+# own and on a target slow to answer, does not end that clean up: the backup
+# still gives up on the target after its 35 seconds and names the file.
+rm -f "$work/rm-blocks"
+TMPDIR="$work/run-tmp" DUMP_FAILS=1 RM_BLOCKS_UNDER="$work/backups" RM_BLOCKS_MARK="$work/rm-blocks" \
+  FIXED_STAMP=2031-03-01T000020Z POSTGRES_DB=opengewerk \
+  "$real_timeout" -s KILL 150 setsid sh "$work/bin/backup.sh" > "$work/out" 2>&1 &
+cleaning_pid=$!
+waited=0
+until [ -e "$work/rm-blocks" ] || [ "$waited" -ge 30 ]; do
+  sleep 1
+  waited=$((waited + 1))
+done
+[ -e "$work/rm-blocks" ] || {
+  echo 'FEHLER: die Sicherung kam nicht ins Aufräumen, der Fall wurde nicht geprüft'
+  cat "$work/out"
+  exit 1
+}
+kill -s TERM "-$cleaning_pid" || {
+  echo 'FEHLER: das TERM erreichte die aufräumende Sicherung nicht, der Fall wurde nicht geprüft'
+  exit 1
+}
+wait "$cleaning_pid" || true
+left_on_target=$(ls -A "$work/backups" | grep '^\..*-2031-03-01T000020Z\.' || true)
+if [ ! -e "$work/rm-blocks" ] || [ -z "$left_on_target" ] ||
+  ! grep -qF "sie bleibt dort liegen: $work/backups/$left_on_target" "$work/out"; then
+  echo 'FEHLER: ein TERM brach das Aufräumen einer Sicherung ab'
+  cat "$work/out"
+  exit 1
+fi
+rm -f "$work/backups/$left_on_target"
+check 'Zeitplan: ein Anhalten erreicht die laufende Sicherung mit allem, was sie gestartet hat, und endet in der Pause sofort'
 
 # A file in an archive whose content is not what its name says, as a link
 # swapped in while tar read the store would leave it: the restore stops and

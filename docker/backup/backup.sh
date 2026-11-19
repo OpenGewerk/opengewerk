@@ -216,6 +216,12 @@ remove_from_target() {
 	fi
 }
 cleanup() {
+	# Once it cleans up it finishes that: a TERM now, a stop of the service
+	# passed on while a failed backup waits on the target, say, would run the
+	# trap below and end the script halfway through this (#1004). What it
+	# starts here ignores the signal as well; the limit on the target is a
+	# KILL after TERM, which nothing can ignore.
+	trap '' HUP INT TERM
 	stop_watcher
 
 	for reader in $hasher $counter; do
