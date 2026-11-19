@@ -102,6 +102,8 @@ echo "Sicherung: $(basename "$archive")"
 work=$(mktemp -d)
 held=$(mktemp -d)
 cleanup() {
+	# A second stop does not end this halfway, as in restore.sh (#1007).
+	trap '' HUP INT TERM
 	rm -rf "$work" "$held"
 }
 trap cleanup EXIT

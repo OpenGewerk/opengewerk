@@ -41,19 +41,15 @@ umask 077
 
 # A stop of the container (docker stop, Ctrl+C) sends SIGINT, and under the
 # init of the backup service every step of this run gets it at once (#1007).
-# Here it only marks the run as stopped: the step under way ends, a failed
-# play of the dump still asks the database how its transaction ended, and the
-# run ends through the same way out as any other failure, which gives the
-# login back or says why not. A trap that ended the run at once would skip
-# that question, and as the first process of a container without an init a
-# signal the shell does not catch would not end it either.
+# The run ends as soon as the step under way has ended, before anything looks
+# at what that step left, so a hash cut short is never taken for a verdict on
+# the archive. It ends through the way out below, which cleans up and gives
+# the login back or says why not. Only while the dump is played is a stop just
+# noted, see there. Without a trap the shell would end at the signal and skip
+# the way out, or, as the first process of a container without an init, not
+# end at all.
 stopped=''
-trap 'stopped=1' HUP INT TERM
-stop_if_stopped() {
-	if [ -n "$stopped" ]; then
-		exit 1
-	fi
-}
+trap 'stopped=1; exit 1' HUP INT TERM
 
 : "${POSTGRES_HOST:=postgres}"
 : "${POSTGRES_DB:=opengewerk}"
@@ -140,6 +136,10 @@ echo "Sicherung: $(basename "$archive")"
 work=$(mktemp -d)
 held=$(mktemp -d)
 cleanup() {
+	# Once it cleans up it finishes that: a second stop would end the run
+	# halfway and leave the unpacked archive behind. What it starts here
+	# ignores the signal as well.
+	trap '' HUP INT TERM
 	rm -rf "$work" "$held"
 	if [ -n "$stopped" ]; then
 		echo "Das Rückspielen wurde angehalten." >&2
@@ -197,8 +197,6 @@ for part in manifest.json $parts; do
 	fi
 done
 
-stop_if_stopped
-
 # --- Check 1: did the archive arrive whole? --------------------------------
 echo "  Prüfsummen werden geprüft."
 for part in $parts; do
@@ -224,8 +222,6 @@ if ! check_chains "${work}/audit-chains.tsv"; then
 	echo "dorthin ein Mandant als UUID und eine Zahl. Es wird nichts zurückgespielt." >&2
 	exit 1
 fi
-
-stop_if_stopped
 
 # --- Check 2: is every file of the store the file its name claims? ---------
 # Before anything changes (#1000). Both parts of the store are unpacked into a
@@ -354,8 +350,6 @@ fi
 
 echo "    ${files} Datei(en) in der Sicherung, ${expected_files} davon gegen ihren Hash geprüft."
 
-stop_if_stopped
-
 # --- Lock the application out for the duration ------------------------------
 # Counting open connections was the first attempt at this and it protects
 # against nothing: the pool closes an idle connection after a few seconds, so
@@ -415,6 +409,8 @@ was_locked=$(psql --host "$POSTGRES_HOST" --username postgres --dbname postgres 
 replaced=0
 waiting=0
 unlock_and_cleanup() {
+	# As in cleanup: a second stop does not end this halfway.
+	trap '' HUP INT TERM
 	if [ "$1" -eq 0 ]; then
 		[ "$waiting" -eq 1 ] || unlock_application || true
 	elif [ "$replaced" -eq 1 ]; then
@@ -441,8 +437,6 @@ echo "  Anwendung wird für die Dauer des Rückspielens ausgesperrt."
 echo "  Bleibt sie danach ausgesperrt, gibt ihr erst sh docker/start.sh die Anmeldung"
 echo "  zurück, und das braucht Docker Engine ab 28.3.3."
 lock_application
-stop_if_stopped
-
 # --- Restore the database --------------------------------------------------
 # Everything the owner holds goes first, and the dump is played into what is
 # left, all of it in one transaction (#988). Restoring into a database that
@@ -561,8 +555,14 @@ pg_restore --no-owner --file "${work}/database.sql" "${work}/database.dump"
 # leaves the database as it was; one it committed, or one whose end nobody
 # can say, counts as replaced. So the run counts as replaced from here on,
 # and only that answer, or a transaction that never began, takes it back: a
-# way out that comes before it, a stop or a failure of the question itself,
+# way out that comes before it, a step of the question that fails, say,
 # leaves the application locked rather than on a database it cannot know.
+#
+# While the dump is played a stop is only noted (#1007). psql ends by it, or
+# plays on when the signal reached this script alone, and either way the run
+# goes on to the question before it ends. Ended at once, it would leave the
+# application locked on a database that may well be as it was.
+trap 'stopped=1' HUP INT TERM
 replaced=1
 if ! PGPASSWORD="$OPENGEWERK_OWNER_PASSWORD" PGOPTIONS="-c client_min_messages=warning" \
 	psql --host "$POSTGRES_HOST" --username opengewerk_owner --dbname "$POSTGRES_DB" \
@@ -587,11 +587,15 @@ if ! PGPASSWORD="$OPENGEWERK_OWNER_PASSWORD" PGOPTIONS="-c client_min_messages=w
 	fi
 	exit 1
 fi
+# A stop ends the run again from here on, and one noted while psql played on
+# ends it now: the database is replaced, the store is not.
+trap 'stopped=1; exit 1' HUP INT TERM
+if [ -n "$stopped" ]; then
+	exit 1
+fi
 # A note an earlier restore left belongs to the database that was there.
 superuser_command "comment on role opengewerk_app is null"
 level_after=$(migration_level)
-
-stop_if_stopped
 
 # --- Restore the file store ------------------------------------------------
 # What check 2 let through, from the folder it checked: nothing that goes into
@@ -615,8 +619,6 @@ chown -R "$storage_owner" "$staged"
 cp -a "${staged}/." "$STORAGE_PATH/"
 chown -R "$storage_owner" "$STORAGE_PATH"
 rm -rf "$staged"
-
-stop_if_stopped
 
 # --- Check 3: is the audit log the same log? -------------------------------
 echo "  Audit-Ketten werden gegen die Sicherung geprüft."
@@ -652,7 +654,6 @@ if [ "$level_before" -eq 0 ] || [ "$level_after" -lt "$level_before" ] || [ "$wa
 	superuser_command "comment on role opengewerk_app is '${waiting_note}'"
 fi
 
-stop_if_stopped
 echo "Fertig."
 if [ "$waiting" -eq 1 ]; then
 	if [ "$level_after" -lt "$level_before" ]; then
