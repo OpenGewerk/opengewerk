@@ -360,17 +360,18 @@ echo "    ${files} Datei(en) in der Sicherung, ${expected_files} davon gegen ihr
 # in the store runs with the rights of the store's owner, and a link takes it
 # only where the application could go itself.
 #
-# The owner empties only folders it may write. One that belongs to someone
-# else, root after a copy that failed halfway before #1000 say, would end the
-# restore with the database already replaced; it is turned away here, while
-# nothing has changed yet.
+# The owner empties only folders it may read, write and enter, the store
+# itself among them. One that belongs to someone else, root after a copy that
+# failed halfway before #1000 say, or one of its own without those rights,
+# would end the restore with the database already replaced; it is turned away
+# here, while nothing has changed yet.
 mkdir -p "$STORAGE_PATH"
 # Read before anything is copied, from the store itself, which carries the
 # owner the application runs as.
 storage_owner=$(stat -c '%u:%g' "$STORAGE_PATH")
 storage_uid=${storage_owner%%:*}
 if [ "$storage_uid" != 0 ]; then
-	find "$STORAGE_PATH" -mindepth 1 -type d \( ! -user "$storage_uid" -o ! -perm -300 \) \
+	find "$STORAGE_PATH" -type d \( ! -user "$storage_uid" -o ! -perm -700 \) \
 		>"${work}/foreign-folders"
 	if [ -s "${work}/foreign-folders" ]; then
 		echo "Im Dateispeicher liegen Ordner, die sein Eigentümer (${storage_owner}) nicht leeren darf:" >&2

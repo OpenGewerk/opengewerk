@@ -1107,7 +1107,8 @@ fi
 rm -rf "$filled_dir"
 # A folder in the store that its owner may not empty turns the restore away
 # before anything changes, with the commands that give the store back: one
-# that belongs to root, and one of the owner's own that it may not write.
+# that belongs to root, one of the owner's own that it may not write, one it
+# may not read, and the store itself when the owner may not write it.
 mkdir "$STORAGE_PATH/fremd"
 : > "$STORAGE_PATH/fremd/datei"
 refused 'nicht leeren darf' env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
@@ -1132,6 +1133,28 @@ refused 'nicht leeren darf' env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh"
 }
 chmod 700 "$STORAGE_PATH/gesperrt"
 rm -rf "$STORAGE_PATH/gesperrt"
+mkdir "$STORAGE_PATH/blind"
+: > "$STORAGE_PATH/blind/datei"
+chown -R 1000:1000 "$STORAGE_PATH/blind"
+chmod 300 "$STORAGE_PATH/blind"
+refused 'nicht leeren darf' env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
+[ -f "$STORAGE_PATH/blind/datei" ] || {
+  echo 'FEHLER: ein abgelehntes Rückspielen änderte den Dateispeicher'
+  exit 1
+}
+chmod 700 "$STORAGE_PATH/blind"
+rm -rf "$STORAGE_PATH/blind"
+: > "$STORAGE_PATH/datei"
+chown 1000:1000 "$STORAGE_PATH/datei"
+storage_mode=$(stat -c %a "$STORAGE_PATH")
+chmod 500 "$STORAGE_PATH"
+refused 'nicht leeren darf' env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
+chmod "$storage_mode" "$STORAGE_PATH"
+[ -f "$STORAGE_PATH/datei" ] || {
+  echo 'FEHLER: ein abgelehntes Rückspielen änderte den Dateispeicher'
+  exit 1
+}
+rm -f "$STORAGE_PATH/datei"
 chown -R 0:0 "$STORAGE_PATH"
 check 'Rückspielen: im Dateispeicher mit den Rechten seines Eigentümers, ein Link führt nicht hinaus'
 halfway PG_RESTORE_FAILS=1

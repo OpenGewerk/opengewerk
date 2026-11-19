@@ -870,10 +870,11 @@ ist, sieht `restore.sh` nicht. Liefe sie noch, könnte sie zwischen zwei
 Schritten einen Ordner gegen einen Link tauschen, und root folgte ihm aus dem
 Speicher hinaus, zu den Archiven etwa. Mit den Rechten des Eigentümers führt ein
 solcher Link nur dorthin, wohin die Anwendung selbst darf. Leeren kann der
-Eigentümer nur Ordner, die ihm gehören und die er beschreiben darf. Liegt ein
-anderer im Speicher, etwa einer, der nach einem halben Kopieren vor #1000 root
-gehört, lehnt `restore.sh` das Rückspielen ab, bevor sich etwas ändert, und
-nennt die Befehle, die den Speicher seinem Eigentümer zurückgeben.
+Eigentümer nur Ordner, die ihm gehören und die er lesen und beschreiben darf,
+den Speicher selbst eingeschlossen. Liegt ein anderer im Speicher, etwa einer,
+der nach einem halben Kopieren vor #1000 root gehört, lehnt `restore.sh` das
+Rückspielen ab, bevor sich etwas ändert, und nennt die Befehle, die den
+Speicher seinem Eigentümer zurückgeben.
 
 ## Die Sicherung als Zeuge für das Audit-Log
 
