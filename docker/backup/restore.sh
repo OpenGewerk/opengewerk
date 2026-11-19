@@ -570,6 +570,9 @@ if ! PGPASSWORD="$OPENGEWERK_OWNER_PASSWORD" PGOPTIONS="-c client_min_messages=w
 	--file "${work}/empty.sql" --file "${work}/database.sql" >"${work}/played.txt"; then
 	transaction=$(sed -n 's/^restore-transaction \([0-9][0-9]*\)$/\1/p' "${work}/played.txt" | head -n 1)
 	# Without its number the transaction never began, and nothing changed.
+	# The number is what the first statement returns, and psql writes each
+	# result out before it sends the next statement, so it stands in the file
+	# before anything changes, even when psql is killed afterwards.
 	if [ -z "$transaction" ]; then
 		replaced=0
 	else
