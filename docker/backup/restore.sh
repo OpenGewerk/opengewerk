@@ -400,22 +400,42 @@ if [ "$storage_uid" != 0 ]; then
 		# Tried rather than read from the mode, which busybox test -w does: an
 		# ACL, or a share that treats every user alike (NFS with all_squash,
 		# SMB with noperm), gives a right the mode does not show.
-		if probe=$(as_store_owner mktemp -d -p "$kept" .restore-probe.XXXXXX 2>/dev/null); then
-			as_store_owner rmdir "$probe" || true
-			echo "In ${kept} darf der Eigentümer des Dateispeichers (${storage_owner}) schreiben." >&2
-			echo "Das Rückspielen leert und füllt den Speicher mit dessen Rechten, und eine Anwendung," >&2
-			echo "die dabei noch liefe, könnte es mit einem Link dorthin lenken und Sicherungen löschen." >&2
+		probe_status=0
+		probe=$(as_store_owner mktemp -d -p "$kept" .restore-probe.XXXXXX 2>"${work}/probe.err") ||
+			probe_status=$?
+		# Only a refusal answers the question. Any other failure, a full target
+		# say, says nothing about the right, and deleting needs no room.
+		if [ "$probe_status" -ne 0 ]; then
+			case $(cat "${work}/probe.err") in
+			*'Permission denied'* | *'Operation not permitted'* | *'Read-only file system'*)
+				continue
+				;;
+			esac
+			echo "Ob der Eigentümer des Dateispeichers (${storage_owner}) in ${kept} schreiben darf," >&2
+			echo "ließ sich nicht ausprobieren:" >&2
+			tr "\001-\011\013-\037\177" "?" <"${work}/probe.err" | sed 's/^/  /' >&2
 			echo "Es wird nichts zurückgespielt, Datenbank und Dateispeicher bleiben, wie sie sind." >&2
-			echo "Das Verzeichnis soll root gehören und anderen kein Schreibrecht geben; auf einem" >&2
-			echo "NAS darf die Freigabe nicht diesem Benutzer zugeordnet eingehängt sein." >&2
 			exit 1
 		fi
+		as_store_owner rmdir "$probe" || true
+		echo "In ${kept} darf der Eigentümer des Dateispeichers (${storage_owner}) schreiben." >&2
+		echo "Das Rückspielen leert und füllt den Speicher mit dessen Rechten, und eine Anwendung," >&2
+		echo "die dabei noch liefe, könnte es mit einem Link dorthin lenken und Sicherungen löschen." >&2
+		echo "Es wird nichts zurückgespielt, Datenbank und Dateispeicher bleiben, wie sie sind." >&2
+		echo "Das Verzeichnis soll root gehören und anderen kein Schreibrecht geben; auf einem" >&2
+		echo "NAS darf die Freigabe nicht diesem Benutzer zugeordnet eingehängt sein." >&2
+		exit 1
 	done
-	find "$STORAGE_PATH" -type d \( ! -user "$storage_uid" -o ! -perm -700 \) \
-		>"${work}/foreign-folders"
-	if [ -s "${work}/foreign-folders" ]; then
-		echo "Im Dateispeicher liegen Ordner, die sein Eigentümer (${storage_owner}) nicht leeren darf:" >&2
+	# Looked for as the owner: a folder above the store or in it that the owner
+	# may not enter or read makes this find fail, and is turned away as well.
+	foreign_status=0
+	as_store_owner find "$STORAGE_PATH" -type d \( ! -user "$storage_uid" -o ! -perm -700 \) \
+		>"${work}/foreign-folders" 2>"${work}/foreign-folders.err" || foreign_status=$?
+	if [ "$foreign_status" -ne 0 ] || [ -s "${work}/foreign-folders" ]; then
+		echo "Im Dateispeicher liegen Ordner, die sein Eigentümer (${storage_owner}) nicht leeren darf," >&2
+		echo "oder er erreicht den Speicher nicht:" >&2
 		head -n 3 "${work}/foreign-folders" | tr "\001-\011\013-\037\177" "?" | sed 's/^/  /' >&2
+		head -n 3 "${work}/foreign-folders.err" | tr "\001-\011\013-\037\177" "?" | sed 's/^/  /' >&2
 		echo "Das Rückspielen leert und füllt den Speicher mit dessen Rechten. Es wird nichts" >&2
 		echo "zurückgespielt, Datenbank und Dateispeicher bleiben, wie sie sind. Bei angehaltener" >&2
 		echo "Anwendung geben diese Befehle den Speicher seinem Eigentümer zurück, danach das" >&2
@@ -721,14 +741,16 @@ echo "  Dateispeicher wird zurückgespielt."
 # also when the copy fails halfway, a full disk say, so the next restore, the
 # one the message asks for, finds the owner on the store (#1000). umask 0
 # keeps the modes the files have in the archive, as a copy by root did.
+# Through a pipe only the status of its last command counts, so the tar that
+# packs leaves a mark that stands until it went through. A mark that cannot be
+# written ends the run here, before the store is emptied.
+pack_pending="${work}/pack-pending"
+: >"$pack_pending"
 as_store_owner find "$STORAGE_PATH" -mindepth 1 -delete
-# Through a pipe only the status of its last command counts; a tar that fails
-# while it reads says so in a file.
-pack_failed="${work}/pack-failed"
-{ tar --create --file - --directory "$staged" . || : >"$pack_failed"; } |
+{ tar --create --file - --directory "$staged" . && rm -f "$pack_pending"; } |
 	as_store_owner sh -c 'umask 0 && exec tar --extract --no-same-owner --file - --directory "$1"' \
 		sh "$STORAGE_PATH"
-if [ -e "$pack_failed" ]; then
+if [ -e "$pack_pending" ]; then
 	exit 1
 fi
 rm -rf "$staged"

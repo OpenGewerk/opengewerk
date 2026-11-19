@@ -42,6 +42,7 @@ real_date=$(command -v date)
 real_cp=$(command -v cp)
 real_find=$(command -v find)
 real_gosu=$(command -v gosu)
+real_mktemp=$(command -v mktemp)
 real_rm=$(command -v rm)
 real_timeout=$(command -v timeout)
 
@@ -591,6 +592,18 @@ fi
 exec $real_gosu "\$@"
 FAKE
 chmod +x "$work/bin/gosu"
+# mktemp as it is, unless PROBE_FAILS_WITH is set: then the probe of a restore
+# in a folder fails with that reason, the way a full target fails it.
+cat > "$work/bin/mktemp" <<FAKE
+#!/bin/sh
+if [ -n "\${PROBE_FAILS_WITH:-}" ]; then
+  case " \$* " in
+    *" .restore-probe."*) echo "mktemp: : \$PROBE_FAILS_WITH" >&2; exit 1 ;;
+  esac
+fi
+exec $real_mktemp "\$@"
+FAKE
+chmod +x "$work/bin/mktemp"
 # timeout as it is; TIMEOUT_CALLS takes down what it is asked to limit.
 cat > "$work/bin/timeout" <<FAKE
 #!/bin/sh
@@ -1217,10 +1230,22 @@ for kept in "$work/backups" "$work/status"; do
     env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
   chmod "$kept_mode" "$kept"
 done
+# A probe that fails for another reason than a refusal, a full target say,
+# says nothing about the right: turned away all the same.
+refused 'ließ sich nicht ausprobieren' \
+  env POSTGRES_DB=opengewerk PROBE_FAILS_WITH='No space left on device' sh "$work/bin/restore.sh" "$ours"
 # A service that cannot switch to the owner, without SETUID and SETGID, turns a
 # store that is not root's away before anything changes.
 refused 'braucht dafür die Capabilities SETUID und SETGID' \
   env POSTGRES_DB=opengewerk GOSU_FAILS=1 sh "$work/bin/restore.sh" "$ours"
+# A store its owner cannot reach, below a folder only root may enter, though
+# every folder in it is the owner's: turned away as well.
+mkdir -p "$work/root-only/storage"
+chmod 700 "$work/root-only"
+chown 1000:1000 "$work/root-only/storage"
+refused 'Permission denied' env POSTGRES_DB=opengewerk STORAGE_PATH="$work/root-only/storage" \
+  sh "$work/bin/restore.sh" "$ours"
+rm -rf "$work/root-only"
 chown -R 0:0 "$STORAGE_PATH"
 check 'Rückspielen: im Dateispeicher mit den Rechten seines Eigentümers, ein Link führt nicht hinaus'
 halfway PG_RESTORE_FAILS=1

@@ -883,7 +883,8 @@ sich etwas ändert, wird ein Rückspielen in drei Fällen:
 - Im Speicher liegt ein Ordner, den der Eigentümer nicht leeren darf, der
   Speicher selbst eingeschlossen: einer, der ihm nicht gehört, etwa nach einem
   halben Kopieren vor #1000 root, oder einer, den er nicht lesen oder
-  beschreiben darf. Die Meldung nennt die Befehle, die den Speicher seinem
+  beschreiben darf. Ebenso, wenn er den Speicher gar nicht erreicht, weil er
+  einen Ordner darüber nicht betreten darf. Die Meldung nennt die Befehle, die den Speicher seinem
   Eigentümer zurückgeben.
 
 Ordner, die eine Sicherung ohne Schreibrecht für ihren Eigentümer enthält,
@@ -970,7 +971,9 @@ denn es arbeitet im Dateispeicher mit den Rechten dieses Benutzers, siehe oben.
 Ausprobiert wird das, nicht aus den Rechten abgelesen. Es trifft also auch eine
 Freigabe, die beim Einhängen jede Datei diesem Benutzer zuordnet, wie SMB mit
 `uid=`, eine, die jeden Benutzer gleich behandelt, wie NFS mit `all_squash`
-oder SMB mit `noperm`, und eine ACL, die ihm das Schreiben erlaubt. Wandert eine Kopie zusätzlich außer Haus, ist auch ein Brand im Büro
+oder SMB mit `noperm`, und eine ACL, die ihm das Schreiben erlaubt. Scheitert die
+Probe aus einem anderen Grund als fehlendem Recht, etwa weil das Ziel voll ist,
+lehnt `restore.sh` ebenso ab, denn Löschen braucht keinen Platz. Wandert eine Kopie zusätzlich außer Haus, ist auch ein Brand im Büro
 überstanden. Verschlüsselt sollte ein Archiv, das die Maschine verlässt, in
 jedem Fall sein.
 
