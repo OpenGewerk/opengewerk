@@ -707,8 +707,10 @@ Sie legte sonst womöglich ein halb zurückgespieltes Archiv als neuestes ab, da
 ein späteres `latest` nähme. `start.sh` startet beide wieder. Läuft die
 Anwendung doch, sperrt `restore.sh` sie für die Dauer aus. Jeder Schritt läuft
 nur, wenn der davor gelang: Ließ sich die Anwendung nicht anhalten, wird nichts
-zurückgespielt, und bricht `restore.sh` ab, kann die Datenbank schon ersetzt und
-der Dateispeicher zum Teil ersetzt sein (siehe unten). Dann bleibt die
+zurückgespielt, und bricht `restore.sh` erst nach der Datenbank ab, beim
+Kopieren des Dateispeichers oder an der Prüfung der Audit-Ketten, kann die
+Datenbank schon ersetzt und der Dateispeicher zum Teil ersetzt sein (siehe
+unten). Dann bleibt die
 Anwendung angehalten, bis die Ursache behoben und die Sicherung noch einmal
 zurückgespielt ist. Gestartet wird sie mit `start.sh` wie nach einem Update:
 Stammt die Sicherung von einer älteren Fassung, laufen zuerst die Migrationen,
@@ -743,6 +745,16 @@ den Container kopiert, und geprüft und gelesen wird nur diese Kopie: eine Datei
 die auf dem Ziel geprüft wurde, könnte beim Lesen schon eine andere sein. Die
 Kopie ist verschlüsselt, wenn das Archiv es ist, und braucht so viel Platz wie
 das Archiv.
+
+**Dann der Dateispeicher, vor der Datenbank** (#1000). `restore.sh` packt beide
+Teile des Speichers in einen Ordner im Container aus und prüft dort jede Datei:
+nur Dateien und Ordner, jede Datei mit Namen und Ort, wie der Speicher sie
+anlegt, und ihr Inhalt passend zu ihrem Hash. Was keine Datei des Speichers ist,
+nimmt es heraus und nennt es. Passt der Inhalt einer Datei nicht zu ihrem Namen,
+bricht es ab, bevor es die Anwendung aussperrt oder die Datenbank anfasst;
+Datenbank und Dateispeicher bleiben dann, wie sie waren. Erst nach der Datenbank
+kommt der geprüfte Stand in den Dateispeicher. Im Container braucht das kurz
+etwa doppelt so viel Platz wie der Dateispeicher.
 
 **Auf einer neuen Maschine** fehlt das Verzeichnis, es lag mit dem Volume
 `backup-status` auf der alten. Dort kommt zuerst die `docker/.env` der alten
@@ -803,8 +815,9 @@ ankommt, steht die Sicherung womöglich schon drin. Nur eine Transaktion, die
 sicher abgebrochen ist, gilt als nicht geschehen. Scheitert also eine
 Anweisung, beim Leeren oder beim
 Einspielen, steht die Datenbank da wie vorher, und die Anwendung bekommt ihre
-Anmeldung zurück. Scheitert der Lauf erst danach, am Dateispeicher oder an einer
-der Prüfungen, bleibt sie ausgesperrt, und die Meldung sagt das. Ebenso, wenn
+Anmeldung zurück. Scheitert der Lauf erst danach, beim Kopieren des
+Dateispeichers oder an der Prüfung der Audit-Ketten, bleibt sie ausgesperrt, und
+die Meldung sagt das. Ebenso, wenn
 sie schon vor dem Lauf ausgesperrt war, weil ein früherer nicht durchlief. Ein
 Lauf, der durchgeht, gibt die Anmeldung zurück oder überlässt das dem Start,
 siehe unten; wer den Stand nach einem Fehler trotzdem so nehmen will, gibt sie
@@ -825,14 +838,14 @@ ausgesperrt, bis Docker aktualisiert ist, die Daten sind dann aber schon
 zurückgespielt. Der Container des Rückspielens sieht die Engine nicht, deshalb
 sagt `restore.sh` das vor dem Aussperren.
 
-Der Lauf sperrt die Anwendung für seine Dauer aus, spielt beide Teile zurück
-und prüft danach drei Dinge, von denen jedes eine Frage beantwortet, die die
-anderen nicht beantworten können:
+Der Lauf prüft drei Dinge, von denen jedes eine Frage beantwortet, die die
+anderen nicht beantworten können. Die ersten beiden laufen, bevor er die
+Anwendung aussperrt und die Datenbank anfasst; das dritte, nachdem die
+Datenbank zurück ist:
 
-1. **Das Manifest**, ob das Archiv heil angekommen ist. Diese Prüfung läuft
-   vor allem anderen: eine beschädigte Sicherung wird abgelehnt, bevor die
-   Datenbank angefasst wird.
-2. **Die Dateihashes.** Ein inhaltsadressierter Speicher kann das allein
+1. **Das Manifest**, ob das Archiv heil angekommen ist. Eine beschädigte
+   Sicherung wird abgelehnt, bevor sich etwas ändert.
+2. **Die Dateihashes** (#1000). Ein inhaltsadressierter Speicher kann das allein
    beantworten, denn der Name einer Datei ist der SHA-256 ihres Inhalts. ADR
    0007 verlangt eine Stichprobe; geprüft werden alle, weil das bei den
    Datenmengen eines Handwerksbetriebs Sekunden kostet und eine Stichprobe
