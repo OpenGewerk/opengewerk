@@ -116,8 +116,9 @@ fi
 # and this script ends once it has. The backup and the pause between checks
 # run behind a wait, which a trap interrupts at once; a command in the
 # foreground would hold the trap until it ends. A TERM between the start of
-# the backup and the line that keeps its process waits for that line, so
-# that it does not end this script with a backup it has not reached.
+# the backup and the line that keeps its process waits for that line, and
+# then for the group of the backup, so that it does not end this script with
+# a backup it has not reached.
 backup=''
 starting=false
 stopping=false
@@ -128,9 +129,22 @@ stop() {
 	fi
 	if [ -n "$backup" ]; then
 		echo "Der Dienst wird angehalten, die laufende Sicherung räumt auf." >&2
-		# Its group, or the process alone when setsid has not made one yet.
-		# Without "--": the kill of busybox sh takes the group as -PID only.
-		kill -s TERM "-$backup" 2>/dev/null || kill -s TERM "$backup" 2>/dev/null || true
+		# To its group, which exists once setsid ran in the child. Before that
+		# the child may still carry the handler of this script, which would
+		# only note the signal and lose it with the exec. So the group is
+		# waited for, five seconds at most, and the process alone gets the
+		# signal when it never comes. Without "--": the kill of busybox sh
+		# takes the group as -PID only.
+		tries=0
+		until kill -s TERM "-$backup" 2>/dev/null; do
+			kill -0 "$backup" 2>/dev/null || break
+			tries=$((tries + 1))
+			if [ "$tries" -ge 50 ]; then
+				kill -s TERM "$backup" 2>/dev/null || true
+				break
+			fi
+			sleep 0.1
+		done
 		wait "$backup" 2>/dev/null || true
 	fi
 	exit 143
