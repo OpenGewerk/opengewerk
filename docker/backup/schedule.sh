@@ -115,9 +115,17 @@ fi
 # process group of the backup, which cleans up as after any other failure,
 # and this script ends once it has. The backup and the pause between checks
 # run behind a wait, which a trap interrupts at once; a command in the
-# foreground would hold the trap until it ends.
+# foreground would hold the trap until it ends. A TERM between the start of
+# the backup and the line that keeps its process waits for that line, so
+# that it does not end this script with a backup it has not reached.
 backup=''
+starting=false
+stopping=false
 stop() {
+	stopping=true
+	if [ "$starting" = true ]; then
+		return
+	fi
 	if [ -n "$backup" ]; then
 		echo "Der Dienst wird angehalten, die laufende Sicherung räumt auf." >&2
 		# Its group, or the process alone when setsid has not made one yet.
@@ -150,8 +158,13 @@ while true; do
 
 		# In a process group of its own, which the limit of twelve hours in
 		# backup.sh ends as a whole (#999); setsid keeps the status.
+		starting=true
 		setsid backup.sh --scheduled &
 		backup=$!
+		starting=false
+		if [ "$stopping" = true ]; then
+			stop
+		fi
 		status=0
 		wait "$backup" || status=$?
 		backup=''
