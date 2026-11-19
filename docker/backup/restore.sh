@@ -51,6 +51,41 @@ umask 077
 stopped=''
 trap 'stopped=1; exit 1' HUP INT TERM
 
+# The folders of this run, made once the archive is found.
+work=''
+held=''
+cleanup() {
+	# Once it cleans up it finishes that: a second stop would end the run
+	# halfway and leave the unpacked archive behind. What it starts here
+	# ignores the signal as well.
+	trap '' HUP INT TERM
+	rm -rf ${work:+"$work"} ${held:+"$held"}
+	if [ -n "$stopped" ]; then
+		echo "Das Rückspielen wurde angehalten." >&2
+	fi
+}
+# Until the application is locked out further below, a run that ends has
+# changed nothing. The documented way stops the application and the nightly
+# backup first and chains the start to this run with &&, so after a run that
+# fails nothing starts them again (#1010): it says how. Unless an earlier
+# restore that did not go through left the application locked: then its
+# message holds, and a start would bring the nightly backup back onto a half
+# restored instance. Which of the two it is, this run does not ask the
+# database, since a run turned away asks it nothing.
+leave_untouched() {
+	# As in cleanup: a second stop does not end this halfway.
+	trap '' HUP INT TERM
+	if [ "$1" -ne 0 ]; then
+		echo "" >&2
+		echo "Datenbank und Dateispeicher sind von diesem Lauf unverändert. Wurden Anwendung und" >&2
+		echo "nächtliche Sicherung dafür angehalten, startet sh docker/start.sh sie wieder, auf dem" >&2
+		echo "Stand von vorher. Hat ein früheres Rückspielen die Anwendung ausgesperrt, weil es" >&2
+		echo "nicht durchlief, gilt seine Meldung: erst eine Sicherung ganz zurückspielen, dann starten." >&2
+	fi
+	cleanup
+}
+trap 'leave_untouched "$?"' EXIT
+
 : "${POSTGRES_HOST:=postgres}"
 : "${POSTGRES_DB:=opengewerk}"
 : "${STORAGE_PATH:=/var/lib/opengewerk/storage}"
@@ -135,17 +170,6 @@ echo "Sicherung: $(basename "$archive")"
 
 work=$(mktemp -d)
 held=$(mktemp -d)
-cleanup() {
-	# Once it cleans up it finishes that: a second stop would end the run
-	# halfway and leave the unpacked archive behind. What it starts here
-	# ignores the signal as well.
-	trap '' HUP INT TERM
-	rm -rf "$work" "$held"
-	if [ -n "$stopped" ]; then
-		echo "Das Rückspielen wurde angehalten." >&2
-	fi
-}
-trap cleanup EXIT
 
 # --- Where it comes from ---------------------------------------------------
 # Before it is decrypted or unpacked, see archive-checks.sh. The archive is
@@ -349,6 +373,107 @@ if [ -s "${work}/expected.sha256" ]; then
 fi
 
 echo "    ${files} Datei(en) in der Sicherung, ${expected_files} davon gegen ihren Hash geprüft."
+
+# --- Who the store belongs to ----------------------------------------------
+# The store belongs to the user of the application, and an application that
+# still runs, which the documented way rules out but nothing here can see, can
+# change what is in it at any moment: put a link where a folder was between a
+# look at the folder and the step that follows, say. Root, going by paths in
+# the store, would follow that link out of it and delete, write or hand over
+# files of this container, the archives among them. So what this restore does
+# in the store runs with the rights of the store's owner, and a link takes it
+# only where that user may write in this container. It gets no password of the
+# database along.
+#
+# The owner empties only folders it may read, write and enter, the store
+# itself among them. One that belongs to someone else, root after a copy that
+# failed halfway before #1000 say, or one of its own without those rights,
+# would end the restore with the database already replaced; it is turned away
+# here, while nothing has changed yet.
+#
+# The archives and the record of the backups are in this container too, and
+# not in that of the application. Where the owner may write to them, a target
+# on a share that maps every file to that user say, a link would take it
+# there, and the restore is turned away as well.
+mkdir -p "$STORAGE_PATH"
+# Read before anything is copied, from the store itself, which carries the
+# owner the application runs as.
+storage_owner=$(stat -c '%u:%g' "$STORAGE_PATH")
+storage_uid=${storage_owner%%:*}
+as_store_owner() {
+	if [ "$storage_uid" = 0 ]; then
+		env -u PGPASSWORD -u OPENGEWERK_OWNER_PASSWORD "$@"
+	else
+		env -u PGPASSWORD -u OPENGEWERK_OWNER_PASSWORD gosu "$storage_owner" "$@"
+	fi
+}
+if [ "$storage_uid" != 0 ]; then
+	# gosu needs SETUID and SETGID, which compose.yaml gives the service. A
+	# service without them is told so here, and not after the database is
+	# replaced.
+	if ! as_store_owner true 2>"${work}/gosu.err"; then
+		echo "Als Eigentümer des Dateispeichers (${storage_owner}) kann dieser Dienst nicht arbeiten:" >&2
+		sed 's/^/  /' "${work}/gosu.err" >&2
+		echo "Er braucht dafür die Capabilities SETUID und SETGID, in docker/compose.yaml unter" >&2
+		echo "cap_add des Dienstes backup. Es wird nichts zurückgespielt, Datenbank und" >&2
+		echo "Dateispeicher bleiben, wie sie sind." >&2
+		exit 1
+	fi
+	for kept in "$BACKUP_PATH" "${BACKUP_STATUS_PATH:-}"; do
+		[ -n "$kept" ] && [ -d "$kept" ] || continue
+		# Tried rather than read from the mode, which busybox test -w does: an
+		# ACL, or a share that treats every user alike (NFS with all_squash,
+		# SMB with noperm), gives a right the mode does not show.
+		probe_status=0
+		probe=$(as_store_owner mktemp -d -p "$kept" .restore-probe.XXXXXX 2>"${work}/probe.err") ||
+			probe_status=$?
+		# Only a refusal answers the question. Any other failure, a full target
+		# say, says nothing about the right, and deleting needs no room.
+		if [ "$probe_status" -ne 0 ]; then
+			case $(cat "${work}/probe.err") in
+			*'Permission denied'* | *'Operation not permitted'* | *'Read-only file system'*)
+				continue
+				;;
+			esac
+			echo "Ob der Eigentümer des Dateispeichers (${storage_owner}) in ${kept} schreiben darf," >&2
+			echo "ließ sich nicht ausprobieren:" >&2
+			tr "\001-\011\013-\037\177" "?" <"${work}/probe.err" | sed 's/^/  /' >&2
+			echo "Es wird nichts zurückgespielt, Datenbank und Dateispeicher bleiben, wie sie sind." >&2
+			exit 1
+		fi
+		as_store_owner rmdir "$probe" || true
+		echo "In ${kept} darf der Eigentümer des Dateispeichers (${storage_owner}) schreiben." >&2
+		echo "Das Rückspielen leert und füllt den Speicher mit dessen Rechten, und eine Anwendung," >&2
+		echo "die dabei noch liefe, könnte es mit einem Link dorthin lenken und Sicherungen löschen." >&2
+		echo "Es wird nichts zurückgespielt, Datenbank und Dateispeicher bleiben, wie sie sind." >&2
+		echo "Das Verzeichnis soll root gehören und anderen kein Schreibrecht geben; auf einem" >&2
+		echo "NAS darf die Freigabe nicht diesem Benutzer zugeordnet eingehängt sein." >&2
+		exit 1
+	done
+	# Looked for as the owner: a folder above the store or in it that the owner
+	# may not enter or read makes this find fail, and is turned away as well.
+	foreign_status=0
+	as_store_owner find "$STORAGE_PATH" -type d \( ! -user "$storage_uid" -o ! -perm -700 \) \
+		>"${work}/foreign-folders" 2>"${work}/foreign-folders.err" || foreign_status=$?
+	if [ "$foreign_status" -ne 0 ] || [ -s "${work}/foreign-folders" ]; then
+		echo "Im Dateispeicher liegen Ordner, die sein Eigentümer (${storage_owner}) nicht leeren darf," >&2
+		echo "oder er erreicht den Speicher nicht:" >&2
+		head -n 3 "${work}/foreign-folders" | tr "\001-\011\013-\037\177" "?" | sed 's/^/  /' >&2
+		head -n 3 "${work}/foreign-folders.err" | tr "\001-\011\013-\037\177" "?" | sed 's/^/  /' >&2
+		echo "Das Rückspielen leert und füllt den Speicher mit dessen Rechten. Es wird nichts" >&2
+		echo "zurückgespielt, Datenbank und Dateispeicher bleiben, wie sie sind. Bei angehaltener" >&2
+		echo "Anwendung geben diese Befehle den Speicher seinem Eigentümer zurück, danach das" >&2
+		echo "Rückspielen noch einmal laufen lassen:" >&2
+		echo "  docker compose -f docker/compose.yaml --profile backup run --rm backup chown -R ${storage_owner} ${STORAGE_PATH}" >&2
+		echo "  docker compose -f docker/compose.yaml --profile backup run --rm backup chmod -R u+rwX ${STORAGE_PATH}" >&2
+		exit 1
+	fi
+fi
+# A folder the archive keeps without write for its owner, 0555 say, would be
+# made so in the store first and then refuse the owner the files that go into
+# it. In the checked folder, which is root's alone, every folder gets read,
+# write and enter for its owner.
+find "$staged" -type d ! -perm -700 -exec chmod u+rwx {} +
 
 # --- Lock the application out for the duration ------------------------------
 # Counting open connections was the first attempt at this and it protects
@@ -634,23 +759,24 @@ level_after=$(migration_level)
 # What check 2 let through, from the folder it checked: nothing that goes into
 # the store now is read from the archive.
 echo "  Dateispeicher wird zurückgespielt."
-mkdir -p "$STORAGE_PATH"
-
-# Read before anything is copied. This container runs as root, the
-# application does not, so files restored with root's ownership would be
-# readable and undeletable for the very process that needs them. The
-# directory itself already carries the right owner, so it is the one to ask.
-storage_owner=$(stat -c '%u:%g' "$STORAGE_PATH")
-
-find "$STORAGE_PATH" -mindepth 1 -delete
-# The checked folder gets that owner before the copy, which cp -a carries
-# over and sets on the store itself at its end, also when it fails halfway, a
-# full disk say. Root's would stay on the store then, and the next restore,
-# the one the message asks for, would read it here and hand the whole store
-# to root (#1000).
-chown -R "$storage_owner" "$staged"
-cp -a "${staged}/." "$STORAGE_PATH/"
-chown -R "$storage_owner" "$STORAGE_PATH"
+# With the rights of the store's owner, see above. Root reads the checked
+# folder, which lies in this container where the application cannot reach it,
+# and the owner unpacks it into the store: every file it writes is its own,
+# also when the copy fails halfway, a full disk say, so the next restore, the
+# one the message asks for, finds the owner on the store (#1000). umask 0
+# keeps the modes the files have in the archive, as a copy by root did.
+# Through a pipe only the status of its last command counts, so the tar that
+# packs leaves a mark that stands until it went through. A mark that cannot be
+# written ends the run here, before the store is emptied.
+pack_pending="${work}/pack-pending"
+: >"$pack_pending"
+as_store_owner find "$STORAGE_PATH" -mindepth 1 -delete
+{ tar --create --file - --directory "$staged" . && rm -f "$pack_pending"; } |
+	as_store_owner sh -c 'umask 0 && exec tar --extract --no-same-owner --file - --directory "$1"' \
+		sh "$STORAGE_PATH"
+if [ -e "$pack_pending" ]; then
+	exit 1
+fi
 rm -rf "$staged"
 
 # --- Check 3: is the audit log the same log? -------------------------------

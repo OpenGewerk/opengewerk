@@ -237,7 +237,7 @@ refused_restore() {
   cat "$out"
   grep -q "$sentence" "$out" || fail "Abgelehnt, aber ohne \"${sentence}\": $*"
 
-  if grep -q -e 'entschlüsselt' -e 'ausgesperrt' "$out"; then
+  if grep -q -e 'entschlüsselt' -e 'für die Dauer des Rückspielens ausgesperrt' "$out"; then
     fail "Abgelehnt erst nach der Entschlüsselung oder dem Aussperren: $*"
   fi
 }
@@ -928,7 +928,7 @@ corrupt)
   grep -q 'Sicherung wird entschlüsselt' "$temp/corrupt.txt" ||
     fail 'Die beschädigte Sicherung wurde abgelehnt, aber nicht bei der Entschlüsselung.'
 
-  if grep -q -e 'Prüfsummen werden geprüft' -e 'ausgesperrt' "$temp/corrupt.txt"; then
+  if grep -q -e 'Prüfsummen werden geprüft' -e 'für die Dauer des Rückspielens ausgesperrt' "$temp/corrupt.txt"; then
     fail 'Die beschädigte Sicherung kam an der Entschlüsselung vorbei.'
   fi
 
@@ -965,7 +965,7 @@ corrupt)
   grep -q 'Die Prüfsumme von database.dump stimmt nicht' "$temp/repacked.txt" ||
     fail 'Die veränderte Sicherung wurde abgelehnt, aber nicht vom Manifest.'
 
-  if grep -q 'ausgesperrt' "$temp/repacked.txt"; then
+  if grep -q 'für die Dauer des Rückspielens ausgesperrt' "$temp/repacked.txt"; then
     fail 'Die veränderte Sicherung wurde erst abgelehnt, als die Anwendung schon ausgesperrt war.'
   fi
 

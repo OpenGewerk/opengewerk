@@ -17,10 +17,14 @@
 # back out of an archive is the job of the CI run that backs one up and
 # restores it.
 #
-# Runs in the image of the backup, with its shell, its tar and a real age:
+# Runs in the image of the backup, with its shell, its tar and a real age, and
+# with the capabilities the service backup has in compose.yaml, as the CI runs
+# it:
 #
 #   docker build --tag opengewerk-backup-under-test backup
-#   docker run --rm --volume "$PWD:/docker:ro" opengewerk-backup-under-test sh /docker/test-backup.sh
+#   docker run --rm --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
+#     --cap-add KILL --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges:true \
+#     --volume "$PWD:/docker:ro" opengewerk-backup-under-test sh /docker/test-backup.sh
 #
 # Prints what it checks and stops at the first thing that is wrong.
 set -eu
@@ -37,10 +41,16 @@ real_tar=$(command -v tar)
 real_date=$(command -v date)
 real_cp=$(command -v cp)
 real_find=$(command -v find)
+real_gosu=$(command -v gosu)
+real_mktemp=$(command -v mktemp)
 real_rm=$(command -v rm)
 real_timeout=$(command -v timeout)
 
 mkdir -p "$work/bin" "$work/storage" "$work/backups" "$work/status" "$work/tmp"
+# A restore empties and fills the store as the store's owner, and where that is
+# not root, the fakes in bin run as that user: it has to reach them. What else
+# lies here keeps its own modes.
+chmod 711 "$work"
 cp "$source_dir/backup/backup.sh" "$source_dir/backup/restore.sh" \
   "$source_dir/backup/verify.sh" "$source_dir/backup/names.sh" \
   "$source_dir/backup/archive-checks.sh" "$source_dir/backup/superuser-reads.sh" \
@@ -370,6 +380,25 @@ if [ -n "\${TAR_FAILS:-}" ] && [ "\$1" = --create ]; then
       ;;
   esac
 fi
+# The tar that packs the checked folder for the copy into the store misses a
+# file, PACK_MISSES: it packs the rest and fails, as on a disk that lost one.
+if [ -n "\${PACK_MISSES:-}" ] && [ "\$1" = --create ]; then
+  case " \$* " in
+    *" --directory \$STORAGE_PATH "*) ;;
+    *' --file - '*) exec $real_tar "\$@" "\$PACK_MISSES" ;;
+  esac
+fi
+# A store that the checked files do not all reach, the way a full disk ends
+# the copy: tar unpacks and still fails, and the restore fails after the
+# database is replaced.
+if [ -n "\${STORAGE_FAILS:-}" ] && [ "\$1" = --extract ]; then
+  case " \$* " in
+    *" --directory \$STORAGE_PATH "*)
+      $real_tar "\$@"
+      exit 1
+      ;;
+  esac
+fi
 exec $real_tar "\$@"
 FAKE
 #
@@ -392,17 +421,6 @@ cat > "$work/bin/cp" <<FAKE
 if [ -n "\${CP_SERVES:-}" ] && [ "\$1" = "\${CP_FROM:-}" ]; then
   exec $real_cp "\$CP_SERVES" "\$2"
 fi
-# A store that the checked files do not all reach, the way a full disk ends
-# the copy: cp copies and still fails, and the restore fails after the
-# database is replaced.
-if [ -n "\${STORAGE_FAILS:-}" ]; then
-  case " \$* " in
-    *" \$STORAGE_PATH/ "*)
-      $real_cp "\$@"
-      exit 1
-      ;;
-  esac
-fi
 exec $real_cp "\$@"
 FAKE
 # A .part that goes while find walks the store for the second part (the walk
@@ -422,6 +440,25 @@ if [ -n "\${FIND_FAILS_AT:-}" ] && [ "\$*" = ". -type f" ]; then
 fi
 $real_find "\$@" || exit
 [ "\$1" = . ] || [ "\$1" = "\$STORAGE_PATH" ] || exit 0
+# The find that empties the store writes who ran it to EMPTIED_BY. Then a
+# running application puts STORE_LINK_AT back into the store, as a link to
+# STORE_LINK_TO, between the emptying and the copy.
+case " \$* " in
+  *" -delete "*)
+    # Its user, and how many passwords of the database it got along.
+    [ -z "\${EMPTIED_BY:-}" ] || { id -u; env | grep -c '^[A-Z_]*PASSWORD=' || true; } > "\$EMPTIED_BY"
+    [ -z "\${STORE_LINK_AT:-}" ] || ln -s "\$STORE_LINK_TO" "\$STORAGE_PATH/\$STORE_LINK_AT"
+    # An emptying that takes three seconds, as of a large store, for a stop to
+    # reach it: STORE_EMPTY_SLOW is written first (the process that started it
+    # and its process group), STORE_EMPTY_SLOW.done once it waited them out.
+    if [ -n "\${STORE_EMPTY_SLOW:-}" ]; then
+      empty_stat=\$(sed 's/.*) //' "/proc/\$\$/stat")
+      printf '%s %s\\n' "\$PPID" "\$(echo "\$empty_stat" | cut -d' ' -f3)" > "\$STORE_EMPTY_SLOW"
+      sleep 3
+      : > "\$STORE_EMPTY_SLOW.done"
+    fi
+    ;;
+esac
 # A find over the store that does not come back, as on a disk that hangs.
 if [ -n "\${FIND_HANGS:-}" ] && [ "\$1" = . ]; then
   sleep 30
@@ -544,6 +581,29 @@ fi
 exec $real_rm "\$@"
 FAKE
 chmod +x "$work/bin/rm"
+# gosu as it is, unless GOSU_FAILS is set: then it cannot switch to the user,
+# as in a service without SETUID and SETGID.
+cat > "$work/bin/gosu" <<FAKE
+#!/bin/sh
+if [ -n "\${GOSU_FAILS:-}" ]; then
+  echo "error: failed switching to \"\$1\": operation not permitted" >&2
+  exit 1
+fi
+exec $real_gosu "\$@"
+FAKE
+chmod +x "$work/bin/gosu"
+# mktemp as it is, unless PROBE_FAILS_WITH is set: then the probe of a restore
+# in a folder fails with that reason, the way a full target fails it.
+cat > "$work/bin/mktemp" <<FAKE
+#!/bin/sh
+if [ -n "\${PROBE_FAILS_WITH:-}" ]; then
+  case " \$* " in
+    *" .restore-probe."*) echo "mktemp: : \$PROBE_FAILS_WITH" >&2; exit 1 ;;
+  esac
+fi
+exec $real_mktemp "\$@"
+FAKE
+chmod +x "$work/bin/mktemp"
 # timeout as it is; TIMEOUT_CALLS takes down what it is asked to limit.
 cat > "$work/bin/timeout" <<FAKE
 #!/bin/sh
@@ -986,6 +1046,13 @@ halfway() {
     printf 'FEHLER: die Anwendung wurde nicht ausgesperrt: %s\n' "$*"
     exit 1
   }
+  # Once the application is locked out, the run no longer says that nothing
+  # changed.
+  if grep -q 'Datenbank und Dateispeicher sind von diesem Lauf unverändert' "$work/out"; then
+    printf 'FEHLER: nach dem Aussperren hieß es, nichts habe sich geändert: %s\n' "$*"
+    cat "$work/out"
+    exit 1
+  fi
 }
 # The store belongs to the user of the application, and after a copy that
 # failed it still does, every file of it, so that the next restore, the one
@@ -1022,11 +1089,189 @@ if [ "$(stat -c '%u:%g' "$STORAGE_PATH")" != 1000:1000 ] || [ -n "$(find "$STORA
   exit 1
 fi
 rm -rf "$filled_dir"
-chown -R 0:0 "$STORAGE_PATH"
 if grep -q 'alter role opengewerk_app login' "$CALLS"; then
   echo 'FEHLER: nach einem halben Rückspielen bekam die Anwendung ihre Anmeldung zurück'
   exit 1
 fi
+
+# In the store the restore works with the rights of its owner, not as root: an
+# application that still runs and puts a link where a folder of the archive
+# goes, between the emptying and the copy, does not lead it out of the store.
+# The emptying runs as the owner, and so does the copy, which writes the
+# owner's files with the modes of the archive.
+mkdir -p "$work/outside" "$work/as-owner"
+chmod 755 "$work/outside"
+chmod 777 "$work/as-owner"
+filled_top=$(printf '%s' "$filled_hash" | cut -c1-2)
+filled_file="$filled_dir/$(printf '%s' "$filled_hash" | cut -c3-4)/$filled_hash"
+restore_status=0
+env POSTGRES_DB=opengewerk EMPTIED_BY="$work/as-owner/emptied-by" STORE_LINK_AT="$filled_top" \
+  STORE_LINK_TO="$work/outside" sh "$work/bin/restore.sh" "$ours_filled" > "$work/out" 2>&1 ||
+  restore_status=$?
+[ -L "$STORAGE_PATH/$filled_top" ] || {
+  echo 'FEHLER: der Link kam nicht in den Dateispeicher, der Fall wurde nicht geprüft'
+  cat "$work/out"
+  exit 1
+}
+if [ -n "$(ls -A "$work/outside")" ] || [ "$(stat -c %a "$work/outside")" != 755 ]; then
+  echo 'FEHLER: das Rückspielen folgte einem Link aus dem Dateispeicher hinaus'
+  ls -lnR "$work/outside"
+  exit 1
+fi
+[ "$(cat "$work/as-owner/emptied-by")" = "$(printf '1000\n0')" ] || {
+  echo "FEHLER: den Dateispeicher leerte nicht sein Eigentümer ohne Passwörter der Datenbank, sondern: $(cat "$work/as-owner/emptied-by" | tr '\n' ' ')"
+  exit 1
+}
+if [ "$restore_status" -eq 0 ] || ! grep -q 'bleibt ausgesperrt' "$work/out"; then
+  echo "FEHLER: ein Kopieren, das nicht in den Speicher kam, lief durch oder sagte nicht, dass die Anwendung ausgesperrt bleibt (Status $restore_status)"
+  cat "$work/out"
+  exit 1
+fi
+rm -f "$STORAGE_PATH/$filled_top"
+taken env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours_filled"
+if [ "$(stat -c '%u %a' "$filled_file")" != '1000 644' ] || [ -n "$(find "$STORAGE_PATH" ! -user 1000 | head -n 1)" ]; then
+  echo "FEHLER: das Rückspielen schrieb den Dateispeicher nicht als sein Eigentümer mit den Rechten der Sicherung ($(stat -c '%u %a' "$filled_file"))"
+  ls -lnR "$STORAGE_PATH"
+  exit 1
+fi
+# A pack of the checked folder that misses a file still ends the copy in the
+# store with all the rest; the restore fails all the same, and the application
+# stays locked. The file the restore before wrote goes first, so that the one
+# found afterwards is the one this copy wrote.
+rm -rf "$filled_dir"
+restore_status=0
+env POSTGRES_DB=opengewerk PACK_MISSES=./nicht-da sh "$work/bin/restore.sh" "$ours_filled" \
+  > "$work/out" 2>&1 || restore_status=$?
+[ -f "$filled_file" ] || {
+  echo 'FEHLER: das Packen für das Kopieren brach ganz ab, der Fall wurde nicht geprüft'
+  cat "$work/out"
+  exit 1
+}
+if [ "$restore_status" -eq 0 ] || ! grep -q 'bleibt ausgesperrt' "$work/out"; then
+  echo "FEHLER: ein Packen, dem eine Datei fehlte, ließ das Rückspielen durchlaufen (Status $restore_status)"
+  cat "$work/out"
+  exit 1
+fi
+rm -rf "$filled_dir"
+# An archive that keeps a folder without write for its owner, 0555, comes back
+# all the same: the folder is opened in the checked folder before the owner
+# unpacks it, and the file in it arrives.
+sealed_text='in einem Ordner ohne Schreibrecht'
+sealed_hash=$(printf '%s' "$sealed_text" | sha256sum | cut -d' ' -f1)
+sealed_top="$STORAGE_PATH/$(printf '%s' "$sealed_hash" | cut -c1-2)"
+sealed_dir="$sealed_top/$(printf '%s' "$sealed_hash" | cut -c3-4)"
+mkdir -p "$sealed_dir"
+printf '%s' "$sealed_text" > "$sealed_dir/$sealed_hash"
+chown -R 1000:1000 "$sealed_top"
+chmod 555 "$sealed_dir"
+POSTGRES_DB=opengewerk BACKUP_KEEP=0 FIXED_STAMP=2031-04-02T000000Z sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
+  cat "$work/out"
+  exit 1
+}
+ours_sealed=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
+chmod 755 "$sealed_dir"
+rm -rf "$sealed_top"
+taken env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours_sealed"
+[ "$(cat "$sealed_dir/$sealed_hash" 2>/dev/null)" = "$sealed_text" ] || {
+  echo 'FEHLER: eine Datei aus einem Ordner ohne Schreibrecht kam nicht zurück'
+  ls -lnR "$STORAGE_PATH"
+  exit 1
+}
+rm -rf "$sealed_top"
+rm -f "$work/backups/$ours_sealed"
+# A folder in the store that its owner may not empty turns the restore away
+# before anything changes, with the commands that give the store back: one
+# that belongs to root, one of the owner's own that it may not write, one it
+# may not read, and the store itself when the owner may not write it.
+mkdir "$STORAGE_PATH/fremd"
+: > "$STORAGE_PATH/fremd/datei"
+refused 'nicht leeren darf' env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
+grep -q "run --rm backup chown -R 1000:1000 $STORAGE_PATH\$" "$work/out" || {
+  echo 'FEHLER: die Ablehnung nennt nicht den Befehl, der den Speicher seinem Eigentümer zurückgibt'
+  cat "$work/out"
+  exit 1
+}
+# Turned away before anything changed, the run says how the application and
+# the nightly backup, stopped for it, start again (#1010). The same for a
+# refusal before the run has a folder of its own.
+grep -q 'startet sh docker/start.sh sie wieder' "$work/out" &&
+  grep -q 'erst eine Sicherung ganz zurückspielen, dann starten' "$work/out" || {
+  echo 'FEHLER: eine Ablehnung vor dem Aussperren sagt nicht, wie die Instanz wieder startet und wann nicht'
+  cat "$work/out"
+  exit 1
+}
+refused 'gibt es nicht' env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" opengewerk-nicht-da.tar.gz
+grep -q 'startet sh docker/start.sh sie wieder' "$work/out" || {
+  echo 'FEHLER: eine Ablehnung vor dem Arbeitsordner sagt nicht, wie die Instanz wieder startet'
+  cat "$work/out"
+  exit 1
+}
+[ -f "$STORAGE_PATH/fremd/datei" ] || {
+  echo 'FEHLER: ein abgelehntes Rückspielen änderte den Dateispeicher'
+  exit 1
+}
+rm -rf "$STORAGE_PATH/fremd"
+mkdir "$STORAGE_PATH/gesperrt"
+: > "$STORAGE_PATH/gesperrt/datei"
+chown -R 1000:1000 "$STORAGE_PATH/gesperrt"
+chmod 500 "$STORAGE_PATH/gesperrt"
+refused 'nicht leeren darf' env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
+[ -f "$STORAGE_PATH/gesperrt/datei" ] || {
+  echo 'FEHLER: ein abgelehntes Rückspielen änderte den Dateispeicher'
+  exit 1
+}
+chmod 700 "$STORAGE_PATH/gesperrt"
+rm -rf "$STORAGE_PATH/gesperrt"
+mkdir "$STORAGE_PATH/blind"
+: > "$STORAGE_PATH/blind/datei"
+chown -R 1000:1000 "$STORAGE_PATH/blind"
+chmod 300 "$STORAGE_PATH/blind"
+refused 'nicht leeren darf' env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
+[ -f "$STORAGE_PATH/blind/datei" ] || {
+  echo 'FEHLER: ein abgelehntes Rückspielen änderte den Dateispeicher'
+  exit 1
+}
+chmod 700 "$STORAGE_PATH/blind"
+rm -rf "$STORAGE_PATH/blind"
+: > "$STORAGE_PATH/datei"
+chown 1000:1000 "$STORAGE_PATH/datei"
+storage_mode=$(stat -c %a "$STORAGE_PATH")
+chmod 500 "$STORAGE_PATH"
+refused 'nicht leeren darf' env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
+chmod "$storage_mode" "$STORAGE_PATH"
+[ -f "$STORAGE_PATH/datei" ] || {
+  echo 'FEHLER: ein abgelehntes Rückspielen änderte den Dateispeicher'
+  exit 1
+}
+rm -f "$STORAGE_PATH/datei"
+# Where the owner may write to the archives or to the record of the backups, a
+# link would take it there: turned away before anything changes, for each of
+# the two.
+for kept in "$work/backups" "$work/status"; do
+  kept_mode=$(stat -c %a "$kept")
+  chmod 777 "$kept"
+  refused 'darf der Eigentümer des Dateispeichers (1000:1000) schreiben' \
+    env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
+  chmod "$kept_mode" "$kept"
+done
+# A probe that fails for another reason than a refusal, a full target say,
+# says nothing about the right: turned away all the same.
+refused 'ließ sich nicht ausprobieren' \
+  env POSTGRES_DB=opengewerk PROBE_FAILS_WITH='No space left on device' sh "$work/bin/restore.sh" "$ours"
+# A service that cannot switch to the owner, without SETUID and SETGID, turns a
+# store that is not root's away before anything changes.
+refused 'braucht dafür die Capabilities SETUID und SETGID' \
+  env POSTGRES_DB=opengewerk GOSU_FAILS=1 sh "$work/bin/restore.sh" "$ours"
+# A store its owner cannot reach, below a folder only root may enter, though
+# every folder in it is the owner's: turned away as well.
+mkdir -p "$work/root-only/storage"
+chmod 700 "$work/root-only"
+chown 1000:1000 "$work/root-only/storage"
+refused 'Permission denied' env POSTGRES_DB=opengewerk STORAGE_PATH="$work/root-only/storage" \
+  sh "$work/bin/restore.sh" "$ours"
+rm -rf "$work/root-only"
+chown -R 0:0 "$STORAGE_PATH"
+check 'Rückspielen: im Dateispeicher mit den Rechten seines Eigentümers, ein Link führt nicht hinaus'
 halfway PG_RESTORE_FAILS=1
 grep -q 'alter role opengewerk_app login' "$CALLS" || {
   echo 'FEHLER: vor dem Einspielen gescheitert, und die Anwendung blieb ausgesperrt'
@@ -1388,6 +1633,35 @@ if [ "$restore_status" -ne 0 ] || [ -n "$(ls -A "$work/stop-tmp")" ]; then
   cat "$work/out"
   exit 1
 fi
+# A stop for the group while the owner of the store empties it, as the init
+# sends it, which runs as root: it reaches the find of that other user too,
+# and the run ends at once instead of after it, with the application locked.
+chown -R 1000:1000 "$STORAGE_PATH"
+rm -rf "$work/as-owner/empty-mark" "$work/as-owner/empty-mark.done" \
+  "$work/as-owner/empty-mark.refused" "$work/as-owner/empty-mark.sent" "$work/stop-tmp"
+mkdir -p "$work/stop-tmp"
+interrupt_when_marked "$work/as-owner/empty-mark" group &
+interrupter=$!
+restore_status=0
+env POSTGRES_DB=opengewerk TMPDIR="$work/stop-tmp" STORE_EMPTY_SLOW="$work/as-owner/empty-mark" \
+  setsid sh "$work/bin/restore.sh" "$ours_filled" > "$work/out" 2>&1 || restore_status=$?
+wait "$interrupter" || true
+if [ ! -s "$work/as-owner/empty-mark" ] || [ -e "$work/as-owner/empty-mark.refused" ]; then
+  echo 'FEHLER: das Leeren des Dateispeichers wurde nicht erreicht, der Fall wurde nicht geprüft'
+  cat "$work/out"
+  exit 1
+fi
+if [ -e "$work/as-owner/empty-mark.done" ]; then
+  echo 'FEHLER: ein Anhalten erreichte das Leeren durch den Eigentümer nicht'
+  exit 1
+fi
+if [ "$restore_status" -eq 0 ] || ! grep -q 'Das Rückspielen wurde angehalten' "$work/out" ||
+  ! grep -q 'bleibt ausgesperrt' "$work/out" || [ -n "$(ls -A "$work/stop-tmp")" ]; then
+  echo "FEHLER: ein Anhalten beim Leeren des Dateispeichers endete nicht auf dem Weg hinaus (Status $restore_status)"
+  cat "$work/out"
+  exit 1
+fi
+chown -R 0:0 "$STORAGE_PATH"
 check 'Anhalten: Rückspielen und Prüfen enden auf ihrem Weg hinaus, das Rückspielen gibt die Anmeldung nur ohne ersetzte Datenbank zurück'
 
 # 8c. A backup from an earlier version than the database it replaces: the

@@ -766,8 +766,8 @@ zuerst eingehängt, und wer mit der Vorgabe, dem Volume `backups`, gesichert und
 die Archive von Hand kopiert hat, legt die Kopien in ein Verzeichnis und trägt
 dessen absoluten Pfad als `BACKUP_TARGET` ein. Das Volume der neuen Maschine ist
 leer, und `restore.sh` sucht ein Archiv nur dort. Dann startet die Instanz einmal leer, damit es den
-Dateispeicher gibt und er dem Benutzer der Anwendung gehört: `restore.sh` gibt
-den zurückgespielten Dateien den Eigentümer dieses Ordners, und legte erst die
+Dateispeicher gibt und er dem Benutzer der Anwendung gehört: `restore.sh` leert
+und füllt diesen Ordner mit den Rechten seines Eigentümers, und legte erst die
 Sicherung das Volume an, gehörte er root. Danach spielt
 
 ```bash
@@ -864,6 +864,32 @@ werden beendet, und der Eigentümer, der zurückspielt, und der Superuser, der
 prüft, sind davon nicht betroffen. Die gesamte Datenbank zu sperren ginge
 nicht, das schlösse auch sie aus.
 
+**Im Dateispeicher arbeitet das Rückspielen mit den Rechten seines Eigentümers**,
+dem Benutzer der Anwendung, nicht als root. Ob die Anwendung wirklich angehalten
+ist, sieht `restore.sh` nicht. Liefe sie noch, könnte sie zwischen zwei
+Schritten einen Ordner gegen einen Link tauschen, und root folgte ihm aus dem
+Speicher hinaus, zu den Archiven etwa. Mit den Rechten des Eigentümers führt ein
+solcher Link nur dorthin, wo dieser Benutzer im Container der Sicherung
+schreiben darf, und die Passwörter der Datenbank bekommt er nicht mit. Dafür
+hat der Dienst `backup` die Capabilities `SETUID` und `SETGID`, dazu `KILL`,
+damit ein Anhalten auch diese Schritte erreicht. Abgelehnt, bevor
+sich etwas ändert, wird ein Rückspielen in drei Fällen:
+
+- Der Dienst kann nicht als Eigentümer arbeiten, weil ihm diese Capabilities
+  fehlen, etwa in einer eigenen `compose.yaml`. Gehört der Speicher root, ist
+  das gleich.
+- Der Eigentümer darf in das Ziel der Sicherungen oder in das Verzeichnis
+  `BACKUP_STATUS_PATH` schreiben, siehe unten beim NAS.
+- Im Speicher liegt ein Ordner, den der Eigentümer nicht leeren darf, der
+  Speicher selbst eingeschlossen: einer, der ihm nicht gehört, etwa nach einem
+  halben Kopieren vor #1000 root, oder einer, den er nicht lesen oder
+  beschreiben darf. Ebenso, wenn er den Speicher gar nicht erreicht, weil er
+  einen Ordner darüber nicht betreten darf. Die Meldung nennt die Befehle, die den Speicher seinem
+  Eigentümer zurückgeben.
+
+Ordner, die eine Sicherung ohne Schreibrecht für ihren Eigentümer enthält,
+bekommen es vor dem Auspacken, sonst kämen die Dateien darin nicht zurück.
+
 ## Die Sicherung als Zeuge für das Audit-Log
 
 Die Hashkette im Audit-Log macht eine kleine Korrektur unmöglich zu verstecken.
@@ -939,7 +965,15 @@ Eingehängt wird es auf dem Server selbst, und zwar so, dass es einen Neustart
 Ist es beim Start nicht da, schreibt die Sicherung in das leere Verzeichnis
 darunter, auf dieselbe Platte, und das Büro merkt davon nichts; wer ein NAS
 nimmt, prüft deshalb nach dem ersten Neustart, dass die Archive dort ankommen.
-Wandert eine Kopie zusätzlich außer Haus, ist auch ein Brand im Büro
+Das Verzeichnis gehört root und gibt anderen kein Schreibrecht. Darf der
+Benutzer der Anwendung hineinschreiben, lehnt `restore.sh` das Rückspielen ab,
+denn es arbeitet im Dateispeicher mit den Rechten dieses Benutzers, siehe oben.
+Ausprobiert wird das, nicht aus den Rechten abgelesen. Es trifft also auch eine
+Freigabe, die beim Einhängen jede Datei diesem Benutzer zuordnet, wie SMB mit
+`uid=`, eine, die jeden Benutzer gleich behandelt, wie NFS mit `all_squash`
+oder SMB mit `noperm`, und eine ACL, die ihm das Schreiben erlaubt. Scheitert die
+Probe aus einem anderen Grund als fehlendem Recht, etwa weil das Ziel voll ist,
+lehnt `restore.sh` ebenso ab, denn Löschen braucht keinen Platz. Wandert eine Kopie zusätzlich außer Haus, ist auch ein Brand im Büro
 überstanden. Verschlüsselt sollte ein Archiv, das die Maschine verlässt, in
 jedem Fall sein.
 
