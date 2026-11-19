@@ -638,9 +638,12 @@ ist ein Aufräumen, das auf dem Ziel scheitert, etwa weil es nicht mehr antworte
 oder nur noch lesbar ist: Dann bleibt die Datei dort, und die Sicherung nennt
 sie (#999). Das ist die verborgene Datei oder, wenn die Sicherung erst nach dem
 Umbenennen scheiterte, das Archiv unter seinem Namen. Wird der Dienst
-`backup-schedule` oder `backup` angehalten, während eine Sicherung läuft, etwa
-bei einem Update, räumt sie vorher auf, auch wenn sie das schon tut; Docker
-wartet darauf bis zu zwei Minuten (#1004). Platz braucht die
+`backup-schedule` angehalten, während eine Sicherung läuft, etwa bei einem
+Update, räumt sie vorher auf, auch wenn sie das schon tut; Docker wartet darauf
+bis zu zwei Minuten (#1004). Eine Sicherung von Hand im Dienst `backup` bricht
+man mit Strg+C ab: `docker stop` erreicht sie dort erst nach dem laufenden
+Schritt, und dauert der länger als zwei Minuten, endet sie ohne Aufräumen
+(#1007). Platz braucht die
 Sicherung dafür im Container, also dort, wo Docker seine Container hält, etwa so
 viel wie Dump und Dateispeicher zusammen; `TMPDIR` im Dienst verlegt das. Die
 Archive auf dem Ziel sind nur für ihren Besitzer lesbar, wer sie von dort
