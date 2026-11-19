@@ -67,12 +67,20 @@ cleanup() {
 # Until the application is locked out further below, a run that ends has
 # changed nothing. The documented way stops the application and the nightly
 # backup first and chains the start to this run with &&, so after a run that
-# fails nothing starts them again (#1010): it says how.
+# fails nothing starts them again (#1010): it says how. Unless an earlier
+# restore that did not go through left the application locked: then its
+# message holds, and a start would bring the nightly backup back onto a half
+# restored instance. Which of the two it is, this run does not ask the
+# database, since a run turned away asks it nothing.
 leave_untouched() {
+	# As in cleanup: a second stop does not end this halfway.
+	trap '' HUP INT TERM
 	if [ "$1" -ne 0 ]; then
 		echo "" >&2
-		echo "Datenbank und Dateispeicher sind unverändert. Wurden Anwendung und nächtliche" >&2
-		echo "Sicherung dafür angehalten, startet sh docker/start.sh sie wieder, auf dem Stand von vorher." >&2
+		echo "Datenbank und Dateispeicher sind von diesem Lauf unverändert. Wurden Anwendung und" >&2
+		echo "nächtliche Sicherung dafür angehalten, startet sh docker/start.sh sie wieder, auf dem" >&2
+		echo "Stand von vorher. Hat ein früheres Rückspielen die Anwendung ausgesperrt, weil es" >&2
+		echo "nicht durchlief, gilt seine Meldung: erst eine Sicherung ganz zurückspielen, dann starten." >&2
 	fi
 	cleanup
 }

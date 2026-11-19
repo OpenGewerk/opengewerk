@@ -1048,7 +1048,7 @@ halfway() {
   }
   # Once the application is locked out, the run no longer says that nothing
   # changed.
-  if grep -q 'Datenbank und Dateispeicher sind unverändert' "$work/out"; then
+  if grep -q 'Datenbank und Dateispeicher sind von diesem Lauf unverändert' "$work/out"; then
     printf 'FEHLER: nach dem Aussperren hieß es, nichts habe sich geändert: %s\n' "$*"
     cat "$work/out"
     exit 1
@@ -1192,13 +1192,14 @@ grep -q "run --rm backup chown -R 1000:1000 $STORAGE_PATH\$" "$work/out" || {
 # Turned away before anything changed, the run says how the application and
 # the nightly backup, stopped for it, start again (#1010). The same for a
 # refusal before the run has a folder of its own.
-grep -q 'startet sh docker/start.sh sie wieder, auf dem Stand von vorher' "$work/out" || {
-  echo 'FEHLER: eine Ablehnung vor dem Aussperren sagt nicht, wie die Instanz wieder startet'
+grep -q 'startet sh docker/start.sh sie wieder' "$work/out" &&
+  grep -q 'erst eine Sicherung ganz zurückspielen, dann starten' "$work/out" || {
+  echo 'FEHLER: eine Ablehnung vor dem Aussperren sagt nicht, wie die Instanz wieder startet und wann nicht'
   cat "$work/out"
   exit 1
 }
 refused 'gibt es nicht' env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" opengewerk-nicht-da.tar.gz
-grep -q 'startet sh docker/start.sh sie wieder, auf dem Stand von vorher' "$work/out" || {
+grep -q 'startet sh docker/start.sh sie wieder' "$work/out" || {
   echo 'FEHLER: eine Ablehnung vor dem Arbeitsordner sagt nicht, wie die Instanz wieder startet'
   cat "$work/out"
   exit 1
