@@ -107,12 +107,13 @@ if [ "${1:-}" = "--time" ]; then
 	exit 0
 fi
 
-# A stop of the service (docker stop, compose down, an update) sends TERM to
-# this script, the first process of its container. Without a trap the kernel
-# drops that signal for PID 1, and the KILL after the grace period ends a
-# backup under way before it cleans up: the hidden file on the target and
-# the parts in the container would stay (#1004). So TERM goes on to the
-# process group of the backup, which cleans up as after any other failure,
+# A stop of the service (docker stop, compose down, an update) sends this
+# script, the first process of its container, the stop signal of the image:
+# SIGINT, from the postgres image. Without a trap the kernel drops that
+# signal for PID 1, and the KILL after the grace period ends a backup under
+# way before it cleans up: the hidden file on the target and the parts in the
+# container would stay (#1004). So TERM goes on to the process group of the
+# backup, which cleans up as after any other failure,
 # and this script ends once it has. The backup and the pause between checks
 # run behind a wait, which a trap interrupts at once; a command in the
 # foreground would hold the trap until it ends. A TERM between the start of

@@ -1784,6 +1784,7 @@ mkdir -p "$work/stop-bin"
 cat > "$work/stop-bin/backup.sh" <<'FAKE'
 #!/bin/sh
 trap 'sleep 2; echo cleaned > "$STOP_MARK"; exit 1' TERM
+echo "$$" > "$STOP_PID"
 echo started > "$STOP_MARK"
 if [ -n "${STOP_HANGS:-}" ]; then
   sleep 120 &
@@ -1794,14 +1795,15 @@ FAKE
 cp "$work/schedule-bin/psql" "$work/stop-bin/psql"
 chmod +x "$work/stop-bin/backup.sh" "$work/stop-bin/psql"
 for phase in backup pause; do
-  rm -f "$work/stop-mark" "$work/stop-child"
+  rm -f "$work/stop-mark" "$work/stop-child" "$work/stop-pid"
   hangs=''
   expected=started
   if [ "$phase" = backup ]; then
     hangs=1
     expected=cleaned
   fi
-  STOP_MARK="$work/stop-mark" STOP_CHILD="$work/stop-child" STOP_HANGS="$hangs" SCHEDULE_PSQL="$work/stop-psql" \
+  STOP_MARK="$work/stop-mark" STOP_PID="$work/stop-pid" STOP_CHILD="$work/stop-child" STOP_HANGS="$hangs" \
+    SCHEDULE_PSQL="$work/stop-psql" \
     BACKUP_STATUS_PATH="$work/stop-status-$phase" POSTGRES_HOST=postgres POSTGRES_DB=opengewerk \
     PATH="$work/stop-bin:$PATH" sh "$work/bin/schedule.sh" > "$work/out" 2>&1 &
   schedule_pid=$!
@@ -1810,8 +1812,24 @@ for phase in backup pause; do
     sleep 1
     waited=$((waited + 1))
   done
-  # A second more: in the pause the stand-in has ended by then.
-  sleep 1
+  [ -s "$work/stop-mark" ] || {
+    echo "FEHLER: die Sicherung des Zeitplans begann nicht, der Fall $phase wurde nicht geprüft"
+    cat "$work/out"
+    exit 1
+  }
+  # In the pause, once the stand-in has ended and the schedule has taken its
+  # status, which ends its process for good.
+  if [ "$phase" = pause ]; then
+    waited=0
+    while kill -0 "$(cat "$work/stop-pid")" 2>/dev/null; do
+      [ "$waited" -lt 50 ] || {
+        echo 'FEHLER: die Sicherung des Zeitplans endete nicht, die Pause wurde nicht geprüft'
+        exit 1
+      }
+      sleep 0.2
+      waited=$((waited + 1))
+    done
+  fi
   stop_started=$(date +%s)
   kill -s TERM "$schedule_pid"
   stop_status=0
@@ -1841,6 +1859,11 @@ until [ -e "$work/rm-blocks" ] || [ "$waited" -ge 30 ]; do
   sleep 1
   waited=$((waited + 1))
 done
+[ -e "$work/rm-blocks" ] || {
+  echo 'FEHLER: die Sicherung kam nicht ins Aufräumen, der Fall wurde nicht geprüft'
+  cat "$work/out"
+  exit 1
+}
 kill -s TERM "-$cleaning_pid" || {
   echo 'FEHLER: das TERM erreichte die aufräumende Sicherung nicht, der Fall wurde nicht geprüft'
   exit 1
