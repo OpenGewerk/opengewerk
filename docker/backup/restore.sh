@@ -386,8 +386,32 @@ superuser_command() {
 # when that database had no migrations at all: then nothing says it either.
 waiting_note='restored, waiting for migrations'
 
+# The way out runs psql in a session of its own (#1007). psql answers a SIGINT
+# by cancelling its statement even when the signal is ignored, as it is there,
+# so a second stop that reaches the process group of this run, or the
+# terminal, would take back what the way out does. setsid runs psql in place,
+# because a child of this shell never leads a group, and keeps its status.
+superuser_command_alone() {
+	setsid psql --host "$POSTGRES_HOST" --username postgres --dbname postgres --quiet \
+		--command "$1" >/dev/null
+}
+
 unlock_application() {
-	superuser_command "alter role opengewerk_app login; comment on role opengewerk_app is null"
+	superuser_command_alone "alter role opengewerk_app login; comment on role opengewerk_app is null"
+}
+
+# A login that could not be given back is said, with the command that gives it
+# back. The role is locked then and carries no note, and start.sh gives the
+# login back only to a role with the note: the application would look as if
+# its password were broken.
+unlock_failed=0
+unlock_or_say() {
+	unlock_application && return 0
+	unlock_failed=1
+	echo "" >&2
+	echo "Die Anwendung bleibt ausgesperrt: Ihre Anmeldung ließ sich nicht zurückgeben," >&2
+	echo "der Grund steht darüber. Im Ordner der Installation gibt dieser Befehl sie zurück:" >&2
+	echo "  docker compose -f docker/compose.yaml exec postgres psql -U postgres -c \"alter role opengewerk_app login; comment on role opengewerk_app is null\"" >&2
 }
 
 # Locked before this run starts: by an earlier restore that did not go through,
@@ -412,9 +436,9 @@ unlock_and_cleanup() {
 	# As in cleanup: a second stop does not end this halfway.
 	trap '' HUP INT TERM
 	if [ "$1" -eq 0 ]; then
-		[ "$waiting" -eq 1 ] || unlock_application || true
+		[ "$waiting" -eq 1 ] || unlock_or_say
 	elif [ "$replaced" -eq 1 ]; then
-		superuser_command "comment on role opengewerk_app is null" || true
+		superuser_command_alone "comment on role opengewerk_app is null" || true
 		echo "" >&2
 		echo "Die Anwendung bleibt ausgesperrt: die Datenbank ist schon zurückgespielt," >&2
 		echo "der Rest nicht. Das Rückspielen noch einmal laufen lassen und danach" >&2
@@ -424,9 +448,14 @@ unlock_and_cleanup() {
 		echo "Die Anwendung bleibt ausgesperrt, wie sie es vor diesem Lauf war: ein" >&2
 		echo "früheres Rückspielen ist nicht durchgelaufen oder wartet auf die Migrationen." >&2
 	else
-		unlock_application || true
+		unlock_or_say
 	fi
 	cleanup
+	# A run that went through ends with an error all the same when the
+	# application did not get its login back.
+	if [ "$unlock_failed" -eq 1 ]; then
+		exit 1
+	fi
 }
 trap 'unlock_and_cleanup "$?"' EXIT
 

@@ -821,8 +821,10 @@ noch nach dem Ausgang, und die Anwendung bekommt ihre Anmeldung nur zurück, wen
 die Datenbank nicht ersetzt ist (#1007). Ebenso bleibt sie ausgesperrt, wenn
 sie schon vor dem Lauf ausgesperrt war, weil ein früherer nicht durchlief. Ein
 Lauf, der durchgeht, gibt die Anmeldung zurück oder überlässt das dem Start,
-siehe unten; wer den Stand nach einem Fehler trotzdem so nehmen will, gibt sie
-von Hand zurück:
+siehe unten. Lässt sie sich nicht zurückgeben, etwa weil die Verbindung abbricht,
+sagt der Lauf das, nennt den Befehl dafür und endet mit einem Fehler (#1007).
+Wer den Stand nach einem Fehler trotzdem so nehmen will, gibt sie ebenso von
+Hand zurück:
 
 ```bash
 docker compose -f docker/compose.yaml exec postgres psql -U postgres -c "alter role opengewerk_app login"

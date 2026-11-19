@@ -115,13 +115,31 @@ cat > "$work/bin/psql" <<'FAKE'
 #!/bin/sh
 # The first call whose arguments hold PSQL_SLOW_ON takes three seconds, for a
 # second stop to reach a restore that cleans up (#1007). PSQL_SLOW_MARK is a
-# file it writes first: the process that started it and its process group.
+# file it writes first: the process that started it and the process group of
+# that one, the group of the run. A SIGINT for a process group, written down
+# in PSQL_SLOW_MARK.sent, cancels its statement when the group is its own, the
+# way psql answers one even when it is ignored: it ends without effect.
 if [ -n "${PSQL_SLOW_ON:-}" ] && [ ! -e "$PSQL_SLOW_MARK" ]; then
   case "$*" in
     *"$PSQL_SLOW_ON"*)
-      psql_stat=$(sed 's/.*) //' "/proc/$$/stat")
-      printf '%s %s\n' "$PPID" "$(echo "$psql_stat" | cut -d' ' -f3)" > "$PSQL_SLOW_MARK"
+      parent_stat=$(sed 's/.*) //' "/proc/$PPID/stat")
+      printf '%s %s\n' "$PPID" "$(echo "$parent_stat" | cut -d' ' -f3)" > "$PSQL_SLOW_MARK"
       sleep 3
+      psql_stat=$(sed 's/.*) //' "/proc/$$/stat")
+      if [ -e "$PSQL_SLOW_MARK.sent" ] &&
+        [ "$(cat "$PSQL_SLOW_MARK.sent")" = "$(echo "$psql_stat" | cut -d' ' -f3)" ]; then
+        echo 'ERROR:  canceling statement due to user request' >&2
+        exit 1
+      fi
+      ;;
+  esac
+fi
+# With UNLOCK_FAILS the login cannot be given back.
+if [ -n "${UNLOCK_FAILS:-}" ]; then
+  case "$*" in
+    *'alter role opengewerk_app login'*)
+      echo 'psql: error: connection to server failed' >&2
+      exit 2
       ;;
   esac
 fi
@@ -1092,6 +1110,35 @@ grep -q 'bleibt ausgesperrt' "$work/out" || {
 }
 check 'Rückspielen: ab dem Einspielen gibt nur ein bestätigter Abbruch die Anmeldung zurück'
 
+# A login that cannot be given back is said, with the command that gives it
+# back, and a run that went through ends with an error then (#1007). The role
+# is locked without a note, and start.sh would not give the login back.
+unlock_refused() {
+  grep -q 'Anmeldung ließ sich nicht zurückgeben' "$work/out" &&
+    grep -q 'psql -U postgres -c "alter role opengewerk_app login; comment on role opengewerk_app is null"' "$work/out" || {
+    echo "FEHLER: ein gescheitertes Zurückgeben der Anmeldung wurde nicht gemeldet ($1)"
+    cat "$work/out"
+    exit 1
+  }
+}
+: > "$CALLS"
+restore_status=0
+POSTGRES_DB=opengewerk UNLOCK_FAILS=1 sh "$work/bin/restore.sh" "$ours" > "$work/out" 2>&1 ||
+  restore_status=$?
+grep -q '^Fertig\.' "$work/out" || {
+  echo 'FEHLER: das Rückspielen kam nicht bis zum Ende, der Fall wurde nicht geprüft'
+  cat "$work/out"
+  exit 1
+}
+unlock_refused 'nach einem Rückspielen, das durchlief'
+[ "$restore_status" -ne 0 ] || {
+  echo 'FEHLER: ein Rückspielen, nach dem die Anwendung ausgesperrt blieb, endete ohne Fehler'
+  exit 1
+}
+halfway PLAY_FAILS=early UNLOCK_FAILS=1
+unlock_refused 'nach einem Rückspielen, das vor der Datenbank scheiterte'
+check 'Rückspielen: lässt sich die Anmeldung nicht zurückgeben, sagt der Lauf es und endet mit Fehler'
+
 # 8b2. A stop, docker stop or Ctrl+C, while a restore plays the dump or a
 # check unpacks the archive (#1007). The init of the service hands the SIGINT
 # to the whole process group: psql ends, the database says the transaction
@@ -1103,7 +1150,8 @@ check 'Rückspielen: ab dem Einspielen gibt nur ein bestätigter Abbruch die Anm
 #
 # Sends SIGINT once the mark file $1 is there, to the process that started the
 # fake ("script") or to its process group ("group"). The group has to be
-# another one than that of the test, or the test would signal itself.
+# another one than that of the test, or the test would signal itself. A group
+# it signalled is written to $1.sent.
 interrupt_when_marked() {
   waited=0
   until [ -s "$1" ] || [ "$waited" -ge 300 ]; do
@@ -1119,6 +1167,7 @@ interrupt_when_marked() {
       return 0
     fi
     kill -s INT "-$marked_group"
+    echo "$marked_group" > "$1.sent"
   else
     kill -s INT "$marked_script"
   fi
@@ -1131,8 +1180,8 @@ stopped_restore() {
   signalled=$1
   second_at=$2
   shift 2
-  rm -rf "$work/play-mark" "$work/play-mark.refused" "$work/psql-mark" "$work/psql-mark.refused" \
-    "$work/stop-tmp"
+  rm -rf "$work/play-mark" "$work/play-mark.refused" "$work/play-mark.sent" "$work/psql-mark" \
+    "$work/psql-mark.refused" "$work/psql-mark.sent" "$work/stop-tmp"
   mkdir -p "$work/stop-tmp"
   : > "$CALLS"
   interrupt_when_marked "$work/play-mark" "$signalled" &
@@ -1184,8 +1233,10 @@ if grep -q 'alter role opengewerk_app login' "$CALLS" || ! grep -q 'schon zurüc
   cat "$work/out"
   exit 1
 fi
-# A second SIGINT while the run gives the login back does not end that
-# halfway: the login comes back all the same, and nothing is left in TMPDIR.
+# A second SIGINT for the group while the run gives the login back does not
+# end that halfway, nor does it cancel the statement of psql, which has a
+# session of its own: the login comes back all the same, and nothing is left
+# in TMPDIR.
 stopped_restore group 'alter role opengewerk_app login' XACT_STATUS=aborted
 grep -q "pg_xact_status('42'::xid8)" "$CALLS" || {
   echo 'FEHLER: nach einem Anhalten beim Einspielen wurde nicht nach dem Ausgang der Transaktion gefragt'
@@ -1197,7 +1248,7 @@ grep -q 'alter role opengewerk_app login' "$CALLS" || {
   cat "$work/out"
   exit 1
 }
-if [ ! -s "$work/psql-mark" ] || [ -e "$work/psql-mark.refused" ]; then
+if [ ! -s "$work/psql-mark" ] || [ -e "$work/psql-mark.refused" ] || [ ! -s "$work/psql-mark.sent" ]; then
   echo 'FEHLER: das zweite Anhalten beim Zurückgeben der Anmeldung wurde nicht erreicht, der Fall wurde nicht geprüft'
   cat "$work/out"
   exit 1
@@ -1205,7 +1256,7 @@ fi
 # A SIGINT for the script alone after the play, while it takes the note of an
 # earlier restore off the role: the run ends after that step, before the store,
 # and the application stays locked.
-rm -rf "$work/psql-mark" "$work/psql-mark.refused"
+rm -rf "$work/psql-mark" "$work/psql-mark.refused" "$work/psql-mark.sent"
 : > "$CALLS"
 interrupt_when_marked "$work/psql-mark" script &
 interrupter=$!
@@ -1306,6 +1357,37 @@ for slow_hash in '/*' -cs; do
     exit 1
   fi
 done
+# A restore that went through, stopped while it gives the login back at its
+# end. The trap in force then is the one that ends the run, and the stop
+# reaches the whole group: it ends neither the way out nor, through a cancel,
+# the statement of psql. The login comes back, and nothing is left in TMPDIR.
+rm -rf "$work/psql-mark" "$work/psql-mark.refused" "$work/psql-mark.sent" "$work/stop-tmp"
+mkdir -p "$work/stop-tmp"
+: > "$CALLS"
+interrupt_when_marked "$work/psql-mark" group &
+interrupter=$!
+restore_status=0
+env POSTGRES_DB=opengewerk TMPDIR="$work/stop-tmp" PSQL_SLOW_ON='alter role opengewerk_app login' \
+  PSQL_SLOW_MARK="$work/psql-mark" setsid sh "$work/bin/restore.sh" "$ours" > "$work/out" 2>&1 ||
+  restore_status=$?
+wait "$interrupter" || true
+if ! grep -q '^Fertig\.' "$work/out" || [ ! -s "$work/psql-mark" ] || [ -e "$work/psql-mark.refused" ] ||
+  [ ! -s "$work/psql-mark.sent" ]; then
+  echo 'FEHLER: das Anhalten beim Zurückgeben der Anmeldung am Ende wurde nicht erreicht, der Fall wurde nicht geprüft'
+  cat "$work/out"
+  exit 1
+fi
+grep -q 'alter role opengewerk_app login' "$CALLS" || {
+  echo 'FEHLER: ein Anhalten beim Zurückgeben der Anmeldung nahm sie der Anwendung wieder'
+  cat "$work/out"
+  exit 1
+}
+if [ "$restore_status" -ne 0 ] || [ -n "$(ls -A "$work/stop-tmp")" ]; then
+  echo "FEHLER: ein Anhalten beim Zurückgeben der Anmeldung am Ende brach den Weg hinaus ab (Status $restore_status)"
+  ls -A "$work/stop-tmp"
+  cat "$work/out"
+  exit 1
+fi
 check 'Anhalten: Rückspielen und Prüfen enden auf ihrem Weg hinaus, das Rückspielen gibt die Anmeldung nur ohne ersetzte Datenbank zurück'
 
 # 8c. A backup from an earlier version than the database it replaces: the
