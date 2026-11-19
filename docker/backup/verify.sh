@@ -102,9 +102,15 @@ echo "Sicherung: $(basename "$archive")"
 work=$(mktemp -d)
 held=$(mktemp -d)
 cleanup() {
+	# A second stop does not end this halfway, as in restore.sh (#1007).
+	trap '' HUP INT TERM
 	rm -rf "$work" "$held"
 }
 trap cleanup EXIT
+# A stop (docker stop, Ctrl+C) ends the run through the same way out (#1007):
+# without a trap the shell would end at the signal and leave the unpacked
+# chains behind, or, as the first process of a container, not end at all.
+trap 'exit 1' HUP INT TERM
 
 # Read from the target once, and only the copy is checked and read, as in
 # restore.sh: a file checked on the target could be another one by the time

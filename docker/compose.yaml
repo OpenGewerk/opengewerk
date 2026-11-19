@@ -309,14 +309,24 @@ services:
     # target such as a share that belongs to somebody else, FOWNER for setting
     # the times and modes of what it restores there.
     cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
-    # A stop sends SIGINT, the stop signal of the postgres image, to the first
-    # process of the container alone, which sees it only once the step under
-    # way ends, pg_dump, tar or the play of the dump. A step longer than the
-    # grace period ends with the KILL after it, before any clean up; Ctrl+C
-    # reaches every step at once. A longer grace period would not do here: a
-    # stop during the play of the dump could then give a restore that has
-    # replaced the database the login back (#1007).
+    # A stop sends SIGINT, the stop signal of the postgres image, and the init
+    # hands it to every process of the run at once, the way Ctrl+C does
+    # (#1007): pg_dump, tar or the play of the dump end, and the script ends
+    # through its way out, which cleans up. A restore stopped while it plays
+    # the dump asks the database how the play ended and gives the application
+    # its login back only when it was aborted. Without the init the signal
+    # reached the first process alone, which saw it only once the step under
+    # way ended, often after the KILL that ends the grace period. The grace
+    # period is that of the schedule below: a backup cleaning up on a target
+    # that does not answer takes up to 35 seconds.
+    init: true
+    stop_grace_period: 2m
     environment: &backup-environment
+      # Read by the init of this service, which then signals the process group
+      # of the script and not the script alone. The schedule below runs
+      # without an init, where it changes nothing: schedule.sh passes the
+      # signal on itself (#1004).
+      TINI_KILL_PROCESS_GROUP: '1'
       POSTGRES_HOST: postgres
       POSTGRES_DB: opengewerk
       PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD fehlt in der .env-Datei}

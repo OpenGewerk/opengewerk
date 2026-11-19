@@ -39,6 +39,18 @@ set -eu
 # The copy of the archive and what is unpacked from it hold every tenant.
 umask 077
 
+# A stop of the container (docker stop, Ctrl+C) sends SIGINT, and under the
+# init of the backup service every step of this run gets it at once (#1007).
+# The run ends as soon as the step under way has ended, before anything looks
+# at what that step left, so a hash cut short is never taken for a verdict on
+# the archive. It ends through the way out below, which cleans up and gives
+# the login back or says why not. Only while the dump is played is a stop just
+# noted, see there. Without a trap the shell would end at the signal and skip
+# the way out, or, as the first process of a container without an init, not
+# end at all.
+stopped=''
+trap 'stopped=1; exit 1' HUP INT TERM
+
 : "${POSTGRES_HOST:=postgres}"
 : "${POSTGRES_DB:=opengewerk}"
 : "${STORAGE_PATH:=/var/lib/opengewerk/storage}"
@@ -124,7 +136,14 @@ echo "Sicherung: $(basename "$archive")"
 work=$(mktemp -d)
 held=$(mktemp -d)
 cleanup() {
+	# Once it cleans up it finishes that: a second stop would end the run
+	# halfway and leave the unpacked archive behind. What it starts here
+	# ignores the signal as well.
+	trap '' HUP INT TERM
 	rm -rf "$work" "$held"
+	if [ -n "$stopped" ]; then
+		echo "Das Rückspielen wurde angehalten." >&2
+	fi
 }
 trap cleanup EXIT
 
@@ -367,8 +386,32 @@ superuser_command() {
 # when that database had no migrations at all: then nothing says it either.
 waiting_note='restored, waiting for migrations'
 
+# The way out runs psql in a session of its own (#1007). psql answers a SIGINT
+# by cancelling its statement even when the signal is ignored, as it is there,
+# so a second stop that reaches the process group of this run, or the
+# terminal, would take back what the way out does. setsid runs psql in place,
+# because a child of this shell never leads a group, and keeps its status.
+superuser_command_alone() {
+	setsid psql --host "$POSTGRES_HOST" --username postgres --dbname postgres --quiet \
+		--command "$1" >/dev/null
+}
+
 unlock_application() {
-	superuser_command "alter role opengewerk_app login; comment on role opengewerk_app is null"
+	superuser_command_alone "alter role opengewerk_app login; comment on role opengewerk_app is null"
+}
+
+# A login that could not be given back is said, with the command that gives it
+# back. The role is locked then and carries no note, and start.sh gives the
+# login back only to a role with the note: the application would look as if
+# its password were broken.
+unlock_failed=0
+unlock_or_say() {
+	unlock_application && return 0
+	unlock_failed=1
+	echo "" >&2
+	echo "Die Anwendung bleibt ausgesperrt: Ihre Anmeldung ließ sich nicht zurückgeben," >&2
+	echo "der Grund steht darüber. Im Ordner der Installation gibt dieser Befehl sie zurück:" >&2
+	echo "  docker compose -f docker/compose.yaml exec postgres psql -U postgres -c \"alter role opengewerk_app login; comment on role opengewerk_app is null\"" >&2
 }
 
 # Locked before this run starts: by an earlier restore that did not go through,
@@ -390,10 +433,12 @@ was_locked=$(psql --host "$POSTGRES_HOST" --username postgres --dbname postgres 
 replaced=0
 waiting=0
 unlock_and_cleanup() {
+	# As in cleanup: a second stop does not end this halfway.
+	trap '' HUP INT TERM
 	if [ "$1" -eq 0 ]; then
-		[ "$waiting" -eq 1 ] || unlock_application || true
+		[ "$waiting" -eq 1 ] || unlock_or_say
 	elif [ "$replaced" -eq 1 ]; then
-		superuser_command "comment on role opengewerk_app is null" || true
+		superuser_command_alone "comment on role opengewerk_app is null" || true
 		echo "" >&2
 		echo "Die Anwendung bleibt ausgesperrt: die Datenbank ist schon zurückgespielt," >&2
 		echo "der Rest nicht. Das Rückspielen noch einmal laufen lassen und danach" >&2
@@ -403,9 +448,14 @@ unlock_and_cleanup() {
 		echo "Die Anwendung bleibt ausgesperrt, wie sie es vor diesem Lauf war: ein" >&2
 		echo "früheres Rückspielen ist nicht durchgelaufen oder wartet auf die Migrationen." >&2
 	else
-		unlock_application || true
+		unlock_or_say
 	fi
 	cleanup
+	# A run that went through ends with an error all the same when the
+	# application did not get its login back.
+	if [ "$unlock_failed" -eq 1 ]; then
+		exit 1
+	fi
 }
 trap 'unlock_and_cleanup "$?"' EXIT
 
@@ -416,7 +466,6 @@ echo "  Anwendung wird für die Dauer des Rückspielens ausgesperrt."
 echo "  Bleibt sie danach ausgesperrt, gibt ihr erst sh docker/start.sh die Anmeldung"
 echo "  zurück, und das braucht Docker Engine ab 28.3.3."
 lock_application
-
 # --- Restore the database --------------------------------------------------
 # Everything the owner holds goes first, and the dump is played into what is
 # left, all of it in one transaction (#988). Restoring into a database that
@@ -533,25 +582,50 @@ pg_restore --no-owner --file "${work}/database.sql" "${work}/database.dump"
 # before its answer came back, the database may hold the backup already. So
 # the database is asked how the transaction ended, and only one it aborted
 # leaves the database as it was; one it committed, or one whose end nobody
-# can say, counts as replaced.
+# can say, counts as replaced. So the run counts as replaced from here on,
+# and only that answer, or a transaction that never began, takes it back: a
+# way out that comes before it, a step of the question that fails, say,
+# leaves the application locked rather than on a database it cannot know.
+#
+# While the dump is played a stop is only noted (#1007). psql ends by it, or
+# plays on when the signal reached this script alone, and either way the run
+# goes on to the question before it ends. Ended at once, it would leave the
+# application locked on a database that may well be as it was.
+trap 'stopped=1' HUP INT TERM
+replaced=1
 if ! PGPASSWORD="$OPENGEWERK_OWNER_PASSWORD" PGOPTIONS="-c client_min_messages=warning" \
 	psql --host "$POSTGRES_HOST" --username opengewerk_owner --dbname "$POSTGRES_DB" \
 	--no-psqlrc --quiet --tuples-only --no-align --single-transaction --set ON_ERROR_STOP=1 \
 	--file "${work}/empty.sql" --file "${work}/database.sql" >"${work}/played.txt"; then
-	transaction=$(sed -n 's/^restore-transaction \([0-9][0-9]*\)$/\1/p' "${work}/played.txt" | head -n 1)
+	# sed reads the number alone and stops at the first one. Through a pipe only
+	# the status of its last command would count, and a sed that a second stop
+	# ended would read as a transaction that never began. As it is, a failed
+	# lookup ends the run here, and the application stays locked.
+	transaction=$(sed -n '/^restore-transaction [0-9][0-9]*$/{s/^restore-transaction //p;q;}' "${work}/played.txt")
 	# Without its number the transaction never began, and nothing changed.
-	if [ -n "$transaction" ]; then
+	# The number is what the first statement returns, and psql writes each
+	# result out before it sends the next statement, so it stands in the file
+	# before anything changes, even when psql is killed afterwards.
+	if [ -z "$transaction" ]; then
+		replaced=0
+	else
 		outcome=$(psql --host "$POSTGRES_HOST" --username postgres --dbname postgres --quiet \
 			--tuples-only --no-align \
 			--command "select pg_catalog.pg_xact_status('${transaction}'::xid8)") || outcome=''
-		if [ "$outcome" != aborted ]; then
+		if [ "$outcome" = aborted ]; then
+			replaced=0
+		else
 			echo "Die Transaktion des Rückspielens ist nicht sicher abgebrochen (${outcome:-unbekannt})." >&2
-			replaced=1
 		fi
 	fi
 	exit 1
 fi
-replaced=1
+# A stop ends the run again from here on, and one noted while psql played on
+# ends it now: the database is replaced, the store is not.
+trap 'stopped=1; exit 1' HUP INT TERM
+if [ -n "$stopped" ]; then
+	exit 1
+fi
 # A note an earlier restore left belongs to the database that was there.
 superuser_command "comment on role opengewerk_app is null"
 level_after=$(migration_level)
