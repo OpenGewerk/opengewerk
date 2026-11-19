@@ -637,7 +637,10 @@ nichts liegen, kein halbes Archiv und keine Teile im Klartext. Die Ausnahme
 ist ein Aufräumen, das auf dem Ziel scheitert, etwa weil es nicht mehr antwortet
 oder nur noch lesbar ist: Dann bleibt die Datei dort, und die Sicherung nennt
 sie (#999). Das ist die verborgene Datei oder, wenn die Sicherung erst nach dem
-Umbenennen scheiterte, das Archiv unter seinem Namen. Wird der Dienst `backup-schedule` angehalten, während eine Sicherung läuft, etwa bei einem Update, räumt sie vorher auf; Docker wartet darauf bis zu zwei Minuten (#1004). Platz braucht die
+Umbenennen scheiterte, das Archiv unter seinem Namen. Wird der Dienst
+`backup-schedule` oder `backup` angehalten, während eine Sicherung läuft, etwa
+bei einem Update, räumt sie vorher auf, auch wenn sie das schon tut; Docker
+wartet darauf bis zu zwei Minuten (#1004). Platz braucht die
 Sicherung dafür im Container, also dort, wo Docker seine Container hält, etwa so
 viel wie Dump und Dateispeicher zusammen; `TMPDIR` im Dienst verlegt das. Die
 Archive auf dem Ziel sind nur für ihren Besitzer lesbar, wer sie von dort
