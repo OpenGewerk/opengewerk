@@ -356,6 +356,17 @@ FAKE
 # that starts at "."): everything else is listed, and the gone one is said.
 cat > "$work/bin/find" <<FAKE
 #!/bin/sh
+# The Nth list of all files below . (find . -type f) breaks off after its
+# first line, as on a disk that fails halfway, counted in FIND_COUNT.
+if [ -n "\${FIND_FAILS_AT:-}" ] && [ "\$*" = ". -type f" ]; then
+  find_number=\$((\$(cat "\$FIND_COUNT" 2>/dev/null || echo 0) + 1))
+  echo "\$find_number" > "\$FIND_COUNT"
+  if [ "\$find_number" = "\$FIND_FAILS_AT" ]; then
+    $real_find "\$@" | head -n 1
+    echo 'find: ./ab: I/O error' >&2
+    exit 1
+  fi
+fi
 $real_find "\$@" || exit
 [ "\$1" = . ] || [ "\$1" = "\$STORAGE_PATH" ] || exit 0
 # A find over the store that does not come back, as on a disk that hangs.
@@ -812,6 +823,25 @@ grep -q '^  sh docker/start.sh$' "$work/out" || {
 refused 'OPENGEWERK_OWNER_PASSWORD fehlt' env -u OPENGEWERK_OWNER_PASSWORD POSTGRES_DB=opengewerk \
   sh "$work/bin/restore.sh" "$ours"
 check 'Rückspielen: als Eigentümer der Tabellen, in einer Transaktion, nicht als Superuser'
+
+# 8a. A list of the checked store that find cannot finish stops the restore
+# before anything changes (#1000): the second "find . -type f" of a restore
+# is the one the checklist of the hashes is built from.
+: > "$CALLS"
+rm -f "$work/find-count"
+if FIND_FAILS_AT=2 FIND_COUNT="$work/find-count" POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"   > "$work/out" 2>&1; then
+  echo 'FEHLER: ein Rückspielen lief durch, obwohl die Liste des geprüften Speichers abbrach'
+  exit 1
+fi
+[ "$(cat "$work/find-count" 2>/dev/null)" = 2 ] || {
+  echo 'FEHLER: die Liste für die Prüfung der Hashes wurde nicht erreicht, der Fall wurde nicht geprüft'
+  cat "$work/out"
+  exit 1
+}
+if grep -q -e 'alter role opengewerk_app nologin' -e 'restore-as' "$CALLS"; then
+  echo 'FEHLER: nach einer abgebrochenen Liste des Speichers wurde ausgesperrt oder eingespielt'
+  exit 1
+fi
 
 # 8b. A restore that fails after the database is replaced leaves the
 # application locked and says so, because the file store did not come back.

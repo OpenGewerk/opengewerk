@@ -299,13 +299,17 @@ fi
 # loop. A loop behind a pipe runs in a subshell, so its counters are gone by
 # the time anybody looks at them, and the check would report nothing while
 # appearing to work. sha256sum -c carries the verdict in its exit code. Every
-# name is a hash by now, two folders deep where it belongs.
-(cd "$staged" && find . -type f) | while IFS= read -r file; do
+# name is a hash by now, two folders deep where it belongs. The list comes
+# first, into a file and not through a pipe: a find that fails halfway would
+# leave a list that misses files, and set -e sees its status only here.
+(cd "$staged" && find . -type f) >"${work}/staged.list"
+while IFS= read -r file; do
 	printf '%s  %s\n' "${file##*/}" "$file"
-done >"${work}/expected.sha256"
+done <"${work}/staged.list" >"${work}/expected.sha256"
 
 expected_files=$(wc -l <"${work}/expected.sha256" | tr -d ' ')
-files=$(cd "$staged" && find . -type f | wc -l | tr -d ' ')
+files=$(wc -l <"${work}/staged.list" | tr -d ' ')
+rm -f "${work}/staged.list"
 
 if [ "$expected_files" -gt 0 ]; then
 	# -s rather than --quiet: this runs on busybox, which has the short option
