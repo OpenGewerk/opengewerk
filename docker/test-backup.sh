@@ -1768,6 +1768,61 @@ if ! test -s "$work/schedule-psql" ||
 fi
 check 'Sicherung als Ganzes: nach zwölf Stunden endet sie mit allem, was sie gestartet hat, und lässt nichts zurück'
 
+# A stop of the service reaches a backup under way (#1004): schedule.sh passes
+# TERM on to the group of the backup, waits until it has cleaned up and ends.
+# In the pause between two checks it ends at once. The stand-in for backup.sh
+# notes that it started, that it cleaned up, which takes it two seconds, and
+# the process it started.
+mkdir -p "$work/stop-bin"
+cat > "$work/stop-bin/backup.sh" <<'FAKE'
+#!/bin/sh
+trap 'sleep 2; echo cleaned > "$STOP_MARK"; exit 1' TERM
+echo started > "$STOP_MARK"
+if [ -n "${STOP_HANGS:-}" ]; then
+  sleep 120 &
+  echo "$!" > "$STOP_CHILD"
+  wait $!
+fi
+FAKE
+cp "$work/schedule-bin/psql" "$work/stop-bin/psql"
+chmod +x "$work/stop-bin/backup.sh" "$work/stop-bin/psql"
+for phase in backup pause; do
+  rm -f "$work/stop-mark" "$work/stop-child"
+  hangs=''
+  expected=started
+  if [ "$phase" = backup ]; then
+    hangs=1
+    expected=cleaned
+  fi
+  STOP_MARK="$work/stop-mark" STOP_CHILD="$work/stop-child" STOP_HANGS="$hangs" SCHEDULE_PSQL="$work/stop-psql" \
+    BACKUP_STATUS_PATH="$work/stop-status-$phase" POSTGRES_HOST=postgres POSTGRES_DB=opengewerk \
+    PATH="$work/stop-bin:$PATH" sh "$work/bin/schedule.sh" > "$work/out" 2>&1 &
+  schedule_pid=$!
+  waited=0
+  until [ -s "$work/stop-mark" ] || [ "$waited" -ge 20 ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  # A second more: in the pause the stand-in has ended by then.
+  sleep 1
+  stop_started=$(date +%s)
+  kill -s TERM "$schedule_pid"
+  stop_status=0
+  wait "$schedule_pid" || stop_status=$?
+  stop_seconds=$(($(date +%s) - stop_started))
+  if [ "$stop_status" -ne 143 ] || [ "$stop_seconds" -ge 10 ] ||
+    [ "$(cat "$work/stop-mark" 2>/dev/null)" != "$expected" ]; then
+    echo "FEHLER: ein Anhalten des Zeitplans erreichte die Sicherung nicht ($phase: Status $stop_status nach $stop_seconds Sekunden, $(cat "$work/stop-mark" 2>/dev/null))"
+    cat "$work/out"
+    exit 1
+  fi
+  if [ "$phase" = backup ] && kill -0 "$(cat "$work/stop-child")" 2>/dev/null; then
+    echo 'FEHLER: nach dem Anhalten lief ein Prozess der Sicherung weiter'
+    exit 1
+  fi
+done
+check 'Zeitplan: ein Anhalten erreicht die laufende Sicherung mit allem, was sie gestartet hat, und endet in der Pause sofort'
+
 # A file in an archive whose content is not what its name says, as a link
 # swapped in while tar read the store would leave it: the restore stops and
 # does not leave the file in the store, where the application would read it.

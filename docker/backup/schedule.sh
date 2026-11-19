@@ -107,6 +107,27 @@ if [ "${1:-}" = "--time" ]; then
 	exit 0
 fi
 
+# A stop of the service (docker stop, compose down, an update) sends TERM to
+# this script, the first process of its container. Without a trap the kernel
+# drops that signal for PID 1, and the KILL after the grace period ends a
+# backup under way before it cleans up: the hidden file on the target and
+# the parts in the container would stay (#1004). So TERM goes on to the
+# process group of the backup, which cleans up as after any other failure,
+# and this script ends once it has. The backup and the pause between checks
+# run behind a wait, which a trap interrupts at once; a command in the
+# foreground would hold the trap until it ends.
+backup=''
+stop() {
+	if [ -n "$backup" ]; then
+		echo "Der Dienst wird angehalten, die laufende Sicherung räumt auf." >&2
+		# Its group, or the process alone when setsid has not made one yet.
+		kill -s TERM -- "-$backup" 2>/dev/null || kill -s TERM "$backup" 2>/dev/null || true
+		wait "$backup" 2>/dev/null || true
+	fi
+	exit 143
+}
+trap stop TERM INT HUP
+
 at=$(configured_time)
 
 echo "Geplante Sicherung: jeden Tag um ${at} Uhr (${TZ:-UTC}), und nachgeholt, wenn die letzte vor dem letzten Termin lag."
@@ -129,10 +150,16 @@ while true; do
 
 		# In a process group of its own, which the limit of twelve hours in
 		# backup.sh ends as a whole (#999); setsid keeps the status.
-		if ! setsid backup.sh --scheduled; then
+		setsid backup.sh --scheduled &
+		backup=$!
+		status=0
+		wait "$backup" || status=$?
+		backup=''
+		if [ "$status" -ne 0 ]; then
 			echo "Die geplante Sicherung ist fehlgeschlagen, der nächste Versuch folgt zum nächsten Termin." >&2
 		fi
 	fi
 
-	sleep 300
+	sleep 300 &
+	wait $! || true
 done
