@@ -77,6 +77,21 @@ Zufallswert, sondern ein Schlüssel auf P-256; der Befehl dafür steht in
 Platzhalter aus der Vorlage findet, startet nicht: sie nennt die Variable, nie
 ihren Wert, und verweist auf das Skript.
 
+Jede Zeile der `.env` hat die Form `NAME=Wert`, ohne `export` davor und ohne
+Leerzeichen um das `=`. Ein Wert beginnt mit einem sichtbaren Zeichen aus
+ASCII; einer, der mit einem Umlaut beginnt, steht in Anführungszeichen. Ein
+Wert in Anführungszeichen endet auf seiner Zeile, hat keinen `\` darin und
+dahinter höchstens einen Kommentar mit einem Leerzeichen davor. Jeder Name
+steht nur einmal da, und gespeichert wird als UTF-8 ohne BOM. `TRUSTED_ORIGINS`
+enthält nur die Adressen, durch Komma getrennt, ohne Anführungszeichen,
+Leerzeichen, Kommentar oder `$`, und `OPENGEWERK_VERSION` nur die Fassung,
+auf Wunsch in Anführungszeichen, ohne `$` und ohne Tabulator.
+Docker Compose nimmt auch anderes an, liest
+es aber anders als die Skripte, die dann eine andere Adresse nennen oder sehen
+würden als die, mit der die Anwendung läuft. `sh docker/start.sh` hält deshalb
+bei einer anderen Form an, nennt die Nummer der Zeile (bei einem Nullbyte nur
+die Datei), nie ihren Wert, und lässt die Datei, wie sie ist (#996).
+
 **Eingestellt wird in der Oberfläche, nicht in der `.env`.** Briefkopf, Steuern,
 Mailserver und alles, was ein Betrieb sonst festlegt, stehen im Büro. In der
 `.env` bleibt nur, was gebraucht wird, bevor die Oberfläche läuft: die

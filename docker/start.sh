@@ -160,12 +160,15 @@ compose() {
 # The version that runs, read the way Docker Compose reads it: from the
 # environment, else from the .env, else the default in compose.yaml. A value
 # edited by hand may carry a comment, quotes or, from Windows, a carriage
-# return, none of which belongs to a version.
+# return, none of which belongs to a version. Under the C locale, as setup.sh
+# checks the line: under UTF-8 sed would not take a comment as a whole that
+# holds a byte from another encoding, and a part of it would stay behind.
 version_variable="${APPLICATION_PREFIX}_VERSION"
 eval "pinned=\${${version_variable}:-}"
 
 if [ -z "$pinned" ]; then
-  pinned=$(sed -n "s/^${version_variable}=//p" "$here/.env" | head -n 1 | sed 's/[[:space:]]#.*//' | tr -d "\r\"' ")
+  pinned=$(LC_ALL=C sed -n "s/^${version_variable}=//p" "$here/.env" | head -n 1 |
+    LC_ALL=C sed 's/[[:space:]]#.*//' | LC_ALL=C tr -d "\r\"' ")
 fi
 
 shipped=$(sed -n "s/.*${version_variable}:-\([^}]*\)}.*/\1/p" "$here/compose.yaml" | head -n 1)
@@ -272,7 +275,15 @@ say "$APPLICATION_NAME startet."
 compose up -d --wait --wait-timeout 300 ||
   fail "$APPLICATION_NAME ist nicht gestartet. Warum, zeigt: docker compose -f docker/compose.yaml logs app"
 
-address=$(grep '^TRUSTED_ORIGINS=' "$here/.env" | head -n 1 | cut -d= -f2- | cut -d, -f1)
+# The address the instance runs with, read the way setup.sh reads it and
+# Docker Compose takes it: from the environment when it is exported there,
+# else from its one line in the .env (#996), which setup.sh holds to the
+# addresses alone, without a carriage return. The first of a list.
+if printenv TRUSTED_ORIGINS >/dev/null 2>&1; then
+  address=$(printenv TRUSTED_ORIGINS | cut -d, -f1)
+else
+  address=$(sed -n 's/^TRUSTED_ORIGINS=//p' "$here/.env" | tr -d '\r' | cut -d, -f1)
+fi
 say "$APPLICATION_NAME läuft. Im Browser: $address"
 
 # An instance nobody has set up yet asks for the setup code on its first

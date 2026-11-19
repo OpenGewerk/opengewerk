@@ -70,7 +70,7 @@ export CALLS PATH
 # Which engine start.sh talks to is what case 13 checks; nothing of the
 # machine this runs on comes in.
 unset DOCKER_CONTEXT DOCKER_HOST CONTEXT_FAILS CONTEXT_IN_USE DOCKER_SERVER DOCKER_SERVERS DOCKER_ID DOCKER_IDS \
-  WATCHED SETUP_NEEDED
+  WATCHED SETUP_NEEDED TRUSTED_ORIGINS
 
 check() {
   printf 'check: %s\n' "$1"
@@ -144,6 +144,22 @@ mv "$work/docker/.env.line" "$work/docker/.env"
 start
 pulled '0\.2\.2'
 check 'Anführungszeichen, Kommentar und Zeilenende aus Windows gehören nicht zur Fassung'
+
+# A comment in another encoding than UTF-8 after the version, read by a shell
+# under UTF-8: it goes as a whole all the same. The line of 3b comes back
+# after, written whole, since a sed under UTF-8 would not replace this one.
+printf 'OPENGEWERK_VERSION=0.2.3 # f\374r den Test\n' > "$work/docker/.env.line"
+grep -v '^OPENGEWERK_VERSION=' "$work/docker/.env" >> "$work/docker/.env.line"
+mv "$work/docker/.env.line" "$work/docker/.env"
+LC_ALL=C.UTF-8
+export LC_ALL
+start
+unset LC_ALL
+pulled '0\.2\.3'
+printf 'OPENGEWERK_VERSION="0.2.2" # pinned\r\n' > "$work/docker/.env.line"
+grep -v '^OPENGEWERK_VERSION=' "$work/docker/.env" >> "$work/docker/.env.line"
+mv "$work/docker/.env.line" "$work/docker/.env"
+check 'ein Kommentar in einer anderen Kodierung gehört auch unter UTF-8 nicht zur Fassung'
 
 # 4. And the environment over the .env, as Docker Compose has it.
 : > "$CALLS"
@@ -500,5 +516,27 @@ printf '%s' "$out" | grep -q 'keine Kennung seiner Engine'
 absent 'run --rm migrate'
 rm -f "$CALLS.engine"
 check 'Docker: dieselbe Engine vom ersten Blick bis zum Start'
+
+# 16. The address start.sh names is the one the instance runs with (#996): the
+# environment before the .env, and in the .env without the carriage return of
+# a file from Windows. Quotes and comments setup.sh does not let through there.
+: > "$CALLS"
+out=$(TRUSTED_ORIGINS=https://umgebung.example.org sh "$work/docker/start.sh" < /dev/null 2>&1)
+printf '%s' "$out" | grep -qF 'Im Browser: https://umgebung.example.org' || {
+  echo 'FEHLER: start.sh nannte nicht die Adresse aus der Umgebung'
+  printf '%s\n' "$out"
+  exit 1
+}
+sed 's/^TRUSTED_ORIGINS=.*$/TRUSTED_ORIGINS=https:\/\/werkstatt.example.org\r/' \
+  "$work/docker/.env" > "$work/docker/.env.windows"
+mv "$work/docker/.env.windows" "$work/docker/.env"
+: > "$CALLS"
+out=$(sh "$work/docker/start.sh" < /dev/null 2>&1)
+printf '%s' "$out" | grep -q 'Im Browser: https://werkstatt.example.org$' || {
+  echo 'FEHLER: start.sh nannte die Adresse aus der .env nicht ohne Zeilenende aus Windows'
+  printf '%s\n' "$out"
+  exit 1
+}
+check 'Adresse im Browser: aus der Umgebung vor der .env, ohne Zeilenende aus Windows'
 
 echo 'Startskript: alles in Ordnung.'
