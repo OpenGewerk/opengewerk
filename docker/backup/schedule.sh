@@ -129,7 +129,8 @@ stop() {
 	if [ -n "$backup" ]; then
 		echo "Der Dienst wird angehalten, die laufende Sicherung räumt auf." >&2
 		# Its group, or the process alone when setsid has not made one yet.
-		kill -s TERM -- "-$backup" 2>/dev/null || kill -s TERM "$backup" 2>/dev/null || true
+		# Without "--": the kill of busybox sh takes the group as -PID only.
+		kill -s TERM "-$backup" 2>/dev/null || kill -s TERM "$backup" 2>/dev/null || true
 		wait "$backup" 2>/dev/null || true
 	fi
 	exit 143

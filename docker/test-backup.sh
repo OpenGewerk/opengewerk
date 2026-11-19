@@ -1841,7 +1841,7 @@ until [ -e "$work/rm-blocks" ] || [ "$waited" -ge 30 ]; do
   sleep 1
   waited=$((waited + 1))
 done
-kill -s TERM -- "-$cleaning_pid" || {
+kill -s TERM "-$cleaning_pid" || {
   echo 'FEHLER: das TERM erreichte die aufräumende Sicherung nicht, der Fall wurde nicht geprüft'
   exit 1
 }
