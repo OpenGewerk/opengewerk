@@ -358,19 +358,54 @@ echo "    ${files} Datei(en) in der Sicherung, ${expected_files} davon gegen ihr
 # the store, would follow that link out of it and delete, write or hand over
 # files of this container, the archives among them. So what this restore does
 # in the store runs with the rights of the store's owner, and a link takes it
-# only where the application could go itself.
+# only where that user may write in this container. It gets no password of the
+# database along.
 #
 # The owner empties only folders it may read, write and enter, the store
 # itself among them. One that belongs to someone else, root after a copy that
 # failed halfway before #1000 say, or one of its own without those rights,
 # would end the restore with the database already replaced; it is turned away
 # here, while nothing has changed yet.
+#
+# The archives and the record of the backups are in this container too, and
+# not in that of the application. Where the owner may write to them, a target
+# on a share that maps every file to that user say, a link would take it
+# there, and the restore is turned away as well.
 mkdir -p "$STORAGE_PATH"
 # Read before anything is copied, from the store itself, which carries the
 # owner the application runs as.
 storage_owner=$(stat -c '%u:%g' "$STORAGE_PATH")
 storage_uid=${storage_owner%%:*}
+as_store_owner() {
+	if [ "$storage_uid" = 0 ]; then
+		env -u PGPASSWORD -u OPENGEWERK_OWNER_PASSWORD "$@"
+	else
+		env -u PGPASSWORD -u OPENGEWERK_OWNER_PASSWORD gosu "$storage_owner" "$@"
+	fi
+}
 if [ "$storage_uid" != 0 ]; then
+	# gosu needs SETUID and SETGID, which compose.yaml gives the service. A
+	# service without them is told so here, and not after the database is
+	# replaced.
+	if ! as_store_owner true 2>"${work}/gosu.err"; then
+		echo "Als Eigentümer des Dateispeichers (${storage_owner}) kann dieser Dienst nicht arbeiten:" >&2
+		sed 's/^/  /' "${work}/gosu.err" >&2
+		echo "Er braucht dafür die Capabilities SETUID und SETGID, in docker/compose.yaml unter" >&2
+		echo "cap_add des Dienstes backup. Es wird nichts zurückgespielt, Datenbank und" >&2
+		echo "Dateispeicher bleiben, wie sie sind." >&2
+		exit 1
+	fi
+	for kept in "$BACKUP_PATH" "${BACKUP_STATUS_PATH:-}"; do
+		if [ -n "$kept" ] && [ -d "$kept" ] && as_store_owner test -w "$kept"; then
+			echo "In ${kept} darf der Eigentümer des Dateispeichers (${storage_owner}) schreiben." >&2
+			echo "Das Rückspielen leert und füllt den Speicher mit dessen Rechten, und eine Anwendung," >&2
+			echo "die dabei noch liefe, könnte es mit einem Link dorthin lenken und Sicherungen löschen." >&2
+			echo "Es wird nichts zurückgespielt, Datenbank und Dateispeicher bleiben, wie sie sind." >&2
+			echo "Das Verzeichnis soll root gehören und anderen kein Schreibrecht geben; auf einem" >&2
+			echo "NAS darf die Freigabe nicht diesem Benutzer zugeordnet eingehängt sein." >&2
+			exit 1
+		fi
+	done
 	find "$STORAGE_PATH" -type d \( ! -user "$storage_uid" -o ! -perm -700 \) \
 		>"${work}/foreign-folders"
 	if [ -s "${work}/foreign-folders" ]; then
@@ -385,6 +420,11 @@ if [ "$storage_uid" != 0 ]; then
 		exit 1
 	fi
 fi
+# A folder the archive keeps without write for its owner, 0555 say, would be
+# made so in the store first and then refuse the owner the files that go into
+# it. In the checked folder, which is root's alone, every folder gets read,
+# write and enter for its owner.
+find "$staged" -type d ! -perm -700 -exec chmod u+rwx {} +
 
 # --- Lock the application out for the duration ------------------------------
 # Counting open connections was the first attempt at this and it protects
@@ -676,12 +716,12 @@ echo "  Dateispeicher wird zurückgespielt."
 # also when the copy fails halfway, a full disk say, so the next restore, the
 # one the message asks for, finds the owner on the store (#1000). umask 0
 # keeps the modes the files have in the archive, as a copy by root did.
-gosu "$storage_owner" find "$STORAGE_PATH" -mindepth 1 -delete
+as_store_owner find "$STORAGE_PATH" -mindepth 1 -delete
 # Through a pipe only the status of its last command counts; a tar that fails
 # while it reads says so in a file.
 pack_failed="${work}/pack-failed"
 { tar --create --file - --directory "$staged" . || : >"$pack_failed"; } |
-	gosu "$storage_owner" sh -c 'umask 0 && exec tar --extract --no-same-owner --file - --directory "$1"' \
+	as_store_owner sh -c 'umask 0 && exec tar --extract --no-same-owner --file - --directory "$1"' \
 		sh "$STORAGE_PATH"
 if [ -e "$pack_failed" ]; then
 	exit 1

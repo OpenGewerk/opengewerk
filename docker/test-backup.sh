@@ -17,10 +17,14 @@
 # back out of an archive is the job of the CI run that backs one up and
 # restores it.
 #
-# Runs in the image of the backup, with its shell, its tar and a real age:
+# Runs in the image of the backup, with its shell, its tar and a real age, and
+# with the capabilities the service backup has in compose.yaml, as the CI runs
+# it:
 #
 #   docker build --tag opengewerk-backup-under-test backup
-#   docker run --rm --volume "$PWD:/docker:ro" opengewerk-backup-under-test sh /docker/test-backup.sh
+#   docker run --rm --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
+#     --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges:true \
+#     --volume "$PWD:/docker:ro" opengewerk-backup-under-test sh /docker/test-backup.sh
 #
 # Prints what it checks and stops at the first thing that is wrong.
 set -eu
@@ -37,6 +41,7 @@ real_tar=$(command -v tar)
 real_date=$(command -v date)
 real_cp=$(command -v cp)
 real_find=$(command -v find)
+real_gosu=$(command -v gosu)
 real_rm=$(command -v rm)
 real_timeout=$(command -v timeout)
 
@@ -439,7 +444,8 @@ $real_find "\$@" || exit
 # STORE_LINK_TO, between the emptying and the copy.
 case " \$* " in
   *" -delete "*)
-    [ -z "\${EMPTIED_BY:-}" ] || id -u > "\$EMPTIED_BY"
+    # Its user, and how many passwords of the database it got along.
+    [ -z "\${EMPTIED_BY:-}" ] || { id -u; env | grep -c '^[A-Z_]*PASSWORD=' || true; } > "\$EMPTIED_BY"
     [ -z "\${STORE_LINK_AT:-}" ] || ln -s "\$STORE_LINK_TO" "\$STORAGE_PATH/\$STORE_LINK_AT"
     ;;
 esac
@@ -565,6 +571,17 @@ fi
 exec $real_rm "\$@"
 FAKE
 chmod +x "$work/bin/rm"
+# gosu as it is, unless GOSU_FAILS is set: then it cannot switch to the user,
+# as in a service without SETUID and SETGID.
+cat > "$work/bin/gosu" <<FAKE
+#!/bin/sh
+if [ -n "\${GOSU_FAILS:-}" ]; then
+  echo "error: failed switching to \"\$1\": operation not permitted" >&2
+  exit 1
+fi
+exec $real_gosu "\$@"
+FAKE
+chmod +x "$work/bin/gosu"
 # timeout as it is; TIMEOUT_CALLS takes down what it is asked to limit.
 cat > "$work/bin/timeout" <<FAKE
 #!/bin/sh
@@ -1072,8 +1089,8 @@ if [ -n "$(ls -A "$work/outside")" ] || [ "$(stat -c %a "$work/outside")" != 755
   ls -lnR "$work/outside"
   exit 1
 fi
-[ "$(cat "$work/as-owner/emptied-by")" = 1000 ] || {
-  echo "FEHLER: den Dateispeicher leerte nicht sein Eigentümer, sondern $(cat "$work/as-owner/emptied-by")"
+[ "$(cat "$work/as-owner/emptied-by")" = "$(printf '1000\n0')" ] || {
+  echo "FEHLER: den Dateispeicher leerte nicht sein Eigentümer ohne Passwörter der Datenbank, sondern: $(cat "$work/as-owner/emptied-by" | tr '\n' ' ')"
   exit 1
 }
 if [ "$restore_status" -eq 0 ] || ! grep -q 'bleibt ausgesperrt' "$work/out"; then
@@ -1105,6 +1122,32 @@ if [ "$restore_status" -eq 0 ] || ! grep -q 'bleibt ausgesperrt' "$work/out"; th
   exit 1
 fi
 rm -rf "$filled_dir"
+# An archive that keeps a folder without write for its owner, 0555, comes back
+# all the same: the folder is opened in the checked folder before the owner
+# unpacks it, and the file in it arrives.
+sealed_text='in einem Ordner ohne Schreibrecht'
+sealed_hash=$(printf '%s' "$sealed_text" | sha256sum | cut -d' ' -f1)
+sealed_top="$STORAGE_PATH/$(printf '%s' "$sealed_hash" | cut -c1-2)"
+sealed_dir="$sealed_top/$(printf '%s' "$sealed_hash" | cut -c3-4)"
+mkdir -p "$sealed_dir"
+printf '%s' "$sealed_text" > "$sealed_dir/$sealed_hash"
+chown -R 1000:1000 "$sealed_top"
+chmod 555 "$sealed_dir"
+POSTGRES_DB=opengewerk BACKUP_KEEP=0 FIXED_STAMP=2031-04-02T000000Z sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
+  cat "$work/out"
+  exit 1
+}
+ours_sealed=$(sed -n 's|^Fertig: .*/\([^/ ]*\) (.*|\1|p' "$work/out")
+chmod 755 "$sealed_dir"
+rm -rf "$sealed_top"
+taken env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours_sealed"
+[ "$(cat "$sealed_dir/$sealed_hash" 2>/dev/null)" = "$sealed_text" ] || {
+  echo 'FEHLER: eine Datei aus einem Ordner ohne Schreibrecht kam nicht zurück'
+  ls -lnR "$STORAGE_PATH"
+  exit 1
+}
+rm -rf "$sealed_top"
+rm -f "$work/backups/$ours_sealed"
 # A folder in the store that its owner may not empty turns the restore away
 # before anything changes, with the commands that give the store back: one
 # that belongs to root, one of the owner's own that it may not write, one it
@@ -1155,6 +1198,20 @@ chmod "$storage_mode" "$STORAGE_PATH"
   exit 1
 }
 rm -f "$STORAGE_PATH/datei"
+# Where the owner may write to the archives or to the record of the backups, a
+# link would take it there: turned away before anything changes, for each of
+# the two.
+for kept in "$work/backups" "$work/status"; do
+  kept_mode=$(stat -c %a "$kept")
+  chmod 777 "$kept"
+  refused 'darf der Eigentümer des Dateispeichers (1000:1000) schreiben' \
+    env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
+  chmod "$kept_mode" "$kept"
+done
+# A service that cannot switch to the owner, without SETUID and SETGID, turns a
+# store that is not root's away before anything changes.
+refused 'braucht dafür die Capabilities SETUID und SETGID' \
+  env POSTGRES_DB=opengewerk GOSU_FAILS=1 sh "$work/bin/restore.sh" "$ours"
 chown -R 0:0 "$STORAGE_PATH"
 check 'Rückspielen: im Dateispeicher mit den Rechten seines Eigentümers, ein Link führt nicht hinaus'
 halfway PG_RESTORE_FAILS=1

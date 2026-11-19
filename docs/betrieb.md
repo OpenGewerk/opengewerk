@@ -869,12 +869,24 @@ dem Benutzer der Anwendung, nicht als root. Ob die Anwendung wirklich angehalten
 ist, sieht `restore.sh` nicht. Liefe sie noch, könnte sie zwischen zwei
 Schritten einen Ordner gegen einen Link tauschen, und root folgte ihm aus dem
 Speicher hinaus, zu den Archiven etwa. Mit den Rechten des Eigentümers führt ein
-solcher Link nur dorthin, wohin die Anwendung selbst darf. Leeren kann der
-Eigentümer nur Ordner, die ihm gehören und die er lesen und beschreiben darf,
-den Speicher selbst eingeschlossen. Liegt ein anderer im Speicher, etwa einer,
-der nach einem halben Kopieren vor #1000 root gehört, lehnt `restore.sh` das
-Rückspielen ab, bevor sich etwas ändert, und nennt die Befehle, die den
-Speicher seinem Eigentümer zurückgeben.
+solcher Link nur dorthin, wo dieser Benutzer im Container der Sicherung
+schreiben darf, und die Passwörter der Datenbank bekommt er nicht mit. Dafür
+hat der Dienst `backup` die Capabilities `SETUID` und `SETGID`. Abgelehnt, bevor
+sich etwas ändert, wird ein Rückspielen in drei Fällen:
+
+- Der Dienst kann nicht als Eigentümer arbeiten, weil ihm diese Capabilities
+  fehlen, etwa in einer eigenen `compose.yaml`. Gehört der Speicher root, ist
+  das gleich.
+- Der Eigentümer darf in das Ziel der Sicherungen oder in das Verzeichnis
+  `BACKUP_STATUS_PATH` schreiben, siehe unten beim NAS.
+- Im Speicher liegt ein Ordner, den der Eigentümer nicht leeren darf, der
+  Speicher selbst eingeschlossen: einer, der ihm nicht gehört, etwa nach einem
+  halben Kopieren vor #1000 root, oder einer, den er nicht lesen oder
+  beschreiben darf. Die Meldung nennt die Befehle, die den Speicher seinem
+  Eigentümer zurückgeben.
+
+Ordner, die eine Sicherung ohne Schreibrecht für ihren Eigentümer enthält,
+bekommen es vor dem Auspacken, sonst kämen die Dateien darin nicht zurück.
 
 ## Die Sicherung als Zeuge für das Audit-Log
 
@@ -951,7 +963,11 @@ Eingehängt wird es auf dem Server selbst, und zwar so, dass es einen Neustart
 Ist es beim Start nicht da, schreibt die Sicherung in das leere Verzeichnis
 darunter, auf dieselbe Platte, und das Büro merkt davon nichts; wer ein NAS
 nimmt, prüft deshalb nach dem ersten Neustart, dass die Archive dort ankommen.
-Wandert eine Kopie zusätzlich außer Haus, ist auch ein Brand im Büro
+Das Verzeichnis gehört root und gibt anderen kein Schreibrecht. Ordnet die
+Freigabe beim Einhängen jede Datei dem Benutzer der Anwendung zu, wie es SMB
+mit `uid=` tut, oder darf jeder hineinschreiben, lehnt `restore.sh` das
+Rückspielen ab: Es arbeitet im Dateispeicher mit den Rechten dieses Benutzers,
+siehe oben. Wandert eine Kopie zusätzlich außer Haus, ist auch ein Brand im Büro
 überstanden. Verschlüsselt sollte ein Archiv, das die Maschine verlässt, in
 jedem Fall sein.
 

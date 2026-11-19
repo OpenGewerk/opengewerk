@@ -629,12 +629,16 @@ jobs:
       # a backup reaches the target encrypted and whole or not at all
       # (opengewerk-haustechnik#360). In the image of the backup, with its
       # shell, its tar and a real age: the shell of the runner knows no
-      # pipefail, which backup.sh relies on.
+      # pipefail, which backup.sh relies on. With the capabilities the service
+      # backup has in compose.yaml and no new privileges, so that a restore
+      # needs nothing the service does not get.
       - name: Namen, Manifest und Herkunft der Sicherungen prüfen
         working-directory: docker
         run: |
           docker build --quiet --tag opengewerk-backup-under-test backup
-          docker run --rm --volume "$PWD:/docker:ro" opengewerk-backup-under-test sh /docker/test-backup.sh
+          docker run --rm --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
+            --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges:true \
+            --volume "$PWD:/docker:ro" opengewerk-backup-under-test sh /docker/test-backup.sh
 
       - name: Jeder Dienst begrenzt seine Protokolle
         working-directory: docker
