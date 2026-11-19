@@ -304,14 +304,18 @@ services:
     # store (backup.sh), and those can come to gigabytes: in a tmpfs they would
     # lie in memory, in a volume they would outlive a killed run, while the
     # writable layer goes with the container. Of the capabilities of root it
-    # keeps five. DAC_OVERRIDE for writing into a target such as a share that
+    # keeps six. DAC_OVERRIDE for writing into a target such as a share that
     # belongs to somebody else. SETUID and SETGID for gosu: a restore empties
     # and fills the file store as the user it belongs to, not as root, so that
     # a link an application that still runs puts into the store does not lead
     # root out of it; without them restore.sh turns a store that is not root's
-    # away before it changes anything. CHOWN and FOWNER for the two commands
-    # restore.sh names when the store holds a folder its owner may not empty.
-    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    # away before it changes anything. KILL so that the stop below reaches
+    # those steps too: without it the init, which runs as root, may not signal
+    # a process of another user, and the run would wait for them until the
+    # KILL at the end of the grace period. CHOWN and FOWNER for the two
+    # commands restore.sh names when the store holds a folder its owner may not
+    # empty.
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, KILL, SETGID, SETUID]
     # A stop sends SIGINT, the stop signal of the postgres image, and the init
     # hands it to every process of the run at once, the way Ctrl+C does
     # (#1007): pg_dump, tar or the play of the dump end, and the script ends

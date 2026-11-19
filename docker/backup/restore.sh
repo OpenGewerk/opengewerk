@@ -396,7 +396,12 @@ if [ "$storage_uid" != 0 ]; then
 		exit 1
 	fi
 	for kept in "$BACKUP_PATH" "${BACKUP_STATUS_PATH:-}"; do
-		if [ -n "$kept" ] && [ -d "$kept" ] && as_store_owner test -w "$kept"; then
+		[ -n "$kept" ] && [ -d "$kept" ] || continue
+		# Tried rather than read from the mode, which busybox test -w does: an
+		# ACL, or a share that treats every user alike (NFS with all_squash,
+		# SMB with noperm), gives a right the mode does not show.
+		if probe=$(as_store_owner mktemp -d -p "$kept" .restore-probe.XXXXXX 2>/dev/null); then
+			as_store_owner rmdir "$probe" || true
 			echo "In ${kept} darf der Eigentümer des Dateispeichers (${storage_owner}) schreiben." >&2
 			echo "Das Rückspielen leert und füllt den Speicher mit dessen Rechten, und eine Anwendung," >&2
 			echo "die dabei noch liefe, könnte es mit einem Link dorthin lenken und Sicherungen löschen." >&2

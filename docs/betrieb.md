@@ -871,7 +871,8 @@ Schritten einen Ordner gegen einen Link tauschen, und root folgte ihm aus dem
 Speicher hinaus, zu den Archiven etwa. Mit den Rechten des Eigentümers führt ein
 solcher Link nur dorthin, wo dieser Benutzer im Container der Sicherung
 schreiben darf, und die Passwörter der Datenbank bekommt er nicht mit. Dafür
-hat der Dienst `backup` die Capabilities `SETUID` und `SETGID`. Abgelehnt, bevor
+hat der Dienst `backup` die Capabilities `SETUID` und `SETGID`, dazu `KILL`,
+damit ein Anhalten auch diese Schritte erreicht. Abgelehnt, bevor
 sich etwas ändert, wird ein Rückspielen in drei Fällen:
 
 - Der Dienst kann nicht als Eigentümer arbeiten, weil ihm diese Capabilities
@@ -963,11 +964,13 @@ Eingehängt wird es auf dem Server selbst, und zwar so, dass es einen Neustart
 Ist es beim Start nicht da, schreibt die Sicherung in das leere Verzeichnis
 darunter, auf dieselbe Platte, und das Büro merkt davon nichts; wer ein NAS
 nimmt, prüft deshalb nach dem ersten Neustart, dass die Archive dort ankommen.
-Das Verzeichnis gehört root und gibt anderen kein Schreibrecht. Ordnet die
-Freigabe beim Einhängen jede Datei dem Benutzer der Anwendung zu, wie es SMB
-mit `uid=` tut, oder darf jeder hineinschreiben, lehnt `restore.sh` das
-Rückspielen ab: Es arbeitet im Dateispeicher mit den Rechten dieses Benutzers,
-siehe oben. Wandert eine Kopie zusätzlich außer Haus, ist auch ein Brand im Büro
+Das Verzeichnis gehört root und gibt anderen kein Schreibrecht. Darf der
+Benutzer der Anwendung hineinschreiben, lehnt `restore.sh` das Rückspielen ab,
+denn es arbeitet im Dateispeicher mit den Rechten dieses Benutzers, siehe oben.
+Ausprobiert wird das, nicht aus den Rechten abgelesen. Es trifft also auch eine
+Freigabe, die beim Einhängen jede Datei diesem Benutzer zuordnet, wie SMB mit
+`uid=`, eine, die jeden Benutzer gleich behandelt, wie NFS mit `all_squash`
+oder SMB mit `noperm`, und eine ACL, die ihm das Schreiben erlaubt. Wandert eine Kopie zusätzlich außer Haus, ist auch ein Brand im Büro
 überstanden. Verschlüsselt sollte ein Archiv, das die Maschine verlässt, in
 jedem Fall sein.
 

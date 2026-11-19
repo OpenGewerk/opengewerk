@@ -23,7 +23,7 @@
 #
 #   docker build --tag opengewerk-backup-under-test backup
 #   docker run --rm --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
-#     --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges:true \
+#     --cap-add KILL --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges:true \
 #     --volume "$PWD:/docker:ro" opengewerk-backup-under-test sh /docker/test-backup.sh
 #
 # Prints what it checks and stops at the first thing that is wrong.
@@ -447,6 +447,15 @@ case " \$* " in
     # Its user, and how many passwords of the database it got along.
     [ -z "\${EMPTIED_BY:-}" ] || { id -u; env | grep -c '^[A-Z_]*PASSWORD=' || true; } > "\$EMPTIED_BY"
     [ -z "\${STORE_LINK_AT:-}" ] || ln -s "\$STORE_LINK_TO" "\$STORAGE_PATH/\$STORE_LINK_AT"
+    # An emptying that takes three seconds, as of a large store, for a stop to
+    # reach it: STORE_EMPTY_SLOW is written first (the process that started it
+    # and its process group), STORE_EMPTY_SLOW.done once it waited them out.
+    if [ -n "\${STORE_EMPTY_SLOW:-}" ]; then
+      empty_stat=\$(sed 's/.*) //' "/proc/\$\$/stat")
+      printf '%s %s\\n' "\$PPID" "\$(echo "\$empty_stat" | cut -d' ' -f3)" > "\$STORE_EMPTY_SLOW"
+      sleep 3
+      : > "\$STORE_EMPTY_SLOW.done"
+    fi
     ;;
 esac
 # A find over the store that does not come back, as on a disk that hangs.
@@ -1575,6 +1584,35 @@ if [ "$restore_status" -ne 0 ] || [ -n "$(ls -A "$work/stop-tmp")" ]; then
   cat "$work/out"
   exit 1
 fi
+# A stop for the group while the owner of the store empties it, as the init
+# sends it, which runs as root: it reaches the find of that other user too,
+# and the run ends at once instead of after it, with the application locked.
+chown -R 1000:1000 "$STORAGE_PATH"
+rm -rf "$work/as-owner/empty-mark" "$work/as-owner/empty-mark.done" \
+  "$work/as-owner/empty-mark.refused" "$work/as-owner/empty-mark.sent" "$work/stop-tmp"
+mkdir -p "$work/stop-tmp"
+interrupt_when_marked "$work/as-owner/empty-mark" group &
+interrupter=$!
+restore_status=0
+env POSTGRES_DB=opengewerk TMPDIR="$work/stop-tmp" STORE_EMPTY_SLOW="$work/as-owner/empty-mark" \
+  setsid sh "$work/bin/restore.sh" "$ours_filled" > "$work/out" 2>&1 || restore_status=$?
+wait "$interrupter" || true
+if [ ! -s "$work/as-owner/empty-mark" ] || [ -e "$work/as-owner/empty-mark.refused" ]; then
+  echo 'FEHLER: das Leeren des Dateispeichers wurde nicht erreicht, der Fall wurde nicht geprüft'
+  cat "$work/out"
+  exit 1
+fi
+if [ -e "$work/as-owner/empty-mark.done" ]; then
+  echo 'FEHLER: ein Anhalten erreichte das Leeren durch den Eigentümer nicht'
+  exit 1
+fi
+if [ "$restore_status" -eq 0 ] || ! grep -q 'Das Rückspielen wurde angehalten' "$work/out" ||
+  ! grep -q 'bleibt ausgesperrt' "$work/out" || [ -n "$(ls -A "$work/stop-tmp")" ]; then
+  echo "FEHLER: ein Anhalten beim Leeren des Dateispeichers endete nicht auf dem Weg hinaus (Status $restore_status)"
+  cat "$work/out"
+  exit 1
+fi
+chown -R 0:0 "$STORAGE_PATH"
 check 'Anhalten: Rückspielen und Prüfen enden auf ihrem Weg hinaus, das Rückspielen gibt die Anmeldung nur ohne ersetzte Datenbank zurück'
 
 # 8c. A backup from an earlier version than the database it replaces: the

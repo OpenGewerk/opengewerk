@@ -637,7 +637,7 @@ jobs:
         run: |
           docker build --quiet --tag opengewerk-backup-under-test backup
           docker run --rm --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
-            --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges:true \
+            --cap-add KILL --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges:true \
             --volume "$PWD:/docker:ro" opengewerk-backup-under-test sh /docker/test-backup.sh
 
       - name: Jeder Dienst begrenzt seine Protokolle
