@@ -622,7 +622,9 @@ function LineForm({
           0 % nach § 12 Abs. 3 UStG, seit 2023: für Solarmodule, die für den Betrieb wesentlichen
           Komponenten und Speicher samt ihrer Installation, geliefert an den Betreiber einer Anlage
           auf oder bei Wohnungen oder Gebäuden, die dem Gemeinwohl dienen. Bei höchstens 30 kWp laut
-          Marktstammdatenregister gelten die Voraussetzungen als erfüllt. Ob sie vorliegen,
+          Marktstammdatenregister gelten die Voraussetzungen als erfüllt. Eine Wallbox oder
+          Wärmepumpe ist nie eine wesentliche Komponente, ein Zählerschrank nur als Teil der
+          Leistung an der Anlage, allein beauftragt nicht. Ob die Voraussetzungen vorliegen,
           entscheidet der Betrieb.
         </p>
       ) : null}

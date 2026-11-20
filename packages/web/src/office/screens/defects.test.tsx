@@ -311,6 +311,8 @@ describe('the page of a defect (#311)', () => {
       ),
     ).toBeTruthy()
     expect(screen.getByText('In der Gewährleistung.')).toBeTruthy()
+    // A complaint in time can outlast the end it shows (#1027).
+    expect(screen.getByText(/ist die Verjährung gehemmt \(§ 203 BGB\)/)).toBeTruthy()
   })
 
   it('says a complaint after the warranty ended so', async () => {

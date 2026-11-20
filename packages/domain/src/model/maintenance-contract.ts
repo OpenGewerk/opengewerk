@@ -400,12 +400,21 @@ export function visitDescription(
  * nothing to say. Nothing is refused: negotiated one by one, such terms may
  * stand, and only the office knows whether they were.
  *
- * The limits come from the rule package `contract` at the day the contract
- * begins, so that the law before the 1st of March 2022 holds for a contract
- * of that time and a change in the law is a record and not a release.
+ * The limits come from the rule package `contract`, so that a change in the
+ * law is a record and not a release. Art. 229 § 60 EGBGB ties the version of
+ * § 309 to the day the contract was concluded, which OpenGewerk does not hold.
+ * It holds two days that bound it: a contract is concluded after its quote,
+ * and rarely after it begins. The limits are read on the later of the two, so
+ * a contract quoted from the 1st of March 2022 on always gets the law that
+ * holds for it, and the law of before only reaches a contract that was both
+ * quoted and begun before that day (#1020).
  */
-export function consumerTermsNotice(rules: RuleSet, terms: ContractTerms): string | null {
-  const on = terms.startsOn
+export function consumerTermsNotice(
+  rules: RuleSet,
+  terms: ContractTerms,
+  quotedOn?: IsoDate,
+): string | null {
+  const on = quotedOn !== undefined && quotedOn > terms.startsOn ? quotedOn : terms.startsOn
   const limit = (key: string): number | null =>
     rules.at(key, on) === null ? null : rules.valueAt(key, 'months', on)
   const maximumTerm = limit('contract.consumer_maximum_term_months')

@@ -68,11 +68,11 @@ export function erasureWhen(kind: ErasureKind, settings: DeletionSettings): stri
     case 'sickness':
       return 'zwölf Monate nach ihrem letzten Tag'
     case 'staff_year':
-      return 'die Arbeitszeiten, die Rufbereitschaft, der Urlaub und der Urlaubsanspruch eines Jahres sechs Jahre nach dessen Ende'
+      return 'die Arbeitszeiten, die Rufbereitschaft, der Urlaub und der Urlaubsanspruch eines Jahres acht Jahre nach dessen Ende'
     case 'person':
       return 'die Akte einer ausgetretenen Person drei Jahre nach dem Ende ihres Austrittsjahres, sobald ihr Zugang geendet hat'
     case 'site':
-      return 'das Objekt eines gelöschten Kunden zehn Jahre nach dem letzten unterschriebenen Protokoll daran, ohne Protokoll nach dem letzten abgeschlossenen Auftrag dort'
+      return 'das Objekt eines gelöschten Kunden dreißig Jahre nach dem letzten unterschriebenen Protokoll daran, ohne Protokoll nach dem letzten abgeschlossenen Auftrag dort'
   }
 }
 
@@ -115,7 +115,7 @@ export function describeDeletion(made: DeletionMade): string {
     '| Daten | Wann | Wie |',
     '|---|---|---|',
     ...kinds,
-    '| Sitzungen | nach zwölf Stunden, ein Gerät für die Arbeit ohne Netz nach dreißig Tagen | von selbst |',
+    '| Sitzungen | zwölf Stunden nach der letzten Nutzung, ein Gerät für die Arbeit ohne Netz dreißig Tage danach | von selbst |',
     '| Neue E-Mail-Adressen, die auf den Link in der Mail an sie warten | spätestens einen Tag, nachdem der Link abgelaufen ist; er gilt einen Tag | von selbst |',
     '',
     '## 3. Was aufbewahrt wird',

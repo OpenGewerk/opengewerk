@@ -98,9 +98,9 @@ export const erasureKindWords: Readonly<Record<ErasureKind, ErasureKindWords>> =
     deadline: 'privacy.site_erasure',
     read: 'site.read',
     one: 'Objekt',
-    title: 'Objekte gelöschter Kunden nach zehn Jahren',
+    title: 'Objekte gelöschter Kunden nach dreißig Jahren',
     reason:
-      'Gelöscht nach dem Löschkonzept: ein Objekt eines gelöschten Kunden mit seinen Anlagen, zehn Jahre nach dem letzten Protokoll.',
+      'Gelöscht nach dem Löschkonzept: ein Objekt eines gelöschten Kunden mit seinen Anlagen, dreißig Jahre nach dem letzten Protokoll.',
   },
 }
 

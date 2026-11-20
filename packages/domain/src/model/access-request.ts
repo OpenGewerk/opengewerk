@@ -190,13 +190,13 @@ export const accessPurposes: Readonly<Record<PersonalSubject, string>> = {
 /** How long the data stay (Art. 15 (1) d DSGVO), after the deletion concept of the business. */
 export const accessStorage: Readonly<Record<PersonalSubject, string>> = {
   customer:
-    'Rechnungen acht Jahre, Angebote und andere Geschäftsbriefe sechs Jahre, jeweils ab dem Ende des Jahres (§ 147 AO, § 257 HGB). Objekt, Anlagen und Prüfprotokolle bleiben ohne Ihre Daten bis zehn Jahre nach dem letzten Protokoll (§ 199 Abs. 3 BGB). Alles andere geht, wenn mit Ihnen nichts mehr läuft und lange kein Kontakt war, oder auf Ihre Bitte.',
+    'Rechnungen und Regieberichte acht Jahre, Angebote und andere Geschäftsbriefe sechs Jahre, jeweils ab dem Ende des Jahres (§ 147 AO, § 257 HGB). Objekt, Anlagen und Prüfprotokolle bleiben ohne Ihre Daten bis dreißig Jahre nach dem letzten Protokoll (§ 199 Abs. 2 und 3 BGB). Alles andere geht, wenn mit Ihnen nichts mehr läuft und lange kein Kontakt war, oder auf Ihre Bitte.',
   contact:
     'Ihre Daten bleiben, solange der Betrieb den Kunden führt, für den Sie Ansprechpartner sind, und gehen mit ihm.',
   prospect:
     'Wird aus Ihrer Anfrage kein Auftrag, gehen Ihre Daten eine Zeit nach dem letzten Kontakt, die der Betrieb festlegt; vorgegeben sind zwölf Monate.',
   person:
-    'Eine Krankheit geht zwölf Monate nach ihrem letzten Tag; Arbeitszeiten, Rufbereitschaft und Urlaub eines Jahres gehen sechs Jahre nach dessen Ende (§ 147 AO, § 41 EStG); die Akte geht drei Jahre nach dem Ende des Jahres, in dem Sie ausgetreten sind (§ 195, § 199 BGB).',
+    'Eine Krankheit geht zwölf Monate nach ihrem letzten Tag; Arbeitszeiten, Rufbereitschaft und Urlaub eines Jahres gehen acht Jahre nach dessen Ende (§ 147 AO, § 41 EStG); die Akte geht drei Jahre nach dem Ende des Jahres, in dem Sie ausgetreten sind (§ 195, § 199 BGB).',
 }
 
 /**

@@ -505,7 +505,7 @@ export const sourceWords: Readonly<
     person: 'Der Inhaber',
     interval: {
       label: 'Fällig nach',
-      hint: 'Fällig zehn Jahre nach dem letzten unterschriebenen Protokoll am Objekt, ohne Protokoll nach dem letzten Auftrag dort.',
+      hint: 'Fällig dreißig Jahre nach dem letzten unterschriebenen Protokoll am Objekt, ohne Protokoll nach dem letzten Auftrag dort.',
     },
     anchor: 'dem letzten Protokoll',
   },

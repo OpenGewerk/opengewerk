@@ -727,7 +727,8 @@ describe('the package Elektro und PV', () => {
     // Milliamperes in thousandths: 30 mA is 30 000.
     expect(judged('rcd_trip_current', 30_000)).toMatchObject({ within: true, limitMilli: 30_000 })
     expect(judged('rcd_trip_current', 30_100)).toMatchObject({ within: false })
-    expect(judged('rcd_trip_current', 30_100)?.source).toContain('722.411.3.3')
+    // The clause that carries the 30 mA per connection point, checked in #31 (#1020).
+    expect(judged('rcd_trip_current', 30_100)?.source).toContain('722.531.3.101')
     expect(judged('dc_trip_current', 6000)).toMatchObject({ within: true, limitMilli: 6000 })
     expect(judged('dc_trip_current', 6100)).toMatchObject({ within: false })
     expect(judged('dc_trip_current', 6100)?.source).toContain('722.531.3.101')

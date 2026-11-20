@@ -1,6 +1,6 @@
 {
   "package": "warranty",
-  "note": "Die Verjährungsfristen für Mängelansprüche aus einem Werkvertrag, für die Gewährleistung ab der Abnahme (#310). Geprüft am 02.11.2026 am Text von § 634a BGB bei gesetze-im-internet.de und von § 13 Abs. 4 VOB/B bei dejure.org. Die Frist beginnt mit der Abnahme (§ 634a Abs. 2 BGB, § 13 Abs. 4 Nr. 3 VOB/B). Die VOB/B gilt nur, wenn sie als Ganzes vereinbart ist, und nur ohne andere Frist im Vertrag; eine vereinbarte Frist kennt die Engine nicht. Die Gültigkeit ab 2002 ist die des Schuldrechts in dieser Form; frühere Fassungen der VOB/B sind nicht abgebildet. Die fachkundige Abnahme steht aus wie bei den Regelpaketen in #31.",
+  "note": "Die Verjährungsfristen für Mängelansprüche aus einem Werkvertrag, für die Gewährleistung ab der Abnahme (#310). Geprüft am 02.11.2026 am Text von § 634a BGB bei gesetze-im-internet.de und von § 13 Abs. 4 VOB/B bei dejure.org. Die Frist beginnt mit der Abnahme (§ 634a Abs. 2 BGB, § 13 Abs. 4 Nr. 3 VOB/B). Die VOB/B gilt nur, wenn sie als Ganzes vereinbart ist, und nur ohne andere Frist im Vertrag; eine vereinbarte Frist kennt die Engine nicht. Die Gültigkeit ab 2002 ist die des Schuldrechts in dieser Form. Die Fristen der VOB/B gelten ab der VOB/B 2002 vom 12.09.2002, bekannt gemacht im Bundesanzeiger Nr. 202a vom 29.10.2002; die Fassung 2000 hatte für Bauwerke zwei Jahre und für andere Arbeiten ein Jahr, und Nr. 2 gab es noch nicht. Welche Fassung gilt, hängt am Vertrag; die Engine sucht nach dem Tag der Abnahme und kennt die älteren Fassungen nicht. Fachlich geprüft am 20.11.2026 in #31.",
   "records": [
     {
       "key": "warranty.bgb.building",
@@ -22,7 +22,7 @@
     },
     {
       "key": "warranty.vob.building",
-      "validFrom": "2002-01-01",
+      "validFrom": "2002-10-29",
       "validUntil": null,
       "unit": "years",
       "value": 4,
@@ -31,7 +31,7 @@
     },
     {
       "key": "warranty.vob.other",
-      "validFrom": "2002-01-01",
+      "validFrom": "2002-10-29",
       "validUntil": null,
       "unit": "years",
       "value": 2,
@@ -40,7 +40,7 @@
     },
     {
       "key": "warranty.vob.unmaintained_parts",
-      "validFrom": "2002-01-01",
+      "validFrom": "2002-10-29",
       "validUntil": null,
       "unit": "years",
       "value": 2,

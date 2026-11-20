@@ -20,9 +20,10 @@ describe('when the staff fall due (#846)', () => {
     expect(sicknessErasureDueOn('2024-02-29' as IsoDate, today, shippedRules)).toBe('2025-03-01')
   })
 
-  it('lets the time and leave of a year go six years after its end, as papers of the payroll', () => {
-    expect(staffYearErasureDueOn(2019, today, shippedRules)).toBe('2026-01-01')
-    expect(staffYearErasureDueOn(2026, today, shippedRules)).toBe('2033-01-01')
+  it('lets the time and leave of a year go eight years after its end, as vouchers of the payroll (#1019)', () => {
+    expect(staffYearErasureDueOn(2017, today, shippedRules)).toBe('2026-01-01')
+    expect(staffYearErasureDueOn(2019, today, shippedRules)).toBe('2028-01-01')
+    expect(staffYearErasureDueOn(2026, today, shippedRules)).toBe('2035-01-01')
   })
 
   it('keeps a year at least as long as the minimum wage and working time acts keep its last record', () => {
@@ -44,7 +45,7 @@ describe('when the staff fall due (#846)', () => {
   it('names the source of each period', () => {
     expect(
       retentionOf('payroll_records', '2019-12-31' as IsoDate, today, shippedRules).source,
-    ).toBe('§ 147 Abs. 1 Nr. 5, Abs. 3 Satz 1 AO; § 41 Abs. 1 Satz 9 EStG')
+    ).toBe('§ 147 Abs. 1 Nr. 4, Abs. 3 Satz 1 AO; § 41 Abs. 1 Satz 9 EStG')
     expect(
       retentionOf('sickness_records', '2025-10-14' as IsoDate, today, shippedRules).source,
     ).toBe('§ 167 Abs. 2 Satz 1 SGB IX; § 3 Abs. 1 EFZG')

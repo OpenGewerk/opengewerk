@@ -1,6 +1,6 @@
 {
   "package": "retention",
-  "note": "Die Aufbewahrungsfristen des Löschkonzepts (#317), nach Abschnitt 7 der Feature-Gliederung getrennt hinterlegt. Geprüft am 04.11.2026 am Text von § 147 AO, § 257 HGB, § 14b UStG, § 17 MiLoG und Art. 97 § 19a EGAO bei gesetze-im-internet.de. Die Frist beginnt mit dem Schluss des Kalenderjahres (§ 147 Abs. 4 AO, § 257 Abs. 5 HGB, § 14b Abs. 1 Satz 3 UStG), die Aufzeichnungen nach MiLoG und ArbZG ab dem Tag der Aufzeichnung; welche Unterlage wann beginnt, steht in `model/retention.ts`. Maßgeblich ist die Frist am Tag der Prüfung: die acht Jahre gelten für jede Unterlage, deren Frist nach der alten Fassung am 31.12.2024 noch nicht abgelaufen war (Art. 97 § 19a Abs. 2 EGAO), außer bei Kreditinstituten, Versicherungen und Wertpapierinstituten (Abs. 3). Eine Frist läuft nicht ab, solange die Unterlagen für Steuern von Bedeutung sind, deren Festsetzungsfrist noch läuft (§ 147 Abs. 3 Satz 5 AO); das kann die Engine nicht wissen, deshalb schlägt der Löschlauf vor und der Inhaber bestätigt. Frühere Fassungen vor 2002 sind nicht abgebildet. Die fachkundige Abnahme steht aus wie bei den Regelpaketen in #31.",
+  "note": "Die Aufbewahrungsfristen des Löschkonzepts (#317), nach Abschnitt 7 der Feature-Gliederung getrennt hinterlegt. Geprüft am 04.11.2026 am Text von § 147 AO, § 257 HGB, § 14b UStG, § 17 MiLoG und Art. 97 § 19a EGAO bei gesetze-im-internet.de. Die Frist beginnt mit dem Schluss des Kalenderjahres (§ 147 Abs. 4 AO, § 257 Abs. 5 HGB, § 14b Abs. 1 Satz 3 UStG), die Aufzeichnungen nach MiLoG und ArbZG ab dem Tag der Aufzeichnung; welche Unterlage wann beginnt, steht in `model/retention.ts`. Maßgeblich ist die Frist am Tag der Prüfung: die acht Jahre gelten für jede Unterlage, deren Frist nach der alten Fassung am 31.12.2024 noch nicht abgelaufen war (Art. 97 § 19a Abs. 2 EGAO), außer bei Kreditinstituten, Versicherungen und Wertpapierinstituten (Abs. 3). Eine Frist läuft nicht ab, solange die Unterlagen für Steuern von Bedeutung sind, deren Festsetzungsfrist noch läuft (§ 147 Abs. 3 Satz 5 AO); das kann die Engine nicht wissen, deshalb schlägt der Löschlauf vor und der Inhaber bestätigt. Frühere Fassungen vor 2002 sind nicht abgebildet. Fachlich geprüft am 20.11.2026 in #31.",
   "records": [
     {
       "key": "retention.books",
@@ -59,11 +59,20 @@
     {
       "key": "retention.payroll_records",
       "validFrom": "2002-01-01",
+      "validUntil": "2024-12-31",
+      "unit": "years",
+      "value": 10,
+      "source": "§ 147 Abs. 1 Nr. 4, Abs. 3 Satz 1 AO a. F.; § 41 Abs. 1 Satz 9 EStG",
+      "note": "Lohnunterlagen, die Arbeitszeiten eingeschlossen, nach denen ein Lohn nach Stunden gezahlt wird: als Lohnbelege Buchungsbelege, bis zum Bürokratieentlastungsgesetz IV zehn Jahre."
+    },
+    {
+      "key": "retention.payroll_records",
+      "validFrom": "2025-01-01",
       "validUntil": null,
       "unit": "years",
-      "value": 6,
-      "source": "§ 147 Abs. 1 Nr. 5, Abs. 3 Satz 1 AO; § 41 Abs. 1 Satz 9 EStG",
-      "note": "Lohnunterlagen, die Arbeitszeiten eingeschlossen, die bei einem Lohn nach Stunden die Lohnzahlung tragen: bis zum Ablauf des sechsten Kalenderjahres nach dem Jahr, in dem sie entstanden sind. Die zwei Jahre aus § 17 MiLoG und § 16 Abs. 2 ArbZG liegen darin. Entschieden am 04.11.2026 (#846); ob Zeiten als Buchungsbeleg acht Jahre bleiben müssen, prüft die fachkundige Abnahme in #31."
+      "value": 8,
+      "source": "§ 147 Abs. 1 Nr. 4, Abs. 3 Satz 1 AO; § 41 Abs. 1 Satz 9 EStG",
+      "note": "Lohnunterlagen, die Arbeitszeiten eingeschlossen, nach denen ein Lohn nach Stunden gezahlt wird: als Lohnbelege Buchungsbelege, acht Jahre ab dem Ende des Jahres, in dem sie entstanden sind, für jede Unterlage, deren Frist am 31.12.2024 noch lief (Art. 97 § 19a Abs. 2 EGAO). Die sechs Jahre des Lohnkontos (§ 41 Abs. 1 Satz 9 EStG) und die zwei aus § 17 MiLoG und § 16 Abs. 2 ArbZG liegen darin. Entgeltunterlagen bleiben außerdem bis zum Ende des Jahres nach der letzten Betriebsprüfung der Rentenversicherung (§ 28f Abs. 1 SGB IV); den Tag kennt der Betrieb, nicht die Engine, deshalb bestätigt er jedes Löschen. Bis zum 20.11.2026 waren es sechs Jahre (#846); geändert mit #1019 nach der Prüfung in #31."
     },
     {
       "key": "retention.sickness_records",
@@ -88,9 +97,9 @@
       "validFrom": "2002-01-01",
       "validUntil": null,
       "unit": "years",
-      "value": 10,
-      "source": "§ 199 Abs. 3 Satz 1 Nr. 1 BGB",
-      "note": "Keine Aufbewahrungsfrist, sondern die längste Verjährung von Schadensersatzansprüchen ohne Rücksicht auf die Kenntnis: zehn Jahre von ihrer Entstehung an. So lange bleiben Objekt, Anlagen und Protokolle eines gelöschten Kunden ohne seine Daten als Nachweis des Betriebs, gezählt ab dem jüngsten unterschriebenen Protokoll am Objekt, ohne Protokoll ab dem letzten abgeschlossenen Auftrag dort. Entschieden am 04. und 05.11.2026 (#845, #848). Ansprüche aus der Verletzung von Leben, Körper und Gesundheit verjähren erst nach dreißig Jahren (§ 199 Abs. 2 BGB); ob das für Nachweise an elektrischen Anlagen eine längere Frist verlangt, prüft die fachkundige Abnahme in #31."
+      "value": 30,
+      "source": "§ 199 Abs. 2 und Abs. 3 Satz 1 Nr. 2 BGB",
+      "note": "Keine Aufbewahrungsfrist, sondern die längste Verjährung eines Anspruchs, gegen den ein Protokoll den Betrieb verteidigt: 30 Jahre von der Handlung an, für Leben, Körper und Gesundheit nach § 199 Abs. 2, für alles andere nach Abs. 3 Satz 1 Nr. 2. Die zehn Jahre aus Abs. 3 Satz 1 Nr. 1 laufen erst ab der Entstehung des Anspruchs, und die liegt beim Schaden: brennt es 15 Jahre nach der Prüfung, besteht der Anspruch bis ins 25. Jahr. So lange bleiben Objekt, Anlagen und Protokolle eines gelöschten Kunden ohne seine Daten als Nachweis des Betriebs (Art. 17 Abs. 3 Buchst. e DSGVO), gezählt ab dem jüngsten unterschriebenen Protokoll am Objekt, ohne Protokoll ab dem letzten abgeschlossenen Auftrag dort. Bis zum 20.11.2026 waren es zehn Jahre (#845, #848); geändert mit #1019 nach der Prüfung in #31."
     },
     {
       "key": "retention.working_time_records",

@@ -1004,8 +1004,17 @@ function ContractForm({
     typeof values.termMonths === 'number' &&
     typeof values.noticeMonths === 'number' &&
     /^\d{4}-\d{2}-\d{2}$/.test(draft.startsOn)
+  const quotedOn = quote ? maybeText(quote, 'documentDate') : null
   const notice =
-    consumer && termsComplete ? consumerTermsNotice(shippedRules, values as ContractTerms) : null
+    consumer && termsComplete
+      ? consumerTermsNotice(
+          shippedRules,
+          values as ContractTerms,
+          quotedOn !== null && /^\d{4}-\d{2}-\d{2}$/.test(quotedOn)
+            ? (quotedOn as IsoDate)
+            : undefined,
+        )
+      : null
 
   const set = <Key extends keyof Draft>(key: Key, value: Draft[Key]) => {
     setDraft((current) => ({ ...current, [key]: value }))

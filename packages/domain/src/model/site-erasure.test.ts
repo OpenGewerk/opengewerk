@@ -22,16 +22,26 @@ describe('when the site of a deleted customer falls due (#848)', () => {
     expect(siteErasureAnchor({ lastProtocolOn: null, lastJobClosedOn: null })).toBeNull()
   })
 
-  it('lets a site go ten years after the day it counts from, and not a day before', () => {
-    const anchor = { kind: 'protocol', on: '2016-03-14' } as const
+  it('lets a site go thirty years after the day it counts from, and not a day before (#1019)', () => {
+    const anchor = { kind: 'protocol', on: '1996-03-14' } as const
 
     expect(siteErasureDueOn(anchor, '2024-01-10' as IsoDate, today, shippedRules)).toBe(
       '2026-03-14',
     )
+    // Ten years, as until #1019, are not enough: a fire fifteen years after
+    // the test still leaves a claim open.
+    expect(
+      siteErasureDueOn(
+        { kind: 'protocol', on: '2016-03-14' },
+        '2024-01-10' as IsoDate,
+        today,
+        shippedRules,
+      ),
+    ).toBe('2046-03-14')
     // The day after the 28th of February of a year without a 29th.
     expect(
       siteErasureDueOn(
-        { kind: 'job', on: '2016-02-29' },
+        { kind: 'job', on: '1996-02-29' },
         '2024-01-10' as IsoDate,
         today,
         shippedRules,
@@ -40,7 +50,7 @@ describe('when the site of a deleted customer falls due (#848)', () => {
   })
 
   it('never lets a site go before its customer went', () => {
-    const anchor = { kind: 'protocol', on: '2012-06-01' } as const
+    const anchor = { kind: 'protocol', on: '1992-06-01' } as const
 
     expect(siteErasureDueOn(anchor, '2026-10-20' as IsoDate, today, shippedRules)).toBe(
       '2026-10-20',
@@ -54,8 +64,8 @@ describe('when the site of a deleted customer falls due (#848)', () => {
   it('names the source of the period', () => {
     expect(retentionOf('site_records', '2016-03-14' as IsoDate, today, shippedRules)).toMatchObject(
       {
-        years: 10,
-        source: '§ 199 Abs. 3 Satz 1 Nr. 1 BGB',
+        years: 30,
+        source: '§ 199 Abs. 2 und Abs. 3 Satz 1 Nr. 2 BGB',
       },
     )
   })

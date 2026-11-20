@@ -289,6 +289,8 @@ describe('the request to accept a job (#310)', () => {
     )
     expect(page?.html).toContain('Hinweis nach § 640 Abs. 2 Satz 2 BGB')
     expect(page?.html).toContain('die Vergütung wird fällig (§ 641 Abs. 1 BGB)')
+    // The burden of proof turns with acceptance, and a consumer is told (#1027).
+    expect(page?.html).toContain('Außerdem müssen dann Sie einen Mangel beweisen')
     expect(page?.landscape).toBe(false)
   })
 
