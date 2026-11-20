@@ -171,6 +171,15 @@ describe('the terms towards a consumer (§ 309 Nr. 9 BGB, #294)', () => {
     )
     // A quote before the day changes nothing about a contract begun before it.
     expect(consumerTermsNotice(shippedRules, before, day('2022-01-10'))).toBeNull()
+    // And a contract begun after the day counts from its begin, also when it
+    // was quoted before: the later of the two decides, not the quote.
+    expect(
+      consumerTermsNotice(
+        shippedRules,
+        { ...terms, startsOn: day('2022-04-01') },
+        day('2022-02-10'),
+      ),
+    ).toContain('eine stillschweigende Verlängerung um eine feste Zeit')
   })
 
   it('say nothing where the rules have no limit', () => {

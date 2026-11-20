@@ -19,7 +19,7 @@ import type { SiteErasureAnchor } from './site-erasure.js'
  * months after its last day, the time and leave of a year of one person once
  * the payroll no longer needs them, and the file of somebody who left three
  * years after the end of that year, decided on 04.11.2026. The last is the
- * site of a deleted customer with all that hangs on it, ten years after its
+ * site of a deleted customer with all that hangs on it, thirty years after its
  * last protocol (#848).
  */
 export const erasureKinds = [
@@ -174,7 +174,7 @@ export function personErasureLabel(leftOn: IsoDate): string {
 
 /**
  * What the site of a deleted customer is called where its address must not
- * go: the day the ten years count from, and whether it is the last protocol,
+ * go: the day the thirty years count from, and whether it is the last protocol,
  * the last job or neither, when the site goes with its customer.
  */
 export function siteErasureLabel(anchor: SiteErasureAnchor | null): string {

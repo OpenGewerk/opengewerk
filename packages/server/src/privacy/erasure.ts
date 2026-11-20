@@ -712,7 +712,7 @@ async function staffDueOf(
 /**
  * The sites of deleted customers that are due (#848) and nothing holds, with
  * what each is called and where it stands: a site keeps its designation and
- * address until it goes, and the label says from when the ten years counted.
+ * address until it goes, and the label says from when the thirty years counted.
  */
 async function dueSitesOf(tx: TenantTransaction, today: IsoDate): Promise<DueErasure[]> {
   const due = await dueDeadlinesOf(tx, 'site', today)

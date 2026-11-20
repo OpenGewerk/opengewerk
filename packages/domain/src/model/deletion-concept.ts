@@ -115,7 +115,7 @@ export function describeDeletion(made: DeletionMade): string {
     '| Daten | Wann | Wie |',
     '|---|---|---|',
     ...kinds,
-    '| Sitzungen | zwölf Stunden nach der letzten Nutzung, ein Gerät für die Arbeit ohne Netz dreißig Tage danach | von selbst |',
+    '| Sitzungen | spätestens einen Tag nach ihrem Ablauf; sie läuft spätestens zwölf Stunden nach der letzten Nutzung ab, auf einem Gerät für die Arbeit ohne Netz dreißig Tage danach | von selbst |',
     '| Neue E-Mail-Adressen, die auf den Link in der Mail an sie warten | spätestens einen Tag, nachdem der Link abgelaufen ist; er gilt einen Tag | von selbst |',
     '',
     '## 3. Was aufbewahrt wird',

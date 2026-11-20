@@ -17,6 +17,7 @@ import {
   probeOrigin as origin,
   reached,
 } from './probe-application.js'
+import { sweepExpiredSessions } from './session-sweep.js'
 import { addStaffMember } from './staff.js'
 
 /**
@@ -1303,5 +1304,89 @@ describe('an instance that has been closed', () => {
     // Neither is the first run or the far end of a link.
     await ask().get('/setup').expect(404)
     await ask().get(`/invitation/${mintToken().token}`).expect(404)
+  })
+})
+
+/**
+ * A session whose time is up (opengewerk#1029). Its row went only when the
+ * same cookie came back, so the network address and the browser of a device
+ * nobody opens again stayed for as long as the account. The sweep takes it
+ * out, and either way the stretch of work in the tenant ends when the session
+ * ran out, so that the tenant's log does not say somebody is still at work.
+ */
+describe('a session that ran out', () => {
+  async function sessionsOf(email: string): Promise<string[]> {
+    const { rows } = await admin.query<{ id: string }>(
+      `select s.id from auth_sessions s join auth_users u on u.id = s.user_id where u.email = $1`,
+      [email],
+    )
+
+    return rows.map((row) => row.id)
+  }
+
+  /** Signs in, chooses the north and hands back the cookies and the new session. */
+  async function atWork(email: string): Promise<{ cookies: string; id: string }> {
+    const before = new Set(await sessionsOf(email))
+    const cookies = await signIn(email)
+
+    await instance.chooseTenant(cookies, north.id)
+
+    const id = (await sessionsOf(email)).find((session) => !before.has(session))
+
+    expect(id).toBeDefined()
+
+    return { cookies, id: id ?? '' }
+  }
+
+  async function endOfWork(sessionId: string): Promise<Date | null | undefined> {
+    const { rows } = await admin.query<{ ended_at: Date | null }>(
+      'select ended_at from tenant_sessions where session_id = $1',
+      [sessionId],
+    )
+
+    return rows[0]?.ended_at
+  }
+
+  it('goes with the sweep, ends its work when it ran out, and one still running stays', async () => {
+    const ran = await atWork(member.email)
+    const runs = await atWork(member.email)
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() - interval '2 hours' where id = $1
+       returning expires_at`,
+      [ran.id],
+    )
+
+    expect(await sweepExpiredSessions(instance.database)).toBeGreaterThanOrEqual(1)
+
+    const left = await sessionsOf(member.email)
+
+    expect(left).not.toContain(ran.id)
+    expect(left).toContain(runs.id)
+    expect((await endOfWork(ran.id))?.getTime()).toBe(rows[0]?.expires_at.getTime())
+    expect(await endOfWork(runs.id)).toBeNull()
+
+    const ended = await instance.database.forTenant({ tenantId: north.id }, (tx) =>
+      tx
+        .select({ reason: auditEntries.reason })
+        .from(auditEntries)
+        .where(
+          and(eq(auditEntries.tableName, 'tenant_sessions'), eq(auditEntries.field, 'ended_at')),
+        ),
+    )
+
+    expect(ended.some((entry) => entry.reason === 'session.expire')).toBe(true)
+  })
+
+  it('ends its work also when better-auth takes it out as its cookie comes back', async () => {
+    const ran = await atWork(member.email)
+
+    await admin.query(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where id = $1`,
+      [ran.id],
+    )
+    await http().get('/auth/tenants').set('cookie', ran.cookies).expect(401)
+
+    expect(await sessionsOf(member.email)).not.toContain(ran.id)
+    expect(await endOfWork(ran.id)).not.toBeNull()
   })
 })

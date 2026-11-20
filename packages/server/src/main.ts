@@ -23,6 +23,7 @@ import {
   startupLine,
   startAddressSweep,
   startFileSweep,
+  startSessionSweep,
   stopOnSignals,
   takeOverFromEnvironment,
   tenantStorage,
@@ -214,6 +215,7 @@ async function start(): Promise<void> {
   let pushWorker: { readonly stop: () => Promise<void> } | null = null
   let fileSweep: { readonly stop: () => Promise<void> } | null = null
   let addressSweep: { readonly stop: () => Promise<void> } | null = null
+  let sessionSweep: { readonly stop: () => Promise<void> } | null = null
 
   stopOnSignals(opengewerk.name, [
     () => mailWorker?.stop(),
@@ -221,6 +223,7 @@ async function start(): Promise<void> {
     () => pushWorker?.stop(),
     () => fileSweep?.stop(),
     () => addressSweep?.stop(),
+    () => sessionSweep?.stop(),
     stopInstanceSettings,
     () => application.close(),
     () => database.close(),
@@ -278,6 +281,9 @@ async function start(): Promise<void> {
     fileSweep = startFileSweep(database, output.files)
     // A new address whose link ran out goes, checked every hour (#862).
     addressSweep = startAddressSweep(database)
+    // A session that ran out goes, with its stretch of work, checked every
+    // hour (#1029).
+    sessionSweep = startSessionSweep(database)
   }
 
   if (push) {

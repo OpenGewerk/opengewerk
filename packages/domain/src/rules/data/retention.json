@@ -72,7 +72,7 @@
       "unit": "years",
       "value": 8,
       "source": "§ 147 Abs. 1 Nr. 4, Abs. 3 Satz 1 AO; § 41 Abs. 1 Satz 9 EStG",
-      "note": "Lohnunterlagen, die Arbeitszeiten eingeschlossen, nach denen ein Lohn nach Stunden gezahlt wird: als Lohnbelege Buchungsbelege, acht Jahre ab dem Ende des Jahres, in dem sie entstanden sind, für jede Unterlage, deren Frist am 31.12.2024 noch lief (Art. 97 § 19a Abs. 2 EGAO). Die sechs Jahre des Lohnkontos (§ 41 Abs. 1 Satz 9 EStG) und die zwei aus § 17 MiLoG und § 16 Abs. 2 ArbZG liegen darin. Entgeltunterlagen bleiben außerdem bis zum Ende des Jahres nach der letzten Betriebsprüfung der Rentenversicherung (§ 28f Abs. 1 SGB IV); den Tag kennt der Betrieb, nicht die Engine, deshalb bestätigt er jedes Löschen. Bis zum 20.11.2026 waren es sechs Jahre (#846); geändert mit #1019 nach der Prüfung in #31."
+      "note": "Lohnunterlagen, die Arbeitszeiten eingeschlossen, nach denen ein Lohn nach Stunden gezahlt wird: als Lohnbelege Buchungsbelege, acht Jahre ab dem Ende des Jahres, in dem sie entstanden sind, für jede Unterlage, deren Frist am 31.12.2024 noch lief (Art. 97 § 19a Abs. 2 EGAO). Die sechs Jahre des Lohnkontos (§ 41 Abs. 1 Satz 9 EStG) und die zwei aus § 17 MiLoG und § 16 Abs. 2 ArbZG liegen darin. Entgeltunterlagen bleiben außerdem bis zum Ende des Jahres nach der letzten Betriebsprüfung der Rentenversicherung (§ 28f Abs. 1 SGB IV); den Tag kennt der Betrieb, nicht die Engine. Die Tafel der Fristen, die Bestätigung vor dem Löschen eines Jahres und der Schalter auf automatisch nennen den Vorbehalt. Bis zum 20.11.2026 waren es sechs Jahre (#846); geändert mit #1019 nach der Prüfung in #31."
     },
     {
       "key": "retention.sickness_records",

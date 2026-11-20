@@ -58,6 +58,7 @@ import {
   secondFactorSessionRequired,
 } from './second-factor.js'
 import { renewSession, sessionLifetimes } from './session-lifetime.js'
+import { endStretchesOf } from './session-sweep.js'
 import { clearCodesAtSignIn, reserveCodeAtSignIn } from './sign-in-codes.js'
 
 export { sessionLifetimes } from './session-lifetime.js'
@@ -596,6 +597,24 @@ export function createAuthentication({
                 context?.path === confirmingTheApp && Boolean(context.context.session),
               )
             }
+          },
+        },
+        delete: {
+          // A session better-auth takes out itself, the one whose cookie came
+          // back after it ran out above all, closes its stretch of work in the
+          // tenant like the sweep does (opengewerk#1029). Our own routes that
+          // end a session close it themselves and delete without better-auth.
+          after: async (session) => {
+            const { activeTenantId } = session as { activeTenantId?: string | null }
+
+            await endStretchesOf(database, [
+              {
+                id: session.id,
+                userId: session.userId,
+                tenantId: activeTenantId ?? null,
+                expiresAt: new Date(session.expiresAt),
+              },
+            ])
           },
         },
       },

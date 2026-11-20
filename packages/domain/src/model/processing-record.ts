@@ -80,7 +80,7 @@ export const processingActivities = [
     subjects: 'Beschäftigte mit Zugang',
     data: 'Name, E-Mail-Adresse, Passwort als Hash, Passkeys, zweiter Faktor, Sitzungen mit Gerät und Netzadresse, Rollen und letzter Tag',
     deletion:
-      'mit der Akte, drei Jahre nach dem Ende des Austrittsjahres; eine Sitzung zwölf Stunden nach der letzten Nutzung, ein Gerät für die Arbeit ohne Netz dreißig Tage danach, eine neue E-Mail-Adresse, deren Link abgelaufen ist, spätestens einen Tag danach',
+      'mit der Akte, drei Jahre nach dem Ende des Austrittsjahres; eine Sitzung spätestens einen Tag nach ihrem Ablauf, der spätestens zwölf Stunden nach der letzten Nutzung kommt, auf einem Gerät für die Arbeit ohne Netz dreißig Tage danach, eine neue E-Mail-Adresse, deren Link abgelaufen ist, spätestens einen Tag danach',
     purpose:
       'Anmeldung an der Anwendung, Festlegen, wer was sehen und tun darf, und Schutz der Konten vor fremdem Zugriff',
     legalBasis: 'Art. 6 Abs. 1 Buchst. b DSGVO; Art. 6 Abs. 1 Buchst. c mit Art. 32 DSGVO',
