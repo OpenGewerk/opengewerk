@@ -725,7 +725,10 @@ vom ersten Lesen bis zum Ende; das Rückspielen hält sie allein, bevor es etwas
 ändert, bis es fertig ist. Läuft gerade eine Sicherung, lehnt `restore.sh` ab
 und ändert nichts, und solange es läuft, beginnt keine Sicherung. Sonst läse
 eine Sicherung womöglich die Datenbank vor und den Dateispeicher nach dem
-Rückspielen. Mehrere Sicherungen laufen weiter nebeneinander.
+Rückspielen. Mehrere Sicherungen laufen weiter nebeneinander. Läuft schon ein
+anderes Rückspielen, lehnt ein zweites ebenso ab und rät nicht zu `start.sh`:
+Das würde die Migrationen auf der Datenbank ausführen, die das andere gerade
+ersetzt. Erst wenn das andere fertig ist, gilt seine Meldung.
 
 **Eine verschlüsselte Sicherung** braucht den privaten Schlüssel, und der liegt
 nicht auf dieser Maschine (siehe „Verschlüsselung und Aufbewahrung“). Er wird
