@@ -1466,9 +1466,17 @@ describe('a session that ran out', () => {
     await admin.query('delete from auth_sessions where id = $1', [gone.id])
     expect(await endOfWork(gone.id)).toBeNull()
 
-    await sweepExpiredSessions(instance.database)
+    // A pass that began before the stretch did, as one that ran while the
+    // stretch was opened: it does not end the stretch before it began.
+    await sweepExpiredSessions(instance.database, new Date(Date.now() - 60 * 60 * 1000))
 
-    expect(await endOfWork(gone.id)).not.toBeNull()
+    const { rows } = await admin.query<{ ended: boolean }>(
+      `select ended_at is not null and ended_at >= started_at as ended
+         from tenant_sessions where session_id = $1`,
+      [gone.id],
+    )
+
+    expect(rows).toEqual([{ ended: true }])
   })
 
   it('ends its work also when better-auth takes it out as its cookie comes back', async () => {

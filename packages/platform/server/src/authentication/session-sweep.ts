@@ -1,5 +1,5 @@
 import type { TenantId } from '@opengewerk/platform-domain'
-import { and, asc, eq, inArray, isNull, lte } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, lte, sql } from 'drizzle-orm'
 
 import type { Database } from '../database/database.js'
 import { everyTenant } from '../database/every-tenant.js'
@@ -132,7 +132,7 @@ export async function sweepExpiredSessions(
     }
   }
 
-  await endOrphanedStretches(database, now, batch)
+  await endOrphanedStretches(database, batch)
 
   return gone
 }
@@ -142,12 +142,12 @@ export async function sweepExpiredSessions(
  * them (opengewerk#1029): the ones better-auth left open before this release,
  * when it took out a session whose cookie came back after it ran out, and any
  * a failure leaves behind. When they really ended is not known any more; they
- * end at the pass that finds them. A tenant at a time, each in its own log,
+ * end when the pass closes them, by the clock of the database, so that one that
+ * began while the pass ran does not end before it began. A tenant at a time, each in its own log,
  * and the sessions in rounds of a bounded size. Says how many it closed.
  */
 export async function endOrphanedStretches(
   database: Database,
-  now: Date = new Date(),
   batch: number = sweepBatch,
 ): Promise<number> {
   let closed = 0
@@ -175,7 +175,7 @@ export async function endOrphanedStretches(
       const ended = await database.forTenant({ tenantId, reason: 'session.expire' }, (tx) =>
         tx
           .update(tenantSessions)
-          .set({ endedAt: now })
+          .set({ endedAt: sql`clock_timestamp()` })
           .where(
             and(
               eq(tenantSessions.tenantId, tenantId),
