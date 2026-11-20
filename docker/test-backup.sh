@@ -60,12 +60,12 @@ cp "$source_dir/backup/backup.sh" "$source_dir/backup/restore.sh" \
 # with a version; whatever else the scripts ask is answered with nothing.
 cat > "$work/bin/pg_dump" <<'FAKE'
 #!/bin/sh
-# A process the dump leaves behind, which outlives the backup for a few
-# seconds with every descriptor but the three standard ones, the way the
-# watchdog of busybox timeout does for a moment (#1012). LINGER names the
-# file for its number.
+# A process the dump leaves behind, which outlives the backup with every
+# descriptor but the three standard ones, the way the watchdog of busybox
+# timeout does for a moment (#1012). LINGER names the file for its number; it
+# ends once a file of that name with .release appears, or the folder goes.
 if [ -n "${LINGER:-}" ]; then
-  sleep 5 < /dev/null > /dev/null 2>&1 &
+  (while [ ! -f "$LINGER.release" ] && [ -d "${LINGER%/*}" ]; do sleep 0.1; done) < /dev/null > /dev/null 2>&1 &
   echo "$!" > "$LINGER"
 fi
 # While the dump runs, the sweep of the store may take a file whose last row
@@ -234,9 +234,9 @@ fi
 FAKE
 cat > "$work/bin/pg_restore" <<'FAKE'
 #!/bin/sh
-# As with pg_dump: a process left behind for a few seconds (#1012).
+# As with pg_dump: a process left behind until it is released (#1012).
 if [ -n "${LINGER:-}" ]; then
-  sleep 5 < /dev/null > /dev/null 2>&1 &
+  (while [ ! -f "$LINGER.release" ] && [ -d "${LINGER%/*}" ]; do sleep 0.1; done) < /dev/null > /dev/null 2>&1 &
   echo "$!" > "$LINGER"
 fi
 printf 'pg_restore %s password=%s\n' "$*" "${PGPASSWORD:-}" >> "$CALLS"
@@ -854,7 +854,8 @@ check 'Sicherung und Rückspielen schließen sich aus, zwei Sicherungen laufen n
 # 4d. What a backup started may outlive it and still hold the lock through
 # it. The backup gives the lock up at its end, so that a restore right after
 # it is not turned away; the process it left is still there when that is
-# checked.
+# checked, and released after it.
+rm -f "$work/lingering.release"
 LINGER="$work/lingering" BACKUP_PREFIX=lingering POSTGRES_DB=opengewerk BACKUP_KEEP=0 \
   sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
   cat "$work/out"
@@ -865,15 +866,18 @@ if ! flock -x -n "$BACKUP_LOCK_PATH" true; then
   echo 'FEHLER: nach dem Ende einer Sicherung hält ein Prozess, den sie gestartet hat, noch die Sperre'
   exit 1
 fi
+: > "$work/lingering.release"
 check 'Sicherung: gibt die Sperre am Ende frei, auch wenn ein Prozess von ihr noch läuft'
 
 # The same for a restore, so that a backup right after it is not turned away.
+rm -f "$work/lingering.release"
 taken env LINGER="$work/lingering" POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
 kill -0 "$(cat "$work/lingering")"
 if ! flock -s -n "$BACKUP_LOCK_PATH" true; then
   echo 'FEHLER: nach dem Ende eines Rückspielens hält ein Prozess, den es gestartet hat, noch die Sperre'
   exit 1
 fi
+: > "$work/lingering.release"
 check 'Rückspielen: gibt die Sperre am Ende frei, auch wenn ein Prozess von ihm noch läuft'
 
 # 5. An archive named outright is held to the names "latest" looks among. The
