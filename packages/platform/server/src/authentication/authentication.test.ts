@@ -1397,6 +1397,41 @@ describe('a session that ran out', () => {
     expect(after.rows[0]?.expires_at.getTime()).toBe(rows[0]?.expires_at.getTime())
   })
 
+  it('takes a backlog in rounds of a bounded size, all of it in one pass', async () => {
+    const template = await atWork(member.email)
+    const backlog = Array.from({ length: 5 }, () => newId<'session'>())
+
+    for (const id of backlog) {
+      await admin.query(
+        `insert into auth_sessions (id, token, user_id, expires_at, credential_generation)
+         select $1, $2, user_id, now() - interval '1 hour', credential_generation
+           from auth_sessions where id = $3`,
+        [id, `token-${id}`, template.id],
+      )
+    }
+
+    // Rounds of two: the five go in three rounds of the same pass.
+    expect(await sweepExpiredSessions(instance.database, new Date(), 2)).toBeGreaterThanOrEqual(5)
+
+    const left = await sessionsOf(member.email)
+
+    expect(backlog.filter((id) => left.includes(id))).toEqual([])
+    expect(left).toContain(template.id)
+  })
+
+  it('ends the work of a session that went without ending it, a release before this one', async () => {
+    const gone = await atWork(member.email)
+
+    // What better-auth did before #1029 with a session whose cookie came back
+    // after it ran out: the row went, the stretch stayed open.
+    await admin.query('delete from auth_sessions where id = $1', [gone.id])
+    expect(await endOfWork(gone.id)).toBeNull()
+
+    await sweepExpiredSessions(instance.database)
+
+    expect(await endOfWork(gone.id)).not.toBeNull()
+  })
+
   it('ends its work also when better-auth takes it out as its cookie comes back', async () => {
     const ran = await atWork(member.email)
 

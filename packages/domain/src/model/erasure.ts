@@ -100,7 +100,7 @@ export const erasureKindWords: Readonly<Record<ErasureKind, ErasureKindWords>> =
     one: 'Objekt',
     title: 'Objekte gelöschter Kunden nach dreißig Jahren',
     reason:
-      'Gelöscht nach dem Löschkonzept: ein Objekt eines gelöschten Kunden mit seinen Anlagen, dreißig Jahre nach dem letzten Protokoll.',
+      'Gelöscht nach dem Löschkonzept: ein Objekt eines gelöschten Kunden mit seinen Anlagen, dreißig Jahre nach dem letzten Protokoll oder Auftrag dort.',
   },
 }
 
@@ -175,16 +175,22 @@ export function personErasureLabel(leftOn: IsoDate): string {
 /**
  * What the site of a deleted customer is called where its address must not
  * go: the day the thirty years count from, and whether it is the last protocol,
- * the last job or neither, when the site goes with its customer.
+ * a job closed after it, the last job of a site without any protocol, or
+ * neither, when the site goes with its customer.
  */
 export function siteErasureLabel(anchor: SiteErasureAnchor | null): string {
   if (anchor === null) {
     return 'Objekt ohne Protokoll und Auftrag'
   }
 
-  return anchor.kind === 'protocol'
-    ? `Objekt, letztes Protokoll ${germanDay(anchor.on)}`
-    : `Objekt ohne Protokoll, letzter Auftrag ${germanDay(anchor.on)}`
+  switch (anchor.kind) {
+    case 'protocol':
+      return `Objekt, letztes Protokoll ${germanDay(anchor.on)}`
+    case 'job_after_protocol':
+      return `Objekt, letzter Auftrag ${germanDay(anchor.on)} nach dem letzten Protokoll`
+    case 'job':
+      return `Objekt ohne Protokoll, letzter Auftrag ${germanDay(anchor.on)}`
+  }
 }
 
 /** A record that is due, as the office reads it before confirming. */

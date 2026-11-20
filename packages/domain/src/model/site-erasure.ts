@@ -19,9 +19,12 @@ import { retentionOf } from './retention.js'
  * goes with its customer.
  */
 
-/** What the thirty years of a site count from. */
+/**
+ * What the thirty years of a site count from: its youngest signed protocol, a
+ * job closed after it, or a job at a site without any protocol.
+ */
 export interface SiteErasureAnchor {
-  readonly kind: 'protocol' | 'job'
+  readonly kind: 'protocol' | 'job_after_protocol' | 'job'
   readonly on: IsoDate
 }
 
@@ -37,7 +40,14 @@ export function siteErasureAnchor(facts: {
     return { kind: 'protocol', on: facts.lastProtocolOn }
   }
 
-  return facts.lastJobClosedOn === null ? null : { kind: 'job', on: facts.lastJobClosedOn }
+  if (facts.lastJobClosedOn === null) {
+    return null
+  }
+
+  return {
+    kind: facts.lastProtocolOn === null ? 'job' : 'job_after_protocol',
+    on: facts.lastJobClosedOn,
+  }
 }
 
 /**

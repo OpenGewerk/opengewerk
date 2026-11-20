@@ -23,7 +23,7 @@ describe('when the site of a deleted customer falls due (#848)', () => {
         lastProtocolOn: '2016-03-14' as IsoDate,
         lastJobClosedOn: '2018-05-02' as IsoDate,
       }),
-    ).toEqual({ kind: 'job', on: '2018-05-02' })
+    ).toEqual({ kind: 'job_after_protocol', on: '2018-05-02' })
     expect(
       siteErasureAnchor({
         lastProtocolOn: '2018-05-02' as IsoDate,
@@ -98,6 +98,10 @@ describe('the site as the deletion names it', () => {
     )
     expect(siteErasureLabel({ kind: 'job', on: '2015-09-30' as IsoDate })).toBe(
       'Objekt ohne Protokoll, letzter Auftrag 30.09.2015',
+    )
+    // A job after the last protocol is not a site without one (#1019).
+    expect(siteErasureLabel({ kind: 'job_after_protocol', on: '2018-05-02' as IsoDate })).toBe(
+      'Objekt, letzter Auftrag 02.05.2018 nach dem letzten Protokoll',
     )
     expect(siteErasureLabel(null)).toBe('Objekt ohne Protokoll und Auftrag')
   })

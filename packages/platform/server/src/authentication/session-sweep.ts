@@ -1,7 +1,8 @@
 import type { TenantId } from '@opengewerk/platform-domain'
-import { and, eq, inArray, isNull, lte } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, lte } from 'drizzle-orm'
 
 import type { Database } from '../database/database.js'
+import { everyTenant } from '../database/every-tenant.js'
 import { authSessions, tenantSessions } from '../schema.js'
 import { type RepeatingJob, startRepeating } from '../start/repeat.js'
 
@@ -59,6 +60,9 @@ export async function endStretchesOf(
   }
 }
 
+/** How many rows one round of a pass takes, so that no statement grows with the backlog. */
+const sweepBatch = 1000
+
 /**
  * Takes out every session that ran out (opengewerk#1029) and says how many
  * went.
@@ -70,48 +74,123 @@ export async function endStretchesOf(
  * and the device until a new password, a lock or the account took it, while
  * the deletion concept promises that it goes once the session has ended.
  *
- * The stretches of work are closed first and the rows go after, so that a
- * pass that fails in between leaves the rows for the next one to find. The run
- * acts for no person, like the other jobs in the background.
+ * In rounds of a bounded size, the oldest first, until a round comes back
+ * short: a backlog of any size goes in one pass, and no statement carries more
+ * keys than PostgreSQL takes. In each round the stretches of work are closed
+ * first and the rows go after, so that a round that fails in between leaves
+ * the rows for the next pass to find. The run acts for no person, like the
+ * other jobs in the background.
  */
 export async function sweepExpiredSessions(
   database: Database,
   now: Date = new Date(),
+  batch: number = sweepBatch,
 ): Promise<number> {
-  const expired = await database.forInstance((tx) =>
-    tx
-      .select({
-        id: authSessions.id,
-        userId: authSessions.userId,
-        tenantId: authSessions.activeTenantId,
-        expiresAt: authSessions.expiresAt,
-      })
-      .from(authSessions)
-      .where(lte(authSessions.expiresAt, now)),
-  )
+  let gone = 0
 
-  if (expired.length === 0) {
-    return 0
+  for (;;) {
+    const expired = await database.forInstance((tx) =>
+      tx
+        .select({
+          id: authSessions.id,
+          userId: authSessions.userId,
+          tenantId: authSessions.activeTenantId,
+          expiresAt: authSessions.expiresAt,
+        })
+        .from(authSessions)
+        .where(lte(authSessions.expiresAt, now))
+        .orderBy(asc(authSessions.expiresAt), asc(authSessions.id))
+        .limit(batch),
+    )
+
+    if (expired.length === 0) {
+      break
+    }
+
+    await endStretchesOf(database, expired, now)
+
+    const deleted = await database.forInstance((tx) =>
+      tx
+        .delete(authSessions)
+        .where(
+          and(
+            inArray(
+              authSessions.id,
+              expired.map((session) => session.id),
+            ),
+            lte(authSessions.expiresAt, now),
+          ),
+        )
+        .returning({ id: authSessions.id }),
+    )
+
+    gone += deleted.length
+
+    // A short round was the last; one that took nothing would only repeat.
+    if (expired.length < batch || deleted.length === 0) {
+      break
+    }
   }
 
-  await endStretchesOf(database, expired, now)
+  await endOrphanedStretches(database, now, batch)
 
-  const gone = await database.forInstance((tx) =>
-    tx
-      .delete(authSessions)
-      .where(
-        and(
-          inArray(
-            authSessions.id,
-            expired.map((session) => session.id),
-          ),
-          lte(authSessions.expiresAt, now),
-        ),
+  return gone
+}
+
+/**
+ * Closes the stretches of work whose session is gone without having closed
+ * them (opengewerk#1029): the ones better-auth left open before this release,
+ * when it took out a session whose cookie came back after it ran out, and any
+ * a failure leaves behind. When they really ended is not known any more; they
+ * end at the pass that finds them. A tenant at a time, each in its own log,
+ * and the sessions in rounds of a bounded size. Says how many it closed.
+ */
+export async function endOrphanedStretches(
+  database: Database,
+  now: Date = new Date(),
+  batch: number = sweepBatch,
+): Promise<number> {
+  let closed = 0
+
+  for (const tenantId of await everyTenant(database)) {
+    const open = await database.forTenant({ tenantId }, (tx) =>
+      tx
+        .selectDistinct({ sessionId: tenantSessions.sessionId })
+        .from(tenantSessions)
+        .where(and(eq(tenantSessions.tenantId, tenantId), isNull(tenantSessions.endedAt))),
+    )
+
+    for (let start = 0; start < open.length; start += batch) {
+      const ids = open.slice(start, start + batch).map((row) => row.sessionId)
+      const alive = await database.forInstance((tx) =>
+        tx.select({ id: authSessions.id }).from(authSessions).where(inArray(authSessions.id, ids)),
       )
-      .returning({ id: authSessions.id }),
-  )
+      const living = new Set(alive.map((row) => row.id))
+      const orphans = ids.filter((id) => !living.has(id))
 
-  return gone.length
+      if (orphans.length === 0) {
+        continue
+      }
+
+      const ended = await database.forTenant({ tenantId, reason: 'session.expire' }, (tx) =>
+        tx
+          .update(tenantSessions)
+          .set({ endedAt: now })
+          .where(
+            and(
+              eq(tenantSessions.tenantId, tenantId),
+              inArray(tenantSessions.sessionId, orphans),
+              isNull(tenantSessions.endedAt),
+            ),
+          )
+          .returning({ id: tenantSessions.id }),
+      )
+
+      closed += ended.length
+    }
+  }
+
+  return closed
 }
 
 /**

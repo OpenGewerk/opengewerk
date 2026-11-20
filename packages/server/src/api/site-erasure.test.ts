@@ -463,6 +463,26 @@ describe('what is due (#848)', () => {
     expect(await siteDeadlines()).toEqual([])
   })
 
+  it('counts from a job closed after the youngest protocol, and names it so (#1019)', async () => {
+    const { customer, site } = await hollberg()
+
+    // A job closed after the test of the appliance on 20.04.1995.
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       update jobs set closed_at = '1996-01-15' where site_id = '${site}'; commit;`,
+    )
+    await deleteCustomer(customer)
+    await pass()
+
+    expect(await siteDeadlines()).toEqual([
+      {
+        source_id: site,
+        source_label: 'Objekt, letzter Auftrag 15.01.1996 nach dem letzten Protokoll',
+        due_on: today,
+      },
+    ])
+  })
+
   it('counts from the last job closed without a protocol, and goes with its customer without either', async () => {
     const worked = await bare('1995-09-30')
     const empty = await bare(null)
