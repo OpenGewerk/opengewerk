@@ -88,12 +88,12 @@ const sweepBatch = 1000
  *
  * In rounds of a bounded size, the oldest first, until a round comes back
  * short: a backlog of any size goes in one pass, and no statement carries more
- * keys than PostgreSQL takes. In each round the stretches of work are closed
- * first and the rows go after, so that a round that fails in between leaves
- * the rows for the next pass to find. That order is safe here and nowhere
- * else: these sessions ran out, and neither a renewal nor a choice of tenant
- * brings one back, so none works on without its stretch. The run acts for no
- * person, like the other jobs in the background.
+ * keys than PostgreSQL takes. In each round the rows go first and the
+ * stretches of work of exactly the rows that went are closed after, as
+ * everywhere a session ends: a renewal that is being committed while the pass
+ * runs keeps its row, and with it its stretch. A close that fails after the
+ * delete leaves an orphan, which the same pass closes at its end. The run acts
+ * for no person, like the other jobs in the background.
  */
 export async function sweepExpiredSessions(
   database: Database,
@@ -121,8 +121,6 @@ export async function sweepExpiredSessions(
       break
     }
 
-    await endStretchesOf(database, expired, now)
-
     const deleted = await database.forInstance((tx) =>
       tx
         .delete(authSessions)
@@ -135,8 +133,15 @@ export async function sweepExpiredSessions(
             lte(authSessions.expiresAt, now),
           ),
         )
-        .returning({ id: authSessions.id }),
+        .returning({
+          id: authSessions.id,
+          userId: authSessions.userId,
+          tenantId: authSessions.activeTenantId,
+          expiresAt: authSessions.expiresAt,
+        }),
     )
+
+    await endStretchesOf(database, deleted, now)
 
     gone += deleted.length
 

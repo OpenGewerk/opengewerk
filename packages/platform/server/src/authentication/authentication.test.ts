@@ -1436,6 +1436,50 @@ describe('a session that ran out', () => {
     expect(open.rowCount).toBe(1)
   })
 
+  it('leaves the work of a session whose renewal is committed while the pass runs', async () => {
+    const renewing = await atWork(member.email)
+
+    await admin.query(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where id = $1`,
+      [renewing.id],
+    )
+
+    // A renewal that checked the row a moment before it ran out, and commits
+    // only once the pass has read the row as run out.
+    const held = await admin.connect()
+
+    try {
+      await held.query('begin')
+      await held.query(
+        `update auth_sessions set expires_at = now() + interval '12 hours' where id = $1`,
+        [renewing.id],
+      )
+
+      const pass = sweepExpiredSessions(instance.database)
+
+      // Until the pass waits for the row the renewal holds.
+      for (let tries = 0; tries < 100; tries += 1) {
+        const { rows } = await admin.query<{ waiting: number }>(
+          `select count(*)::int as waiting from pg_stat_activity where wait_event_type = 'Lock'`,
+        )
+
+        if ((rows[0]?.waiting ?? 0) > 0) {
+          break
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+
+      await held.query('commit')
+      await pass
+    } finally {
+      held.release()
+    }
+
+    expect(await sessionsOf(member.email)).toContain(renewing.id)
+    expect(await endOfWork(renewing.id)).toBeNull()
+  })
+
   it('takes a backlog in rounds of a bounded size, all of it in one pass', async () => {
     const template = await atWork(member.email)
     const backlog = Array.from({ length: 5 }, () => newId<'session'>())

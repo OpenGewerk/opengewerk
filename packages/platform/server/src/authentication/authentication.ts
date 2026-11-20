@@ -1,6 +1,11 @@
 import { passkey } from '@better-auth/passkey'
 import { hash, verify } from '@node-rs/argon2'
-import { passkeyNameProblem } from '@opengewerk/platform-domain'
+import {
+  passkeyNameProblem,
+  type SignInMethod,
+  signInMethods,
+  type TenantId,
+} from '@opengewerk/platform-domain'
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { APIError, createAuthMiddleware, getSessionFromCtx, isAPIError } from 'better-auth/api'
@@ -18,6 +23,7 @@ import {
   authTwoFactors,
   authUsers,
   authVerifications,
+  tenantSessions,
 } from '../schema.js'
 import type { AccessRules } from './access.js'
 import {
@@ -597,6 +603,8 @@ export function createAuthentication({
                 context?.path === confirmingTheApp && Boolean(context.context.session),
               )
             }
+
+            await carryStretch(database, session, context?.path === confirmingTheApp)
           },
         },
         delete: {
@@ -1311,6 +1319,52 @@ async function generationAtSignIn(
     : null
 
   return verification ? generationOfAccount(database, verification.value) : null
+}
+
+/**
+ * A session better-auth writes in the place of another, when the app is set
+ * up or the second factor changes, takes over the tenant the old one had
+ * chosen, while the old one and its stretch of work end (opengewerk#1029). It
+ * works on in that tenant, so it opens a stretch of its own there, as choosing
+ * the tenant does: without one the tenant's log would say the work ended when
+ * the app was set up, and the sign out later would find nothing to close. Only
+ * such a session is born with a tenant; every other one chooses it after.
+ */
+async function carryStretch(
+  database: Database,
+  session: { readonly id: string; readonly userId: string },
+  appSetUp: boolean,
+): Promise<void> {
+  const { activeTenantId, deviceId, signInMethod } = session as {
+    activeTenantId?: string | null
+    deviceId?: string | null
+    signInMethod?: string | null
+  }
+
+  if (!activeTenantId) {
+    return
+  }
+
+  const tenantId = activeTenantId as TenantId
+
+  await database.forTenant(
+    {
+      tenantId,
+      userId: session.userId,
+      reason: appSetUp ? 'second-factor.app' : 'session.start',
+      deviceId: deviceId ?? undefined,
+    },
+    (tx) =>
+      tx.insert(tenantSessions).values({
+        tenantId,
+        userId: session.userId,
+        sessionId: session.id,
+        deviceId: deviceId ?? null,
+        signInMethod: signInMethods.includes(signInMethod as SignInMethod)
+          ? (signInMethod as SignInMethod)
+          : 'password',
+      }),
+  )
 }
 
 /**

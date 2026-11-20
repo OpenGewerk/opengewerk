@@ -517,6 +517,48 @@ describe('the second factor of an account', () => {
     expect(rows).toEqual([{ open: 0, app: 1, ended: ran.rows[0]?.expires_at }])
   })
 
+  /**
+   * Set up in a session that works in a tenant, the app makes better-auth
+   * write a new session in its place that takes the tenant along. The work
+   * goes on in it, so it opens a stretch of its own as the old one's closes,
+   * and signing out closes that one (opengewerk#1029).
+   */
+  it('keeps the work going in the session that takes over when the app is set up in a tenant', async () => {
+    const email = 'app-im-betrieb@nord.example.de'
+    const userId = await leader(email)
+    const signedIn = await withPassword(email)
+
+    await instance.chooseTenant(signedIn, north.id)
+
+    const started = await post('/two-factor/enable', signedIn).send({ password }).expect(200)
+    const { totpURI } = started.body as { totpURI: string }
+    const confirmed = cookiesOf(
+      await post('/two-factor/verify-totp', signedIn)
+        .send({ code: await currentCode(totpURI) })
+        .expect(200),
+    )
+    const open = async () =>
+      (
+        await admin.query<{ alive: boolean }>(
+          `select exists (select 1 from auth_sessions s where s.id = t.session_id) as alive
+             from tenant_sessions t
+            where t.user_id = $1 and t.ended_at is null`,
+          [userId],
+        )
+      ).rows
+
+    expect(await open()).toEqual([{ alive: true }])
+
+    await instance
+      .http()
+      .post('/auth/sign-out')
+      .set('cookie', confirmed)
+      .set('origin', origin)
+      .expect(201)
+
+    expect(await open()).toEqual([])
+  })
+
   it('makes no new recovery codes for a day after a reset of the password', async () => {
     const email = 'zurueckgesetzt@nord.example.de'
     const userId = await leader(email)
