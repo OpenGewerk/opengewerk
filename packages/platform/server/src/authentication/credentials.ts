@@ -50,7 +50,11 @@ export async function revokeCredentials(
   keep: SQL | null = null,
 ): Promise<{
   readonly generation: number
-  readonly ended: readonly { readonly id: string; readonly tenantId: string | null }[]
+  readonly ended: readonly {
+    readonly id: string
+    readonly tenantId: string | null
+    readonly expiresAt: Date
+  }[]
 }> {
   const [counted] = await tx
     .update(authUsers)
@@ -63,7 +67,11 @@ export async function revokeCredentials(
   const ended = await tx
     .delete(authSessions)
     .where(keep === null ? ofTheAccount : and(ofTheAccount, not(keep)))
-    .returning({ id: authSessions.id, tenantId: authSessions.activeTenantId })
+    .returning({
+      id: authSessions.id,
+      tenantId: authSessions.activeTenantId,
+      expiresAt: authSessions.expiresAt,
+    })
 
   if (keep !== null) {
     await tx
@@ -301,6 +309,7 @@ export async function endRevokedSession(database: Database, sessionId: string): 
         id: authSessions.id,
         userId: authSessions.userId,
         tenantId: authSessions.activeTenantId,
+        expiresAt: authSessions.expiresAt,
       }),
   )
 

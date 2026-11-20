@@ -1325,7 +1325,11 @@ async function generationAtSignIn(
  * Either way what the ended sessions had open in a tenant is closed after the
  * rows went, tenant by tenant, as `endOtherSessions` does (opengewerk#1029):
  * left open, it would say the person still works there until the sweep of
- * sessions found it and named the wrong reason and time.
+ * sessions found it and named the wrong reason and time. The rows go first so
+ * that the sessions end whatever happens next; a stretch closed first would
+ * leave a session working without one should the delete fail, while a close
+ * that fails after the delete leaves an orphan the next pass of the sweep
+ * closes. A session that had run out already ends its stretch when it ran out.
  */
 async function endSessionsWithoutSecondFactor(
   database: Database,
@@ -1350,7 +1354,11 @@ async function endSessionsWithoutSecondFactor(
             ),
           ),
         )
-        .returning({ id: authSessions.id, tenantId: authSessions.activeTenantId })
+        .returning({
+          id: authSessions.id,
+          tenantId: authSessions.activeTenantId,
+          expiresAt: authSessions.expiresAt,
+        })
     }
 
     const [account] = await tx

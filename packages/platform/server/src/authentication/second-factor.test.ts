@@ -491,20 +491,30 @@ describe('the second factor of an account', () => {
     const other = await withPassword(email)
 
     await instance.chooseTenant(other, north.id)
+
+    // It ran out half an hour ago, and its stretch ends then, not now.
+    const ran = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() - interval '30 minutes'
+        where user_id = $1 and active_tenant_id is not null
+       returning expires_at`,
+      [userId],
+    )
+
     await setUpApp(email)
 
-    const { rows } = await admin.query<{ open: number; app: number }>(
+    const { rows } = await admin.query<{ open: number; app: number; ended: Date | null }>(
       `select count(*) filter (where t.ended_at is null)::int as open,
               count(*) filter (where exists (
                 select 1 from audit_entries a
                  where a.table_name = 'tenant_sessions' and a.record_id = t.id
-                   and a.field = 'ended_at' and a.reason = 'second-factor.app'))::int as app
+                   and a.field = 'ended_at' and a.reason = 'second-factor.app'))::int as app,
+              max(t.ended_at) as ended
          from tenant_sessions t
         where t.user_id = $1`,
       [userId],
     )
 
-    expect(rows).toEqual([{ open: 0, app: 1 }])
+    expect(rows).toEqual([{ open: 0, app: 1, ended: ran.rows[0]?.expires_at }])
   })
 
   it('makes no new recovery codes for a day after a reset of the password', async () => {
