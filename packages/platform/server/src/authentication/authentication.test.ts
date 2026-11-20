@@ -1455,29 +1455,60 @@ describe('a session that ran out', () => {
         [renewing.id],
       )
 
+      const holder = await held.query<{ pid: number }>('select pg_backend_pid() as pid')
       const pass = sweepExpiredSessions(instance.database)
+      let blocked = false
 
-      // Until the pass waits for the row the renewal holds.
-      for (let tries = 0; tries < 100; tries += 1) {
-        const { rows } = await admin.query<{ waiting: number }>(
-          `select count(*)::int as waiting from pg_stat_activity where wait_event_type = 'Lock'`,
+      // Until the pass waits for the row the renewal holds, and no further: a
+      // pass that read the row after the commit would prove nothing.
+      for (let tries = 0; tries < 200 && !blocked; tries += 1) {
+        const { rows } = await admin.query<{ blocked: boolean }>(
+          `select exists (
+             select 1 from pg_stat_activity a where $1 = any(pg_blocking_pids(a.pid))
+           ) as blocked`,
+          [holder.rows[0]?.pid],
         )
 
-        if ((rows[0]?.waiting ?? 0) > 0) {
-          break
-        }
+        blocked = rows[0]?.blocked === true
 
-        await new Promise((resolve) => setTimeout(resolve, 50))
+        if (!blocked) {
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
       }
 
       await held.query('commit')
       await pass
+
+      expect(blocked).toBe(true)
     } finally {
       held.release()
     }
 
     expect(await sessionsOf(member.email)).toContain(renewing.id)
     expect(await endOfWork(renewing.id)).toBeNull()
+  })
+
+  it('closes the orphans also when a round fails, and reports that failure', async () => {
+    const ran = await atWork(member.email)
+
+    await admin.query(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where id = $1`,
+      [ran.id],
+    )
+
+    // The close of the round fails once, after its rows went.
+    const failing = vi
+      .spyOn(instance.database, 'forTenant')
+      .mockRejectedValueOnce(new Error('closing failed'))
+
+    try {
+      await expect(sweepExpiredSessions(instance.database)).rejects.toThrow('closing failed')
+    } finally {
+      failing.mockRestore()
+    }
+
+    expect(await sessionsOf(member.email)).not.toContain(ran.id)
+    expect(await endOfWork(ran.id)).toBeInstanceOf(Date)
   })
 
   it('takes a backlog in rounds of a bounded size, all of it in one pass', async () => {

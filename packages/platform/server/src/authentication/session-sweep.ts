@@ -101,57 +101,77 @@ export async function sweepExpiredSessions(
   batch: number = sweepBatch,
 ): Promise<number> {
   let gone = 0
+  let failed = false
+  let failure: unknown
 
-  for (;;) {
-    const expired = await database.forInstance((tx) =>
-      tx
-        .select({
-          id: authSessions.id,
-          userId: authSessions.userId,
-          tenantId: authSessions.activeTenantId,
-          expiresAt: authSessions.expiresAt,
-        })
-        .from(authSessions)
-        .where(lte(authSessions.expiresAt, now))
-        .orderBy(asc(authSessions.expiresAt), asc(authSessions.id))
-        .limit(batch),
-    )
+  // The orphans are closed also after a round failed, so that the stretches
+  // of rows that went before the failure do not wait for the next pass; the
+  // failure of the round is the one reported.
+  try {
+    for (;;) {
+      const expired = await database.forInstance((tx) =>
+        tx
+          .select({
+            id: authSessions.id,
+            userId: authSessions.userId,
+            tenantId: authSessions.activeTenantId,
+            expiresAt: authSessions.expiresAt,
+          })
+          .from(authSessions)
+          .where(lte(authSessions.expiresAt, now))
+          .orderBy(asc(authSessions.expiresAt), asc(authSessions.id))
+          .limit(batch),
+      )
 
-    if (expired.length === 0) {
-      break
-    }
+      if (expired.length === 0) {
+        break
+      }
 
-    const deleted = await database.forInstance((tx) =>
-      tx
-        .delete(authSessions)
-        .where(
-          and(
-            inArray(
-              authSessions.id,
-              expired.map((session) => session.id),
+      const deleted = await database.forInstance((tx) =>
+        tx
+          .delete(authSessions)
+          .where(
+            and(
+              inArray(
+                authSessions.id,
+                expired.map((session) => session.id),
+              ),
+              lte(authSessions.expiresAt, now),
             ),
-            lte(authSessions.expiresAt, now),
-          ),
-        )
-        .returning({
-          id: authSessions.id,
-          userId: authSessions.userId,
-          tenantId: authSessions.activeTenantId,
-          expiresAt: authSessions.expiresAt,
-        }),
-    )
+          )
+          .returning({
+            id: authSessions.id,
+            userId: authSessions.userId,
+            tenantId: authSessions.activeTenantId,
+            expiresAt: authSessions.expiresAt,
+          }),
+      )
 
-    await endStretchesOf(database, deleted, now)
+      await endStretchesOf(database, deleted, now)
 
-    gone += deleted.length
+      gone += deleted.length
 
-    // A short round was the last; one that took nothing would only repeat.
-    if (expired.length < batch || deleted.length === 0) {
-      break
+      // A short round was the last; one that took nothing would only repeat.
+      if (expired.length < batch || deleted.length === 0) {
+        break
+      }
+    }
+  } catch (error) {
+    failed = true
+    failure = error
+  }
+
+  try {
+    await endOrphanedStretches(database, batch)
+  } catch (error) {
+    if (!failed) {
+      throw error
     }
   }
 
-  await endOrphanedStretches(database, batch)
+  if (failed) {
+    throw failure
+  }
 
   return gone
 }
