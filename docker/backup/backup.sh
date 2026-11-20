@@ -157,7 +157,9 @@ fi
 # holds it alone, from before it changes anything until it ends. Backups among
 # themselves go on side by side. The file lies on the volume of the record,
 # which both backup services have and the application only reads, and only
-# root may open it. The path is only ever another one in test-backup.sh.
+# root may open it. compose.yaml names it in BACKUP_LOCK_PATH, so that it
+# stays there when a run points BACKUP_STATUS_PATH elsewhere; without that it
+# lies beside the record, wherever an application mounts it (#1015).
 #
 # What this script starts inherits the lock, and some of it outlives the
 # script for a moment: the watchdog of busybox timeout, say, ends up to a
@@ -167,7 +169,7 @@ fi
 release_lock() {
 	flock -u 8 2>/dev/null || true
 }
-exec 8>>"${BACKUP_LOCK_PATH:-/var/lib/opengewerk/backup-status/.running}"
+exec 8>>"${BACKUP_LOCK_PATH:-${BACKUP_STATUS_PATH:-/var/lib/opengewerk/backup-status}/.running}"
 trap 'stop_watcher; release_lock' EXIT
 if ! flock -s -n 8; then
 	echo "Ein Rückspielen läuft gerade. Gesichert wird erst, wenn es zu Ende ist." >&2

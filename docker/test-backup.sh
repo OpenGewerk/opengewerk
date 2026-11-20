@@ -903,6 +903,29 @@ fi
 : > "$work/lingering.release"
 check 'Rückspielen: gibt die Sperre am Ende frei, auch wenn ein Prozess von ihm noch läuft'
 
+# 4e. Without BACKUP_LOCK_PATH the lock lies beside the record, wherever an
+# application mounts it (#1015): another application has no /var/lib/opengewerk
+# in its containers, and a fixed path there would stop every backup and
+# restore of it.
+rm -f "$BACKUP_STATUS_PATH/.running"
+env -u BACKUP_LOCK_PATH BACKUP_PREFIX=beside-record POSTGRES_DB=opengewerk BACKUP_KEEP=0 \
+  sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
+  cat "$work/out"
+  exit 1
+}
+test -f "$BACKUP_STATUS_PATH/.running" || {
+  echo 'FEHLER: ohne BACKUP_LOCK_PATH lag die Sperre einer Sicherung nicht neben dem Verzeichnis'
+  exit 1
+}
+rm -f "$BACKUP_STATUS_PATH/.running"
+taken env -u BACKUP_LOCK_PATH POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
+test -f "$BACKUP_STATUS_PATH/.running" || {
+  echo 'FEHLER: ohne BACKUP_LOCK_PATH lag die Sperre eines Rückspielens nicht neben dem Verzeichnis'
+  exit 1
+}
+rm -f "$BACKUP_STATUS_PATH/.running"
+check 'Sperre ohne BACKUP_LOCK_PATH: neben dem Verzeichnis der Sicherungen, wo eine Anwendung es einhängt'
+
 # 5. An archive named outright is held to the names "latest" looks among. The
 # archive of the other application lies in the same folder, and by its name or
 # by its path it is turned away before anything is asked of the database, in

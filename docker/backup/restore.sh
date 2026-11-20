@@ -490,7 +490,9 @@ find "$staged" -type d ! -perm -700 -exec chmod u+rwx {} +
 # message names that one, and the hint at the end about starting on the
 # state from before is left out: start.sh would run the migrations on the
 # database the other one is replacing.
-exec 8>>"${BACKUP_LOCK_PATH:-/var/lib/opengewerk/backup-status/.running}"
+#
+# Where the file lies is decided as in backup.sh (#1015).
+exec 8>>"${BACKUP_LOCK_PATH:-${BACKUP_STATUS_PATH:-/var/lib/opengewerk/backup-status}/.running}"
 if ! flock -x -n 8; then
 	if flock -s -n 8; then
 		echo "Eine Sicherung läuft gerade. Zurückgespielt wird erst, wenn sie fertig ist; ob" >&2
