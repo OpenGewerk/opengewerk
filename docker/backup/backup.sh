@@ -150,6 +150,47 @@ if [ ! -d "$STORAGE_PATH" ]; then
 	exit 1
 fi
 
+# Not while a restore runs (#1012). One that began while this backup reads
+# would leave it a mix of the state before and after, and as the newest
+# archive that mix would be the one restore.sh latest takes. Every backup
+# holds this lock shared, from before its first read until it ends; a restore
+# holds it alone, from before it changes anything until it ends. Backups among
+# themselves go on side by side. The file lies on the volume of the record,
+# which both backup services have and the application only reads, and only
+# root may open it. The path is only ever another one in test-backup.sh.
+#
+# What this script starts inherits the lock, and some of it outlives the
+# script for a moment: the watchdog of busybox timeout, say, ends up to a
+# second after its command. So the lock is given up outright at the end,
+# which ends it for every process that holds it through this script; else a
+# restore right after a backup would be turned away.
+release_lock() {
+	flock -u 8 2>/dev/null || true
+}
+exec 8>>"${BACKUP_LOCK_PATH:-/var/lib/opengewerk/backup-status/.running}"
+trap 'stop_watcher; release_lock' EXIT
+if ! flock -s -n 8; then
+	echo "Ein Rückspielen läuft gerade. Gesichert wird erst, wenn es zu Ende ist." >&2
+	exit 1
+fi
+
+# A locked application means a restore (#1012): one under way, one that did
+# not go through after it had replaced the database, one that waits for the
+# migrations, or one that could not give the login back. The database may
+# then stand next to a file store that is only partly back. A backup of that
+# would become the newest archive, the one restore.sh latest takes, and its
+# checks would pass, because they hold the files to the archive itself. So
+# nothing is backed up, on schedule or by hand, until the application has its
+# login back.
+locked=$(superuser_query --command "select not rolcanlogin from pg_catalog.pg_roles where rolname = 'opengewerk_app'")
+if [ "$locked" = t ]; then
+	echo "Die Anwendung ist ausgesperrt: Ein Rückspielen läuft, ist nicht durchgelaufen" >&2
+	echo "oder wartet auf den Start. Gesichert wird erst, wenn sie ihre Anmeldung zurück hat," >&2
+	echo "wie es die Meldung des Rückspielens beschreibt. Eine Sicherung jetzt könnte einen" >&2
+	echo "halben Stand enthalten und würde die neueste, die restore.sh latest nimmt." >&2
+	exit 1
+fi
+
 if [ "$scheduled" = true ]; then
 	# A database that is not migrated yet has no table of tenants at all, and
 	# nothing in it to back up either.
@@ -234,6 +275,7 @@ cleanup() {
 	if [ "$renamed" = true ] && [ "$recorded" = false ]; then
 		remove_from_target "$archive"
 	fi
+	release_lock
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM

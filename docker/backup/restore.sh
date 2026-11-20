@@ -63,6 +63,9 @@ cleanup() {
 	if [ -n "$stopped" ]; then
 		echo "Das Rückspielen wurde angehalten." >&2
 	fi
+	# The lock against backups, taken further below, given up outright: what
+	# this run started may hold it a moment longer, see backup.sh.
+	flock -u 8 2>/dev/null || true
 }
 # Until the application is locked out further below, a run that ends has
 # changed nothing. The documented way stops the application and the nightly
@@ -475,6 +478,31 @@ fi
 # write and enter for its owner.
 find "$staged" -type d ! -perm -700 -exec chmod u+rwx {} +
 
+# --- Not while a backup runs (#1012) ----------------------------------------
+# A backup that read while this run replaces database and store would hold a
+# mix of both, and as the newest archive it would be the one restore.sh
+# latest takes next. Every backup holds this lock shared, from before its
+# first read until it ends. This run holds it alone from here, before it
+# changes anything, until it ends: it does not start while a backup runs, and
+# no backup starts before it is over. See backup.sh.
+#
+# Held by another restore, the lock cannot be had shared either. Then the
+# message names that one, and the hint at the end about starting on the
+# state from before is left out: start.sh would run the migrations on the
+# database the other one is replacing.
+exec 8>>"${BACKUP_LOCK_PATH:-/var/lib/opengewerk/backup-status/.running}"
+if ! flock -x -n 8; then
+	if flock -s -n 8; then
+		echo "Eine Sicherung läuft gerade. Zurückgespielt wird erst, wenn sie fertig ist; ob" >&2
+		echo "die nächtliche läuft, zeigt: docker compose -f docker/compose.yaml logs backup-schedule" >&2
+	else
+		echo "Ein anderes Rückspielen läuft gerade. Dieser Lauf hat nichts geändert. Bis das" >&2
+		echo "andere fertig ist, nichts starten; danach gilt seine Meldung." >&2
+		trap cleanup EXIT
+	fi
+	exit 1
+fi
+
 # --- Lock the application out for the duration ------------------------------
 # Counting open connections was the first attempt at this and it protects
 # against nothing: the pool closes an idle connection after a few seconds, so
@@ -544,6 +572,11 @@ unlock_or_say() {
 was_locked=$(psql --host "$POSTGRES_HOST" --username postgres --dbname postgres --quiet \
 	--tuples-only --no-align \
 	--command "select not rolcanlogin from pg_catalog.pg_roles where rolname = 'opengewerk_app'")
+# And whether that earlier one waits for the migrations: then its note stands
+# on the role, which this run takes off before it changes anything, see below.
+had_note=$(psql --host "$POSTGRES_HOST" --username postgres --dbname postgres --quiet \
+	--tuples-only --no-align \
+	--command "select pg_catalog.shobj_description(oid, 'pg_authid') = '${waiting_note}' from pg_catalog.pg_roles where rolname = 'opengewerk_app'")
 
 # A restore that fails before the database is replaced leaves it as it was,
 # see below, and the application gets its login back: a role left locked would
@@ -572,6 +605,16 @@ unlock_and_cleanup() {
 		echo "" >&2
 		echo "Die Anwendung bleibt ausgesperrt, wie sie es vor diesem Lauf war: ein" >&2
 		echo "früheres Rückspielen ist nicht durchgelaufen oder wartet auf die Migrationen." >&2
+		# Nothing changed, so the note of one that waits goes back on the role.
+		# Should that fail, the role stays locked without it, and start.sh
+		# refuses: the safe way round, and the message says how to go on.
+		if [ "$had_note" = t ] &&
+			! superuser_command_alone "comment on role opengewerk_app is '${waiting_note}'"; then
+			echo "Es wartete auf die Migrationen, und den Vermerk dafür konnte dieser Lauf nicht" >&2
+			echo "zurückschreiben, der Grund steht darüber. Ohne ihn startet sh docker/start.sh" >&2
+			echo "nicht. Im Ordner der Installation schreibt ihn dieser Befehl zurück:" >&2
+			echo "  docker compose -f docker/compose.yaml exec postgres psql -U postgres -c \"comment on role opengewerk_app is '${waiting_note}'\"" >&2
+		fi
 	else
 		unlock_or_say
 	fi
@@ -591,6 +634,15 @@ echo "  Anwendung wird für die Dauer des Rückspielens ausgesperrt."
 echo "  Bleibt sie danach ausgesperrt, gibt ihr erst sh docker/start.sh die Anmeldung"
 echo "  zurück, und das braucht Docker Engine ab 28.3.3."
 lock_application
+# The note of an earlier restore that waits for the migrations goes now,
+# before anything changes (#1012). Left on the role, it would make start.sh
+# give the login back on whatever this run leaves, half a state included, and
+# taking it off later can fail with the very connection that broke the run.
+# Should this run change nothing, the way out puts it back. If taking it off
+# fails, nothing has changed yet, and the note is still there.
+if [ "$had_note" = t ]; then
+	superuser_command "comment on role opengewerk_app is null"
+fi
 # --- Restore the database --------------------------------------------------
 # Everything the owner holds goes first, and the dump is played into what is
 # left, all of it in one transaction (#988). Restoring into a database that

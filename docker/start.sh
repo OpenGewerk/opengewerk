@@ -251,7 +251,7 @@ engine_new_enough
 # application locked, with a note on its role, so that it does not work on a
 # schema older than itself (#988). The migrations have run now, and the login
 # comes back. A role without the note stays as it is: one locked by a restore
-# that did not go through waits for the next one.
+# that did not go through waits for the next one, and the start ends below.
 unlock_after_restore() {
   compose exec -T postgres psql --username postgres --dbname postgres --quiet --no-psqlrc \
     --set ON_ERROR_STOP=1 > /dev/null <<'SQL'
@@ -269,6 +269,22 @@ SQL
 }
 unlock_after_restore ||
   fail 'Nach dem Zurückspielen ließ sich der Anwendung die Anmeldung nicht zurückgeben, der Grund steht darüber.'
+
+# A role still locked now carries no note (#1012). Then a restore is under
+# way, or one did not go through after it had replaced the database, or one
+# could not give the login back at its end. Started now, the application
+# could not sign in, and the nightly backup would take that database together
+# with a file store that may be only partly back, as the newest archive, the
+# one restore.sh latest takes. So neither is started, and the message of the
+# restore says what to do. The migrations have run on that database by now,
+# which does no harm: a restore that goes through replaces it as a whole.
+locked=$(compose exec -T postgres psql --username postgres --dbname postgres --quiet --no-psqlrc \
+  --tuples-only --no-align --set ON_ERROR_STOP=1 \
+  --command "select not rolcanlogin from pg_catalog.pg_roles where rolname = 'opengewerk_app'") ||
+  fail 'Ob die Anwendung ausgesperrt ist, ließ sich nicht prüfen, der Grund steht darüber. Gestartet wird nichts.'
+if [ "$(printf '%s' "$locked" | tr -d '\r')" = t ]; then
+  fail 'Die Anwendung ist ausgesperrt. Ein Rückspielen läuft gerade, ist nicht durchgelaufen oder konnte ihr am Ende die Anmeldung nicht zurückgeben; was zu tun ist, steht in seiner Meldung. Lief es nicht durch, erst eine Sicherung ganz zurückspielen und dann wieder sh docker/start.sh. Bis dahin starten weder die Anwendung noch die nächtliche Sicherung, damit kein halber Stand zur neuesten Sicherung wird.'
+fi
 
 engine_new_enough
 say "$APPLICATION_NAME startet."

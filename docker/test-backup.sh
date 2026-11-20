@@ -60,6 +60,14 @@ cp "$source_dir/backup/backup.sh" "$source_dir/backup/restore.sh" \
 # with a version; whatever else the scripts ask is answered with nothing.
 cat > "$work/bin/pg_dump" <<'FAKE'
 #!/bin/sh
+# A process the dump leaves behind, which outlives the backup with every
+# descriptor but the three standard ones, the way the watchdog of busybox
+# timeout does for a moment (#1012). LINGER names the file for its number; it
+# ends once a file of that name with .release appears, or the folder goes.
+if [ -n "${LINGER:-}" ]; then
+  (while [ ! -f "$LINGER.release" ] && [ -d "${LINGER%/*}" ]; do sleep 0.1; done) < /dev/null > /dev/null 2>&1 &
+  echo "$!" > "$LINGER"
+fi
 # While the dump runs, the sweep of the store may take a file whose last row
 # just went, and somebody may upload one (#991).
 # Where the store keeps a file: two folders from its hash, then the hash.
@@ -153,6 +161,16 @@ if [ -n "${UNLOCK_FAILS:-}" ]; then
       ;;
   esac
 fi
+# With NOTE_BACK_FAILS the note of a restore that waits for the migrations
+# cannot be written back.
+if [ -n "${NOTE_BACK_FAILS:-}" ]; then
+  case "$*" in
+    *"comment on role opengewerk_app is 'restored, waiting for migrations'"*)
+      echo 'psql: error: connection to server failed' >&2
+      exit 2
+      ;;
+  esac
+fi
 printf 'psql %s\n' "$*" >> "$CALLS"
 case " $* " in
   *" --single-transaction "*) printf 'restore-as %s password=%s\n' "$*" "${PGPASSWORD:-}" >> "$CALLS" ;;
@@ -183,7 +201,12 @@ case " $* " in
 esac
 case "$*" in
   *server_version*) echo 18 ;;
-  *rolcanlogin*) echo "${WAS_LOCKED:-f}" ;;
+  *rolcanlogin*)
+    [ "${WAS_LOCKED:-f}" != fails ] || exit 2
+    echo "${WAS_LOCKED:-f}"
+    ;;
+  # Whether the role carries the note of a restore that waits (#1012).
+  *"select pg_catalog.shobj_description"*) echo "${HAD_NOTE:-f}" ;;
   *pg_xact_status*) echo "${XACT_STATUS:-aborted}" ;;
   *"to_regclass('drizzle.__drizzle_migrations')"*) echo t ;;
   # How far the migrations had come: before the dump is played and after.
@@ -223,6 +246,11 @@ fi
 FAKE
 cat > "$work/bin/pg_restore" <<'FAKE'
 #!/bin/sh
+# As with pg_dump: a process left behind until it is released (#1012).
+if [ -n "${LINGER:-}" ]; then
+  (while [ ! -f "$LINGER.release" ] && [ -d "${LINGER%/*}" ]; do sleep 0.1; done) < /dev/null > /dev/null 2>&1 &
+  echo "$!" > "$LINGER"
+fi
 printf 'pg_restore %s password=%s\n' "$*" "${PGPASSWORD:-}" >> "$CALLS"
 [ -z "${PG_RESTORE_FAILS:-}" ] || exit 1
 # The statements of the dump, into the file it is asked to write.
@@ -620,9 +648,10 @@ OPENGEWERK_OWNER_PASSWORD=owner-probe
 STORAGE_PATH="$work/storage"
 BACKUP_PATH="$work/backups"
 BACKUP_STATUS_PATH="$work/status"
+BACKUP_LOCK_PATH="$work/running"
 TMPDIR="$work/tmp"
 CALLS="$work/calls"
-export PATH PGPASSWORD OPENGEWERK_OWNER_PASSWORD STORAGE_PATH BACKUP_PATH BACKUP_STATUS_PATH TMPDIR CALLS
+export PATH PGPASSWORD OPENGEWERK_OWNER_PASSWORD STORAGE_PATH BACKUP_PATH BACKUP_STATUS_PATH BACKUP_LOCK_PATH TMPDIR CALLS
 
 # A key pair for the archives that are encrypted here.
 "$real_age-keygen" -o "$work/key.txt" 2> /dev/null
@@ -761,6 +790,118 @@ fi
 grep -q 'taugt nicht als Anfang eines Dateinamens' "$work/out"
 test "$(ls "$work/backups" | wc -l)" -eq "$before"
 check 'falsches Präfix: abgelehnt, nichts geschrieben'
+
+# 4b. A locked application means a restore under way, one that did not go
+# through, or one that waits for the start (#1012). A backup then could hold
+# half a state and become the newest archive, so none is made, by hand or on
+# schedule, and nothing is written. A question about the lock that fails
+# stops it the same way. The time is fixed: a backup that went through would
+# otherwise meet the one of case 1 within the same second and fail for that.
+for locked in t fails; do
+  for how in '' --scheduled; do
+    before=$(ls "$work/backups" | wc -l)
+    if WAS_LOCKED=$locked POSTGRES_DB=opengewerk BACKUP_KEEP=0 FIXED_STAMP=2031-05-01T000000Z \
+      sh "$work/bin/backup.sh" ${how:+"$how"} > "$work/out" 2>&1; then
+      printf 'FEHLER: die Sicherung %s lief bei WAS_LOCKED=%s durch\n' "${how:-von Hand}" "$locked"
+      cat "$work/out"
+      exit 1
+    fi
+    if [ "$locked" = t ] && ! grep -q 'Die Anwendung ist ausgesperrt' "$work/out"; then
+      printf 'FEHLER: die Sicherung %s brach nicht an der Sperre ab\n' "${how:-von Hand}"
+      cat "$work/out"
+      exit 1
+    fi
+    test "$(ls "$work/backups" | wc -l)" -eq "$before"
+  done
+done
+check 'ausgesperrte Anwendung: keine Sicherung, von Hand und geplant, nichts geschrieben'
+
+# 4c. Backup and restore exclude each other (#1012): no backup starts while a
+# restore holds the lock, and no restore starts while a backup holds it, nor
+# does it change anything then. Two backups go on side by side. The holder
+# takes the lock the way the other script would and keeps it until released.
+hold() {
+  rm -f "$work/held" "$work/release"
+  (
+    flock "$1" 8
+    : > "$work/held"
+    until [ -f "$work/release" ]; do sleep 0.1; done
+  ) 8>> "$BACKUP_LOCK_PATH" &
+  holder=$!
+  until [ -f "$work/held" ]; do sleep 0.1; done
+}
+release() {
+  : > "$work/release"
+  wait "$holder"
+}
+
+hold -x
+before=$(ls "$work/backups" | wc -l)
+status=0
+POSTGRES_DB=opengewerk BACKUP_KEEP=0 FIXED_STAMP=2031-05-02T000000Z sh "$work/bin/backup.sh" > "$work/out" 2>&1 || status=$?
+release
+if [ "$status" -eq 0 ] || ! grep -q 'Ein Rückspielen läuft gerade' "$work/out"; then
+  echo 'FEHLER: eine Sicherung brach nicht ab, während ein Rückspielen die Sperre hielt'
+  cat "$work/out"
+  exit 1
+fi
+test "$(ls "$work/backups" | wc -l)" -eq "$before"
+
+hold -s
+refused 'Eine Sicherung läuft gerade' env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
+release
+grep -q 'von diesem Lauf unverändert' "$work/out"
+
+# Held by another restore: the message names that one, and it does not send
+# anybody to start.sh, which would migrate the database the other replaces.
+hold -x
+refused 'Ein anderes Rückspielen läuft gerade' env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
+release
+if grep -q 'start.sh' "$work/out"; then
+  echo 'FEHLER: neben einem anderen Rückspielen rät die Meldung zum Start'
+  cat "$work/out"
+  exit 1
+fi
+
+hold -s
+status=0
+BACKUP_PREFIX=beside POSTGRES_DB=opengewerk BACKUP_KEEP=0 sh "$work/bin/backup.sh" > "$work/out" 2>&1 || status=$?
+release
+if [ "$status" -ne 0 ]; then
+  echo 'FEHLER: eine Sicherung lief nicht neben einer anderen'
+  cat "$work/out"
+  exit 1
+fi
+check 'Sicherung und Rückspielen schließen sich aus, zwei Sicherungen laufen nebeneinander'
+
+# 4d. What a backup started may outlive it and still hold the lock through
+# it. The backup gives the lock up at its end, so that a restore right after
+# it is not turned away; the process it left is still there when that is
+# checked, and released after it.
+rm -f "$work/lingering.release"
+LINGER="$work/lingering" BACKUP_PREFIX=lingering POSTGRES_DB=opengewerk BACKUP_KEEP=0 \
+  sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
+  cat "$work/out"
+  exit 1
+}
+kill -0 "$(cat "$work/lingering")"
+if ! flock -x -n "$BACKUP_LOCK_PATH" true; then
+  echo 'FEHLER: nach dem Ende einer Sicherung hält ein Prozess, den sie gestartet hat, noch die Sperre'
+  exit 1
+fi
+: > "$work/lingering.release"
+check 'Sicherung: gibt die Sperre am Ende frei, auch wenn ein Prozess von ihr noch läuft'
+
+# The same for a restore, so that a backup right after it is not turned away.
+rm -f "$work/lingering.release"
+taken env LINGER="$work/lingering" POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
+kill -0 "$(cat "$work/lingering")"
+if ! flock -s -n "$BACKUP_LOCK_PATH" true; then
+  echo 'FEHLER: nach dem Ende eines Rückspielens hält ein Prozess, den es gestartet hat, noch die Sperre'
+  exit 1
+fi
+: > "$work/lingering.release"
+check 'Rückspielen: gibt die Sperre am Ende frei, auch wenn ein Prozess von ihm noch läuft'
 
 # 5. An archive named outright is held to the names "latest" looks among. The
 # archive of the other application lies in the same folder, and by its name or
@@ -1293,6 +1434,50 @@ grep -q 'wie sie es vor diesem Lauf war' "$work/out" || {
   cat "$work/out"
   exit 1
 }
+# Locked by an earlier run that waits for the migrations (#1012): its note
+# goes before anything changes, and when this run fails before the dump it
+# goes back, for start.sh. Taken off only on the way out, a connection that
+# broke the run could leave it on half a state, where start.sh would give the
+# login back.
+first_call() {
+  grep -n -m 1 -e "$1" "$CALLS" | cut -d: -f1
+}
+waiting_note="comment on role opengewerk_app is 'restored, waiting for migrations'"
+halfway WAS_LOCKED=t HAD_NOTE=t PG_RESTORE_FAILS=1
+cleared=$(first_call '--command comment on role opengewerk_app is null')
+dumped=$(first_call '^pg_restore ')
+back=$(grep -n -F -e "$waiting_note" "$CALLS" | tail -n 1 | cut -d: -f1)
+if [ -z "$cleared" ] || [ -z "$dumped" ] || [ "$cleared" -gt "$dumped" ]; then
+  echo 'FEHLER: der Vermerk eines wartenden Rückspielens ging nicht vor dem Einspielen weg'
+  cat "$CALLS"
+  exit 1
+fi
+if [ -z "$back" ] || [ "$back" -lt "$cleared" ]; then
+  echo 'FEHLER: ein Lauf, der nichts geändert hat, schrieb den Vermerk nicht zurück'
+  cat "$CALLS"
+  exit 1
+fi
+# Failed once the database counts as replaced, the note stays off.
+halfway WAS_LOCKED=t HAD_NOTE=t PLAY_FAILS=1 XACT_STATUS=committed
+cleared=$(first_call '--command comment on role opengewerk_app is null')
+played=$(first_call '^restore-as ')
+if [ -z "$cleared" ] || [ -z "$played" ] || [ "$cleared" -gt "$played" ]; then
+  echo 'FEHLER: der Vermerk eines wartenden Rückspielens ging nicht vor dem Einspielen weg'
+  cat "$CALLS"
+  exit 1
+fi
+if grep -q -F -e "$waiting_note" "$CALLS"; then
+  echo 'FEHLER: nach dem Ersetzen der Datenbank steht der Vermerk wieder an der Rolle'
+  exit 1
+fi
+# A note that cannot be written back is said, with the command for it.
+halfway WAS_LOCKED=t HAD_NOTE=t PG_RESTORE_FAILS=1 NOTE_BACK_FAILS=1
+grep -q 'schreibt ihn dieser Befehl zurück' "$work/out" || {
+  echo 'FEHLER: die Meldung sagt nicht, dass der Vermerk fehlt und wie er zurückkommt'
+  cat "$work/out"
+  exit 1
+}
+check 'Rückspielen: der Vermerk eines wartenden Laufs geht vor dem Einspielen weg und kommt nur zurück, wenn sich nichts geändert hat'
 # psql fails while playing: the database is asked how the transaction ended.
 # Committed, or not known, the application stays locked; aborted, it gets its
 # login back.

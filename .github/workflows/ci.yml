@@ -794,6 +794,10 @@ jobs:
         working-directory: docker
         run: sh test-stack.sh superuser-reads
 
+      - name: Nach einem halben Rückspielen starten weder Anwendung noch nächtliche Sicherung
+        working-directory: docker
+        run: sh test-stack.sh half-restore
+
       - name: Protokolle bei einem Fehlschlag
         if: failure()
         working-directory: docker

@@ -710,9 +710,25 @@ Kopieren des Dateispeichers oder an der Prüfung der Audit-Ketten, kann die
 Datenbank schon ersetzt und der Dateispeicher zum Teil ersetzt sein (siehe
 unten). Dann bleibt die
 Anwendung angehalten, bis die Ursache behoben und die Sicherung noch einmal
-zurückgespielt ist. Gestartet wird sie mit `start.sh` wie nach einem Update:
+zurückgespielt ist. Darauf achten auch `start.sh` und die Sicherung (#1012): Ist
+die Anwendung ausgesperrt, ohne dass ein Rückspielen sie zum Warten auf die
+Migrationen vermerkt hat, bricht `start.sh` nach den Migrationen ab und startet
+weder sie noch die nächtliche Sicherung. Und `backup.sh` sichert nichts, solange
+die Anwendung ausgesperrt ist, weder nachts noch von Hand; ein halber Stand würde
+sonst die neueste Sicherung, die `latest` nimmt. Gestartet wird sie mit `start.sh` wie nach einem Update:
 Stammt die Sicherung von einer älteren Fassung, laufen zuerst die Migrationen,
 und fehlt der Container noch, etwa auf einer neuen Maschine, legt es ihn an.
+
+Sicherung und Rückspielen schließen sich aus, auch eine Sicherung von Hand. Jede
+Sicherung hält eine geteilte Sperre auf `.running` im Volume `backup-status`,
+vom ersten Lesen bis zum Ende; das Rückspielen hält sie allein, bevor es etwas
+ändert, bis es fertig ist. Läuft gerade eine Sicherung, lehnt `restore.sh` ab
+und ändert nichts, und solange es läuft, beginnt keine Sicherung. Sonst läse
+eine Sicherung womöglich die Datenbank vor und den Dateispeicher nach dem
+Rückspielen. Mehrere Sicherungen laufen weiter nebeneinander. Läuft schon ein
+anderes Rückspielen, lehnt ein zweites ebenso ab und rät nicht zu `start.sh`:
+Das würde die Migrationen auf der Datenbank ausführen, die das andere gerade
+ersetzt. Erst wenn das andere fertig ist, gilt seine Meldung.
 
 **Eine verschlüsselte Sicherung** braucht den privaten Schlüssel, und der liegt
 nicht auf dieser Maschine (siehe „Verschlüsselung und Aufbewahrung“). Er wird
@@ -819,7 +835,13 @@ die Meldung sagt das. Ein Anhalten mit Strg+C oder `docker stop` endet genauso:
 Der laufende Schritt bricht ab, ein abgebrochenes Einspielen fragt die Datenbank
 noch nach dem Ausgang, und die Anwendung bekommt ihre Anmeldung nur zurück, wenn
 die Datenbank nicht ersetzt ist (#1007). Ebenso bleibt sie ausgesperrt, wenn
-sie schon vor dem Lauf ausgesperrt war, weil ein früherer nicht durchlief. Ein
+sie schon vor dem Lauf ausgesperrt war, weil ein früherer nicht durchlief. Wartete
+ein früherer auf die Migrationen, nimmt der Lauf dessen Vermerk gleich nach dem
+Aussperren von der Rolle, bevor er etwas ändert, und schreibt ihn nur zurück,
+wenn er scheitert, bevor die Datenbank ersetzt ist (#1012). So kann kein
+Vermerk auf einem halben Stand stehen bleiben, auf dem `start.sh` sonst die
+Anmeldung zurückgäbe; lässt er sich nicht zurückschreiben, nennt die Meldung den
+Befehl dafür. Ein
 Lauf, der durchgeht, gibt die Anmeldung zurück oder überlässt das dem Start,
 siehe unten. Lässt sie sich nicht zurückgeben, etwa weil die Verbindung abbricht,
 sagt der Lauf das, nennt den Befehl dafür und endet mit einem Fehler (#1007).

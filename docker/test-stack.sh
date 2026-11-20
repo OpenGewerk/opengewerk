@@ -830,6 +830,11 @@ restore)
   cat "$temp/restore.txt"
   grep -q 'Herkunft geprüft' "$temp/restore.txt" ||
     fail 'Zurückgespielt wurde, ohne die Herkunft der Sicherung zu prüfen.'
+  # The checks of the refused restores look for this sentence to see that
+  # nothing was locked. It has to stand where a restore does lock, or those
+  # checks would pass whatever happens.
+  grep -q 'für die Dauer des Rückspielens ausgesperrt' "$temp/restore.txt" ||
+    fail 'Das Rückspielen sagt nicht, dass es die Anwendung aussperrt. Genau diesen Satz suchen die Prüfungen, nach denen ein abgelehntes Rückspielen nichts gesperrt hat.'
   [ "$(value "select to_regclass('public.later_things') is null")" = t ] ||
     fail 'Was eine spätere Migration angelegt hatte, steht nach dem Rückspielen noch.'
   echo 'Zurückgespielt über das, was eine spätere Migration angelegt hatte.'
@@ -1046,6 +1051,57 @@ superuser-reads)
   [ "$scheduled" = '02:30' ] ||
     fail "Der Zeitplan nahm aus einer Sicht ${scheduled} statt der Vorgabe 02:30."
   echo 'Eine Sicht an der Stelle von audit_chains oder instance_settings liest weder die Sicherung noch der Zeitplan.'
+  ;;
+
+half-restore)
+  # What a restore leaves that did not go through after it had replaced the
+  # database (#1012): the application locked without the note of one that
+  # waits for the migrations, application and nightly backup stopped. A start
+  # must bring up neither of them, and a backup by hand is refused: it would
+  # become the newest archive, the one restore.sh latest takes, with a file
+  # store that may be only partly back. Whatever stops the step, the
+  # application gets its login back; at its end the stack runs again.
+  give_back() {
+    sql "alter role opengewerk_app login; comment on role opengewerk_app is null" > /dev/null
+  }
+  # Counted from the service backup: backup-schedule is stopped here.
+  stored() {
+    compose --profile backup run --rm --entrypoint sh backup -c '. /usr/local/bin/names.sh && find "$BACKUP_PATH" -maxdepth 1 -name "$archives" | wc -l' | tr -d '\r '
+  }
+  trap give_back EXIT
+  before=$(stored)
+  compose stop app backup-schedule
+  sql "alter role opengewerk_app nologin; comment on role opengewerk_app is null" > /dev/null
+
+  status=0
+  with_address sh "$scripts/start.sh" > "$temp/start-half.txt" 2>&1 || status=$?
+  cat "$temp/start-half.txt"
+  [ "$status" -ne 0 ] || fail 'start.sh lief durch, obwohl die Anwendung ohne Vermerk ausgesperrt war.'
+  grep -q 'Die Anwendung ist ausgesperrt' "$temp/start-half.txt" ||
+    fail 'start.sh brach ab, aber nicht an der ausgesperrten Anwendung.'
+  running=$(compose ps --status running --services | tr -d '\r')
+  if printf '%s\n' "$running" | grep -qx -e app -e backup-schedule; then
+    fail "Nach dem Abbruch von start.sh laufen: $(printf '%s' "$running" | tr '\n' ' ')"
+  fi
+  echo 'Bei ausgesperrter Anwendung startet start.sh weder sie noch die nächtliche Sicherung.'
+
+  if compose --profile backup run --rm backup backup.sh > "$temp/backup-half.txt" 2>&1; then
+    cat "$temp/backup-half.txt"
+    fail 'Die Sicherung lief durch, obwohl die Anwendung ausgesperrt war.'
+  fi
+  cat "$temp/backup-half.txt"
+  grep -q 'Die Anwendung ist ausgesperrt' "$temp/backup-half.txt" ||
+    fail 'Die Sicherung brach ab, aber nicht an der ausgesperrten Anwendung.'
+  [ "$(stored)" = "$before" ] || fail 'Bei ausgesperrter Anwendung ist ein Archiv dazugekommen.'
+  echo 'Bei ausgesperrter Anwendung wird auch eine Sicherung von Hand abgelehnt.'
+
+  give_back
+  trap - EXIT
+  if ! with_address sh "$scripts/start.sh" > "$temp/start-again.txt" 2>&1; then
+    cat "$temp/start-again.txt"
+    fail 'start.sh ist mit zurückgegebener Anmeldung gescheitert.'
+  fi
+  echo 'Mit zurückgegebener Anmeldung startet die Instanz wieder.'
   ;;
 
 # --- Update einer laufenden Instanz ------------------------------------------
