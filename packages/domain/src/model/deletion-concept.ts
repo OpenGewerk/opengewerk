@@ -68,11 +68,11 @@ export function erasureWhen(kind: ErasureKind, settings: DeletionSettings): stri
     case 'sickness':
       return 'zwölf Monate nach ihrem letzten Tag'
     case 'staff_year':
-      return 'die Arbeitszeiten, die Rufbereitschaft, der Urlaub und der Urlaubsanspruch eines Jahres acht Jahre nach dessen Ende'
+      return 'die Arbeitszeiten, die Rufbereitschaft, der Urlaub und der Urlaubsanspruch eines Jahres acht Jahre nach dessen Ende, ein Jahr, das die Rentenversicherung noch nicht geprüft hat, erst nach dem Ende des Jahres nach ihrer Prüfung (§ 28f Abs. 1 SGB IV)'
     case 'person':
       return 'die Akte einer ausgetretenen Person drei Jahre nach dem Ende ihres Austrittsjahres, sobald ihr Zugang geendet hat'
     case 'site':
-      return 'das Objekt eines gelöschten Kunden dreißig Jahre nach dem letzten unterschriebenen Protokoll daran, ohne Protokoll nach dem letzten abgeschlossenen Auftrag dort'
+      return 'das Objekt eines gelöschten Kunden dreißig Jahre nach dem letzten unterschriebenen Protokoll oder abgeschlossenen Auftrag dort, je nachdem, was später kam'
   }
 }
 

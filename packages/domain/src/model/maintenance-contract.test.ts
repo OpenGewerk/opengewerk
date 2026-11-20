@@ -172,7 +172,8 @@ describe('the terms towards a consumer (§ 309 Nr. 9 BGB, #294)', () => {
     // A quote before the day changes nothing about a contract begun before it.
     expect(consumerTermsNotice(shippedRules, before, day('2022-01-10'))).toBeNull()
     // And a contract begun after the day counts from its begin, also when it
-    // was quoted before: the later of the two decides, not the quote.
+    // was quoted before: concluded in between, on a day OpenGewerk does not
+    // hold, it may have been either, and the notice says rather too much.
     expect(
       consumerTermsNotice(
         shippedRules,

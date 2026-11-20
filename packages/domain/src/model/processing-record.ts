@@ -129,7 +129,7 @@ export const processingActivities = [
     subjects: 'Kunden; Beschäftigte, die prüfen und unterschreiben',
     data: 'Anschrift des Objekts, Anlagen mit Struktur, Prüfprotokolle mit Messwerten und Unterschrift, Mängel, Fotos, Zugänge zum Objekt (versiegelt)',
     deletion:
-      'ohne Kundendaten bis dreißig Jahre nach dem letzten unterschriebenen Protokoll, ohne Protokoll nach dem letzten Auftrag dort',
+      'ohne Kundendaten bis dreißig Jahre nach dem letzten unterschriebenen Protokoll oder Auftrag dort, je nachdem, was später kam',
     purpose: 'Anlagen errichten, prüfen und warten, Prüfungen nachweisen und Mängel beheben',
     legalBasis:
       'Art. 6 Abs. 1 Buchst. b und c DSGVO; für den Nachweis Art. 6 Abs. 1 Buchst. f DSGVO',

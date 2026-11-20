@@ -11,11 +11,12 @@ import { retentionOf } from './retention.js'
  * that caused the damage (section 199 (2) and (3) sentence 1 no. 2 BGB, the
  * period `site_records` in the rule package `retention`, #1019).
  *
- * The thirty years count from the youngest signed protocol at the site: of an
+ * The thirty years count from the youngest signed protocol at the site, of an
  * installation, of an appliance of the register (DGUV regulation 3) or the
- * acceptance of a job there, since each of them can be the proof. A site
- * without any counts from its last job closed, since claims come from the
- * work; one without either goes with its customer.
+ * acceptance of a job there, since each of them can be the proof, or from its
+ * last job closed where that came later (#1019): a claim comes from the work,
+ * and a job done after the last protocol is work as well. A site with neither
+ * goes with its customer.
  */
 
 /** What the thirty years of a site count from. */
@@ -24,12 +25,15 @@ export interface SiteErasureAnchor {
   readonly on: IsoDate
 }
 
-/** The anchor of a site: its youngest signed protocol, else its last job closed, else none. */
+/** The anchor of a site: its youngest signed protocol or its last job closed, whichever came later, else none. */
 export function siteErasureAnchor(facts: {
   readonly lastProtocolOn: IsoDate | null
   readonly lastJobClosedOn: IsoDate | null
 }): SiteErasureAnchor | null {
-  if (facts.lastProtocolOn !== null) {
+  if (
+    facts.lastProtocolOn !== null &&
+    (facts.lastJobClosedOn === null || facts.lastProtocolOn >= facts.lastJobClosedOn)
+  ) {
     return { kind: 'protocol', on: facts.lastProtocolOn }
   }
 

@@ -9,13 +9,27 @@ import { siteErasureAnchor, siteErasureDueOn, siteHoldSentence } from './site-er
 const today = '2026-11-05' as IsoDate
 
 describe('when the site of a deleted customer falls due (#848)', () => {
-  it('counts from the youngest signed protocol, else from the last job closed, else from nothing', () => {
+  it('counts from the youngest signed protocol or the last job closed, whichever came later, else from nothing', () => {
+    expect(
+      siteErasureAnchor({
+        lastProtocolOn: '2018-05-02' as IsoDate,
+        lastJobClosedOn: '2016-03-14' as IsoDate,
+      }),
+    ).toEqual({ kind: 'protocol', on: '2018-05-02' })
+    // A job done after the last protocol is work a claim can come from as
+    // well (#1019).
     expect(
       siteErasureAnchor({
         lastProtocolOn: '2016-03-14' as IsoDate,
         lastJobClosedOn: '2018-05-02' as IsoDate,
       }),
-    ).toEqual({ kind: 'protocol', on: '2016-03-14' })
+    ).toEqual({ kind: 'job', on: '2018-05-02' })
+    expect(
+      siteErasureAnchor({
+        lastProtocolOn: '2018-05-02' as IsoDate,
+        lastJobClosedOn: '2018-05-02' as IsoDate,
+      }),
+    ).toEqual({ kind: 'protocol', on: '2018-05-02' })
     expect(
       siteErasureAnchor({ lastProtocolOn: null, lastJobClosedOn: '2015-09-30' as IsoDate }),
     ).toEqual({ kind: 'job', on: '2015-09-30' })

@@ -17,6 +17,7 @@ import {
   probeOrigin as origin,
   reached,
 } from './probe-application.js'
+import { renewSession } from './session-lifetime.js'
 import { sweepExpiredSessions } from './session-sweep.js'
 import { addStaffMember } from './staff.js'
 
@@ -1375,6 +1376,25 @@ describe('a session that ran out', () => {
     )
 
     expect(ended.some((entry) => entry.reason === 'session.expire')).toBe(true)
+  })
+
+  it('is not renewed by a request that read it a moment before it ran out', async () => {
+    const ran = await atWork(member.email)
+    const { rows } = await admin.query<{ expires_at: Date; user_id: string }>(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where id = $1
+       returning expires_at, user_id`,
+      [ran.id],
+    )
+    const read = { id: ran.id, expiresAt: new Date(Date.now() + 60_000), longLived: false }
+
+    expect(await renewSession(instance.database, read, rows[0]?.user_id ?? '')).toBe(false)
+
+    const after = await admin.query<{ expires_at: Date }>(
+      'select expires_at from auth_sessions where id = $1',
+      [ran.id],
+    )
+
+    expect(after.rows[0]?.expires_at.getTime()).toBe(rows[0]?.expires_at.getTime())
   })
 
   it('ends its work also when better-auth takes it out as its cookie comes back', async () => {

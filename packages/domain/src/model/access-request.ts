@@ -190,7 +190,7 @@ export const accessPurposes: Readonly<Record<PersonalSubject, string>> = {
 /** How long the data stay (Art. 15 (1) d DSGVO), after the deletion concept of the business. */
 export const accessStorage: Readonly<Record<PersonalSubject, string>> = {
   customer:
-    'Rechnungen und Regieberichte acht Jahre, Angebote und andere Geschäftsbriefe sechs Jahre, jeweils ab dem Ende des Jahres (§ 147 AO, § 257 HGB). Objekt, Anlagen und Prüfprotokolle bleiben ohne Ihre Daten bis dreißig Jahre nach dem letzten Protokoll (§ 199 Abs. 2 und 3 BGB). Alles andere geht, wenn mit Ihnen nichts mehr läuft und lange kein Kontakt war, oder auf Ihre Bitte.',
+    'Rechnungen und Regieberichte acht Jahre, Angebote und andere Geschäftsbriefe sechs Jahre, jeweils ab dem Ende des Jahres (§ 147 AO, § 257 HGB). Objekt, Anlagen und Prüfprotokolle bleiben ohne Ihre Daten bis dreißig Jahre nach dem letzten Protokoll oder Auftrag dort (§ 199 Abs. 2 und 3 BGB). Alles andere geht, wenn mit Ihnen nichts mehr läuft und lange kein Kontakt war, oder auf Ihre Bitte.',
   contact:
     'Ihre Daten bleiben, solange der Betrieb den Kunden führt, für den Sie Ansprechpartner sind, und gehen mit ihm.',
   prospect:

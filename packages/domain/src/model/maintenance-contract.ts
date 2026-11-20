@@ -407,7 +407,10 @@ export function visitDescription(
  * and rarely after it begins. The limits are read on the later of the two, so
  * a contract quoted from the 1st of March 2022 on always gets the law that
  * holds for it, and the law of before only reaches a contract that was both
- * quoted and begun before that day (#1020).
+ * quoted and begun before that day (#1020). A contract quoted before and
+ * begun after it may have been concluded on either side; it gets the law of
+ * after, since a notice too many is something the office checks, and one too
+ * few a void term it never hears of.
  */
 export function consumerTermsNotice(
   rules: RuleSet,

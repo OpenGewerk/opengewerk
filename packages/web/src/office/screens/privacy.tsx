@@ -201,7 +201,7 @@ function DueTable({
   const [problem, setProblem] = useState<string | null>(null)
   const chosen = due.filter((entry) => !unselected.has(entry.recordId))
   const note =
-    'Ein Lead, der nie Kunde wurde, kommt nach dem letzten Kontakt hierher, vorgegeben nach zwölf Monaten; ein Kunde, wenn mit ihm nichts mehr läuft, vorgegeben drei Jahre nach dem letzten Kontakt, oder auf seine Löschanfrage. Die Dauer steht unter Fristen bei „Lead löschen“ und „Kunde löschen“. Eine Krankheit kommt zwölf Monate nach ihrem letzten Tag, Arbeitszeiten und Urlaub eines Jahres acht Jahre nach dessen Ende und die Akte einer Person drei Jahre nach dem Ende ihres Austrittsjahres, sobald ihr Zugang geendet hat. Das Objekt eines gelöschten Kunden kommt dreißig Jahre nach dem letzten unterschriebenen Protokoll daran, ohne Protokoll nach dem letzten Auftrag dort.'
+    'Ein Lead, der nie Kunde wurde, kommt nach dem letzten Kontakt hierher, vorgegeben nach zwölf Monaten; ein Kunde, wenn mit ihm nichts mehr läuft, vorgegeben drei Jahre nach dem letzten Kontakt, oder auf seine Löschanfrage. Die Dauer steht unter Fristen bei „Lead löschen“ und „Kunde löschen“. Eine Krankheit kommt zwölf Monate nach ihrem letzten Tag, Arbeitszeiten und Urlaub eines Jahres acht Jahre nach dessen Ende und die Akte einer Person drei Jahre nach dem Ende ihres Austrittsjahres, sobald ihr Zugang geendet hat. Das Objekt eines gelöschten Kunden kommt dreißig Jahre nach dem letzten unterschriebenen Protokoll oder Auftrag dort, je nachdem, was später kam.'
   const counts = Object.fromEntries(
     erasureKinds.map((kind) => [kind, chosen.filter((entry) => entry.kind === kind).length]),
   ) as Readonly<Record<ErasureKind, number>>
@@ -368,7 +368,7 @@ const automaticWords: Readonly<Record<ErasureKind, string>> = {
     'Eingeschaltet löscht der Lauf die Arbeitszeiten, die Rufbereitschaft, den Urlaub und den Urlaubsanspruch eines Jahres von selbst, sobald sie als Lohnunterlage nicht mehr aufzubewahren sind. Ob die Rentenversicherung das Jahr bis dahin geprüft hat (§ 28f Abs. 1 SGB IV), weiß der Lauf nicht.',
   person:
     'Eingeschaltet löscht der Lauf die Akte einer ausgetretenen Person von selbst, mit ihrer Arbeitszeit, ihren Qualifikationen und ihrem Zugang.',
-  site: 'Eingeschaltet löscht der Lauf das Objekt eines gelöschten Kunden dreißig Jahre nach dem letzten unterschriebenen Protokoll, ohne Protokoll nach dem letzten abgeschlossenen Auftrag dort, von selbst, mit seinen Anlagen, Geräten, Protokollen, Mängeln und Dateien.',
+  site: 'Eingeschaltet löscht der Lauf das Objekt eines gelöschten Kunden dreißig Jahre nach dem letzten unterschriebenen Protokoll oder abgeschlossenen Auftrag dort, je nachdem, was später kam, von selbst, mit seinen Anlagen, Geräten, Protokollen, Mängeln und Dateien.',
 }
 
 /**

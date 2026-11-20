@@ -136,7 +136,7 @@ export type DeadlineAction = (typeof deadlineActions)[number]
  * - `person`: the file of somebody who left, three years after the end of the
  *   year they left (#846, `personErasureDueOn`). Coming back lets it drop.
  * - `site`: the site of a deleted customer, thirty years after its youngest
- *   signed protocol or, without one, its last job closed (#848,
+ *   signed protocol or its last job closed, whichever came later (#848,
  *   `siteErasureDueOn`). A maintenance contract there that has not ended
  *   lets it drop.
  *
@@ -505,7 +505,7 @@ export const sourceWords: Readonly<
     person: 'Der Inhaber',
     interval: {
       label: 'Fällig nach',
-      hint: 'Fällig dreißig Jahre nach dem letzten unterschriebenen Protokoll am Objekt, ohne Protokoll nach dem letzten Auftrag dort.',
+      hint: 'Fällig dreißig Jahre nach dem letzten unterschriebenen Protokoll oder abgeschlossenen Auftrag am Objekt, je nachdem, was später kam.',
     },
     anchor: 'dem letzten Protokoll',
   },
