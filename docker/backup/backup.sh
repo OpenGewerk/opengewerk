@@ -169,7 +169,12 @@ fi
 release_lock() {
 	flock -u 8 2>/dev/null || true
 }
-exec 8>>"${BACKUP_LOCK_PATH:-${BACKUP_STATUS_PATH:-/var/lib/opengewerk/backup-status}/.running}"
+#
+# Its folder is made first, as the record makes it further below: a backup
+# that writes the first record of an instance finds no folder yet.
+lock_file=${BACKUP_LOCK_PATH:-${BACKUP_STATUS_PATH:-/var/lib/opengewerk/backup-status}/.running}
+mkdir -p -m 0755 "$(dirname "$lock_file")"
+exec 8>>"$lock_file"
 trap 'stop_watcher; release_lock' EXIT
 if ! flock -s -n 8; then
 	echo "Ein Rückspielen läuft gerade. Gesichert wird erst, wenn es zu Ende ist." >&2

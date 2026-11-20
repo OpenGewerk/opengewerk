@@ -924,7 +924,19 @@ test -f "$BACKUP_STATUS_PATH/.running" || {
   exit 1
 }
 rm -f "$BACKUP_STATUS_PATH/.running"
-check 'Sperre ohne BACKUP_LOCK_PATH: neben dem Verzeichnis der Sicherungen, wo eine Anwendung es einhängt'
+# Its folder is made first: the first backup of an instance and a restore on
+# a new machine find none yet.
+env -u BACKUP_LOCK_PATH BACKUP_STATUS_PATH="$work/fresh-backup-status" BACKUP_PREFIX=fresh-status \
+  POSTGRES_DB=opengewerk BACKUP_KEEP=0 sh "$work/bin/backup.sh" > "$work/out" 2>&1 || {
+  echo 'FEHLER: eine Sicherung ohne Verzeichnis der Sicherungen scheiterte'
+  cat "$work/out"
+  exit 1
+}
+test -f "$work/fresh-backup-status/.running"
+taken env -u BACKUP_LOCK_PATH BACKUP_STATUS_PATH="$work/fresh-restore-status" POSTGRES_DB=opengewerk \
+  sh "$work/bin/restore.sh" --skip-origin-check "$ours"
+test -f "$work/fresh-restore-status/.running"
+check 'Sperre ohne BACKUP_LOCK_PATH: neben dem Verzeichnis der Sicherungen, wo eine Anwendung es einhängt, auch wenn es noch fehlt'
 
 # 5. An archive named outright is held to the names "latest" looks among. The
 # archive of the other application lies in the same folder, and by its name or
