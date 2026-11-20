@@ -161,6 +161,16 @@ if [ -n "${UNLOCK_FAILS:-}" ]; then
       ;;
   esac
 fi
+# With NOTE_BACK_FAILS the note of a restore that waits for the migrations
+# cannot be written back.
+if [ -n "${NOTE_BACK_FAILS:-}" ]; then
+  case "$*" in
+    *"comment on role opengewerk_app is 'restored, waiting for migrations'"*)
+      echo 'psql: error: connection to server failed' >&2
+      exit 2
+      ;;
+  esac
+fi
 printf 'psql %s\n' "$*" >> "$CALLS"
 case " $* " in
   *" --single-transaction "*) printf 'restore-as %s password=%s\n' "$*" "${PGPASSWORD:-}" >> "$CALLS" ;;
@@ -195,6 +205,8 @@ case "$*" in
     [ "${WAS_LOCKED:-f}" != fails ] || exit 2
     echo "${WAS_LOCKED:-f}"
     ;;
+  # Whether the role carries the note of a restore that waits (#1012).
+  *"select pg_catalog.shobj_description"*) echo "${HAD_NOTE:-f}" ;;
   *pg_xact_status*) echo "${XACT_STATUS:-aborted}" ;;
   *"to_regclass('drizzle.__drizzle_migrations')"*) echo t ;;
   # How far the migrations had come: before the dump is played and after.
@@ -1422,6 +1434,50 @@ grep -q 'wie sie es vor diesem Lauf war' "$work/out" || {
   cat "$work/out"
   exit 1
 }
+# Locked by an earlier run that waits for the migrations (#1012): its note
+# goes before anything changes, and when this run fails before the dump it
+# goes back, for start.sh. Taken off only on the way out, a connection that
+# broke the run could leave it on half a state, where start.sh would give the
+# login back.
+first_call() {
+  grep -n -m 1 -e "$1" "$CALLS" | cut -d: -f1
+}
+waiting_note="comment on role opengewerk_app is 'restored, waiting for migrations'"
+halfway WAS_LOCKED=t HAD_NOTE=t PG_RESTORE_FAILS=1
+cleared=$(first_call '--command comment on role opengewerk_app is null')
+dumped=$(first_call '^pg_restore ')
+back=$(grep -n -F -e "$waiting_note" "$CALLS" | tail -n 1 | cut -d: -f1)
+if [ -z "$cleared" ] || [ -z "$dumped" ] || [ "$cleared" -gt "$dumped" ]; then
+  echo 'FEHLER: der Vermerk eines wartenden Rückspielens ging nicht vor dem Einspielen weg'
+  cat "$CALLS"
+  exit 1
+fi
+if [ -z "$back" ] || [ "$back" -lt "$cleared" ]; then
+  echo 'FEHLER: ein Lauf, der nichts geändert hat, schrieb den Vermerk nicht zurück'
+  cat "$CALLS"
+  exit 1
+fi
+# Failed once the database counts as replaced, the note stays off.
+halfway WAS_LOCKED=t HAD_NOTE=t PLAY_FAILS=1 XACT_STATUS=committed
+cleared=$(first_call '--command comment on role opengewerk_app is null')
+played=$(first_call '^restore-as ')
+if [ -z "$cleared" ] || [ -z "$played" ] || [ "$cleared" -gt "$played" ]; then
+  echo 'FEHLER: der Vermerk eines wartenden Rückspielens ging nicht vor dem Einspielen weg'
+  cat "$CALLS"
+  exit 1
+fi
+if grep -q -F -e "$waiting_note" "$CALLS"; then
+  echo 'FEHLER: nach dem Ersetzen der Datenbank steht der Vermerk wieder an der Rolle'
+  exit 1
+fi
+# A note that cannot be written back is said, with the command for it.
+halfway WAS_LOCKED=t HAD_NOTE=t PG_RESTORE_FAILS=1 NOTE_BACK_FAILS=1
+grep -q 'schreibt ihn dieser Befehl zurück' "$work/out" || {
+  echo 'FEHLER: die Meldung sagt nicht, dass der Vermerk fehlt und wie er zurückkommt'
+  cat "$work/out"
+  exit 1
+}
+check 'Rückspielen: der Vermerk eines wartenden Laufs geht vor dem Einspielen weg und kommt nur zurück, wenn sich nichts geändert hat'
 # psql fails while playing: the database is asked how the transaction ended.
 # Committed, or not known, the application stays locked; aborted, it gets its
 # login back.

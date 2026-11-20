@@ -835,7 +835,13 @@ die Meldung sagt das. Ein Anhalten mit Strg+C oder `docker stop` endet genauso:
 Der laufende Schritt bricht ab, ein abgebrochenes Einspielen fragt die Datenbank
 noch nach dem Ausgang, und die Anwendung bekommt ihre Anmeldung nur zurück, wenn
 die Datenbank nicht ersetzt ist (#1007). Ebenso bleibt sie ausgesperrt, wenn
-sie schon vor dem Lauf ausgesperrt war, weil ein früherer nicht durchlief. Ein
+sie schon vor dem Lauf ausgesperrt war, weil ein früherer nicht durchlief. Wartete
+ein früherer auf die Migrationen, nimmt der Lauf dessen Vermerk gleich nach dem
+Aussperren von der Rolle, bevor er etwas ändert, und schreibt ihn nur zurück,
+wenn er scheitert, bevor die Datenbank ersetzt ist (#1012). So kann kein
+Vermerk auf einem halben Stand stehen bleiben, auf dem `start.sh` sonst die
+Anmeldung zurückgäbe; lässt er sich nicht zurückschreiben, nennt die Meldung den
+Befehl dafür. Ein
 Lauf, der durchgeht, gibt die Anmeldung zurück oder überlässt das dem Start,
 siehe unten. Lässt sie sich nicht zurückgeben, etwa weil die Verbindung abbricht,
 sagt der Lauf das, nennt den Befehl dafür und endet mit einem Fehler (#1007).
