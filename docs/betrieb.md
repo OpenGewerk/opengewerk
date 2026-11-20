@@ -710,7 +710,12 @@ Kopieren des Dateispeichers oder an der Prüfung der Audit-Ketten, kann die
 Datenbank schon ersetzt und der Dateispeicher zum Teil ersetzt sein (siehe
 unten). Dann bleibt die
 Anwendung angehalten, bis die Ursache behoben und die Sicherung noch einmal
-zurückgespielt ist. Gestartet wird sie mit `start.sh` wie nach einem Update:
+zurückgespielt ist. Darauf achten auch `start.sh` und die Sicherung (#1012): Ist
+die Anwendung ausgesperrt, ohne dass ein Rückspielen sie zum Warten auf die
+Migrationen vermerkt hat, bricht `start.sh` nach den Migrationen ab und startet
+weder sie noch die nächtliche Sicherung. Und `backup.sh` sichert nichts, solange
+die Anwendung ausgesperrt ist, weder nachts noch von Hand; ein halber Stand würde
+sonst die neueste Sicherung, die `latest` nimmt. Gestartet wird sie mit `start.sh` wie nach einem Update:
 Stammt die Sicherung von einer älteren Fassung, laufen zuerst die Migrationen,
 und fehlt der Container noch, etwa auf einer neuen Maschine, legt es ihn an.
 

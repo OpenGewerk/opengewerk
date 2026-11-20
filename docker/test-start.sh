@@ -26,13 +26,19 @@ cp "$source_dir/start.sh" "$source_dir/setup.sh" "$source_dir/.env.example" \
 # of the engine in DOCKER_SERVER, 28.3.3 when it is not set, and its ID. The one
 # question start.sh asks the running application, whether it still waits for
 # its first run, is answered with SETUP_NEEDED, false when it is not set and
-# nothing at all when it is empty.
+# nothing at all when it is empty. Whether the role of the application is
+# still locked after the migrations is answered with APP_LOCKED, f when it is
+# not set; "fails" makes the question fail.
 cat > "$work/bin/docker" <<'FAKE'
 #!/bin/sh
 eval "seen=\${${WATCHED:-OPENGEWERK_VERSION}:-}"
 printf '%s|%s\n' "$seen" "$*" >> "$CALLS"
 case "$*" in
   *' exec -T app '*) printf '%s' "${SETUP_NEEDED-false}" ;;
+  *' exec -T postgres psql '*rolcanlogin*)
+    [ "${APP_LOCKED:-f}" != fails ] || exit 2
+    printf '%s\n' "${APP_LOCKED:-f}"
+    ;;
   "info --format {{.ServerVersion}}|{{.ID}}")
     # The engine answers its version and its ID at once. DOCKER_SERVERS and
     # DOCKER_IDS answer the questions in turn, the last one for every
@@ -70,7 +76,7 @@ export CALLS PATH
 # Which engine start.sh talks to is what case 13 checks; nothing of the
 # machine this runs on comes in.
 unset DOCKER_CONTEXT DOCKER_HOST CONTEXT_FAILS CONTEXT_IN_USE DOCKER_SERVER DOCKER_SERVERS DOCKER_ID DOCKER_IDS \
-  WATCHED SETUP_NEEDED TRUSTED_ORIGINS
+  WATCHED SETUP_NEEDED TRUSTED_ORIGINS APP_LOCKED
 
 check() {
   printf 'check: %s\n' "$1"
@@ -123,6 +129,25 @@ awk '/\|compose -f .*compose.yaml run --rm migrate$/ { migrated = NR }
   exit 1
 }
 check 'Zurückspielen: die Anmeldung der Anwendung kommt nach der Migration zurück, vor dem Start'
+
+# 1c. A role still locked after that carries no note: a restore is under way,
+# did not go through, or could not give the login back (#1012). Neither the
+# application nor the nightly backup starts then, and the start says why. A
+# question that fails stops the start the same way.
+refused_start() {
+  : > "$CALLS"
+  status=0
+  APP_LOCKED=$1 OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null > "$work/out" 2>&1 || status=$?
+  if [ "$status" -eq 0 ] || ! grep -q -- "$2" "$work/out"; then
+    printf 'FEHLER: start.sh mit APP_LOCKED=%s endete mit %s und sagte:\n' "$1" "$status"
+    cat "$work/out"
+    exit 1
+  fi
+  absent ' up -d'
+}
+refused_start t 'Die Anwendung ist ausgesperrt'
+refused_start fails 'ließ sich nicht prüfen'
+check 'Gesperrte Anwendung ohne Vermerk: weder Anwendung noch nächtliche Sicherung gestartet'
 
 # 2. A release kit: the version in compose.yaml, written there the way the
 # release workflow writes it.

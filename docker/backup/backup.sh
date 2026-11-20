@@ -150,6 +150,23 @@ if [ ! -d "$STORAGE_PATH" ]; then
 	exit 1
 fi
 
+# A locked application means a restore (#1012): one under way, one that did
+# not go through after it had replaced the database, one that waits for the
+# migrations, or one that could not give the login back. The database may
+# then stand next to a file store that is only partly back. A backup of that
+# would become the newest archive, the one restore.sh latest takes, and its
+# checks would pass, because they hold the files to the archive itself. So
+# nothing is backed up, on schedule or by hand, until the application has its
+# login back.
+locked=$(superuser_query --command "select not rolcanlogin from pg_catalog.pg_roles where rolname = 'opengewerk_app'")
+if [ "$locked" = t ]; then
+	echo "Die Anwendung ist ausgesperrt: Ein Rückspielen läuft, ist nicht durchgelaufen" >&2
+	echo "oder wartet auf den Start. Gesichert wird erst, wenn sie ihre Anmeldung zurück hat," >&2
+	echo "wie es die Meldung des Rückspielens beschreibt. Eine Sicherung jetzt könnte einen" >&2
+	echo "halben Stand enthalten und würde die neueste, die restore.sh latest nimmt." >&2
+	exit 1
+fi
+
 if [ "$scheduled" = true ]; then
 	# A database that is not migrated yet has no table of tenants at all, and
 	# nothing in it to back up either.

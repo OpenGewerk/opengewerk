@@ -183,7 +183,10 @@ case " $* " in
 esac
 case "$*" in
   *server_version*) echo 18 ;;
-  *rolcanlogin*) echo "${WAS_LOCKED:-f}" ;;
+  *rolcanlogin*)
+    [ "${WAS_LOCKED:-f}" != fails ] || exit 2
+    echo "${WAS_LOCKED:-f}"
+    ;;
   *pg_xact_status*) echo "${XACT_STATUS:-aborted}" ;;
   *"to_regclass('drizzle.__drizzle_migrations')"*) echo t ;;
   # How far the migrations had come: before the dump is played and after.
@@ -761,6 +764,31 @@ fi
 grep -q 'taugt nicht als Anfang eines Dateinamens' "$work/out"
 test "$(ls "$work/backups" | wc -l)" -eq "$before"
 check 'falsches Präfix: abgelehnt, nichts geschrieben'
+
+# 4b. A locked application means a restore under way, one that did not go
+# through, or one that waits for the start (#1012). A backup then could hold
+# half a state and become the newest archive, so none is made, by hand or on
+# schedule, and nothing is written. A question about the lock that fails
+# stops it the same way. The time is fixed: a backup that went through would
+# otherwise meet the one of case 1 within the same second and fail for that.
+for locked in t fails; do
+  for how in '' --scheduled; do
+    before=$(ls "$work/backups" | wc -l)
+    if WAS_LOCKED=$locked POSTGRES_DB=opengewerk BACKUP_KEEP=0 FIXED_STAMP=2031-05-01T000000Z \
+      sh "$work/bin/backup.sh" ${how:+"$how"} > "$work/out" 2>&1; then
+      printf 'FEHLER: die Sicherung %s lief bei WAS_LOCKED=%s durch\n' "${how:-von Hand}" "$locked"
+      cat "$work/out"
+      exit 1
+    fi
+    if [ "$locked" = t ] && ! grep -q 'Die Anwendung ist ausgesperrt' "$work/out"; then
+      printf 'FEHLER: die Sicherung %s brach nicht an der Sperre ab\n' "${how:-von Hand}"
+      cat "$work/out"
+      exit 1
+    fi
+    test "$(ls "$work/backups" | wc -l)" -eq "$before"
+  done
+done
+check 'ausgesperrte Anwendung: keine Sicherung, von Hand und geplant, nichts geschrieben'
 
 # 5. An archive named outright is held to the names "latest" looks among. The
 # archive of the other application lies in the same folder, and by its name or
