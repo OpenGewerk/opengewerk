@@ -1397,6 +1397,45 @@ describe('a session that ran out', () => {
     expect(after.rows[0]?.expires_at.getTime()).toBe(rows[0]?.expires_at.getTime())
   })
 
+  it('is not brought back by a choice of tenant that read it a moment before it ran out', async () => {
+    const ran = await atWork(member.email)
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where id = $1
+       returning expires_at`,
+      [ran.id],
+    )
+    const expiredAt = rows[0]?.expires_at.getTime() ?? 0
+
+    // The request reads the session by the clock of the process, a moment
+    // before it ran out, and writes after it, by the clock of the database.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(expiredAt - 30_000)
+
+    try {
+      await http()
+        .post('/auth/tenant')
+        .set('cookie', ran.cookies)
+        .set('origin', origin)
+        .send({ tenantId: north.id })
+        .expect(401)
+    } finally {
+      vi.useRealTimers()
+    }
+
+    const after = await admin.query<{ expires_at: Date }>(
+      'select expires_at from auth_sessions where id = $1',
+      [ran.id],
+    )
+    const open = await admin.query(
+      'select 1 from tenant_sessions where session_id = $1 and ended_at is null',
+      [ran.id],
+    )
+
+    expect(after.rows[0]?.expires_at.getTime()).toBe(expiredAt)
+    // The stretch it had stays the one the sweep ends; no second one opens.
+    expect(open.rowCount).toBe(1)
+  })
+
   it('takes a backlog in rounds of a bounded size, all of it in one pass', async () => {
     const template = await atWork(member.email)
     const backlog = Array.from({ length: 5 }, () => newId<'session'>())
