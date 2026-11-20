@@ -63,6 +63,9 @@ cleanup() {
 	if [ -n "$stopped" ]; then
 		echo "Das Rückspielen wurde angehalten." >&2
 	fi
+	# The lock against backups, taken further below, given up outright: what
+	# this run started may hold it a moment longer, see backup.sh.
+	flock -u 8 2>/dev/null || true
 }
 # Until the application is locked out further below, a run that ends has
 # changed nothing. The documented way stops the application and the nightly
@@ -474,6 +477,20 @@ fi
 # it. In the checked folder, which is root's alone, every folder gets read,
 # write and enter for its owner.
 find "$staged" -type d ! -perm -700 -exec chmod u+rwx {} +
+
+# --- Not while a backup runs (#1012) ----------------------------------------
+# A backup that read while this run replaces database and store would hold a
+# mix of both, and as the newest archive it would be the one restore.sh
+# latest takes next. Every backup holds this lock shared, from before its
+# first read until it ends. This run holds it alone from here, before it
+# changes anything, until it ends: it does not start while a backup runs, and
+# no backup starts before it is over. See backup.sh.
+exec 8>>"${BACKUP_LOCK_PATH:-/var/lib/opengewerk/backup-status/.running}"
+if ! flock -x -n 8; then
+	echo "Eine Sicherung läuft gerade. Zurückgespielt wird erst, wenn sie fertig ist; ob" >&2
+	echo "die nächtliche läuft, zeigt: docker compose -f docker/compose.yaml logs backup-schedule" >&2
+	exit 1
+fi
 
 # --- Lock the application out for the duration ------------------------------
 # Counting open connections was the first attempt at this and it protects

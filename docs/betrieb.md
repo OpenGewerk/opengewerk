@@ -719,6 +719,14 @@ sonst die neueste Sicherung, die `latest` nimmt. Gestartet wird sie mit `start.s
 Stammt die Sicherung von einer älteren Fassung, laufen zuerst die Migrationen,
 und fehlt der Container noch, etwa auf einer neuen Maschine, legt es ihn an.
 
+Sicherung und Rückspielen schließen sich aus, auch eine Sicherung von Hand. Jede
+Sicherung hält eine geteilte Sperre auf `.running` im Volume `backup-status`,
+vom ersten Lesen bis zum Ende; das Rückspielen hält sie allein, bevor es etwas
+ändert, bis es fertig ist. Läuft gerade eine Sicherung, lehnt `restore.sh` ab
+und ändert nichts, und solange es läuft, beginnt keine Sicherung. Sonst läse
+eine Sicherung womöglich die Datenbank vor und den Dateispeicher nach dem
+Rückspielen. Mehrere Sicherungen laufen weiter nebeneinander.
+
 **Eine verschlüsselte Sicherung** braucht den privaten Schlüssel, und der liegt
 nicht auf dieser Maschine (siehe „Verschlüsselung und Aufbewahrung“). Er wird
 nur für diesen einen Lauf hineingereicht, als Datei, die nur root lesen kann:
