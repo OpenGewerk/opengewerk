@@ -12,6 +12,7 @@ import {
   authUsers,
   authVerifications,
 } from '../schema.js'
+import { endStretchesOf } from './session-sweep.js'
 
 /**
  * The count of an account's credentials, against a session written after
@@ -296,8 +297,15 @@ export async function endRevokedSession(database: Database, sessionId: string): 
           sql`${authSessions.credentialGeneration} is distinct from (select ${authUsers.credentialGeneration} from ${authUsers} where ${authUsers.id} = ${authSessions.userId})`,
         ),
       )
-      .returning({ id: authSessions.id }),
+      .returning({
+        id: authSessions.id,
+        userId: authSessions.userId,
+        tenantId: authSessions.activeTenantId,
+      }),
   )
+
+  // What it had open in a tenant ends with it (opengewerk#1029).
+  await endStretchesOf(database, ended, new Date(), 'session.revoke')
 
   return ended.length > 0
 }

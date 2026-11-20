@@ -478,6 +478,35 @@ describe('the second factor of an account', () => {
     expect(rows).toEqual([{ open: 1, renewed: 1 }])
   })
 
+  /**
+   * Setting the app up ends the sessions of the account that began with the
+   * password alone (opengewerk-haustechnik#360), and what one of them had open
+   * in a tenant ends with it, at once and under the reason of the app
+   * (opengewerk#1029). Until then it stayed open, and the sweep of sessions
+   * would later have closed it as one that ran out.
+   */
+  it('ends the work of a session the app ends, at once and named after the app', async () => {
+    const email = 'app-ende@nord.example.de'
+    const userId = await leader(email)
+    const other = await withPassword(email)
+
+    await instance.chooseTenant(other, north.id)
+    await setUpApp(email)
+
+    const { rows } = await admin.query<{ open: number; app: number }>(
+      `select count(*) filter (where t.ended_at is null)::int as open,
+              count(*) filter (where exists (
+                select 1 from audit_entries a
+                 where a.table_name = 'tenant_sessions' and a.record_id = t.id
+                   and a.field = 'ended_at' and a.reason = 'second-factor.app'))::int as app
+         from tenant_sessions t
+        where t.user_id = $1`,
+      [userId],
+    )
+
+    expect(rows).toEqual([{ open: 0, app: 1 }])
+  })
+
   it('makes no new recovery codes for a day after a reset of the password', async () => {
     const email = 'zurueckgesetzt@nord.example.de'
     const userId = await leader(email)

@@ -6,12 +6,15 @@ import { everyTenant } from '../database/every-tenant.js'
 import { authSessions, tenantSessions } from '../schema.js'
 import { type RepeatingJob, startRepeating } from '../start/repeat.js'
 
-/** A session that is gone, with what its stretch of work in a tenant needs. */
+/**
+ * A session that is gone, with what its stretch of work in a tenant needs:
+ * when it ran out, where that is known and is why it went.
+ */
 export interface EndedSession {
   readonly id: string
   readonly userId: string
   readonly tenantId: string | null
-  readonly expiresAt: Date
+  readonly expiresAt?: Date
 }
 
 /**
@@ -19,12 +22,14 @@ export interface EndedSession {
  * out closes them: the row is the tenant's record that somebody worked in it,
  * and an open one would say they still do. A stretch ends when its session
  * ran out, or now where it went before that. One transaction per tenant, so
- * that each change lands in that tenant's log.
+ * that each change lands in that tenant's log, under the reason the caller
+ * names, or else whether the sessions ran out or were ended.
  */
 export async function endStretchesOf(
   database: Database,
   sessions: readonly EndedSession[],
   now: Date = new Date(),
+  reason?: string,
 ): Promise<void> {
   const byTenant = new Map<TenantId, EndedSession[]>()
 
@@ -37,15 +42,22 @@ export async function endStretchesOf(
   }
 
   for (const [tenantId, ended] of byTenant) {
-    const expired = ended.every((session) => session.expiresAt <= now)
+    const expired = ended.every(
+      (session) => session.expiresAt !== undefined && session.expiresAt <= now,
+    )
 
     await database.forTenant(
-      { tenantId, reason: expired ? 'session.expire' : 'session.end' },
+      { tenantId, reason: reason ?? (expired ? 'session.expire' : 'session.end') },
       async (tx) => {
         for (const session of ended) {
           await tx
             .update(tenantSessions)
-            .set({ endedAt: session.expiresAt < now ? session.expiresAt : now })
+            .set({
+              endedAt:
+                session.expiresAt !== undefined && session.expiresAt < now
+                  ? session.expiresAt
+                  : now,
+            })
             .where(
               and(
                 eq(tenantSessions.tenantId, tenantId),

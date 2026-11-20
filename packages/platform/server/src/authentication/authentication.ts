@@ -1321,6 +1321,11 @@ async function generationAtSignIn(
  * that a sign in with the password alone that began before the app was there
  * is refused as it writes its session (`credentials.ts`), and the sessions
  * that stay take the new count. Anywhere else only the rows go.
+ *
+ * Either way what the ended sessions had open in a tenant is closed after the
+ * rows went, tenant by tenant, as `endOtherSessions` does (opengewerk#1029):
+ * left open, it would say the person still works there until the sweep of
+ * sessions found it and named the wrong reason and time.
  */
 async function endSessionsWithoutSecondFactor(
   database: Database,
@@ -1328,23 +1333,24 @@ async function endSessionsWithoutSecondFactor(
   keep: string,
   appSetUp: boolean,
 ): Promise<void> {
-  await database.forInstance(async (tx) => {
+  const ended = await database.forInstance(async (tx) => {
     if (!appSetUp) {
-      await tx.delete(authSessions).where(
-        and(
-          eq(authSessions.userId, userId),
-          ne(authSessions.id, keep),
-          eq(authSessions.secondFactor, false),
-          exists(
-            tx
-              .select({ id: authUsers.id })
-              .from(authUsers)
-              .where(and(eq(authUsers.id, userId), eq(authUsers.twoFactorEnabled, true))),
+      return tx
+        .delete(authSessions)
+        .where(
+          and(
+            eq(authSessions.userId, userId),
+            ne(authSessions.id, keep),
+            eq(authSessions.secondFactor, false),
+            exists(
+              tx
+                .select({ id: authUsers.id })
+                .from(authUsers)
+                .where(and(eq(authUsers.id, userId), eq(authUsers.twoFactorEnabled, true))),
+            ),
           ),
-        ),
-      )
-
-      return
+        )
+        .returning({ id: authSessions.id, tenantId: authSessions.activeTenantId })
     }
 
     const [account] = await tx
@@ -1353,13 +1359,22 @@ async function endSessionsWithoutSecondFactor(
       .where(eq(authUsers.id, userId))
 
     if (account?.app !== true) {
-      return
+      return []
     }
 
-    await revokeCredentials(
+    const revoked = await revokeCredentials(
       tx,
       userId,
       or(theSession(keep), eq(authSessions.secondFactor, true)) ?? theSession(keep),
     )
+
+    return revoked.ended
   }, userId)
+
+  await endStretchesOf(
+    database,
+    ended.map((session) => ({ ...session, userId })),
+    new Date(),
+    appSetUp ? 'second-factor.app' : 'session.second-factor',
+  )
 }
