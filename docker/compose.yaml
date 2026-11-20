@@ -348,6 +348,10 @@ services:
       # the name and SHA-256 of every archive it wrote, which restore.sh and
       # verify.sh hold an archive to. On the instance, never on the target.
       BACKUP_STATUS_PATH: /var/lib/opengewerk/backup-status
+      # The lock that keeps backups and a restore apart (#1012), on the same
+      # volume. Named here, so that it stays there when a run points
+      # BACKUP_STATUS_PATH elsewhere (#1015).
+      BACKUP_LOCK_PATH: /var/lib/opengewerk/backup-status/.running
       # How many generations to keep. 14 daily runs is a fortnight, which is
       # long enough to notice that something went wrong before the last good
       # copy is gone.
