@@ -103,6 +103,8 @@ export async function sweepExpiredSessions(
   let gone = 0
   let failed = false
   let failure: unknown
+  // The rows of a round that went and whose stretches are not closed yet.
+  let pending: readonly EndedSession[] = []
 
   // The orphans are closed also after a round failed, so that the stretches
   // of rows that went before the failure do not wait for the next pass; the
@@ -147,7 +149,9 @@ export async function sweepExpiredSessions(
           }),
       )
 
+      pending = deleted
       await endStretchesOf(database, deleted, now)
+      pending = []
 
       gone += deleted.length
 
@@ -159,6 +163,17 @@ export async function sweepExpiredSessions(
   } catch (error) {
     failed = true
     failure = error
+  }
+
+  // A round that failed after its rows went tries their stretches once more,
+  // with the time each ran out, which only this pass still knows. What is
+  // left after that goes with the orphans, at the time they are closed.
+  if (pending.length > 0) {
+    try {
+      await endStretchesOf(database, pending, now)
+    } catch {
+      // The orphans below take what is left.
+    }
   }
 
   try {

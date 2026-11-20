@@ -1490,9 +1490,9 @@ describe('a session that ran out', () => {
 
   it('closes the orphans also when a round fails, and reports that failure', async () => {
     const ran = await atWork(member.email)
-
-    await admin.query(
-      `update auth_sessions set expires_at = now() - interval '1 minute' where id = $1`,
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where id = $1
+       returning expires_at`,
       [ran.id],
     )
 
@@ -1508,7 +1508,8 @@ describe('a session that ran out', () => {
     }
 
     expect(await sessionsOf(member.email)).not.toContain(ran.id)
-    expect(await endOfWork(ran.id)).toBeInstanceOf(Date)
+    // Still when it ran out: the pass knew that, and tried once more.
+    expect((await endOfWork(ran.id))?.getTime()).toBe(rows[0]?.expires_at.getTime())
   })
 
   it('takes a backlog in rounds of a bounded size, all of it in one pass', async () => {
