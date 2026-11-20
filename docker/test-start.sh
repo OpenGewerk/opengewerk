@@ -120,8 +120,11 @@ check 'Quelltext: Anwendung und Sicherung gebaut, nichts geholt'
 # back if a restore of an older backup left it locked (#988): after the
 # migration, so that it never works on the older schema, and before the
 # start, which would otherwise wait for an application that cannot sign in.
+# The call that gives it back is the one whose statement comes on stdin, so
+# its arguments end with ON_ERROR_STOP; the question of 1c ends with its
+# statement and does not count here.
 awk '/\|compose -f .*compose.yaml run --rm migrate$/ { migrated = NR }
-  /\|compose -f .*compose.yaml exec -T postgres psql / { unlocked = NR }
+  /\|compose -f .*compose.yaml exec -T postgres psql .*--set ON_ERROR_STOP=1$/ { unlocked = NR }
   /\|compose -f .*compose.yaml up -d --wait/ { started = NR }
   END { exit !(migrated && unlocked && started && migrated < unlocked && unlocked < started) }' "$CALLS" || {
   echo 'FEHLER: die Anmeldung nach einem Zurückspielen kommt nicht zwischen Migration und Start zurück'

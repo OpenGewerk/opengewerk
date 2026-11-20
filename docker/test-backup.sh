@@ -840,6 +840,17 @@ refused 'Eine Sicherung läuft gerade' env POSTGRES_DB=opengewerk sh "$work/bin/
 release
 grep -q 'von diesem Lauf unverändert' "$work/out"
 
+# Held by another restore: the message names that one, and it does not send
+# anybody to start.sh, which would migrate the database the other replaces.
+hold -x
+refused 'Ein anderes Rückspielen läuft gerade' env POSTGRES_DB=opengewerk sh "$work/bin/restore.sh" "$ours"
+release
+if grep -q 'start.sh' "$work/out"; then
+  echo 'FEHLER: neben einem anderen Rückspielen rät die Meldung zum Start'
+  cat "$work/out"
+  exit 1
+fi
+
 hold -s
 status=0
 BACKUP_PREFIX=beside POSTGRES_DB=opengewerk BACKUP_KEEP=0 sh "$work/bin/backup.sh" > "$work/out" 2>&1 || status=$?

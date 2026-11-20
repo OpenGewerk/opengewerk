@@ -485,10 +485,21 @@ find "$staged" -type d ! -perm -700 -exec chmod u+rwx {} +
 # first read until it ends. This run holds it alone from here, before it
 # changes anything, until it ends: it does not start while a backup runs, and
 # no backup starts before it is over. See backup.sh.
+#
+# Held by another restore, the lock cannot be had shared either. Then the
+# message names that one, and the hint at the end about starting on the
+# state from before is left out: start.sh would run the migrations on the
+# database the other one is replacing.
 exec 8>>"${BACKUP_LOCK_PATH:-/var/lib/opengewerk/backup-status/.running}"
 if ! flock -x -n 8; then
-	echo "Eine Sicherung läuft gerade. Zurückgespielt wird erst, wenn sie fertig ist; ob" >&2
-	echo "die nächtliche läuft, zeigt: docker compose -f docker/compose.yaml logs backup-schedule" >&2
+	if flock -s -n 8; then
+		echo "Eine Sicherung läuft gerade. Zurückgespielt wird erst, wenn sie fertig ist; ob" >&2
+		echo "die nächtliche läuft, zeigt: docker compose -f docker/compose.yaml logs backup-schedule" >&2
+	else
+		echo "Ein anderes Rückspielen läuft gerade. Dieser Lauf hat nichts geändert. Bis das" >&2
+		echo "andere fertig ist, nichts starten; danach gilt seine Meldung." >&2
+		trap cleanup EXIT
+	fi
 	exit 1
 fi
 
