@@ -687,6 +687,7 @@ const foundationReasonWords: Readonly<Record<string, string>> = {
   'session.start': 'Anmeldung',
   'session.end': 'Abmeldung',
   'session.revoke': 'Gerät abgemeldet',
+  'session.expire': 'Von selbst, Sitzung abgelaufen',
   'passkey.add': 'Passkey hinzugefügt',
   'passkey.rename': 'Passkey umbenannt',
   'passkey.remove': 'Passkey gelöscht',

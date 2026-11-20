@@ -1,6 +1,6 @@
 {
   "package": "elektro.vde-0100-600",
-  "note": "Grenzwerte der Erstprüfung nach DIN VDE 0100-600, für das Prüfprotokoll (#79). Vorprüfung am 24.09.2026 anhand der genannten Normen; die fachkundige Abnahme steht aus wie bei den Regelpaketen in #31, und bis dahin ist jeder Wert eine Hilfe beim Ablesen und keine Freigabe. Alle gelten ab dem 01.06.2017, dem Ausgabedatum von DIN VDE 0100-600:2017-06, nach der das Protokoll aufgebaut ist; ein früheres Prüfdatum bekommt keinen Grenzwert statt eines erfundenen. Ausgaben und Abschnitte der Gerätenormen sind am 20.11.2026 in #31 geprüft (#731): DIN EN 60898-1 gilt in der Ausgabe 2025-08, die von 2020-11 ist zurückgezogen; Abschnitte und Tabellen stehen in IEC 60898-1:2015+AMD1:2019, IEC 61008-1:2010 und IEC 61009-1:2010, auf denen die deutschen Ausgaben beruhen.",
+  "note": "Grenzwerte der Erstprüfung nach DIN VDE 0100-600, für das Prüfprotokoll (#79). Vorprüfung am 24.09.2026 anhand der genannten Normen; die fachkundige Abnahme steht aus wie bei den Regelpaketen in #31, und bis dahin ist jeder Wert eine Hilfe beim Ablesen und keine Freigabe. Alle gelten ab dem 01.06.2017, dem Ausgabedatum von DIN VDE 0100-600:2017-06, nach der das Protokoll aufgebaut ist; ein früheres Prüfdatum bekommt keinen Grenzwert statt eines erfundenen. Ausgaben und Abschnitte der Gerätenormen sind am 20.11.2026 in #31 geprüft (#731): DIN EN 60898-1 gilt in der Ausgabe 2025-08, die von 2020-11 ist zurückgezogen; Abschnitte und Tabellen stehen in IEC 60898-1:2015+AMD1:2019, IEC 61008-1:2010 und IEC 61009-1:2010, auf denen die deutschen Ausgaben beruhen. Eine Fundstelle mit Ausgabe gilt ab dem Monat dieser Ausgabe; davor nennt der Datensatz die Norm ohne Ausgabe, wie bis #1020, damit ein Protokoll aus der Zeit davor keine Ausgabe nennt, die es am Tag der Prüfung noch nicht gab (die Werte sind in beiden gleich).",
   "records": [
     {
       "key": "elektro.insulation.minimum_up_to_500v",
@@ -14,6 +14,15 @@
     {
       "key": "elektro.rcd.trip_time_maximum",
       "validFrom": "2017-06-01",
+      "validUntil": "2023-07-31",
+      "unit": "milliseconds",
+      "value": 300,
+      "source": "DIN EN 61008-1 (VDE 0664-10) und DIN EN 61009-1 (VDE 0664-20), Höchstwert der Abschaltzeit bei IΔn",
+      "note": "Für Fehlerstromschutzeinrichtungen ohne Verzögerung. Eine selektive (S) darf länger brauchen; das Protokoll unterscheidet sie in dieser Fassung noch nicht."
+    },
+    {
+      "key": "elektro.rcd.trip_time_maximum",
+      "validFrom": "2023-08-01",
       "validUntil": null,
       "unit": "milliseconds",
       "value": 300,
@@ -23,6 +32,15 @@
     {
       "key": "elektro.rcd.trip_current_maximum",
       "validFrom": "2017-06-01",
+      "validUntil": "2018-02-28",
+      "unit": "basis_points",
+      "value": 10000,
+      "source": "DIN EN 61008-1 (VDE 0664-10), Auslösung zwischen 0,5 IΔn und IΔn",
+      "note": "Höchstens der Bemessungsdifferenzstrom, den das Stromkreisverzeichnis für den Stromkreis nennt."
+    },
+    {
+      "key": "elektro.rcd.trip_current_maximum",
+      "validFrom": "2018-03-01",
       "validUntil": null,
       "unit": "basis_points",
       "value": 10000,
@@ -32,6 +50,15 @@
     {
       "key": "elektro.loop.nominal_voltage",
       "validFrom": "2017-06-01",
+      "validUntil": "2018-09-30",
+      "unit": "volts",
+      "value": 230,
+      "source": "DIN VDE 0100-410 (VDE 0100-410), 411.4.4, Zs × Ia ≤ U0 mit U0 = 230 V nach DIN EN 60038",
+      "note": "Die Schleifenimpedanz, bei der der Leitungsschutzschalter noch unverzögert auslöst, aus der Nennspannung gegen Erde und dem Auslösestrom Ia. Das ist der ungeminderte Grenzwert. Der informative Anhang D der DIN VDE 0100-600:2017-06 setzt für den gemessenen Wert zwei Drittel davon an, weil die Leiter im Betrieb wärmer sind als bei der Messung, und im Hauptteil nennen die Anmerkungen 4 und 5 zu 6.4.3.7.3 eine Messunsicherheit von ± 30 % und einen Faktor 1,24 zur Umrechnung von 20 °C auf 80 °C. Beides ist nur aus zweiter Hand belegt, aus einer Leserfrage bei elektro.net vom 24.11.2023, und nicht am Normtext geprüft. Nach welchem Wert das Protokoll urteilt, ist offen in #31."
+    },
+    {
+      "key": "elektro.loop.nominal_voltage",
+      "validFrom": "2018-10-01",
       "validUntil": null,
       "unit": "volts",
       "value": 230,
@@ -41,6 +68,15 @@
     {
       "key": "elektro.loop.factor_b",
       "validFrom": "2017-06-01",
+      "validUntil": "2025-07-31",
+      "unit": "factor",
+      "value": 5,
+      "source": "DIN EN 60898-1 (VDE 0641-11), unverzögerte Auslösung Typ B über 3 bis 5 In",
+      "note": "Ia ist das obere Ende des Bereichs, das der Schalter erreichen muss."
+    },
+    {
+      "key": "elektro.loop.factor_b",
+      "validFrom": "2025-08-01",
       "validUntil": null,
       "unit": "factor",
       "value": 5,
@@ -50,6 +86,14 @@
     {
       "key": "elektro.loop.factor_c",
       "validFrom": "2017-06-01",
+      "validUntil": "2025-07-31",
+      "unit": "factor",
+      "value": 10,
+      "source": "DIN EN 60898-1 (VDE 0641-11), unverzögerte Auslösung Typ C über 5 bis 10 In"
+    },
+    {
+      "key": "elektro.loop.factor_c",
+      "validFrom": "2025-08-01",
       "validUntil": null,
       "unit": "factor",
       "value": 10,
@@ -58,6 +102,14 @@
     {
       "key": "elektro.loop.factor_d",
       "validFrom": "2017-06-01",
+      "validUntil": "2025-07-31",
+      "unit": "factor",
+      "value": 20,
+      "source": "DIN EN 60898-1 (VDE 0641-11), unverzögerte Auslösung Typ D über 10 bis 20 In"
+    },
+    {
+      "key": "elektro.loop.factor_d",
+      "validFrom": "2025-08-01",
       "validUntil": null,
       "unit": "factor",
       "value": 20,

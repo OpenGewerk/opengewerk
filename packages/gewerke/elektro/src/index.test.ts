@@ -684,6 +684,27 @@ describe('the package Elektro und PV', () => {
     expect(elektroRules.at('elektro.mastr.registration_months', '2017-06-30')).toBeNull()
   })
 
+  it('names no edition of a standard on a protocol of a day before it was issued (#1020)', () => {
+    const editions: readonly (readonly [string, string, string])[] = [
+      ['elektro.loop.factor_b', '2025-08-01', ':2025-08'],
+      ['elektro.loop.factor_c', '2025-08-01', ':2025-08'],
+      ['elektro.loop.factor_d', '2025-08-01', ':2025-08'],
+      ['elektro.rcd.trip_current_maximum', '2018-03-01', ':2018-03'],
+      ['elektro.rcd.trip_time_maximum', '2023-08-01', ':2023-08'],
+      ['elektro.loop.nominal_voltage', '2018-10-01', ':2018-10'],
+    ]
+
+    for (const [key, issued, edition] of editions) {
+      const before = elektroRules.at(key, '2017-06-01')
+      const since = elektroRules.at(key, issued)
+
+      expect(before?.source).not.toContain(edition)
+      expect(since?.source).toContain(edition)
+      // The limit itself is the same on both sides of the day.
+      expect(before?.value).toBe(since?.value)
+    }
+  })
+
   it('puts a wallbox into operation with its first inspection after DIN VDE 0100-722 (#307)', () => {
     const protocol = elektroRegistry.definitionFor('vde-0100-722', 1)
     const fields = protocol ? fieldsOf(protocol) : []
