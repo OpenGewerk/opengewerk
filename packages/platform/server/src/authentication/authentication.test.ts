@@ -1481,14 +1481,16 @@ describe('a session that ran out', () => {
 
   it('ends its work also when better-auth takes it out as its cookie comes back', async () => {
     const ran = await atWork(member.email)
-
-    await admin.query(
-      `update auth_sessions set expires_at = now() - interval '1 minute' where id = $1`,
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where id = $1
+       returning expires_at`,
       [ran.id],
     )
+
     await http().get('/auth/tenants').set('cookie', ran.cookies).expect(401)
 
     expect(await sessionsOf(member.email)).not.toContain(ran.id)
-    expect(await endOfWork(ran.id)).not.toBeNull()
+    // The stretch stays, ended when the session ran out.
+    expect((await endOfWork(ran.id))?.getTime()).toBe(rows[0]?.expires_at.getTime())
   })
 })
