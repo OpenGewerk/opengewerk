@@ -602,11 +602,13 @@ export function createAuthentication({
         delete: {
           // A session better-auth takes out itself, the one whose cookie came
           // back after it ran out above all, closes its stretch of work in the
-          // tenant like the sweep does (opengewerk#1029). Before the row goes,
-          // as in the sweep: when closing fails, the row stays and the next
-          // request or pass tries again. Our own routes that end a session
-          // close it themselves and delete without better-auth.
-          before: async (session) => {
+          // tenant like the sweep does (opengewerk#1029). After the row went,
+          // as everywhere a session that may still be valid ends: closed first,
+          // a delete that failed would leave it working without a stretch,
+          // while a close that fails after the delete leaves an orphan the next
+          // pass of the sweep closes. Our own routes that end a session close
+          // it themselves and delete without better-auth.
+          after: async (session) => {
             const { activeTenantId } = session as { activeTenantId?: string | null }
 
             await endStretchesOf(database, [

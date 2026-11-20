@@ -90,8 +90,10 @@ const sweepBatch = 1000
  * short: a backlog of any size goes in one pass, and no statement carries more
  * keys than PostgreSQL takes. In each round the stretches of work are closed
  * first and the rows go after, so that a round that fails in between leaves
- * the rows for the next pass to find. The run acts for no person, like the
- * other jobs in the background.
+ * the rows for the next pass to find. That order is safe here and nowhere
+ * else: these sessions ran out, and neither a renewal nor a choice of tenant
+ * brings one back, so none works on without its stretch. The run acts for no
+ * person, like the other jobs in the background.
  */
 export async function sweepExpiredSessions(
   database: Database,
