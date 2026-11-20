@@ -54,7 +54,7 @@
       "unit": "flag",
       "value": 1,
       "source": "§ 14 Abs. 4 Satz 1 Nr. 6a UStG, Art. 27 Jahressteuergesetz 2024, in Kraft ab 01.01.2028 nach Art. 56 Abs. 12",
-      "note": "Berechnet der Betrieb die Steuer nach § 20 UStG, trägt die Rechnung die Angabe „Versteuerung nach vereinnahmten Entgelten“. Hintergrund ist der Vorsteuerabzug des Kunden, der ab demselben Tag bei einem solchen Betrieb erst mit der Zahlung möglich ist (§ 15 Abs. 1 Satz 1 Nr. 1 Satz 2 Buchst. b UStG in der Fassung von Art. 27, nach § 27 Abs. 41 UStG für Rechnungen, die nach dem 31.12.2027 ausgestellt werden). Diese Engine sucht nach dem Belegdatum. OpenGewerk setzt die Angabe nur auf eine Rechnung mit ausgewiesener Steuer: bei § 19 wird keine Steuer berechnet, bei § 13b schuldet sie der Kunde, und sein Vorsteuerabzug hängt dort nicht an der Zahlung. Diese Lesart gehört zur fachkundigen Prüfung in #31."
+      "note": "Berechnet der Betrieb die Steuer nach § 20 UStG, trägt die Rechnung die Angabe „Versteuerung nach vereinnahmten Entgelten“. Hintergrund ist der Vorsteuerabzug des Kunden, der ab demselben Tag bei einem solchen Betrieb erst mit der Zahlung möglich ist (§ 15 Abs. 1 Satz 1 Nr. 1 Satz 2 Buchst. b UStG in der Fassung von Art. 27, nach § 27 Abs. 41 UStG für Rechnungen, die nach dem 31.12.2027 ausgestellt werden). Diese Engine sucht nach dem Belegdatum. OpenGewerk setzt die Angabe auf jede Rechnung eines solchen Betriebs, auch auf eine nach § 13b: Nr. 6a knüpft an die Berechnung nach § 20 und nicht an den Ausweis der Steuer, und § 14a Abs. 5 verlangt bei § 13b alle Angaben außer dem Steuerbetrag. Nur die Rechnung eines Kleinunternehmers folgt § 34a UStDV und trägt sie nicht. Fachlich geprüft am 20.11.2026 in #31 (#1018)."
     }
   ]
 }

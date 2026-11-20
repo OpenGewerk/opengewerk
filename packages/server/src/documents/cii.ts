@@ -87,6 +87,11 @@ const unitOne = 'C62'
  * cumulatively, which is what the KoSIT asks of invoices for construction. A
  * final invoice that followed no progress invoice is an ordinary invoice,
  * which is also what its page calls it (#132): the same question decides both.
+ * Kept for every job, checked in #1018: building work in the sense of section
+ * 1 VOB/A includes repair and upkeep of what is built, so nearly every job of
+ * a trade is one, and a public client requires these codes for it. The mark
+ * "Bauwerk" on a job answers a narrower question of section 634a BGB and
+ * would take them from a repair that needs them.
  *
  * A cancellation is a correction of the invoice it names, 384, and not a
  * credit note: the KoSIT keeps 381 for a credit given independently of any
@@ -155,6 +160,16 @@ function percent(basisPoints: number): string {
   return basisPoints % 100 === 0
     ? String(basisPoints / 100)
     : (basisPoints / 100).toFixed(2).replace(/0$/, '')
+}
+
+const germanAmount = new Intl.NumberFormat('de-DE', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
+/** An amount in a sentence a person reads: 1.234,56. The fields of the syntax take `amount`. */
+function euros(cents: number): string {
+  return germanAmount.format(cents / 100)
 }
 
 /** A date in format 102 of UN/EDIFACT, the only one the standard takes: 20260921. */
@@ -587,6 +602,7 @@ function notes(content: DocumentContent): string {
         `${content.corrects.number} vom ${day(content.corrects.documentDate)} in voller Höhe. ` +
         'Die Beträge sind die dieser Rechnung mit umgekehrtem Vorzeichen.'
       : null,
+    ...deductionSentences(content),
     ...content.notes,
   ]
 
@@ -594,6 +610,32 @@ function notes(content: DocumentContent): string {
     .filter(present)
     .map((sentence) => `<ram:IncludedNote>${element('ram:Content', sentence)}</ram:IncludedNote>`)
     .join('')
+}
+
+/**
+ * One sentence per progress invoice a final invoice takes off, with what it
+ * takes off and the tax on it (#1018). Section 14 (5) sentence 2 UStG asks
+ * for both: the part payments received "und die auf sie entfallenden
+ * Steuerbeträge". The lines with the quantity minus one carry the net amount
+ * per rate, and the tax on them stood only inside the total per rate; here
+ * it stands in the structured part of the e-invoice in its own words. Nothing
+ * on a cancellation, which takes no payment off but gives the deductions
+ * back, and nothing without tax, where none is taken off.
+ */
+function deductionSentences(content: DocumentContent): readonly string[] {
+  if (content.kind === 'cancellation_invoice' || content.taxTreatment !== 'standard') {
+    return []
+  }
+
+  return content.deductions
+    .map((deduction) => ({ deduction, part: deduction.received ?? deduction.billed }))
+    .filter(({ part }) => part.netCents !== 0 || part.taxCents !== 0)
+    .map(
+      ({ deduction, part }) =>
+        `Abgesetzt nach § 14 Abs. 5 Satz 2 UStG: Abschlagsrechnung ${deduction.number} vom ` +
+        `${day(deduction.documentDate)}, ${deduction.received === null ? 'gestellt' : 'vereinnahmt'} ` +
+        `${euros(part.netCents)} Euro Entgelt und ${euros(part.taxCents)} Euro Umsatzsteuer.`,
+    )
 }
 
 /**

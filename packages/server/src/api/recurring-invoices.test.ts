@@ -178,7 +178,9 @@ describe('the recurring invoices of a contract (#295)', () => {
       [addMonths(startsOn, 2), 'issued'],
     ])
     expect(invoices[0]?.service_until).toBe(addDays(addMonths(startsOn, 1), -1))
-    expect(invoices.every((invoice) => invoice.document_date === invoice.service_from)).toBe(true)
+    // Dated the day they were made, which is the day of issue, also the two
+    // the run caught up on (#1017); the rate comes from the period of service.
+    expect(invoices.map((invoice) => invoice.document_date)).toEqual([today, today, today])
     expect(
       invoices.slice(1).every((invoice) => invoice.number !== null && invoice.issued_by === null),
     ).toBe(true)
@@ -228,8 +230,11 @@ describe('the recurring invoices of a contract (#295)', () => {
     )
 
     expect(rows.map((row) => row.service_from)).toEqual(['2020-07-01'])
-    // The reduced standard rate of the second half of 2020, 16 instead of 19 per cent.
+    // The reduced standard rate of the second half of 2020, 16 instead of 19
+    // per cent, though the invoice is dated today: the rate is the one of the
+    // work (#1017).
     expect(JSON.stringify(rows[0]?.content)).toContain('"basisPoints":1600')
+    expect(JSON.stringify(rows[0]?.content)).toContain(`"documentDate":"${today}"`)
   })
 
   it('go to the customer once those were issued by nobody, and to nobody without an address', async () => {

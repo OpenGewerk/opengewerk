@@ -61,11 +61,17 @@ export interface DocumentTotals {
 }
 
 /**
- * What a document adds up to, by the rules of its own date.
+ * What a document adds up to, by the rates of the day its work was done.
  *
- * The date is the document date and not today, which is the whole point of the
- * engine: an invoice from 2020 is still an invoice at sixteen percent in 2030.
- * Nothing here reads a clock.
+ * A change of section 12 UStG applies to supplies carried out from the day it
+ * comes into force (section 27 (1) sentence 1 UStG), so the rate is the one of
+ * the day of the supply: the end of its period, its only day, or, where nobody
+ * entered one, the date of the document (`supplyDateOf`, the same day the
+ * e-invoice asks about). Until #1017 it was the date of the document, and work
+ * finished in June 2020 and invoiced in July came out at sixteen percent
+ * instead of nineteen. Not today either, which is the whole point of the
+ * engine: an invoice for work of the second half of 2020 is still one at
+ * sixteen percent in 2030. Nothing here reads a clock.
  *
  * The order of operations matters and is the one German invoicing uses: the
  * lines of a rate are added up first, then the tax is worked out once on that
@@ -81,9 +87,17 @@ export interface DocumentTotals {
 export function totalsFor(
   rules: RuleSet,
   lines: readonly (Pick<DocumentLine, 'netCents' | 'vatRate'> & { readonly kind?: LineKind })[],
-  document: { readonly documentDate: IsoDate; readonly taxTreatment: TaxTreatment },
+  document: {
+    readonly documentDate: IsoDate
+    readonly serviceFrom: IsoDate | null
+    readonly serviceUntil: IsoDate | null
+    readonly taxTreatment: TaxTreatment
+  },
 ): DocumentTotals {
   const positions = lines.filter((line) => line.kind !== 'title')
+  // The rule of `supplyDateOf` in e-invoice.ts, written out here because that
+  // module builds on this one.
+  const suppliedOn = document.serviceUntil ?? document.serviceFrom ?? document.documentDate
   const netCents = withoutNegativeZero(positions.reduce((sum, line) => sum + line.netCents, 0))
 
   if (document.taxTreatment !== 'standard') {
@@ -110,7 +124,7 @@ export function totalsFor(
   // A Map keeps insertion order, which would make the block depend on which
   // line somebody typed first.
   for (const rate of [...netByRate.keys()].sort()) {
-    const taxed = vatOn(rules, { netCents: netByRate.get(rate) ?? 0, rate }, document.documentDate)
+    const taxed = vatOn(rules, { netCents: netByRate.get(rate) ?? 0, rate }, suppliedOn)
 
     byRate.push({ rate, ...taxed })
   }

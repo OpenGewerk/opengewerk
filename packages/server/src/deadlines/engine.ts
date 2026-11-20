@@ -46,9 +46,14 @@ export type DeadlineRow = typeof deadlines.$inferSelect
  * What the action `status` does for a kind: a change of state at its source,
  * in the transaction that marks the deadline reminded. A kind that names the
  * action brings its handler; a kind without one stops the run with an error
- * rather than claim it changed something.
+ * rather than claim it changed something. `today` is the day in Germany the
+ * run happens on, from the clock of the run (#1017).
  */
-export type StatusHandler = (tx: TenantTransaction, deadline: DeadlineRow) => Promise<void>
+export type StatusHandler = (
+  tx: TenantTransaction,
+  deadline: DeadlineRow,
+  today: IsoDate,
+) => Promise<void>
 
 /**
  * The status handlers of the kinds this instance knows, by kind: the invoice
@@ -208,14 +213,14 @@ function bound(
             : {}),
         })
       },
-      status: async ({ tx, kind, deadline }) => {
+      status: async ({ tx, kind, deadline, now }) => {
         const handler = handlers[kind.key]
 
         if (!handler) {
           throw new Error(`The deadline kind ${kind.key} changes a status and has no handler`)
         }
 
-        await handler(tx, deadline)
+        await handler(tx, deadline, berlinClock(now).day)
       },
       customer_reminder: async ({ tx, tenantId, kind, deadline, responsible, now }) => {
         await remindCustomer(tx, { tenantId, kind, deadline, responsible, now })

@@ -131,24 +131,28 @@ export function inOrder(records: readonly RecordState[]): readonly ShownLine[] {
 }
 
 /**
- * What the lines add up to, by the rules of the date the tax belongs to: the
- * document's own, or for a cancellation the date of the invoice it takes back.
- * The totals, or the sentence the rules answer with for a date they do not
- * cover.
+ * What the lines add up to, by the rules of the day the tax belongs to: the
+ * day of the document's work, or for a cancellation the one of the invoice it
+ * takes back (#1017). The totals, or the sentence the rules answer with for a
+ * day they do not cover.
  *
  * A cancellation undoes the tax that invoice stated, and should a rate change
- * between the two, its own date would work out a different tax from the same
+ * between the two, its own day would work out a different tax from the same
  * lines. The server does not work it out at all, it mirrors what the invoice
- * froze; counting by the invoice's date is how the screen comes to the same.
+ * froze; counting by the invoice's day is how the screen comes to the same.
  */
 export function totalsOf(
   document: RecordState,
   lines: readonly ShownLine[],
   original: RecordState | null,
 ): DocumentTotals | string {
+  const taxedBy = original ?? document
+
   try {
     return totalsFor(shippedRules, lines, {
-      documentDate: text(original ?? document, 'documentDate'),
+      documentDate: text(taxedBy, 'documentDate'),
+      serviceFrom: maybeText(taxedBy, 'serviceFrom'),
+      serviceUntil: maybeText(taxedBy, 'serviceUntil'),
       taxTreatment: taxTreatmentOf(document),
     })
   } catch (error) {

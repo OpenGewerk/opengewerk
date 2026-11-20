@@ -22,7 +22,14 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { aMailServer, testKey } from '@opengewerk/platform-server/testing'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
-import { documentAttachments, restrictedCustomerMail } from '../mail/attachments.js'
+import type { IsoDate } from '@opengewerk/domain'
+import {
+  documentAttachments,
+  lapsedTransitionMail,
+  refuseLapsedTransition,
+  restrictedCustomerMail,
+} from '../mail/attachments.js'
+import type { OutboxRow } from '../mail/outbox.js'
 import { runMailCycle } from '../mail/worker.js'
 import { ApiModule } from './api.module.js'
 import { DocumentFiles } from './document-files.js'
@@ -414,6 +421,40 @@ describe('an invoice to a business after the transition has ended', () => {
     expect(body.message).toContain('31.12.2026')
     expect(body.missing.map((gap) => gap.detail)).toEqual(['recipient_vat_id_format'])
     expect(await messagesOf(late)).toEqual([])
+  })
+
+  it('stays unsent when the outbox reaches it after the transition ended (#1018)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-12-31T23:50:00+01:00') })
+
+    const asked = await issuedInvoice(await customer(lacking), north, december)
+    const sent = await sending(asked).expect(202)
+
+    expect((sent.body as DocumentMail).attachment).toBe('pdf')
+
+    // What the worker reads of the message: an invoice to go as a PDF.
+    const row = {
+      tenantId: north.id,
+      kind: 'document',
+      attachment: 'pdf',
+      documentId: asked,
+    } as unknown as OutboxRow
+
+    // Sent the same day it was asked for, it may go.
+    await expect(
+      refuseLapsedTransition(database, row, '2026-12-31' as IsoDate),
+    ).resolves.toBeUndefined()
+    // Reached after midnight, it would be transmitted in 2027 and is given up.
+    await expect(refuseLapsedTransition(database, row, '2027-01-01' as IsoDate)).rejects.toThrow(
+      lapsedTransitionMail,
+    )
+    // An invoice that goes as an e-invoice is not the outbox's to stop.
+    await expect(
+      refuseLapsedTransition(
+        database,
+        { ...row, attachment: 'zugferd' } as OutboxRow,
+        '2027-01-01' as IsoDate,
+      ),
+    ).resolves.toBeUndefined()
   })
 })
 

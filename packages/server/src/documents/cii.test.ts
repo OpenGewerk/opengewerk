@@ -153,6 +153,27 @@ describe('an e-invoice', () => {
     ).toEqual(['875'])
   })
 
+  it('names what it takes off and the tax on it, one note per progress invoice (#1018)', () => {
+    // Section 14 (5) sentence 2 UStG: the part payments and the tax on them.
+    // The lines carry the net amount, the tax stood only inside the total.
+    const notes = read(
+      ciiInvoice(finalInvoice, 'xrechnung'),
+      '//rsm:ExchangedDocument/ram:IncludedNote/ram:Content',
+    ).filter((note) => note.startsWith('Abgesetzt nach § 14 Abs. 5 Satz 2 UStG'))
+
+    expect(notes).toEqual([
+      'Abgesetzt nach § 14 Abs. 5 Satz 2 UStG: Abschlagsrechnung RE-2026-0001 vom 01.07.2026, gestellt 5.000,00 Euro Entgelt und 950,00 Euro Umsatzsteuer.',
+      expect.stringContaining('Abschlagsrechnung RE-2026-0002'),
+    ])
+    // A cancellation gives the deductions back and takes nothing off.
+    expect(
+      read(
+        ciiInvoice(cancellation, 'xrechnung'),
+        '//rsm:ExchangedDocument/ram:IncludedNote/ram:Content',
+      ).filter((note) => note.startsWith('Abgesetzt')),
+    ).toEqual([])
+  })
+
   it('keeps a tax that was stated at an old rate at that rate', () => {
     const xml = ciiInvoice(acrossTheChange, 'xrechnung')
 

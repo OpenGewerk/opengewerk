@@ -187,7 +187,13 @@ export function SiteInvoiceScreen() {
         vatRate: vatRateOf(line),
         kind: line['kind'] === 'title' ? 'title' : 'item',
       })),
-      { documentDate: text(invoice, 'documentDate'), taxTreatment: taxTreatmentOf(invoice) },
+      {
+        documentDate: text(invoice, 'documentDate'),
+        // The rates of the day of the work (#1017).
+        serviceFrom: maybeText(invoice, 'serviceFrom'),
+        serviceUntil: maybeText(invoice, 'serviceUntil'),
+        taxTreatment: taxTreatmentOf(invoice),
+      },
     )
   } catch (error) {
     if (!(error instanceof RuleError)) {

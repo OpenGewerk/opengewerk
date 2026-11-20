@@ -1,5 +1,14 @@
 import { ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common'
-import { type AppointmentId, berlinClock, type JobId, RuleError } from '@opengewerk/domain'
+import {
+  type AppointmentId,
+  berlinClock,
+  type DocumentId,
+  formatFor,
+  type IsoDate,
+  type JobId,
+  RuleError,
+  shippedRules,
+} from '@opengewerk/domain'
 import {
   type Database,
   type MailAttachment,
@@ -9,6 +18,9 @@ import {
 import { eq } from 'drizzle-orm'
 
 import type { DocumentFiles, MailedFile } from '../api/document-files.js'
+import { dutyOf } from '../api/e-invoice.controller.js'
+import { frozenContent } from '../documents/content.js'
+import { todayInGermany } from '../today.js'
 import { appointments, documents, jobs } from '../database/schema/index.js'
 import { customerRestricted } from '../privacy/customer-erasure.js'
 import { appointmentInvitation } from '../notifications/confirmation-mail.js'
@@ -238,6 +250,51 @@ export const restrictedCustomerMail =
 /** Why a message about a job that belongs to another customer now stays unsent. */
 export const reassignedCustomerMail =
   'Der Auftrag gehört inzwischen zu einem anderen Kunden. Die Nachricht geht deshalb nicht mehr hinaus.'
+
+/** Why an invoice that was to go as a PDF stays unsent once its transition ended. */
+export const lapsedTransitionMail =
+  'Diese Rechnung sollte als PDF hinausgehen, wie es der Übergang nach § 27 Abs. 38 UStG erlaubte. ' +
+  'Der Übergang endete vor dem Versand, und eine Rechnung, die danach übermittelt wird, muss eine ' +
+  'E-Rechnung sein. Die Nachricht geht deshalb nicht hinaus; die Rechnung lässt sich als E-Rechnung ' +
+  'neu verschicken, sobald ihr nichts mehr fehlt.'
+
+/**
+ * Whether an invoice asked for as a PDF may still leave as one (#1018). The
+ * transition of section 27 (38) UStG asks when an invoice is transmitted, and
+ * the answer at the request (`attachmentFor`) holds for the day it was asked
+ * for: a message asked for on the last day of the transition and sent after
+ * midnight would carry a PDF the law no longer allows. So the worker asks
+ * again, for the day it sends, and gives the message up with the reason
+ * rather than send it. A message whose invoice goes as an e-invoice, or whose
+ * customer needs none, is not touched.
+ */
+export async function refuseLapsedTransition(
+  database: Database,
+  row: OutboxRow,
+  sentOn: IsoDate = todayInGermany(),
+): Promise<void> {
+  if (row.kind !== 'document' || row.attachment !== 'pdf' || row.documentId === null) {
+    return
+  }
+
+  const documentId = row.documentId as DocumentId
+  const lapsed = await database.forTenant(
+    { tenantId: row.tenantId, reason: 'mail' },
+    async (tx) => {
+      const content = await frozenContent(tx, documentId)
+
+      if (content === null || formatFor(shippedRules, content).format !== 'e_invoice') {
+        return false
+      }
+
+      return (await dutyOf(tx, content, sentOn)).required
+    },
+  )
+
+  if (lapsed) {
+    throw new MailDeliveryError(lapsedTransitionMail, 'ETRANSITION', null, { permanent: true })
+  }
+}
 
 /**
  * Whether a message to a customer may still go, asked by the worker of every
