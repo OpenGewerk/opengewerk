@@ -1690,6 +1690,34 @@ describe('the work of a session a new password ends', () => {
     ])
   })
 
+  it('ends as run out, and in no name, when a session that ran out comes back to set a password', async () => {
+    const email = 'abgelaufen-passwort@example.de'
+    const userId = await newcomer(email)
+    const working = await signIn(email)
+
+    await instance.chooseTenant(working, north.id)
+    await admin.query(
+      `update tenant_sessions set started_at = now() - interval '1 day' where user_id = $1`,
+      [userId],
+    )
+    await admin.query(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where user_id = $1`,
+      [userId],
+    )
+
+    // Refused, and the password stays: nothing the route would do happened.
+    await http()
+      .post(`${authenticationPath}/change-password`)
+      .set('cookie', working)
+      .set('origin', origin)
+      .send({ currentPassword: password, newPassword: another, revokeOtherSessions: true })
+      .expect(401)
+
+    expect(await stretchesOf(userId)).toEqual([
+      { open: false, reason: 'session.expire', user: null },
+    ])
+  })
+
   it('ends at once and under the reset when the command line sets a new password', async () => {
     const email = 'kommandozeile@example.de'
     const userId = await newcomer(email)

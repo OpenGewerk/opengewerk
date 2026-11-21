@@ -625,8 +625,11 @@ export function createAuthentication({
             const { activeTenantId } = session as { activeTenantId?: string | null }
             // What took it out names the reason, and the person did it: the
             // app set up, a new password, a password reset through its link.
-            // A cookie that came back after its session ran out names none.
-            const reason = endingReasons[context?.path ?? '']
+            // A session that had run out already names none, also when its
+            // cookie came back on one of those routes, which then refuses: it
+            // ran out, and nothing the route would do happened.
+            const ranOut = new Date(session.expiresAt).getTime() <= Date.now()
+            const reason = ranOut ? undefined : endingReasons[context?.path ?? '']
 
             await endStretchesOf(
               database,
