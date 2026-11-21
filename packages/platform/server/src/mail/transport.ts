@@ -1,3 +1,5 @@
+import { connect, isIP, type Socket } from 'node:net'
+
 import { createTransport } from 'nodemailer'
 
 import type { MailConfiguration } from './configuration.js'
@@ -132,12 +134,39 @@ const defaultTimeouts: Required<MailTimeouts> = {
  * File and URL access are switched off. Attachments are handed over as bytes,
  * and a message is never meant to make this process read a path or fetch an
  * address named somewhere in its content.
+ *
+ * The transport opens the connection of each conversation itself
+ * (`getSocket`) and hands it to nodemailer while it connects; nodemailer
+ * speaks SMTP, TLS and STARTTLS over it as over its own. That way the end of
+ * `whole` ends the conversation and not only the wait for it. Before,
+ * nodemailer went on in the background, and a server that answered a little
+ * at a time could still take the message after the outbox had counted it as
+ * not sent: it went out twice, or after the day it was asked for
+ * (opengewerk#1018). The messages of a transport go one after the other, and
+ * what is open when the time is up is the one. Only for an address, which is
+ * what the running instance always hands in (`destinationOf`); a name, as a
+ * test hands one in, nodemailer still resolves and connects itself, so that
+ * a name that does not exist is told as such.
  */
 export function smtpTransport(
   configuration: MailConfiguration,
   timeouts: MailTimeouts = defaultTimeouts,
 ): MailTransport {
+  const open = new Set<Socket>()
   const transport = createTransport({
+    getSocket: (_options, callback) => {
+      if (isIP(configuration.host) === 0) {
+        callback(null, false)
+
+        return
+      }
+
+      const socket = connect({ host: configuration.host, port: configuration.port })
+
+      open.add(socket)
+      socket.once('close', () => open.delete(socket))
+      callback(null, { connection: socket })
+    },
     host: configuration.host,
     // The name behind an address, for TLS. The connection goes to the address
     // that was checked and the certificate is still held against the name.
@@ -182,6 +211,12 @@ export function smtpTransport(
           sending,
           new Promise<never>((_, reject) => {
             deadline = setTimeout(() => {
+              // The conversation ends with the wait, so that the server
+              // cannot take the message later.
+              for (const socket of open) {
+                socket.destroy()
+              }
+
               reject(
                 new MailDeliveryError(
                   'Der Mailserver hat die Nachricht nicht in der Zeit angenommen, die eine Nachricht hat.',

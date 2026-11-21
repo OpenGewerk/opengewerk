@@ -124,6 +124,23 @@ describe('a message', () => {
     expect(performance.now() - started).toBeLessThan(3000)
   })
 
+  it('does not arrive later when the server takes longer than the time a message has (#1018)', async () => {
+    // Every step within the time a step has, the whole beyond it: the server
+    // asks for the message only after the time is up.
+    server = await fakeSmtpServer({ slowDataReply: 1_500 })
+    const transport = smtpTransport(settings(server.port), { ...short, socket: 5_000, whole: 500 })
+
+    const failure = await failureOf(transport.send(letter))
+
+    expect(failure.code).toBe('ETIMEDOUT')
+
+    // Long after the server would have asked for it, nothing came.
+    await new Promise((resolve) => setTimeout(resolve, 2_000))
+    transport.close()
+
+    expect(server.received).toEqual([])
+  })
+
   it('is refused for now when nothing listens on the port', async () => {
     const transport = smtpTransport(settings(await closedPort()), short)
 
