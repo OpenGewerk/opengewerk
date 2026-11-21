@@ -618,12 +618,14 @@ function notes(content: DocumentContent): string {
  * for both: the part payments received "und die auf sie entfallenden
  * Steuerbeträge". The lines with the quantity minus one carry the net amount
  * per rate, and the tax on them stood only inside the total per rate; here
- * it stands in the structured part of the e-invoice in its own words. Nothing
- * on a cancellation, which takes no payment off but gives the deductions
- * back, and nothing without tax, where none is taken off.
+ * it stands in the structured part of the e-invoice in its own words. Only
+ * on a final invoice, the one the sentence speaks of: a progress invoice
+ * that takes the earlier ones off is a way of counting and no case of it,
+ * and a cancellation takes no payment off but gives the deductions back.
+ * Nothing without tax, where none is taken off.
  */
 function deductionSentences(content: DocumentContent): readonly string[] {
-  if (content.kind === 'cancellation_invoice' || content.taxTreatment !== 'standard') {
+  if (content.kind !== 'final_invoice' || content.taxTreatment !== 'standard') {
     return []
   }
 

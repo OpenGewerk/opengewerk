@@ -255,8 +255,9 @@ export const reassignedCustomerMail =
 export const lapsedTransitionMail =
   'Diese Rechnung sollte als PDF hinausgehen, wie es der Übergang nach § 27 Abs. 38 UStG erlaubte. ' +
   'Der Übergang endete vor dem Versand, und eine Rechnung, die danach übermittelt wird, muss eine ' +
-  'E-Rechnung sein. Die Nachricht geht deshalb nicht hinaus; die Rechnung lässt sich als E-Rechnung ' +
-  'neu verschicken, sobald ihr nichts mehr fehlt.'
+  'E-Rechnung sein. Dieser fehlen dafür Angaben, und was sie bei der Ausstellung festgeschrieben hat, ' +
+  'ändert sich nicht mehr. Die Nachricht geht deshalb nicht hinaus: Die Rechnung lässt sich stornieren ' +
+  'und mit den fehlenden Angaben neu stellen; welche das sind, sagt das Verschicken.'
 
 /**
  * How far ahead of the moment it asks the outbox looks for the end of a

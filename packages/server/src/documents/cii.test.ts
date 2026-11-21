@@ -165,13 +165,16 @@ describe('an e-invoice', () => {
       'Abgesetzt nach § 14 Abs. 5 Satz 2 UStG: Abschlagsrechnung RE-2026-0001 vom 01.07.2026, gestellt 5.000,00 Euro Entgelt und 950,00 Euro Umsatzsteuer.',
       expect.stringContaining('Abschlagsrechnung RE-2026-0002'),
     ])
-    // A cancellation gives the deductions back and takes nothing off.
-    expect(
-      read(
-        ciiInvoice(cancellation, 'xrechnung'),
-        '//rsm:ExchangedDocument/ram:IncludedNote/ram:Content',
-      ).filter((note) => note.startsWith('Abgesetzt')),
-    ).toEqual([])
+    // A cancellation gives the deductions back and takes nothing off, and a
+    // progress invoice that takes the first one off is no final invoice.
+    for (const other of [cancellation, secondProgress]) {
+      expect(
+        read(
+          ciiInvoice(other, 'xrechnung'),
+          '//rsm:ExchangedDocument/ram:IncludedNote/ram:Content',
+        ).filter((note) => note.startsWith('Abgesetzt')),
+      ).toEqual([])
+    }
   })
 
   it('keeps a tax that was stated at an old rate at that rate', () => {

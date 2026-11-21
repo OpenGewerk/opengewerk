@@ -502,6 +502,8 @@ describe('cash accounting', () => {
         /ab dem 01\.01\.2028 die Angabe „Versteuerung nach vereinnahmten Entgelten“/,
       ),
     ).toBeTruthy()
+    // An invoice under section 13b too, which states no tax (#1018).
+    expect(within(section).getByText(/jede Rechnung außer einer nach § 19 UStG/)).toBeTruthy()
   })
 
   it('is stated from the day the tax office names', async () => {

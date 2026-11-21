@@ -470,6 +470,9 @@ describe('an invoice to a business after the transition has ended', () => {
 
     expect(await cycle(post.transport)).toMatchObject({ sent: 0 })
     expect(post.sent).toEqual([])
+    // The office reads the way out that there is: what an issued invoice froze
+    // does not change, so it is cancelled and written anew.
+    expect(lapsedTransitionMail).toContain('stornieren und mit den fehlenden Angaben neu stellen')
   })
 
   it('stays unsent when making its file takes it past the end of the transition (#1018)', async () => {
