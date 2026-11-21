@@ -259,14 +259,31 @@ export const lapsedTransitionMail =
   'neu verschicken, sobald ihr nichts mehr fehlt.'
 
 /**
+ * How far ahead of the moment it asks the outbox looks for the end of a
+ * transition: well beyond the two minutes a message has to reach the mail
+ * server (`whole` in `smtpTransport`), so that a message that passes the
+ * question cannot reach the server after midnight.
+ */
+const transmittingAhead = 10 * 60 * 1000
+
+/**
+ * The day a message sent from this moment reaches the mail server by, at the
+ * latest, in Germany: the day the outbox asks the transition about.
+ */
+export function transmittedBy(now: Date): IsoDate {
+  return todayInGermany(new Date(now.getTime() + transmittingAhead))
+}
+
+/**
  * Whether an invoice asked for as a PDF may still leave as one (#1018). The
  * transition of section 27 (38) UStG asks when an invoice is transmitted, and
  * the answer at the request (`attachmentFor`) holds for the day it was asked
  * for: a message asked for on the last day of the transition and sent after
  * midnight would carry a PDF the law no longer allows. So the worker asks
- * again, for the day it sends, and gives the message up with the reason
- * rather than send it. A message whose invoice goes as an e-invoice, or whose
- * customer needs none, is not touched.
+ * again, for the day it reaches the mail server by (`transmittedBy`), before
+ * the file is made and once more after, and gives the message up with the
+ * reason rather than send it. A message whose invoice goes as an e-invoice,
+ * or whose customer needs none, is not touched.
  */
 export async function refuseLapsedTransition(
   database: Database,

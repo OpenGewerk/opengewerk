@@ -456,6 +456,50 @@ describe('an invoice to a business after the transition has ended', () => {
       ),
     ).resolves.toBeUndefined()
   })
+
+  it('stays unsent when it would reach the mail server only after the transition ended (#1018)', async () => {
+    // Ten minutes before midnight on the last day: asked for, it may go as a
+    // PDF, but the outbox gives it up, since it could arrive after midnight.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-12-31T23:52:00+01:00') })
+
+    const asked = await issuedInvoice(await customer(lacking), north, december)
+
+    expect(((await sending(asked).expect(202)).body as DocumentMail).attachment).toBe('pdf')
+
+    const post = recording()
+
+    expect(await cycle(post.transport)).toMatchObject({ sent: 0 })
+    expect(post.sent).toEqual([])
+  })
+
+  it('stays unsent when making its file takes it past the end of the transition (#1018)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-12-31T23:30:00+01:00') })
+
+    const asked = await issuedInvoice(await customer(lacking), north, december)
+
+    expect(((await sending(asked).expect(202)).body as DocumentMail).attachment).toBe('pdf')
+
+    const post = recording()
+    const making = documentAttachments(files)
+    const report = await runMailCycle({
+      database,
+      connect: () => post.transport,
+      key: testKey,
+      origin: 'https://opengewerk.example.de',
+      // The file is ready only after midnight.
+      attachments: async (row) => {
+        const made = await making(row)
+
+        vi.setSystemTime(new Date('2027-01-01T00:05:00+01:00'))
+
+        return made
+      },
+      now: () => new Date(Date.now() + 1_000),
+    })
+
+    expect(report).toMatchObject({ sent: 0 })
+    expect(post.sent).toEqual([])
+  })
 })
 
 describe('what cannot be sent', () => {
