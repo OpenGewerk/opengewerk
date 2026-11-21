@@ -226,9 +226,10 @@ export async function sweepExpiredSessions(
 
   // The accesses past their last day first: a session still alive when its
   // access ended ends with the access, at the end of that day, and not when
-  // it ran out later (opengewerk#1030); one that ran out before is left to the
-  // rounds below. Every step runs also after one before it failed, and the
-  // first failure is the one reported.
+  // it ran out later (opengewerk#1030). Should that fail, the rounds wait for
+  // the next pass: they would take such a session for run out, at the wrong
+  // time and for the wrong reason. The orphans run in any case, and the first
+  // failure is the one reported.
   try {
     await endPastLastDays(database, batch)
   } catch (error) {
@@ -239,7 +240,7 @@ export async function sweepExpiredSessions(
   // The orphans are closed also after a round failed, so that the stretches
   // of rows that went before the failure do not wait for the next pass.
   try {
-    for (;;) {
+    for (; !failed;) {
       const expired = await database.forInstance((tx) =>
         tx
           .select({
@@ -336,10 +337,9 @@ export async function sweepExpiredSessions(
  * day, which is when the access ended, under a reason of their own. Sessions
  * of the same person in another tenant stay.
  *
- * A session that ran out before the access ended is left alone: its stretch
- * ends when it ran out, under the reason of the expiry, in the rounds of
- * `sweepExpiredSessions` that follow. Whichever came first, the end of the
- * access or of the session, is when the work ended.
+ * A session that ran out before the access ended ends when it ran out, under
+ * the reason of the expiry: whichever came first, the end of the access or of
+ * the session, is when the work ended.
  *
  * Looked at are the people with a session working in the tenant and the ones
  * with a stretch still open there, also one left open by an earlier release
@@ -347,12 +347,20 @@ export async function sweepExpiredSessions(
  * by how many accesses ever ended. Each round holds the memberships it found
  * past their end in its own transaction until it is through (`FOR SHARE`): a
  * last day moved on meanwhile waits for the round, instead of losing its
- * sessions to a round that read it a moment before. The rows go first and the
- * stretches close after, as everywhere a session ends. A close that fails
- * leaves the stretch open on an access past its end; the orphans leave it be
- * (`endOrphanedStretches`), and the next pass finds it here and closes it as
- * it should. A tenant at a time, the people in rounds of a bounded size. Says
- * how many stretches it closed.
+ * sessions to a round that read it a moment before.
+ *
+ * Here the stretches close first and the sessions go after, the other way
+ * round from everywhere else a session ends. There the order keeps a session
+ * that may still work from working on without its stretch; a session of an
+ * access past its end does no work, every request into the tenant is refused
+ * and none is renewed (`renewSession`). This way a failure loses nothing: a
+ * close that fails leaves the sessions, and the next pass does it all again;
+ * a delete that fails leaves sessions whose work is already closed. The
+ * sessions it deletes are the ones it read, while the round still holds the
+ * memberships. A stretch whose session is gone otherwise ends with the access
+ * as well, and the orphans leave such stretches to this step
+ * (`endOrphanedStretches`). A tenant at a time, the people in rounds of a
+ * bounded size. Says how many stretches it closed.
  */
 export async function endPastLastDays(
   database: Database,
@@ -404,24 +412,38 @@ export async function endPastLastDays(
         // itself is counted (`last-day.ts`).
         const accessEnded = sql`((m.last_day + 1)::timestamp at time zone 'Europe/Berlin')`
 
-        // The sessions that ran out before the access ended stay for the
-        // expiry; the others go now, as a block takes them.
-        const ranOut = await database.forInstance(async (instance) => {
-          const { rows } = await instance.execute<{ id: string }>(sql`
-            select s.id from ${authSessions} s
+        // The sessions working there, each with whether it ran out before its
+        // access ended.
+        const sessions = await database.forInstance(async (instance) => {
+          const { rows } = await instance.execute<{
+            id: string
+            user_id: string
+            expires_at: Date | string
+            ran_out: boolean
+          }>(sql`
+            select s.id, s.user_id, s.expires_at, s.expires_at <= ${accessEnded} as ran_out
+              from ${authSessions} s
               join (values ${lastDays}) as m(user_id, last_day) on s.user_id = m.user_id
-             where s.active_tenant_id = ${tenantId} and s.expires_at <= ${accessEnded}`)
+             where s.active_tenant_id = ${tenantId}`)
 
-          await instance.execute(sql`
-            delete from ${authSessions} s using (values ${lastDays}) as m(user_id, last_day)
-             where s.user_id = m.user_id and s.active_tenant_id = ${tenantId}
-               and s.expires_at > ${accessEnded}`)
-
-          return rows.map((row) => row.id)
+          return rows
         })
+        const ranOut = sessions.filter((session) => session.ran_out)
 
-        // Never before the stretch began. The membership is asked again here,
-        // under the lock the round holds on it.
+        // Those end when they ran out, under the reason of the expiry, in a
+        // transaction of their own, since the reason is the transaction's.
+        await endStretchesOf(
+          database,
+          ranOut.map((session) => ({
+            id: session.id,
+            userId: session.user_id,
+            tenantId,
+            expiresAt: new Date(session.expires_at),
+          })),
+        )
+
+        // The others with the access, never before the stretch began. The
+        // membership is asked again here, under the lock the round holds.
         const stretches = await tx
           .update(tenantSessions)
           .set({
@@ -436,7 +458,12 @@ export async function endPastLastDays(
               eq(tenantSessions.tenantId, tenantId),
               inArray(tenantSessions.userId, users),
               isNull(tenantSessions.endedAt),
-              ranOut.length === 0 ? undefined : notInArray(tenantSessions.sessionId, ranOut),
+              ranOut.length === 0
+                ? undefined
+                : notInArray(
+                    tenantSessions.sessionId,
+                    ranOut.map((session) => session.id),
+                  ),
               sql`exists (
                 select 1 from ${memberships}
                  where ${memberships.tenantId} = ${tenantSessions.tenantId}
@@ -446,7 +473,20 @@ export async function endPastLastDays(
           )
           .returning({ id: tenantSessions.id })
 
-        return stretches.length
+        // Then the sessions it read go, as a block takes them, while the
+        // round still holds the memberships.
+        if (sessions.length > 0) {
+          await database.forInstance((instance) =>
+            instance.delete(authSessions).where(
+              inArray(
+                authSessions.id,
+                sessions.map((session) => session.id),
+              ),
+            ),
+          )
+        }
+
+        return stretches.length + ranOut.length
       })
     }
   }
