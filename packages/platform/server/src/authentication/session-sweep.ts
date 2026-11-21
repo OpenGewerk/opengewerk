@@ -1,5 +1,5 @@
 import { type SignInMethod, signInMethods, type TenantId } from '@opengewerk/platform-domain'
-import { and, asc, eq, inArray, isNull, lte, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, lte, notInArray, sql } from 'drizzle-orm'
 
 import type { Database } from '../database/database.js'
 import { everyTenant } from '../database/every-tenant.js'
@@ -224,9 +224,20 @@ export async function sweepExpiredSessions(
   // The rows of a round that went and whose stretches are not closed yet.
   let pending: readonly EndedSession[] = []
 
+  // The accesses past their last day first: a session still alive when its
+  // access ended ends with the access, at the end of that day, and not when
+  // it ran out later (opengewerk#1030); one that ran out before is left to the
+  // rounds below. Every step runs also after one before it failed, and the
+  // first failure is the one reported.
+  try {
+    await endPastLastDays(database, batch)
+  } catch (error) {
+    failed = true
+    failure = error
+  }
+
   // The orphans are closed also after a round failed, so that the stretches
-  // of rows that went before the failure do not wait for the next pass; the
-  // failure of the round is the one reported.
+  // of rows that went before the failure do not wait for the next pass.
   try {
     for (;;) {
       const expired = await database.forInstance((tx) =>
@@ -282,8 +293,10 @@ export async function sweepExpiredSessions(
       }
     }
   } catch (error) {
-    failed = true
-    failure = error
+    if (!failed) {
+      failed = true
+      failure = error
+    }
   }
 
   // A round that failed after its rows went tries their stretches once more,
@@ -297,18 +310,12 @@ export async function sweepExpiredSessions(
     }
   }
 
-  // The accesses past their last day, then the orphans, each also after a
-  // step before it failed; the first failure is the one reported. The last
-  // days come first, so that the stretch of such an access closes at the end
-  // of that day and for that reason, not as an orphan at the time of the pass.
-  for (const step of [endPastLastDays, endOrphanedStretches]) {
-    try {
-      await step(database, batch)
-    } catch (error) {
-      if (!failed) {
-        failed = true
-        failure = error
-      }
+  try {
+    await endOrphanedStretches(database, batch)
+  } catch (error) {
+    if (!failed) {
+      failed = true
+      failure = error
     }
   }
 
@@ -329,14 +336,23 @@ export async function sweepExpiredSessions(
  * day, which is when the access ended, under a reason of their own. Sessions
  * of the same person in another tenant stay.
  *
+ * A session that ran out before the access ended is left alone: its stretch
+ * ends when it ran out, under the reason of the expiry, in the rounds of
+ * `sweepExpiredSessions` that follow. Whichever came first, the end of the
+ * access or of the session, is when the work ended.
+ *
  * Looked at are the people with a session working in the tenant and the ones
  * with a stretch still open there, also one left open by an earlier release
  * or one whose session is gone; both lists are bounded by what is open, not
- * by how many accesses ever ended. The rows go first and the stretches close
- * after, as everywhere a session ends. A close that fails leaves the stretch
- * to the orphans of the same pass, and the next pass finds any that is still
- * open on an access past its end. A tenant at a time, the people in rounds of
- * a bounded size. Says how many stretches it closed.
+ * by how many accesses ever ended. Each round holds the memberships it found
+ * past their end in its own transaction until it is through (`FOR SHARE`): a
+ * last day moved on meanwhile waits for the round, instead of losing its
+ * sessions to a round that read it a moment before. The rows go first and the
+ * stretches close after, as everywhere a session ends. A close that fails
+ * leaves the stretch open on an access past its end; the orphans leave it be
+ * (`endOrphanedStretches`), and the next pass finds it here and closes it as
+ * it should. A tenant at a time, the people in rounds of a bounded size. Says
+ * how many stretches it closed.
  */
 export async function endPastLastDays(
   database: Database,
@@ -361,9 +377,10 @@ export async function endPastLastDays(
 
     for (let start = 0; start < people.length; start += batch) {
       const round = people.slice(start, start + batch)
-      const ended = await database.forTenant({ tenantId }, (tx) =>
-        tx
-          .select({ userId: memberships.userId })
+
+      closed += await database.forTenant({ tenantId, reason: 'membership.end' }, async (tx) => {
+        const ended = await tx
+          .select({ userId: memberships.userId, lastDay: memberships.lastDay })
           .from(memberships)
           .where(
             and(
@@ -371,29 +388,41 @@ export async function endPastLastDays(
               inArray(memberships.userId, round),
               pastItsEnd(),
             ),
-          ),
-      )
+          )
+          .for('share')
 
-      if (ended.length === 0) {
-        continue
-      }
+        if (ended.length === 0) {
+          return 0
+        }
 
-      const users = ended.map((row) => row.userId)
+        const users = ended.map((row) => row.userId)
+        const lastDays = sql.join(
+          ended.map((row) => sql`(${row.userId}, ${row.lastDay}::date)`),
+          sql`, `,
+        )
+        // The end of the last day is midnight after it, in Germany, as the day
+        // itself is counted (`last-day.ts`).
+        const accessEnded = sql`((m.last_day + 1)::timestamp at time zone 'Europe/Berlin')`
 
-      await database.forInstance((tx) =>
-        tx
-          .delete(authSessions)
-          .where(
-            and(eq(authSessions.activeTenantId, tenantId), inArray(authSessions.userId, users)),
-          ),
-      )
+        // The sessions that ran out before the access ended stay for the
+        // expiry; the others go now, as a block takes them.
+        const ranOut = await database.forInstance(async (instance) => {
+          const { rows } = await instance.execute<{ id: string }>(sql`
+            select s.id from ${authSessions} s
+              join (values ${lastDays}) as m(user_id, last_day) on s.user_id = m.user_id
+             where s.active_tenant_id = ${tenantId} and s.expires_at <= ${accessEnded}`)
 
-      // The end of the last day is midnight after it, in Germany, as the day
-      // itself is counted (`last-day.ts`); never before the stretch began.
-      // The membership is asked again here, so that one given a new last day
-      // in the meantime keeps its stretch.
-      const stretches = await database.forTenant({ tenantId, reason: 'membership.end' }, (tx) =>
-        tx
+          await instance.execute(sql`
+            delete from ${authSessions} s using (values ${lastDays}) as m(user_id, last_day)
+             where s.user_id = m.user_id and s.active_tenant_id = ${tenantId}
+               and s.expires_at > ${accessEnded}`)
+
+          return rows.map((row) => row.id)
+        })
+
+        // Never before the stretch began. The membership is asked again here,
+        // under the lock the round holds on it.
+        const stretches = await tx
           .update(tenantSessions)
           .set({
             endedAt: sql`greatest(${tenantSessions.startedAt}, (
@@ -407,6 +436,7 @@ export async function endPastLastDays(
               eq(tenantSessions.tenantId, tenantId),
               inArray(tenantSessions.userId, users),
               isNull(tenantSessions.endedAt),
+              ranOut.length === 0 ? undefined : notInArray(tenantSessions.sessionId, ranOut),
               sql`exists (
                 select 1 from ${memberships}
                  where ${memberships.tenantId} = ${tenantSessions.tenantId}
@@ -414,10 +444,10 @@ export async function endPastLastDays(
                    and ${pastItsEnd()})`,
             ),
           )
-          .returning({ id: tenantSessions.id }),
-      )
+          .returning({ id: tenantSessions.id })
 
-      closed += stretches.length
+        return stretches.length
+      })
     }
   }
 
@@ -440,11 +470,24 @@ export async function endOrphanedStretches(
   let closed = 0
 
   for (const tenantId of await everyTenant(database)) {
+    // Not the stretches of an access past its last day: those end at the end
+    // of that day and for that reason (`endPastLastDays`), also after a pass
+    // that failed to close them.
     const open = await database.forTenant({ tenantId }, (tx) =>
       tx
         .selectDistinct({ sessionId: tenantSessions.sessionId })
         .from(tenantSessions)
-        .where(and(eq(tenantSessions.tenantId, tenantId), isNull(tenantSessions.endedAt))),
+        .where(
+          and(
+            eq(tenantSessions.tenantId, tenantId),
+            isNull(tenantSessions.endedAt),
+            sql`not exists (
+              select 1 from ${memberships}
+               where ${memberships.tenantId} = ${tenantSessions.tenantId}
+                 and ${memberships.userId} = ${tenantSessions.userId}
+                 and ${pastItsEnd()})`,
+          ),
+        ),
     )
 
     for (let start = 0; start < open.length; start += batch) {

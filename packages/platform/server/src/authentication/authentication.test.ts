@@ -1568,10 +1568,23 @@ describe('a session that ran out', () => {
       [ran.id],
     )
 
-    // The close of the round fails once, after its rows went.
-    const failing = vi
-      .spyOn(instance.database, 'forTenant')
-      .mockRejectedValueOnce(new Error('closing failed'))
+    // The close of the round fails once, after its rows went: the first
+    // close under the reason of the expiry, which the rounds write before the
+    // orphans do.
+    const forTenant = instance.database.forTenant.bind(instance.database)
+    let failed = false
+    const failing = vi.spyOn(instance.database, 'forTenant').mockImplementation(((
+      identity: Parameters<Database['forTenant']>[0],
+      work: Parameters<Database['forTenant']>[1],
+    ) => {
+      if (identity.reason === 'session.expire' && !failed) {
+        failed = true
+
+        return Promise.reject(new Error('closing failed'))
+      }
+
+      return forTenant(identity, work)
+    }) as unknown as Database['forTenant'])
 
     try {
       await expect(sweepExpiredSessions(instance.database)).rejects.toThrow('closing failed')
@@ -2110,5 +2123,139 @@ describe('an access past its last day', () => {
     )
 
     expect(await renewSession(instance.database, read, userId)).toBe(true)
+  })
+
+  it('ends with the access a session that was still alive then, though it ran out after', async () => {
+    const email = 'letzter-tag-spaeter-abgelaufen@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+
+    await begunDaysAgo(working.id)
+    await lastDayAgo(north.id, userId, 2)
+    // Ran out an hour ago, a day after the access ended.
+    await admin.query(
+      `update auth_sessions set expires_at = now() - interval '1 hour' where id = $1`,
+      [working.id],
+    )
+
+    await sweepExpiredSessions(instance.database)
+
+    expect((await endOfWork(working.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(working.id)).toBe('membership.end')
+  })
+
+  it('ends when it ran out a session that ran out before the access ended', async () => {
+    const email = 'letzter-tag-frueher-abgelaufen@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+
+    await begunDaysAgo(working.id)
+    await lastDayAgo(north.id, userId, 2)
+
+    // Ran out three days ago, before the last day ended.
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() - interval '3 days' where id = $1
+       returning expires_at`,
+      [working.id],
+    )
+
+    await sweepExpiredSessions(instance.database)
+
+    expect(await sessionsOf(email)).not.toContain(working.id)
+    expect((await endOfWork(working.id))?.getTime()).toBe(rows[0]?.expires_at.getTime())
+    expect(await reasonOfEnd(working.id)).toBe('session.expire')
+  })
+
+  it('closes at the end of the day, a pass later, a stretch it could not close, and no orphan takes it', async () => {
+    const email = 'letzter-tag-scheitert@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+
+    await begunDaysAgo(working.id)
+    await lastDayAgo(north.id, userId, 2)
+
+    // The close of the round fails once, after its sessions went.
+    const forTenant = instance.database.forTenant.bind(instance.database)
+    let failed = false
+    const failing = vi.spyOn(instance.database, 'forTenant').mockImplementation(((
+      identity: Parameters<Database['forTenant']>[0],
+      work: Parameters<Database['forTenant']>[1],
+    ) => {
+      if (identity.reason === 'membership.end' && !failed) {
+        return forTenant(identity, async (tx) => {
+          await work(tx)
+          failed = true
+
+          throw new Error('closing failed')
+        })
+      }
+
+      return forTenant(identity, work)
+    }) as unknown as Database['forTenant'])
+
+    try {
+      await expect(sweepExpiredSessions(instance.database)).rejects.toThrow('closing failed')
+    } finally {
+      failing.mockRestore()
+    }
+
+    expect(await sessionsOf(email)).not.toContain(working.id)
+    expect(await endOfWork(working.id)).toBeNull()
+
+    await sweepExpiredSessions(instance.database)
+
+    expect((await endOfWork(working.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(working.id)).toBe('membership.end')
+  })
+
+  it('keeps the sessions of an access whose last day is moved on while the pass runs', async () => {
+    const email = 'letzter-tag-verlaengert@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+
+    await lastDayAgo(north.id, userId, 2)
+
+    // An office that gives the access a new last day, and commits only once
+    // the pass has read the membership as past its end.
+    const held = await admin.connect()
+    let committed = false
+
+    try {
+      await held.query('begin')
+      await held.query(
+        'update memberships set last_day = null where tenant_id = $1 and user_id = $2',
+        [north.id, userId],
+      )
+
+      const holder = await held.query<{ pid: number }>('select pg_backend_pid() as pid')
+      const pass = sweepExpiredSessions(instance.database)
+      let blocked = false
+
+      for (let tries = 0; tries < 200 && !blocked; tries += 1) {
+        const { rows } = await admin.query<{ blocked: boolean }>(
+          `select exists (
+             select 1 from pg_stat_activity a where $1 = any(pg_blocking_pids(a.pid))
+           ) as blocked`,
+          [holder.rows[0]?.pid],
+        )
+
+        blocked = rows[0]?.blocked === true
+
+        if (!blocked) {
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+      }
+
+      await held.query('commit')
+      committed = true
+      await pass
+
+      expect(blocked).toBe(true)
+    } finally {
+      held.release(!committed)
+    }
+
+    expect(await sessionsOf(email)).toContain(working.id)
+    expect(await endOfWork(working.id)).toBeNull()
   })
 })
