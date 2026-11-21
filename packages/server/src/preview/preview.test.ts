@@ -1,7 +1,7 @@
 import type { AddressInfo } from 'node:net'
 
 import type { INestApplication } from '@nestjs/common'
-import { permissions } from '@opengewerk/domain'
+import { addDays, permissions } from '@opengewerk/domain'
 import { Database, newId } from '@opengewerk/platform-server'
 import express from 'express'
 import type { Pool } from 'pg'
@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { runDeadlinesOf } from '../deadlines/engine.js'
+import { todayInGermany } from '../today.js'
 import {
   admitPreviewUser,
   defaultPreviewDatabaseUrl,
@@ -108,6 +109,10 @@ describe('the question who is signed in', () => {
 describe('the sample data', () => {
   const tenant = { id: newId<'tenant'>(), name: 'Elektro Nord GmbH (Vorschau)' }
   const identity = previewIdentity(tenant.id)
+  // The day the preview plants on when it starts. Not a fixed one: the routes
+  // check what is sent against the real day, and a working time the sample
+  // data begins 61 days after a fixed day was refused once that day was past.
+  const today = todayInGermany()
 
   let admin: Pool
   let database: Database
@@ -126,7 +131,7 @@ describe('the sample data', () => {
     const { port } = application.getHttpServer().address() as AddressInfo
     base = `http://127.0.0.1:${String(port)}`
 
-    await plantSampleData(base, '2026-09-21')
+    await plantSampleData(base, today)
   })
 
   afterAll(async () => {
@@ -320,7 +325,7 @@ describe('the sample data', () => {
       ['vde-0105-100', 'signed'],
       ['vde-0100-600', 'draft'],
     ])
-    expect(rows[2]?.performed_on).toBe('2026-09-21')
+    expect(rows[2]?.performed_on).toBe(today)
     // F3 in the kitchen, 3,41 Ω behind a B 16 A: the one value the board
     // "Prüfprotokoll im Büro" shows in red (#219).
     expect(rows[2]?.values).toContain('"loop_impedance":3410')
@@ -330,7 +335,12 @@ describe('the sample data', () => {
 
   it('makes a deadline of the next inspection the recurring one names (#301)', async () => {
     // As the preview does when it starts, after the sample data.
-    await runDeadlinesOf({ database }, tenant.id, new Date('2026-09-21T08:00:00Z'))
+    await runDeadlinesOf({ database }, tenant.id, new Date())
+
+    // The sample data signs the recurring inspection 35 days back, and it
+    // names its next one 48 months after.
+    const inspected = addDays(today, -35)
+    const next = `${String(Number(inspected.slice(0, 4)) + 4)}${inspected.slice(4)}`
 
     const { rows } = await admin.query<{ kind: string; due_on: string; source_label: string }>(
       'select kind, due_on::text, source_label from deadlines where kind = $1',
@@ -340,7 +350,7 @@ describe('the sample data', () => {
     expect(rows).toEqual([
       {
         kind: 'elektro.recurring_inspection',
-        due_on: '2030-08-17',
+        due_on: next,
         source_label: 'Zählerschrank Keller am Objekt Einfamilienhaus Berg',
       },
     ])
