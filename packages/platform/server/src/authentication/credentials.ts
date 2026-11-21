@@ -97,6 +97,12 @@ export async function revokeCredentials(
  * change only while the account still has `asking`, the count of the
  * session that asks for it. A link from a mail asks without one, `undefined`:
  * whoever holds the link sets the password, whatever came before.
+ *
+ * The sessions the count takes out close their stretches of work after it,
+ * under the reason of the new password and in the person's name
+ * (opengewerk#1029), as the hook does for those better-auth takes out itself:
+ * a change that keeps the other devices signed in leaves them to this, the
+ * one that asks included. A session that had run out already ends as run out.
  */
 export async function writePassword(
   database: Database,
@@ -104,7 +110,7 @@ export async function writePassword(
   hash: string,
   asking: unknown,
 ): Promise<number | null> {
-  return database.forInstance(async (tx) => {
+  const revoked = await database.forInstance(async (tx) => {
     const [account] = await tx
       .select({ generation: authUsers.credentialGeneration })
       .from(authUsers)
@@ -125,8 +131,28 @@ export async function writePassword(
       return null
     }
 
-    return (await revokeCredentials(tx, userId)).generation
+    return revokeCredentials(tx, userId)
   }, userId)
+
+  if (revoked === null) {
+    return null
+  }
+
+  const now = new Date()
+  const ended = revoked.ended.map((session) => ({ ...session, userId }))
+
+  await endStretchesOrLeaveThem(
+    database,
+    ended.filter((session) => session.expiresAt > now),
+    { now, reason: asking === undefined ? 'password.reset' : 'password.change', actor: userId },
+  )
+  await endStretchesOrLeaveThem(
+    database,
+    ended.filter((session) => session.expiresAt <= now),
+    { now },
+  )
+
+  return revoked.generation
 }
 
 /** The session that is named, as what `keep` takes. */

@@ -18,6 +18,7 @@ import {
   probeOrigin as origin,
   reached,
 } from './probe-application.js'
+import { writePassword } from './credentials.js'
 import { renewSession } from './session-lifetime.js'
 import { carryStretch, endStretchesOf, sweepExpiredSessions } from './session-sweep.js'
 import { addStaffMember, replacePassword } from './staff.js'
@@ -1751,6 +1752,38 @@ describe('the work of a session a new password ends', () => {
 
     expect(await stretchesOf(userId)).toEqual([
       { open: false, reason: 'password.change', user: userId },
+    ])
+  })
+
+  it('ends under the new password the sessions the count of the credentials takes out, and one that ran out as run out', async () => {
+    const email = 'neues-passwort-selbst@example.de'
+    const userId = await newcomer(email)
+    const ran = await signIn(email)
+
+    await instance.chooseTenant(ran, north.id)
+    // One that ran out before, its row still there: it ends as run out.
+    await admin.query(
+      `update tenant_sessions set started_at = now() - interval '1 day' where user_id = $1`,
+      [userId],
+    )
+    await admin.query(
+      `update auth_sessions set expires_at = now() - interval '1 hour' where user_id = $1`,
+      [userId],
+    )
+
+    const working = await signIn(email)
+
+    await instance.chooseTenant(working, north.id)
+
+    // What better-auth has not taken out when the password is written, a
+    // session signed in between, goes with the count of the credentials.
+    expect(await writePassword(instance.database, userId, 'neuer-hash', undefined)).not.toBeNull()
+
+    const ended = await stretchesOf(userId)
+
+    expect(ended.sort((a, b) => String(a.reason).localeCompare(String(b.reason)))).toEqual([
+      { open: false, reason: 'password.reset', user: userId },
+      { open: false, reason: 'session.expire', user: null },
     ])
   })
 
