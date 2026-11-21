@@ -263,10 +263,11 @@ export const lapsedTransitionMail =
  * How far ahead of the moment it asks the outbox looks for the end of a
  * transition, so that a message that passes the question cannot reach the
  * mail server after midnight. After the last question the way is bounded:
- * the question's own query (half a minute for a connection, two for the
- * statement), fifteen seconds for the name of the server (`destinationOf`)
- * and two minutes for the message (`whole` in `smtpTransport`), under five
- * minutes together. The two minutes end the wait for the server, not yet the
+ * the question's own transaction (half a minute for a connection, two
+ * minutes for each of its three statements), fifteen seconds for the name of
+ * the server (`destinationOf`) and two minutes for the message (`whole` in
+ * `smtpTransport`), under nine minutes together, so that the ten leave room
+ * and are not to be cut. The two minutes end the wait for the server, not yet the
  * conversation with it: a server that takes the message only after them can
  * still have it after midnight (opengewerk#1036).
  */

@@ -140,6 +140,24 @@ describe('the totals of a document', () => {
     ).toBe(1600)
   })
 
+  it('taxes a period across a change of the rates by its end, as the e-invoice dates it (#1017)', () => {
+    // Work from June into July 2020 was finished at sixteen percent, and
+    // work from December 2020 into January 2021 at nineteen again.
+    for (const [serviceFrom, serviceUntil, cents] of [
+      ['2020-06-15', '2020-07-15', 1600],
+      ['2020-12-15', '2021-01-15', 1900],
+    ] as const) {
+      expect(
+        totalsFor(rules, [line(10000)], {
+          documentDate: '2021-02-01',
+          serviceFrom,
+          serviceUntil,
+          taxTreatment: 'standard',
+        }).taxCents,
+      ).toBe(cents)
+    }
+  })
+
   it('carries no rate block and no zero when no tax is shown', () => {
     for (const treatment of ['small_business', 'reverse_charge'] as const) {
       const totals = totalsFor(rules, [line(10000), line(5000, 'reduced')], {
