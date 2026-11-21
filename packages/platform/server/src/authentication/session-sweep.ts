@@ -250,8 +250,11 @@ export async function sweepExpiredSessions(
 
       gone += deleted.length
 
-      // A short round was the last; one that took nothing would only repeat.
-      if (expired.length < batch || deleted.length === 0) {
+      // A short round was the last. A full one goes on even when it took
+      // nothing: a row it left was renewed meanwhile and has left the
+      // selection, which counts against the same moment, so the next round
+      // reads others and the rounds end.
+      if (expired.length < batch) {
         break
       }
     }
