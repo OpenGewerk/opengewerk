@@ -1,5 +1,5 @@
 import { type SignInMethod, signInMethods, type TenantId } from '@opengewerk/platform-domain'
-import { and, asc, eq, inArray, isNull, lte, notInArray, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, lte, notInArray, or, sql } from 'drizzle-orm'
 
 import type { Database } from '../database/database.js'
 import { everyTenant } from '../database/every-tenant.js'
@@ -226,21 +226,38 @@ export async function sweepExpiredSessions(
 
   // The accesses past their last day first: a session still alive when its
   // access ended ends with the access, at the end of that day, and not when
-  // it ran out later (opengewerk#1030). Should that fail, the rounds wait for
-  // the next pass: they would take such a session for run out, at the wrong
-  // time and for the wrong reason. The orphans run in any case, and the first
-  // failure is the one reported.
+  // it ran out later (opengewerk#1030). The sessions of a tenant where that
+  // failed wait for the next pass, the rounds would take them for run out at
+  // the wrong time and for the wrong reason; those of the other tenants go on.
+  // Without even the list of tenants all of them wait. The orphans run in any
+  // case, and the first failure is the one reported.
+  let held: readonly TenantId[] = []
+  let unsettled = false
+
   try {
-    await endPastLastDays(database, batch)
+    const lastDays = await endPastLastDays(database, batch)
+
+    held = lastDays.held
+
+    if (lastDays.held.length > 0) {
+      failed = true
+      failure = lastDays.failure
+    }
   } catch (error) {
+    unsettled = true
     failed = true
     failure = error
   }
 
+  const settled =
+    held.length === 0
+      ? undefined
+      : or(isNull(authSessions.activeTenantId), notInArray(authSessions.activeTenantId, [...held]))
+
   // The orphans are closed also after a round failed, so that the stretches
   // of rows that went before the failure do not wait for the next pass.
   try {
-    for (; !failed;) {
+    for (; !unsettled;) {
       const expired = await database.forInstance((tx) =>
         tx
           .select({
@@ -250,7 +267,7 @@ export async function sweepExpiredSessions(
             expiresAt: authSessions.expiresAt,
           })
           .from(authSessions)
-          .where(lte(authSessions.expiresAt, now))
+          .where(and(lte(authSessions.expiresAt, now), settled))
           .orderBy(asc(authSessions.expiresAt), asc(authSessions.id))
           .limit(batch),
       )
@@ -269,6 +286,7 @@ export async function sweepExpiredSessions(
                 expired.map((session) => session.id),
               ),
               lte(authSessions.expiresAt, now),
+              settled,
             ),
           )
           .returning({
@@ -365,130 +383,161 @@ export async function sweepExpiredSessions(
 export async function endPastLastDays(
   database: Database,
   batch: number = sweepBatch,
+): Promise<LastDaysPass> {
+  let closed = 0
+  const held: TenantId[] = []
+  let failure: unknown
+
+  for (const tenantId of await everyTenant(database)) {
+    try {
+      closed += await endPastLastDaysIn(database, tenantId, batch)
+    } catch (error) {
+      if (held.length === 0) {
+        failure = error
+      }
+
+      held.push(tenantId)
+    }
+  }
+
+  return held.length === 0 ? { closed, held } : { closed, held, failure }
+}
+
+/** What a pass over the last days did, and the tenants it could not finish. */
+export interface LastDaysPass {
+  readonly closed: number
+  readonly held: readonly TenantId[]
+  /** The first failure, where a tenant failed. */
+  readonly failure?: unknown
+}
+
+/** `endPastLastDays` in one tenant. Says how many stretches it closed. */
+async function endPastLastDaysIn(
+  database: Database,
+  tenantId: TenantId,
+  batch: number,
 ): Promise<number> {
   let closed = 0
 
-  for (const tenantId of await everyTenant(database)) {
-    const working = await database.forInstance((tx) =>
-      tx
-        .selectDistinct({ userId: authSessions.userId })
-        .from(authSessions)
-        .where(eq(authSessions.activeTenantId, tenantId)),
-    )
-    const open = await database.forTenant({ tenantId }, (tx) =>
-      tx
-        .selectDistinct({ userId: tenantSessions.userId })
-        .from(tenantSessions)
-        .where(and(eq(tenantSessions.tenantId, tenantId), isNull(tenantSessions.endedAt))),
-    )
-    const people = [...new Set([...working, ...open].map((row) => row.userId))]
+  const working = await database.forInstance((tx) =>
+    tx
+      .selectDistinct({ userId: authSessions.userId })
+      .from(authSessions)
+      .where(eq(authSessions.activeTenantId, tenantId)),
+  )
+  const open = await database.forTenant({ tenantId }, (tx) =>
+    tx
+      .selectDistinct({ userId: tenantSessions.userId })
+      .from(tenantSessions)
+      .where(and(eq(tenantSessions.tenantId, tenantId), isNull(tenantSessions.endedAt))),
+  )
+  const people = [...new Set([...working, ...open].map((row) => row.userId))]
 
-    for (let start = 0; start < people.length; start += batch) {
-      const round = people.slice(start, start + batch)
+  for (let start = 0; start < people.length; start += batch) {
+    const round = people.slice(start, start + batch)
 
-      closed += await database.forTenant({ tenantId, reason: 'membership.end' }, async (tx) => {
-        const ended = await tx
-          .select({ userId: memberships.userId, lastDay: memberships.lastDay })
-          .from(memberships)
-          .where(
-            and(
-              eq(memberships.tenantId, tenantId),
-              inArray(memberships.userId, round),
-              pastItsEnd(),
-            ),
-          )
-          .for('share')
-
-        if (ended.length === 0) {
-          return 0
-        }
-
-        const users = ended.map((row) => row.userId)
-        const lastDays = sql.join(
-          ended.map((row) => sql`(${row.userId}, ${row.lastDay}::date)`),
-          sql`, `,
+    closed += await database.forTenant({ tenantId, reason: 'membership.end' }, async (tx) => {
+      const ended = await tx
+        .select({ userId: memberships.userId, lastDay: memberships.lastDay })
+        .from(memberships)
+        .where(
+          and(eq(memberships.tenantId, tenantId), inArray(memberships.userId, round), pastItsEnd()),
         )
-        // The end of the last day is midnight after it, in Germany, as the day
-        // itself is counted (`last-day.ts`).
-        const accessEnded = sql`((m.last_day + 1)::timestamp at time zone 'Europe/Berlin')`
+        .for('share')
 
-        // The sessions working there, each with whether it ran out before its
-        // access ended.
-        const sessions = await database.forInstance(async (instance) => {
-          const { rows } = await instance.execute<{
-            id: string
-            user_id: string
-            expires_at: Date | string
-            ran_out: boolean
-          }>(sql`
-            select s.id, s.user_id, s.expires_at, s.expires_at <= ${accessEnded} as ran_out
-              from ${authSessions} s
-              join (values ${lastDays}) as m(user_id, last_day) on s.user_id = m.user_id
-             where s.active_tenant_id = ${tenantId}`)
+      if (ended.length === 0) {
+        return 0
+      }
 
-          return rows
+      const users = ended.map((row) => row.userId)
+      const lastDays = sql.join(
+        ended.map((row) => sql`(${row.userId}, ${row.lastDay}::date)`),
+        sql`, `,
+      )
+      // The end of the last day is midnight after it, in Germany, as the day
+      // itself is counted (`last-day.ts`).
+      const accessEnded = sql`((m.last_day + 1)::timestamp at time zone 'Europe/Berlin')`
+
+      // The sessions working there, each with whether it ran out before its
+      // access ended.
+      const sessions = await database.forInstance(async (instance) => {
+        const { rows } = await instance.execute<{
+          id: string
+          user_id: string
+          expires_at: Date | string
+          ran_out: boolean
+        }>(sql`
+          select s.id, s.user_id, s.expires_at, s.expires_at <= ${accessEnded} as ran_out
+            from ${authSessions} s
+            join (values ${lastDays}) as m(user_id, last_day) on s.user_id = m.user_id
+           where s.active_tenant_id = ${tenantId}`)
+
+        return rows
+      })
+      const ranOut = sessions.filter((session) => session.ran_out)
+
+      // Those end when they ran out, under the reason of the expiry, in a
+      // transaction of their own, since the reason is the transaction's.
+      await endStretchesOf(
+        database,
+        ranOut.map((session) => ({
+          id: session.id,
+          userId: session.user_id,
+          tenantId,
+          expiresAt: new Date(session.expires_at),
+        })),
+      )
+
+      // The others with the access, never before the stretch began. The
+      // membership is asked again here, under the lock the round holds.
+      const stretches = await tx
+        .update(tenantSessions)
+        .set({
+          endedAt: sql`greatest(${tenantSessions.startedAt}, (
+            select ((${memberships.lastDay} + 1)::timestamp at time zone 'Europe/Berlin')
+              from ${memberships}
+             where ${memberships.tenantId} = ${tenantSessions.tenantId}
+               and ${memberships.userId} = ${tenantSessions.userId}))`,
         })
-        const ranOut = sessions.filter((session) => session.ran_out)
-
-        // Those end when they ran out, under the reason of the expiry, in a
-        // transaction of their own, since the reason is the transaction's.
-        await endStretchesOf(
-          database,
-          ranOut.map((session) => ({
-            id: session.id,
-            userId: session.user_id,
-            tenantId,
-            expiresAt: new Date(session.expires_at),
-          })),
-        )
-
-        // The others with the access, never before the stretch began. The
-        // membership is asked again here, under the lock the round holds.
-        const stretches = await tx
-          .update(tenantSessions)
-          .set({
-            endedAt: sql`greatest(${tenantSessions.startedAt}, (
-              select ((${memberships.lastDay} + 1)::timestamp at time zone 'Europe/Berlin')
-                from ${memberships}
+        .where(
+          and(
+            eq(tenantSessions.tenantId, tenantId),
+            inArray(tenantSessions.userId, users),
+            isNull(tenantSessions.endedAt),
+            ranOut.length === 0
+              ? undefined
+              : notInArray(
+                  tenantSessions.sessionId,
+                  ranOut.map((session) => session.id),
+                ),
+            sql`exists (
+              select 1 from ${memberships}
                where ${memberships.tenantId} = ${tenantSessions.tenantId}
-                 and ${memberships.userId} = ${tenantSessions.userId}))`,
-          })
-          .where(
-            and(
-              eq(tenantSessions.tenantId, tenantId),
-              inArray(tenantSessions.userId, users),
-              isNull(tenantSessions.endedAt),
-              ranOut.length === 0
-                ? undefined
-                : notInArray(
-                    tenantSessions.sessionId,
-                    ranOut.map((session) => session.id),
-                  ),
-              sql`exists (
-                select 1 from ${memberships}
-                 where ${memberships.tenantId} = ${tenantSessions.tenantId}
-                   and ${memberships.userId} = ${tenantSessions.userId}
-                   and ${pastItsEnd()})`,
-            ),
-          )
-          .returning({ id: tenantSessions.id })
+                 and ${memberships.userId} = ${tenantSessions.userId}
+                 and ${pastItsEnd()})`,
+          ),
+        )
+        .returning({ id: tenantSessions.id })
 
-        // Then the sessions it read go, as a block takes them, while the
-        // round still holds the memberships.
-        if (sessions.length > 0) {
-          await database.forInstance((instance) =>
-            instance.delete(authSessions).where(
+      // Then the sessions it read go, as a block takes them, while the
+      // round still holds the memberships; one that changed to another
+      // tenant meanwhile works there and stays.
+      if (sessions.length > 0) {
+        await database.forInstance((instance) =>
+          instance.delete(authSessions).where(
+            and(
               inArray(
                 authSessions.id,
                 sessions.map((session) => session.id),
               ),
+              eq(authSessions.activeTenantId, tenantId),
             ),
-          )
-        }
+          ),
+        )
+      }
 
-        return stretches.length + ranOut.length
-      })
-    }
+      return stretches.length + ranOut.length
+    })
   }
 
   return closed
@@ -510,24 +559,11 @@ export async function endOrphanedStretches(
   let closed = 0
 
   for (const tenantId of await everyTenant(database)) {
-    // Not the stretches of an access past its last day: those end at the end
-    // of that day and for that reason (`endPastLastDays`), also after a pass
-    // that failed to close them.
     const open = await database.forTenant({ tenantId }, (tx) =>
       tx
         .selectDistinct({ sessionId: tenantSessions.sessionId })
         .from(tenantSessions)
-        .where(
-          and(
-            eq(tenantSessions.tenantId, tenantId),
-            isNull(tenantSessions.endedAt),
-            sql`not exists (
-              select 1 from ${memberships}
-               where ${memberships.tenantId} = ${tenantSessions.tenantId}
-                 and ${memberships.userId} = ${tenantSessions.userId}
-                 and ${pastItsEnd()})`,
-          ),
-        ),
+        .where(and(eq(tenantSessions.tenantId, tenantId), isNull(tenantSessions.endedAt))),
     )
 
     for (let start = 0; start < open.length; start += batch) {
@@ -551,6 +587,15 @@ export async function endOrphanedStretches(
               eq(tenantSessions.tenantId, tenantId),
               inArray(tenantSessions.sessionId, orphans),
               isNull(tenantSessions.endedAt),
+              // Not the stretches of an access past its last day: those end
+              // at the end of that day and for that reason (`endPastLastDays`),
+              // also after a pass that failed to close them, and one whose
+              // last day passed since they were read. Asked as they close.
+              sql`not exists (
+                select 1 from ${memberships}
+                 where ${memberships.tenantId} = ${tenantSessions.tenantId}
+                   and ${memberships.userId} = ${tenantSessions.userId}
+                   and ${pastItsEnd()})`,
             ),
           )
           .returning({ id: tenantSessions.id }),
