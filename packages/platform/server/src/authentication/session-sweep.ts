@@ -1,9 +1,10 @@
-import type { TenantId } from '@opengewerk/platform-domain'
+import { type SignInMethod, signInMethods, type TenantId } from '@opengewerk/platform-domain'
 import { and, asc, eq, inArray, isNull, lte, sql } from 'drizzle-orm'
 
 import type { Database } from '../database/database.js'
 import { everyTenant } from '../database/every-tenant.js'
-import { authSessions, tenantSessions } from '../schema.js'
+import { authSessions, memberships, tenantSessions } from '../schema.js'
+import { beforeItsEnd } from './last-day.js'
 import { type RepeatingJob, startRepeating } from '../start/repeat.js'
 
 /**
@@ -75,6 +76,92 @@ export async function endStretchesOf(
         }
       },
     )
+  }
+}
+
+/**
+ * A session better-auth writes in the place of another, when the app is set
+ * up or the second factor changes, takes over the tenant the old one had
+ * chosen, while the old one and its stretch of work end (opengewerk#1029). It
+ * works on in that tenant, so it opens a stretch of its own there, as choosing
+ * the tenant does: without one the tenant's log would say the work ended when
+ * the app was set up, and the sign out later would find nothing to close. Only
+ * such a session is born with a tenant; every other one chooses it after.
+ *
+ * Only where the person still works there, as choosing the tenant asks: not
+ * blocked and not past the last day. And only for a session that still lives:
+ * a revocation that takes it out while the stretch is being opened found
+ * nothing to close, so the stretch is looked at again once it is written and
+ * closed here when its session is gone. No lock on the session row, which the
+ * tenant's half of the transaction could not reach, and which a block, holding
+ * the membership first, would wait on in the other order.
+ */
+export async function carryStretch(
+  database: Database,
+  session: { readonly id: string; readonly userId: string },
+  appSetUp: boolean,
+): Promise<void> {
+  const { activeTenantId, deviceId, signInMethod } = session as {
+    activeTenantId?: string | null
+    deviceId?: string | null
+    signInMethod?: string | null
+  }
+
+  if (!activeTenantId) {
+    return
+  }
+
+  const tenantId = activeTenantId as TenantId
+  const reason = appSetUp ? 'second-factor.app' : 'session.start'
+
+  const opened = await database.forTenant(
+    { tenantId, userId: session.userId, reason, deviceId: deviceId ?? undefined },
+    async (tx) => {
+      // Shared, so that a block that comes in at the same moment waits and
+      // closes this stretch along with the others.
+      const [member] = await tx
+        .select({ userId: memberships.userId })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.tenantId, tenantId),
+            eq(memberships.userId, session.userId),
+            isNull(memberships.blockedAt),
+            beforeItsEnd(),
+          ),
+        )
+        .for('share')
+
+      if (!member) {
+        return false
+      }
+
+      await tx.insert(tenantSessions).values({
+        tenantId,
+        userId: session.userId,
+        sessionId: session.id,
+        deviceId: deviceId ?? null,
+        signInMethod: signInMethods.includes(signInMethod as SignInMethod)
+          ? (signInMethod as SignInMethod)
+          : 'password',
+      })
+
+      return true
+    },
+  )
+
+  if (!opened) {
+    return
+  }
+
+  const [alive] = await database.forInstance((tx) =>
+    tx.select({ id: authSessions.id }).from(authSessions).where(eq(authSessions.id, session.id)),
+  )
+
+  if (!alive) {
+    await endStretchesOf(database, [{ id: session.id, userId: session.userId, tenantId }], {
+      reason: 'session.revoke',
+    })
   }
 }
 

@@ -18,7 +18,7 @@ import {
   reached,
 } from './probe-application.js'
 import { renewSession } from './session-lifetime.js'
-import { sweepExpiredSessions } from './session-sweep.js'
+import { carryStretch, sweepExpiredSessions } from './session-sweep.js'
 import { addStaffMember, replacePassword } from './staff.js'
 
 /**
@@ -1510,6 +1510,38 @@ describe('a session that ran out', () => {
     expect(await sessionsOf(member.email)).not.toContain(ran.id)
     // Still when it ran out: the pass knew that, and tried once more.
     expect((await endOfWork(ran.id))?.getTime()).toBe(rows[0]?.expires_at.getTime())
+  })
+
+  it('closes the stretch it carries over again when a revocation took the session meanwhile', async () => {
+    const template = await atWork(member.email)
+    const copy = newId<'session'>()
+
+    // The session better-auth writes in the place of the old one at the setup
+    // of the app, with its tenant, taken out by a revocation before its
+    // stretch is written.
+    await admin.query(
+      `insert into auth_sessions (id, token, user_id, expires_at, credential_generation, active_tenant_id)
+       select $1, $2, user_id, now() + interval '1 hour', credential_generation, active_tenant_id
+         from auth_sessions where id = $3`,
+      [copy, `token-${copy}`, template.id],
+    )
+    await admin.query('delete from auth_sessions where id = $1', [copy])
+
+    await carryStretch(
+      instance.database,
+      { id: copy, userId: userIds.get(member.email) ?? '', activeTenantId: north.id } as {
+        id: string
+        userId: string
+      },
+      true,
+    )
+
+    const { rows } = await admin.query<{ ended: boolean }>(
+      'select ended_at is not null as ended from tenant_sessions where session_id = $1',
+      [copy],
+    )
+
+    expect(rows).toEqual([{ ended: true }])
   })
 
   it('takes a backlog in rounds of a bounded size, all of it in one pass', async () => {

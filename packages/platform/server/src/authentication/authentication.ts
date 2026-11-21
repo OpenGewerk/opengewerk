@@ -1,16 +1,11 @@
 import { passkey } from '@better-auth/passkey'
 import { hash, verify } from '@node-rs/argon2'
-import {
-  passkeyNameProblem,
-  type SignInMethod,
-  signInMethods,
-  type TenantId,
-} from '@opengewerk/platform-domain'
+import { passkeyNameProblem } from '@opengewerk/platform-domain'
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { APIError, createAuthMiddleware, getSessionFromCtx, isAPIError } from 'better-auth/api'
 import { twoFactor } from 'better-auth/plugins'
-import { and, eq, exists, isNull, ne, or } from 'drizzle-orm'
+import { and, eq, exists, ne, or } from 'drizzle-orm'
 
 import { clientAddressHeader } from '../api/client-address.js'
 import type { ServerApplication } from '../configuration.js'
@@ -23,8 +18,6 @@ import {
   authTwoFactors,
   authUsers,
   authVerifications,
-  memberships,
-  tenantSessions,
 } from '../schema.js'
 import type { AccessRules } from './access.js'
 import {
@@ -51,7 +44,6 @@ import {
 } from './credentials.js'
 import { endOtherSessions } from './other-sessions.js'
 import { markUsed, recordAdded, recordWithdrawn } from './passkeys.js'
-import { beforeItsEnd } from './last-day.js'
 import { shortestPassword } from './password.js'
 import { recordPasswordReset, waitingAfterReset, waitsAfterReset } from './password-resets.js'
 import {
@@ -66,7 +58,7 @@ import {
   secondFactorSessionRequired,
 } from './second-factor.js'
 import { renewSession, sessionLifetimes } from './session-lifetime.js'
-import { endStretchesOf } from './session-sweep.js'
+import { carryStretch, endStretchesOf } from './session-sweep.js'
 import { clearCodesAtSignIn, reserveCodeAtSignIn } from './sign-in-codes.js'
 
 export { sessionLifetimes } from './session-lifetime.js'
@@ -1340,74 +1332,6 @@ async function generationAtSignIn(
     : null
 
   return verification ? generationOfAccount(database, verification.value) : null
-}
-
-/**
- * A session better-auth writes in the place of another, when the app is set
- * up or the second factor changes, takes over the tenant the old one had
- * chosen, while the old one and its stretch of work end (opengewerk#1029). It
- * works on in that tenant, so it opens a stretch of its own there, as choosing
- * the tenant does: without one the tenant's log would say the work ended when
- * the app was set up, and the sign out later would find nothing to close. Only
- * such a session is born with a tenant; every other one chooses it after.
- */
-async function carryStretch(
-  database: Database,
-  session: { readonly id: string; readonly userId: string },
-  appSetUp: boolean,
-): Promise<void> {
-  const { activeTenantId, deviceId, signInMethod } = session as {
-    activeTenantId?: string | null
-    deviceId?: string | null
-    signInMethod?: string | null
-  }
-
-  if (!activeTenantId) {
-    return
-  }
-
-  const tenantId = activeTenantId as TenantId
-
-  await database.forTenant(
-    {
-      tenantId,
-      userId: session.userId,
-      reason: appSetUp ? 'second-factor.app' : 'session.start',
-      deviceId: deviceId ?? undefined,
-    },
-    async (tx) => {
-      // Only where the person still works, as choosing the tenant asks: not
-      // blocked and not past the last day. Shared, so that a block that comes
-      // in at the same moment waits and closes this stretch along with the
-      // others.
-      const [member] = await tx
-        .select({ userId: memberships.userId })
-        .from(memberships)
-        .where(
-          and(
-            eq(memberships.tenantId, tenantId),
-            eq(memberships.userId, session.userId),
-            isNull(memberships.blockedAt),
-            beforeItsEnd(),
-          ),
-        )
-        .for('share')
-
-      if (!member) {
-        return
-      }
-
-      await tx.insert(tenantSessions).values({
-        tenantId,
-        userId: session.userId,
-        sessionId: session.id,
-        deviceId: deviceId ?? null,
-        signInMethod: signInMethods.includes(signInMethod as SignInMethod)
-          ? (signInMethod as SignInMethod)
-          : 'password',
-      })
-    },
-  )
 }
 
 /**
