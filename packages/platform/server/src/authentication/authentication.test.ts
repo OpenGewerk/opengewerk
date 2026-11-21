@@ -19,7 +19,7 @@ import {
 } from './probe-application.js'
 import { renewSession } from './session-lifetime.js'
 import { sweepExpiredSessions } from './session-sweep.js'
-import { addStaffMember } from './staff.js'
+import { addStaffMember, replacePassword } from './staff.js'
 
 /**
  * The authentication, end to end and through HTTP, because that is the only
@@ -1568,5 +1568,77 @@ describe('a session that ran out', () => {
     expect(await sessionsOf(member.email)).not.toContain(ran.id)
     // The stretch stays, ended when the session ran out.
     expect((await endOfWork(ran.id))?.getTime()).toBe(rows[0]?.expires_at.getTime())
+  })
+})
+
+/**
+ * A new password ends the sessions of the account, and what they had open in
+ * a tenant ends with them, at once, under the reason of the password and, where
+ * the person set it, in their name (opengewerk#1029).
+ */
+describe('the work of a session a new password ends', () => {
+  const another = 'ein-ganz-anderes-langes-passwort'
+
+  async function newcomer(email: string): Promise<string> {
+    const { userId } = await addStaffMember(instance.authentication, instance.database, {
+      email,
+      name: 'Nina Neu',
+      password,
+      tenantId: north.id,
+      roles: ['member'],
+    })
+
+    return userId
+  }
+
+  async function stretchesOf(userId: string) {
+    const { rows } = await admin.query<{
+      open: boolean
+      reason: string | null
+      user: string | null
+    }>(
+      `select t.ended_at is null as open, a.reason, a.user_id as "user"
+         from tenant_sessions t
+         left join audit_entries a
+           on a.table_name = 'tenant_sessions' and a.record_id = t.id and a.field = 'ended_at'
+        where t.user_id = $1`,
+      [userId],
+    )
+
+    return rows
+  }
+
+  it('ends under the new password and in the name of the person when better-auth takes it out', async () => {
+    const email = 'neues-passwort@example.de'
+    const userId = await newcomer(email)
+    const working = await signIn(email)
+
+    await instance.chooseTenant(working, north.id)
+
+    const other = await signIn(email)
+
+    await http()
+      .post(`${authenticationPath}/change-password`)
+      .set('cookie', other)
+      .set('origin', origin)
+      .send({ currentPassword: password, newPassword: another, revokeOtherSessions: true })
+      .expect(200)
+
+    expect(await stretchesOf(userId)).toEqual([
+      { open: false, reason: 'password.change', user: userId },
+    ])
+  })
+
+  it('ends at once and under the reset when the command line sets a new password', async () => {
+    const email = 'kommandozeile@example.de'
+    const userId = await newcomer(email)
+    const working = await signIn(email)
+
+    await instance.chooseTenant(working, north.id)
+    await replacePassword(instance.authentication, instance.database, { email, password: another })
+
+    expect(await stretchesOf(userId)).toEqual([
+      { open: false, reason: 'password.reset', user: null },
+    ])
   })
 })

@@ -10,7 +10,7 @@ import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { APIError, createAuthMiddleware, getSessionFromCtx, isAPIError } from 'better-auth/api'
 import { twoFactor } from 'better-auth/plugins'
-import { and, eq, exists, ne, or } from 'drizzle-orm'
+import { and, eq, exists, isNull, ne, or } from 'drizzle-orm'
 
 import { clientAddressHeader } from '../api/client-address.js'
 import type { ServerApplication } from '../configuration.js'
@@ -23,6 +23,7 @@ import {
   authTwoFactors,
   authUsers,
   authVerifications,
+  memberships,
   tenantSessions,
 } from '../schema.js'
 import type { AccessRules } from './access.js'
@@ -50,6 +51,7 @@ import {
 } from './credentials.js'
 import { endOtherSessions } from './other-sessions.js'
 import { markUsed, recordAdded, recordWithdrawn } from './passkeys.js'
+import { beforeItsEnd } from './last-day.js'
 import { shortestPassword } from './password.js'
 import { recordPasswordReset, waitingAfterReset, waitsAfterReset } from './password-resets.js'
 import {
@@ -271,6 +273,17 @@ const askingForTheSession = '/get-session'
 
 /** The route that sets a new password through a link. */
 const resettingPassword = '/reset-password'
+
+/**
+ * The reason a stretch of work ends under when better-auth takes its session
+ * out on one of these routes (opengewerk#1029). Elsewhere the session ran out
+ * or ended.
+ */
+const endingReasons: Readonly<Record<string, string>> = {
+  [confirmingTheApp]: 'second-factor.app',
+  [replacingSession]: 'password.change',
+  [resettingPassword]: 'password.reset',
+}
 
 /** The account a link to a new password is for, from the hook before the route to the write. */
 const accountOfReset = 'openGewerkAccountOfReset'
@@ -616,17 +629,25 @@ export function createAuthentication({
           // while a close that fails after the delete leaves an orphan the next
           // pass of the sweep closes. Our own routes that end a session close
           // it themselves and delete without better-auth.
-          after: async (session) => {
+          after: async (session, context) => {
             const { activeTenantId } = session as { activeTenantId?: string | null }
+            // What took it out names the reason, and the person did it: the
+            // app set up, a new password, a password reset through its link.
+            // A cookie that came back after its session ran out names none.
+            const reason = endingReasons[context?.path ?? '']
 
-            await endStretchesOf(database, [
-              {
-                id: session.id,
-                userId: session.userId,
-                tenantId: activeTenantId ?? null,
-                expiresAt: new Date(session.expiresAt),
-              },
-            ])
+            await endStretchesOf(
+              database,
+              [
+                {
+                  id: session.id,
+                  userId: session.userId,
+                  tenantId: activeTenantId ?? null,
+                  expiresAt: new Date(session.expiresAt),
+                },
+              ],
+              reason === undefined ? {} : { reason, actor: session.userId },
+            )
           },
         },
       },
@@ -1354,8 +1375,29 @@ async function carryStretch(
       reason: appSetUp ? 'second-factor.app' : 'session.start',
       deviceId: deviceId ?? undefined,
     },
-    (tx) =>
-      tx.insert(tenantSessions).values({
+    async (tx) => {
+      // Only where the person still works, as choosing the tenant asks: not
+      // blocked and not past the last day. Shared, so that a block that comes
+      // in at the same moment waits and closes this stretch along with the
+      // others.
+      const [member] = await tx
+        .select({ userId: memberships.userId })
+        .from(memberships)
+        .where(
+          and(
+            eq(memberships.tenantId, tenantId),
+            eq(memberships.userId, session.userId),
+            isNull(memberships.blockedAt),
+            beforeItsEnd(),
+          ),
+        )
+        .for('share')
+
+      if (!member) {
+        return
+      }
+
+      await tx.insert(tenantSessions).values({
         tenantId,
         userId: session.userId,
         sessionId: session.id,
@@ -1363,7 +1405,8 @@ async function carryStretch(
         signInMethod: signInMethods.includes(signInMethod as SignInMethod)
           ? (signInMethod as SignInMethod)
           : 'password',
-      }),
+      })
+    },
   )
 }
 
@@ -1438,7 +1481,6 @@ async function endSessionsWithoutSecondFactor(
   await endStretchesOf(
     database,
     ended.map((session) => ({ ...session, userId })),
-    new Date(),
-    appSetUp ? 'second-factor.app' : 'session.second-factor',
+    { reason: appSetUp ? 'second-factor.app' : 'session.second-factor', actor: userId },
   )
 }

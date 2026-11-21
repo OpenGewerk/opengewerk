@@ -696,6 +696,7 @@ const foundationReasonWords: Readonly<Record<string, string>> = {
   'account.own': 'Eigene Angaben geändert',
   'account.address': 'Adresse berichtigt und bestätigt',
   'password.reset': 'Passwort zurückgesetzt',
+  'password.change': 'Passwort geändert',
   'second-factor.app': 'Authenticator-App eingerichtet',
   'second-factor.reset': 'Zweiter Faktor zurückgesetzt',
   'instance.mail-server': 'Mailserver der Instanz geändert',

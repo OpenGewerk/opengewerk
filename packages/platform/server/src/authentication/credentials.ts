@@ -314,7 +314,7 @@ export async function endRevokedSession(database: Database, sessionId: string): 
   )
 
   // What it had open in a tenant ends with it (opengewerk#1029).
-  await endStretchesOf(database, ended, new Date(), 'session.revoke')
+  await endStretchesOf(database, ended, { reason: 'session.revoke' })
 
   return ended.length > 0
 }

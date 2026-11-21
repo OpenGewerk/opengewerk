@@ -9,6 +9,7 @@ import { addressUnconfirmed } from './address-confirmation.js'
 import type { Authentication } from './authentication.js'
 import { recordPasswordReset } from './password-resets.js'
 import { revokeCredentials } from './credentials.js'
+import { endStretchesOf } from './session-sweep.js'
 
 /** What better-auth hands out once it has read its own configuration. */
 export type AuthenticationContext = Awaited<Authentication['$context']>
@@ -254,16 +255,23 @@ export async function replacePassword(
     // A new password ends every session, and counts the credentials up, so
     // that a sign in with the old one written a moment later is refused
     // (`credentials.ts`).
-    await revokeCredentials(tx, user.id)
+    const { ended } = await revokeCredentials(tx, user.id)
 
-    return user.id
+    return { userId: user.id, ended }
   })
 
   if (replaced === null) {
     return false
   }
 
-  await recordPasswordReset(database, replaced)
+  // What the ended sessions had open in a tenant ends now, under the reason
+  // of the new password (opengewerk#1029). The command acts for no person.
+  await endStretchesOf(
+    database,
+    replaced.ended.map((session) => ({ ...session, userId: replaced.userId })),
+    { reason: 'password.reset' },
+  )
+  await recordPasswordReset(database, replaced.userId)
 
   return true
 }

@@ -559,6 +559,37 @@ describe('the second factor of an account', () => {
     expect(await open()).toEqual([])
   })
 
+  /**
+   * Choosing the tenant asks whether the person still works there; the stretch
+   * a session that takes over opens asks the same, or a session kept past the
+   * last day would write a new start of work into the tenant's log.
+   */
+  it('opens no stretch for the session that takes over once the access has ended', async () => {
+    const email = 'app-nach-ende@nord.example.de'
+    const userId = await leader(email)
+    const signedIn = await withPassword(email)
+
+    await instance.chooseTenant(signedIn, north.id)
+    await admin.query(
+      `update memberships set last_day = current_date - 1 where user_id = $1 and tenant_id = $2`,
+      [userId, north.id],
+    )
+
+    const started = await post('/two-factor/enable', signedIn).send({ password }).expect(200)
+    const { totpURI } = started.body as { totpURI: string }
+
+    await post('/two-factor/verify-totp', signedIn)
+      .send({ code: await currentCode(totpURI) })
+      .expect(200)
+
+    const { rows } = await admin.query<{ open: number }>(
+      'select count(*) filter (where ended_at is null)::int as open from tenant_sessions where user_id = $1',
+      [userId],
+    )
+
+    expect(rows).toEqual([{ open: 0 }])
+  })
+
   it('makes no new recovery codes for a day after a reset of the password', async () => {
     const email = 'zurueckgesetzt@nord.example.de'
     const userId = await leader(email)

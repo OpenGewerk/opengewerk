@@ -23,14 +23,16 @@ export interface EndedSession {
  * and an open one would say they still do. A stretch ends when its session
  * ran out, or now where it went before that. One transaction per tenant, so
  * that each change lands in that tenant's log, under the reason the caller
- * names, or else whether the sessions ran out or were ended.
+ * names, or else whether the sessions ran out or were ended, and in the name
+ * of the person whose action ended them, where one did.
  */
 export async function endStretchesOf(
   database: Database,
   sessions: readonly EndedSession[],
-  now: Date = new Date(),
-  reason?: string,
+  how: { readonly now?: Date; readonly reason?: string; readonly actor?: string } = {},
 ): Promise<void> {
+  const now = how.now ?? new Date()
+  const { reason, actor } = how
   const byTenant = new Map<TenantId, EndedSession[]>()
 
   for (const session of sessions) {
@@ -47,7 +49,11 @@ export async function endStretchesOf(
     )
 
     await database.forTenant(
-      { tenantId, reason: reason ?? (expired ? 'session.expire' : 'session.end') },
+      {
+        tenantId,
+        reason: reason ?? (expired ? 'session.expire' : 'session.end'),
+        ...(actor === undefined ? {} : { userId: actor }),
+      },
       async (tx) => {
         for (const session of ended) {
           await tx
@@ -150,7 +156,7 @@ export async function sweepExpiredSessions(
       )
 
       pending = deleted
-      await endStretchesOf(database, deleted, now)
+      await endStretchesOf(database, deleted, { now })
       pending = []
 
       gone += deleted.length
@@ -170,7 +176,7 @@ export async function sweepExpiredSessions(
   // left after that goes with the orphans, at the time they are closed.
   if (pending.length > 0) {
     try {
-      await endStretchesOf(database, pending, now)
+      await endStretchesOf(database, pending, { now })
     } catch {
       // The orphans below take what is left.
     }

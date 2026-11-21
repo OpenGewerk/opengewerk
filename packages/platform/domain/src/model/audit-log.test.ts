@@ -334,6 +334,7 @@ describe('the way a change took', () => {
     expect(language.way('session.second-factor', applicationRoleName).text).toBe(
       'Von selbst, Sitzung ohne zweiten Faktor beendet',
     )
+    expect(language.way('password.change', applicationRoleName).text).toBe('Passwort geändert')
     expect(language.way('sync.write', applicationRoleName).text).toBe('Abgleich')
     expect(language.way('session.switch', applicationRoleName).text).toBe(
       'Wechsel in einen anderen Mandanten',
