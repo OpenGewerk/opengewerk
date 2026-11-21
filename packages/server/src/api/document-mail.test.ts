@@ -25,6 +25,7 @@ import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/te
 import type { IsoDate } from '@opengewerk/domain'
 import {
   documentAttachments,
+  closingTransitionMail,
   lapsedTransitionMail,
   refuseLapsedTransition,
   restrictedCustomerMail,
@@ -471,14 +472,15 @@ describe('an invoice to a business after the transition has ended', () => {
     expect(await cycle(post.transport)).toMatchObject({ sent: 0 })
     expect(post.sent).toEqual([])
 
-    // Given up for good, not tried again for two days.
+    // Given up for good, not tried again for two days, and told that the
+    // transition ends at midnight, not that it ended.
     const [message] = await messagesOf(asked)
 
     expect(message?.status).toBe('failed')
-    expect(message?.lastError).toContain(lapsedTransitionMail)
+    expect(message?.lastError).toContain(closingTransitionMail)
     // The office reads the way out that there is: what an issued invoice froze
     // does not change, so it is cancelled and written anew.
-    expect(lapsedTransitionMail).toContain('stornieren und mit den fehlenden Angaben neu stellen')
+    expect(closingTransitionMail).toContain('stornieren und mit den fehlenden Angaben neu stellen')
   })
 
   it('stays unsent when making its file takes it past the end of the transition (#1018)', async () => {

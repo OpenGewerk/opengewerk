@@ -260,6 +260,20 @@ export const lapsedTransitionMail =
   'und mit den fehlenden Angaben neu stellen; welche das sind, sagt das Verschicken.'
 
 /**
+ * Why such an invoice stays unsent in the last minutes before its transition
+ * ends: asked for while a PDF was still allowed, it would reach the mail
+ * server only after midnight (`transmittedBy`). Until then sending it again
+ * gives the same answer, from midnight on it names what is missing.
+ */
+export const closingTransitionMail =
+  'Diese Rechnung sollte als PDF hinausgehen, wie es der Übergang nach § 27 Abs. 38 UStG erlaubt. ' +
+  'Der Übergang endet um Mitternacht, und vorher erreicht die Nachricht den Mailserver nicht sicher; ' +
+  'eine Rechnung, die danach übermittelt wird, muss eine E-Rechnung sein. Dieser fehlen dafür Angaben, ' +
+  'und was sie bei der Ausstellung festgeschrieben hat, ändert sich nicht mehr. Die Nachricht geht ' +
+  'deshalb nicht hinaus: Die Rechnung lässt sich stornieren und mit den fehlenden Angaben neu stellen; ' +
+  'welche das sind, sagt das Verschicken ab Mitternacht.'
+
+/**
  * How far ahead of the moment it asks the outbox looks for the end of a
  * transition, so that a message that passes the question cannot reach the
  * mail server after midnight. After the last question the way is bounded:
@@ -289,13 +303,15 @@ export function transmittedBy(now: Date): IsoDate {
  * midnight would carry a PDF the law no longer allows. So the worker asks
  * again, for the day it reaches the mail server by (`transmittedBy`), before
  * the file is made and once more after, and gives the message up with the
- * reason rather than send it. A message whose invoice goes as an e-invoice,
+ * reason rather than send it: that the transition ended, or, asked on the
+ * day it ends (`askedOn`), that it ends before the message would arrive. A message whose invoice goes as an e-invoice,
  * or whose customer needs none, is not touched.
  */
 export async function refuseLapsedTransition(
   database: Database,
   row: OutboxRow,
   sentOn: IsoDate = todayInGermany(),
+  askedOn: IsoDate = sentOn,
 ): Promise<void> {
   if (row.kind !== 'document' || row.attachment !== 'pdf' || row.documentId === null) {
     return
@@ -311,12 +327,22 @@ export async function refuseLapsedTransition(
         return false
       }
 
-      return (await dutyOf(tx, content, sentOn)).required
+      if (!(await dutyOf(tx, content, sentOn)).required) {
+        return false
+      }
+
+      // Ended already, or ending before the message reaches the server.
+      return (await dutyOf(tx, content, askedOn)).required ? 'ended' : 'ending'
     },
   )
 
-  if (lapsed) {
-    throw new MailDeliveryError(lapsedTransitionMail, 'ETRANSITION', null, { permanent: true })
+  if (lapsed !== false) {
+    throw new MailDeliveryError(
+      lapsed === 'ended' ? lapsedTransitionMail : closingTransitionMail,
+      'ETRANSITION',
+      null,
+      { permanent: true },
+    )
   }
 }
 
