@@ -44,6 +44,31 @@ async function addressesOf(host: string): Promise<readonly string[]> {
 }
 
 /**
+ * How long the resolver has to answer for the name of a mail server. Without
+ * a limit, a resolver that never answers held the job that sends the messages
+ * of every tenant, and the way from the outbox to the mail server had no
+ * bound in time that the caller of the job could count on; the transport has
+ * its own (`whole` in `smtpTransport`).
+ */
+const resolvingTime = 15_000
+
+/** What the resolver answers, or a failure once `resolvingTime` has passed. */
+function withinResolvingTime<T>(resolving: Promise<T>): Promise<T> {
+  let deadline: NodeJS.Timeout | undefined
+
+  return Promise.race([
+    resolving,
+    new Promise<never>((_, reject) => {
+      deadline = setTimeout(() => {
+        reject(new Error('The resolver did not answer in time.'))
+      }, resolvingTime)
+    }),
+  ]).finally(() => {
+    clearTimeout(deadline)
+  })
+}
+
+/**
  * The configuration to connect with, or the reason not to connect at all.
  *
  * The name is resolved once, here, and the connection then goes to the
@@ -66,7 +91,9 @@ export async function destinationOf(
   let addresses: readonly string[]
 
   try {
-    addresses = isIP(host) ? [host] : await resolve(host)
+    // A resolver that does not answer in time is answered like a name that
+    // does not resolve.
+    addresses = isIP(host) ? [host] : await withinResolvingTime(resolve(host))
   } catch {
     addresses = []
   }

@@ -260,9 +260,12 @@ export const lapsedTransitionMail =
 
 /**
  * How far ahead of the moment it asks the outbox looks for the end of a
- * transition: well beyond the two minutes a message has to reach the mail
- * server (`whole` in `smtpTransport`), so that a message that passes the
- * question cannot reach the server after midnight.
+ * transition, so that a message that passes the question cannot reach the
+ * mail server after midnight. After the last question the way is bounded:
+ * the question's own query (half a minute for a connection, two for the
+ * statement), fifteen seconds for the name of the server (`destinationOf`)
+ * and two minutes for the message (`whole` in `smtpTransport`), under five
+ * minutes together.
  */
 const transmittingAhead = 10 * 60 * 1000
 
