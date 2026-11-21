@@ -266,7 +266,9 @@ export const lapsedTransitionMail =
  * the question's own query (half a minute for a connection, two for the
  * statement), fifteen seconds for the name of the server (`destinationOf`)
  * and two minutes for the message (`whole` in `smtpTransport`), under five
- * minutes together.
+ * minutes together. The two minutes end the wait for the server, not yet the
+ * conversation with it: a server that takes the message only after them can
+ * still have it after midnight (opengewerk#1036).
  */
 const transmittingAhead = 10 * 60 * 1000
 

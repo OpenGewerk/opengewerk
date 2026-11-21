@@ -16,11 +16,6 @@ export interface FakeSmtpOptions {
   readonly refuse?: readonly string[]
   /** Takes a message and never says whether it took it, the way a server that hangs over one does. */
   readonly stallAfterData?: boolean
-  /**
-   * Answers DATA only after this many milliseconds, the way a slow server
-   * answers a step within the time a step has but the whole beyond its time.
-   */
-  readonly slowDataReply?: number
 }
 
 export interface FakeSmtpServer {
@@ -131,16 +126,7 @@ export async function fakeSmtpServer(options: FakeSmtpOptions = {}): Promise<Fak
         } else if (command === 'DATA') {
           inData = true
           lines = []
-
-          if (options.slowDataReply === undefined) {
-            say('354 End data with <CR><LF>.<CR><LF>')
-          } else {
-            setTimeout(() => {
-              if (!socket.destroyed) {
-                say('354 End data with <CR><LF>.<CR><LF>')
-              }
-            }, options.slowDataReply)
-          }
+          say('354 End data with <CR><LF>.<CR><LF>')
         } else if (command === 'RSET' || command === 'NOOP') {
           say('250 2.0.0 Ok')
         } else if (command === 'QUIT') {
