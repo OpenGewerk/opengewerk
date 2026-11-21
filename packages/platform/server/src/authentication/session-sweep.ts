@@ -57,13 +57,15 @@ export async function endStretchesOf(
       },
       async (tx) => {
         for (const session of ended) {
+          const end =
+            session.expiresAt !== undefined && session.expiresAt < now ? session.expiresAt : now
+
+          // Never before the stretch began: one a session opened a moment
+          // after the time this close was worked out ends where it began.
           await tx
             .update(tenantSessions)
             .set({
-              endedAt:
-                session.expiresAt !== undefined && session.expiresAt < now
-                  ? session.expiresAt
-                  : now,
+              endedAt: sql`greatest(${tenantSessions.startedAt}, ${end.toISOString()}::timestamptz)`,
             })
             .where(
               and(

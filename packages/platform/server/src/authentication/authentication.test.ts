@@ -18,7 +18,7 @@ import {
   reached,
 } from './probe-application.js'
 import { renewSession } from './session-lifetime.js'
-import { carryStretch, sweepExpiredSessions } from './session-sweep.js'
+import { carryStretch, endStretchesOf, sweepExpiredSessions } from './session-sweep.js'
 import { addStaffMember, replacePassword } from './staff.js'
 
 /**
@@ -1336,6 +1336,13 @@ describe('a session that ran out', () => {
 
     expect(id).toBeDefined()
 
+    // Begun a day ago, so that a session the test lets run out an hour or two
+    // back still ran out after its stretch began, as one always does.
+    await admin.query(
+      `update tenant_sessions set started_at = now() - interval '1 day' where session_id = $1`,
+      [id],
+    )
+
     return { cookies, id: id ?? '' }
   }
 
@@ -1542,6 +1549,28 @@ describe('a session that ran out', () => {
     )
 
     expect(rows).toEqual([{ ended: true }])
+  })
+
+  it('never ends a stretch before it began', async () => {
+    const working = await atWork(member.email)
+
+    await admin.query(`update tenant_sessions set started_at = now() where session_id = $1`, [
+      working.id,
+    ])
+
+    // A close worked out an hour before the stretch was opened.
+    await endStretchesOf(
+      instance.database,
+      [{ id: working.id, userId: userIds.get(member.email) ?? '', tenantId: north.id }],
+      { now: new Date(Date.now() - 60 * 60 * 1000) },
+    )
+
+    const { rows } = await admin.query<{ atItsStart: boolean }>(
+      'select ended_at = started_at as "atItsStart" from tenant_sessions where session_id = $1',
+      [working.id],
+    )
+
+    expect(rows).toEqual([{ atItsStart: true }])
   })
 
   it('takes a backlog in rounds of a bounded size, all of it in one pass', async () => {

@@ -492,7 +492,13 @@ describe('the second factor of an account', () => {
 
     await instance.chooseTenant(other, north.id)
 
-    // It ran out half an hour ago, and its stretch ends then, not now.
+    // It ran out half an hour ago, after its stretch began an hour before, and
+    // the stretch ends then, not now.
+    await admin.query(
+      `update tenant_sessions set started_at = now() - interval '90 minutes' where user_id = $1`,
+      [userId],
+    )
+
     const ran = await admin.query<{ expires_at: Date }>(
       `update auth_sessions set expires_at = now() - interval '30 minutes'
         where user_id = $1 and active_tenant_id is not null
