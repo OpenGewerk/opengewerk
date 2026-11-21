@@ -114,13 +114,13 @@ export const retentionKindWords: Readonly<Record<RetentionKind, RetentionKindWor
     label: 'Akten nach dem Austritt',
     begins: 'Ende des Austrittsjahres',
   },
-  // Counted from the day of the youngest signed protocol at the site, which is
-  // when a claim for damages can arise at the latest.
+  // Counted from the youngest signed protocol at the site or a job closed after
+  // it (#1019), the last act there a claim for damages can come from.
   site_records: {
     rule: 'retention.site_records',
     starts: 'record',
     label: 'Objekte gelöschter Kunden mit Anlagen und Protokollen',
-    begins: 'Letztes Protokoll',
+    begins: 'Letztes Protokoll oder späterer Auftrag',
   },
 }
 

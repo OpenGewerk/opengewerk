@@ -131,12 +131,12 @@ export type DeadlineAction = (typeof deadlineActions)[number]
  *   month after it came in (Art. 12 (3) DSGVO). The answer lets it drop.
  * - `sickness`: a sickness a year after its last day (#846,
  *   `sicknessErasureDueOn`); deleting it lets it drop.
- * - `staff_year`: the time and leave of one year of one person, six years
+ * - `staff_year`: the time and leave of one year of one person, eight years
  *   after the end of the year (#846, `staffYearErasureDueOn`).
  * - `person`: the file of somebody who left, three years after the end of the
  *   year they left (#846, `personErasureDueOn`). Coming back lets it drop.
- * - `site`: the site of a deleted customer, ten years after its youngest
- *   signed protocol or, without one, its last job closed (#848,
+ * - `site`: the site of a deleted customer, thirty years after its youngest
+ *   signed protocol or its last job closed, whichever came later (#848,
  *   `siteErasureDueOn`). A maintenance contract there that has not ended
  *   lets it drop.
  *
@@ -488,7 +488,7 @@ export const sourceWords: Readonly<
     person: 'Der Inhaber',
     interval: {
       label: 'Fällig nach',
-      hint: 'Fällig sechs Jahre nach dem Ende des Jahres, wenn die Lohnunterlagen gehen dürfen.',
+      hint: 'Fällig acht Jahre nach dem Ende des Jahres, wenn die Lohnunterlagen gehen dürfen.',
     },
     anchor: 'dem Ende des Jahres',
   },
@@ -500,12 +500,12 @@ export const sourceWords: Readonly<
     },
     anchor: 'dem Ende des Austrittsjahres',
   },
-  // Due from the rule package, ten years after the last protocol (#848).
+  // Due from the rule package, thirty years after the last protocol (#848, #1019).
   site: {
     person: 'Der Inhaber',
     interval: {
       label: 'Fällig nach',
-      hint: 'Fällig zehn Jahre nach dem letzten unterschriebenen Protokoll am Objekt, ohne Protokoll nach dem letzten Auftrag dort.',
+      hint: 'Fällig dreißig Jahre nach dem letzten unterschriebenen Protokoll oder abgeschlossenen Auftrag am Objekt, je nachdem, was später kam.',
     },
     anchor: 'dem letzten Protokoll',
   },

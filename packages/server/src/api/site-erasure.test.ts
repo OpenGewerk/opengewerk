@@ -15,8 +15,8 @@ import { testIdentities as identities } from './test-identity.js'
 
 /**
  * The site of a deleted customer under the deletion concept (#848): kept
- * with its installations and protocols as proof until ten years after the
- * youngest signed protocol there, else after its last job closed, and then
+ * with its installations and protocols as proof until thirty years after the
+ * youngest signed protocol there or its last job closed, whichever came later, and then
  * deleted with everything that hangs on it, unless a maintenance contract
  * there has not ended.
  */
@@ -94,9 +94,9 @@ interface Fixture {
 /**
  * A customer with a site that has something in every table the deletion of
  * a site reaches, the family name in each: Erika Hollberg, Hollweg 7. Its
- * youngest signed protocol is the test of an appliance on 20.04.2015, the
- * protocol of the meter cabinet is of 2014 and the acceptance of its job of
- * 2013, so the site is due once the customer is gone.
+ * youngest signed protocol is the test of an appliance on 20.04.1995, the
+ * protocol of the meter cabinet is of 1994 and the acceptance of its job of
+ * 1993, so the site is due once the customer is gone.
  */
 async function hollberg(): Promise<Fixture> {
   const family = `Hollberg${newId<'customer'>().slice(-6)}`
@@ -126,14 +126,14 @@ async function hollberg(): Promise<Fixture> {
     `begin;
      set local app.user_id = 'bruno';
      insert into customers (id, tenant_id, kind, name, email, created_at)
-       values ('${customer}', '${north}', 'private', 'Erika ${family}', 'erika@${family.toLowerCase()}.example', '2012-01-10');
+       values ('${customer}', '${north}', 'private', 'Erika ${family}', 'erika@${family.toLowerCase()}.example', '1992-01-10');
      insert into sites (id, tenant_id, customer_id, designation, street, house_number, postal_code, city, notes)
        values ('${site}', '${north}', '${customer}', 'Hollweg${family} 7', 'Hollweg${family}', '7', '22222',
                'Holl${family}', 'Katze der ${family}s im Flur');
      insert into installations (id, tenant_id, site_id, kind, designation, notes)
        values ('${cabinet}', '${north}', '${site}', 'meter_cabinet', 'Zählerschrank ${family}', 'Bei ${family} im Keller');
      insert into installations (id, tenant_id, site_id, kind, designation, manufacturer, serial_number, commissioned_on)
-       values ('${pv}', '${north}', '${site}', 'pv_system', 'PV ${family}', 'Sonne', 'PV-${family}', '2014-03-01');
+       values ('${pv}', '${north}', '${site}', 'pv_system', 'PV ${family}', 'Sonne', 'PV-${family}', '1994-03-01');
      insert into installations (id, tenant_id, site_id, kind, designation, pv_system_id)
        values ('${battery}', '${north}', '${site}', 'battery', 'Speicher ${family}', '${pv}');
      insert into distribution_boards (id, tenant_id, installation_id, kind, designation, location)
@@ -153,24 +153,24 @@ async function hollberg(): Promise<Fixture> {
      insert into installation_labels (tenant_id, installation_id, code)
        values ('${north}', '${cabinet}', '${labelCode()}');
      insert into installation_labels (tenant_id, installation_id, code, blocked_at)
-       values ('${north}', '${cabinet}', '${labelCode()}', '2016-01-01');
+       values ('${north}', '${cabinet}', '${labelCode()}', '1996-01-01');
      insert into appliances (id, tenant_id, site_id, designation, protection_class, location, notes,
          cord_length_milli, cord_cross_section_milli, heating_power_watts)
        values ('${appliance}', '${north}', '${site}', 'Bohrmaschine ${family}', 'II', 'Werkraum ${family}', 'Von ${family} geliehen',
          3000, 1500, 800);
      insert into jobs (id, tenant_id, customer_id, site_id, installation_id, kind, status, designation, created_at)
-       values ('${job}', '${north}', '${customer}', '${site}', '${cabinet}', 'project', 'completed', 'Umbau ${family}', '2013-01-10');
+       values ('${job}', '${north}', '${customer}', '${site}', '${cabinet}', 'project', 'completed', 'Umbau ${family}', '1993-01-10');
      insert into form_records (tenant_id, definition_key, definition_version, installation_id, performed_on, status, "values")
-       values ('${north}', 'vde_0100_600', 1, '${cabinet}', '2014-03-10', 'signed', '{"tester": "Prüfer ${family}"}');
+       values ('${north}', 'vde_0100_600', 1, '${cabinet}', '1994-03-10', 'signed', '{"tester": "Prüfer ${family}"}');
      insert into form_records (id, tenant_id, definition_key, definition_version, appliance_id, performed_on, status, "values")
-       values ('${applianceTest}', '${north}', 'dguv_v3', 1, '${appliance}', '2015-04-20', 'signed', '{"note": "Gerät ${family}"}');
+       values ('${applianceTest}', '${north}', 'dguv_v3', 1, '${appliance}', '1995-04-20', 'signed', '{"note": "Gerät ${family}"}');
      insert into form_records (id, tenant_id, definition_key, definition_version, job_id, performed_on, status, "values")
-       values ('${acceptance}', '${north}', 'acceptance', 1, '${job}', '2013-06-01', 'signed', '{"reservations": "Riss bei ${family}"}');
+       values ('${acceptance}', '${north}', 'acceptance', 1, '${job}', '1993-06-01', 'signed', '{"reservations": "Riss bei ${family}"}');
      insert into defects (id, tenant_id, installation_id, description, reported_at)
-       values ('${defect}', '${north}', '${cabinet}', 'Wackelkontakt bei ${family}', '2015-01-05');
-     insert into defect_steps (tenant_id, defect_id, step, taken_at) values ('${north}', '${defect}', 'resolved', '2015-01-06');
+       values ('${defect}', '${north}', '${cabinet}', 'Wackelkontakt bei ${family}', '1995-01-05');
+     insert into defect_steps (tenant_id, defect_id, step, taken_at) values ('${north}', '${defect}', 'resolved', '1995-01-06');
      insert into defect_steps (tenant_id, defect_id, step, taken_at, signer_name, signature_path)
-       values ('${north}', '${defect}', 'accepted', '2015-01-07', 'Erika ${family}', 'M1,1L2,2');
+       values ('${north}', '${defect}', 'accepted', '1995-01-07', 'Erika ${family}', 'M1,1L2,2');
      insert into files (tenant_id, sha256, size_bytes, media_type)
        values ('${north}', '${photo}', 10, 'image/jpeg'), ('${north}', '${plan}', 10, 'application/pdf'),
               ('${north}', '${close}', 10, 'image/jpeg'), ('${north}', '${cord}', 10, 'image/jpeg');
@@ -187,25 +187,25 @@ async function hollberg(): Promise<Fixture> {
               ('${north}', '${defectFile}', '${close}', '${family.toLowerCase()}-kontakt.jpg', 'image/jpeg', 10),
               ('${north}', '${applianceFile}', '${cord}', '${family.toLowerCase()}-leitung.jpg', 'image/jpeg', 10);
      insert into pv_handovers (tenant_id, installation_id, handed_over_on, content)
-       values ('${north}', '${pv}', '2014-03-15', '{"owner": "Erika ${family}"}');
+       values ('${north}', '${pv}', '1994-03-15', '{"owner": "Erika ${family}"}');
      insert into tags (id, tenant_id, name) values ('${tag}', '${north}', 'Wärmepumpe ${tag.slice(-6)}');
      insert into site_tags (tenant_id, site_id, tag_id) values ('${north}', '${site}', '${tag}');
      insert into site_accesses (id, tenant_id, site_id, designation, hint)
        values ('${access}', '${north}', '${site}', 'Schlüssel ${family}', 'beim Nachbarn');
      insert into secrets (tenant_id, purpose, sealed, record_id) values ('${north}', 'site_access', 'versiegelt', '${access}');
      insert into site_access_reveals (tenant_id, site_access_id, user_id, revealed_at, device_id)
-       values ('${north}', '${access}', 'tom', '2016-02-01', 'tablet-tom');
+       values ('${north}', '${access}', 'tom', '1996-02-01', 'tablet-tom');
      insert into site_access_deliveries (tenant_id, site_access_id, user_id, value_set_at, device_id)
-       values ('${north}', '${access}', 'tom', '2016-02-01', 'tablet-tom');
+       values ('${north}', '${access}', 'tom', '1996-02-01', 'tablet-tom');
      insert into deadlines (tenant_id, kind, source_id, source_label, installation_id, site_id, anchor_on, due_on)
        values ('${north}', 'installation.inspection', '${cabinet}', 'Prüfung ${family}', '${cabinet}', '${site}',
-               '2014-03-10', '2018-03-10');
+               '1994-03-10', '1998-03-10');
      commit;`,
   )
-  // Closed in 2013; the trigger that stamps the day a job closes knows only today.
+  // Closed in 1993; the trigger that stamps the day a job closes knows only today.
   await admin.query(
     `begin; set local session_replication_role = replica;
-     update jobs set closed_at = '2013-06-01' where id = '${job}'; commit;`,
+     update jobs set closed_at = '1993-06-01' where id = '${job}'; commit;`,
   )
 
   return {
@@ -233,13 +233,13 @@ async function bare(closedOn: string | null): Promise<{ customer: string; site: 
     `begin;
      set local app.user_id = 'bruno';
      insert into customers (id, tenant_id, kind, name, created_at)
-       values ('${customer}', '${north}', 'business', '${family} GmbH', '2012-01-10');
+       values ('${customer}', '${north}', 'business', '${family} GmbH', '1992-01-10');
      insert into sites (id, tenant_id, customer_id, designation) values ('${site}', '${north}', '${customer}', 'Halle ${family}');
      ${
        closedOn === null
          ? ''
          : `insert into jobs (id, tenant_id, customer_id, site_id, kind, status, designation, created_at)
-              values ('${job}', '${north}', '${customer}', '${site}', 'project', 'completed', 'Halle', '2015-01-10');`
+              values ('${job}', '${north}', '${customer}', '${site}', 'project', 'completed', 'Halle', '1995-01-10');`
      }
      commit;`,
   )
@@ -394,7 +394,7 @@ afterAll(async () => {
 })
 
 describe('what is due (#848)', () => {
-  it('is the site of a deleted customer, ten years after its youngest signed protocol', async () => {
+  it('is the site of a deleted customer, thirty years after its youngest signed protocol (#1019)', async () => {
     const { family, customer, site } = await hollberg()
 
     // Not while its customer is there, and not for a customer deleted some other way.
@@ -404,9 +404,9 @@ describe('what is due (#848)', () => {
     await deleteCustomer(customer)
     await pass()
 
-    // Due ten years after 20.04.2015, and never before its customer went, today.
+    // Due thirty years after 20.04.1995, and never before its customer went, today.
     expect(await siteDeadlines()).toEqual([
-      { source_id: site, source_label: 'Objekt, letztes Protokoll 20.04.2015', due_on: today },
+      { source_id: site, source_label: 'Objekt, letztes Protokoll 20.04.1995', due_on: today },
     ])
 
     const overview = await http().get('/privacy').set('x-test-identity', owner).expect(200)
@@ -416,7 +416,7 @@ describe('what is due (#848)', () => {
         kind: 'site',
         recordId: site,
         name: `Hollweg${family} 7`,
-        detail: `Hollweg${family} 7, 22222 Holl${family} · Objekt, letztes Protokoll 20.04.2015`,
+        detail: `Hollweg${family} 7, 22222 Holl${family} · Objekt, letztes Protokoll 20.04.1995`,
       }),
     )
   })
@@ -448,12 +448,12 @@ describe('what is due (#848)', () => {
     )
     await pass()
     expect((await siteDeadlines()).map((row) => row.source_label)).toEqual([
-      'Objekt, letztes Protokoll 20.04.2015',
-      'Objekt, letztes Protokoll 20.04.2015',
+      'Objekt, letztes Protokoll 20.04.1995',
+      'Objekt, letztes Protokoll 20.04.1995',
     ])
 
     // A test of an appliance there and an acceptance of a job there, each
-    // signed a year ago, keep their sites nine more years.
+    // signed a year ago, keep their sites twenty-nine more years.
     await admin.query(
       `begin; set local session_replication_role = replica;
        update form_records set performed_on = '${addMonths(today, -12)}'
@@ -463,8 +463,43 @@ describe('what is due (#848)', () => {
     expect(await siteDeadlines()).toEqual([])
   })
 
+  it('counts from a job closed after the youngest protocol, and names it so (#1019)', async () => {
+    const { customer, site } = await hollberg()
+
+    // A job closed after the test of the appliance on 20.04.1995.
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       update jobs set closed_at = '1996-01-15' where site_id = '${site}'; commit;`,
+    )
+    await deleteCustomer(customer)
+    await pass()
+
+    expect(await siteDeadlines()).toEqual([
+      {
+        source_id: site,
+        source_label: 'Objekt, letzter Auftrag 15.01.1996 nach dem letzten Protokoll',
+        due_on: today,
+      },
+    ])
+  })
+
+  it('keeps a site thirty years after a later job, though its protocol is older than that (#1019)', async () => {
+    const { customer, site } = await hollberg()
+
+    // Thirty years after the test of 20.04.1995 are over; after a job closed
+    // twenty-five years ago they are not, so the site is not due.
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       update jobs set closed_at = '${addMonths(today, -300)}' where site_id = '${site}'; commit;`,
+    )
+    await deleteCustomer(customer)
+    await pass()
+
+    expect(await siteDeadlines()).toEqual([])
+  })
+
   it('counts from the last job closed without a protocol, and goes with its customer without either', async () => {
-    const worked = await bare('2015-09-30')
+    const worked = await bare('1995-09-30')
     const empty = await bare(null)
 
     await deleteCustomer(worked.customer)
@@ -475,7 +510,7 @@ describe('what is due (#848)', () => {
       { source_id: empty.site, source_label: 'Objekt ohne Protokoll und Auftrag', due_on: today },
       {
         source_id: worked.site,
-        source_label: 'Objekt ohne Protokoll, letzter Auftrag 30.09.2015',
+        source_label: 'Objekt ohne Protokoll, letzter Auftrag 30.09.1995',
         due_on: today,
       },
     ])
@@ -577,7 +612,7 @@ describe('deleting a site (#848)', () => {
     expect(answer.body).toEqual([
       expect.objectContaining({
         kind: 'site',
-        label: 'Objekt, letztes Protokoll 20.04.2015',
+        label: 'Objekt, letztes Protokoll 20.04.1995',
         dueOn: today,
         erasedBy: 'lena',
         automatic: false,

@@ -3,6 +3,7 @@ import { Client, type Pool } from 'pg'
 import type { Response } from 'supertest'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import type { Database } from '../database/database.js'
 import { newId } from '../database/identifier.js'
 import { authenticationPath } from './authentication.js'
 import { refusingRevokedSessions, revokeCredentials } from './credentials.js'
@@ -796,5 +797,62 @@ describe('the adapter around the database', () => {
     })
     // Any other table, and any other error, goes on as it was thrown.
     await expect(adapter.create({ model: 'user', data: {} })).rejects.toBe(refused)
+  })
+})
+
+describe('work that cannot be closed when a revoked session ends', () => {
+  /**
+   * Makes every close of work under one reason fail while `run` runs, and hands
+   * back what the server logged meanwhile.
+   */
+  async function whileClosingFails(
+    reason: string,
+    run: () => Promise<unknown>,
+  ): Promise<unknown[][]> {
+    const forTenant = instance.database.forTenant.bind(instance.database)
+    const logged: unknown[][] = []
+    const failing = vi
+      .spyOn(instance.database, 'forTenant')
+      .mockImplementation(((
+        identity: Parameters<Database['forTenant']>[0],
+        work: Parameters<Database['forTenant']>[1],
+      ) =>
+        identity.reason === reason
+          ? Promise.reject(new Error('closing failed'))
+          : forTenant(identity, work)) as unknown as Database['forTenant'])
+    const said = vi.spyOn(console, 'error').mockImplementation((...line: unknown[]) => {
+      logged.push(line)
+    })
+
+    try {
+      await run()
+    } finally {
+      failing.mockRestore()
+      said.mockRestore()
+    }
+
+    return logged
+  }
+
+  it('still tells the browser it has no session', async () => {
+    const email = 'zaehler-schliessen@nord.example.de'
+    const userId = await person(email)
+    const browser = await instance.signIn(email, first)
+
+    await instance.chooseTenant(browser, north.id)
+    await admin.query(
+      'update auth_users set credential_generation = credential_generation + 1 where id = $1',
+      [userId],
+    )
+
+    let asked: Response | undefined
+    const logged = await whileClosingFails('session.revoke', async () => {
+      asked = await http().get(`${authenticationPath}/get-session`).set('cookie', browser)
+    })
+
+    expect(asked?.status).toBe(200)
+    expect(asked?.body).toBeNull()
+    expect(logged).not.toHaveLength(0)
+    expect(await sessionsOf(userId)).toBe(0)
   })
 })

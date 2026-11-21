@@ -8,8 +8,8 @@
       "validUntil": null,
       "unit": "kiloohms",
       "value": 1000,
-      "source": "DIN EN IEC 62446-1 (VDE 0126-23-1):2019-04, Tabelle 2, Systemspannung ab 120 V",
-      "note": "Isolationswiderstand eines Strings gegen Erde, gemessen mit 500 V bei einer Systemspannung von 120 V bis 500 V und mit 1000 V darüber: mindestens 1 MΩ. Bei einer Systemspannung unter 120 V gelten 0,5 MΩ bei 250 V Prüfspannung; diese Stufe unterscheidet das Protokoll in dieser Fassung noch nicht."
+      "source": "DIN EN IEC 62446-1 (VDE 0126-23-1):2019-04, Tabelle 2 (PV-Generatoren bis 10 kWp), Systemspannung ab 120 V",
+      "note": "Isolationswiderstand eines Strings gegen Erde, gemessen mit 500 V bei einer Systemspannung von 120 V bis 500 V und mit 1000 V darüber: mindestens 1 MΩ. Bei einer Systemspannung unter 120 V gelten 0,5 MΩ bei 250 V Prüfspannung; diese Stufe unterscheidet das Protokoll in dieser Fassung noch nicht. Tabelle 2 nennt die Werte für einen PV-Generator bis 10 kWp; ein größerer wird nach Abschnitt 6.7.3 in Teilen gemessen, etwa je String, gegen dieselben Werte. Das Protokoll misst je String."
     }
   ]
 }

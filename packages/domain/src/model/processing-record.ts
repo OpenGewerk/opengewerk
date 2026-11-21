@@ -80,7 +80,7 @@ export const processingActivities = [
     subjects: 'Beschäftigte mit Zugang',
     data: 'Name, E-Mail-Adresse, Passwort als Hash, Passkeys, zweiter Faktor, Sitzungen mit Gerät und Netzadresse, Rollen und letzter Tag',
     deletion:
-      'mit der Akte, drei Jahre nach dem Ende des Austrittsjahres; eine Sitzung nach zwölf Stunden, ein Gerät für die Arbeit ohne Netz nach dreißig Tagen, eine neue E-Mail-Adresse, deren Link abgelaufen ist, spätestens einen Tag danach',
+      'mit der Akte, drei Jahre nach dem Ende des Austrittsjahres; eine Sitzung spätestens einen Tag nach ihrem Ablauf, der spätestens zwölf Stunden nach der letzten Nutzung kommt, auf einem Gerät für die Arbeit ohne Netz dreißig Tage danach, eine neue E-Mail-Adresse, deren Link abgelaufen ist, spätestens einen Tag danach',
     purpose:
       'Anmeldung an der Anwendung, Festlegen, wer was sehen und tun darf, und Schutz der Konten vor fremdem Zugriff',
     legalBasis: 'Art. 6 Abs. 1 Buchst. b DSGVO; Art. 6 Abs. 1 Buchst. c mit Art. 32 DSGVO',
@@ -117,7 +117,7 @@ export const processingActivities = [
     subjects: 'Kunden; Beschäftigte, die einen Beleg festschreiben oder unterschreiben lassen',
     data: 'Belege mit Positionen, Unterschriften, E-Rechnungen, Zahlungen, Aufträge und ihre Notizen',
     deletion:
-      'Rechnungen, Gutschriften und Stornos acht Jahre, andere festgeschriebene Belege sechs Jahre nach dem Ende des Jahres, danach mit dem Kunden',
+      'Rechnungen, Gutschriften, Stornos und Regieberichte acht Jahre, andere festgeschriebene Belege sechs Jahre nach dem Ende des Jahres, danach mit dem Kunden',
     purpose: 'Aufträge ausführen und abrechnen und die Belege aufbewahren',
     legalBasis: 'Art. 6 Abs. 1 Buchst. b und c DSGVO mit § 147 AO, § 14 UStG und § 257 HGB',
     uses: 'always',
@@ -129,7 +129,7 @@ export const processingActivities = [
     subjects: 'Kunden; Beschäftigte, die prüfen und unterschreiben',
     data: 'Anschrift des Objekts, Anlagen mit Struktur, Prüfprotokolle mit Messwerten und Unterschrift, Mängel, Fotos, Zugänge zum Objekt (versiegelt)',
     deletion:
-      'ohne Kundendaten bis zehn Jahre nach dem letzten unterschriebenen Protokoll, ohne Protokoll nach dem letzten Auftrag dort',
+      'ohne Kundendaten bis dreißig Jahre nach dem letzten unterschriebenen Protokoll oder Auftrag dort, je nachdem, was später kam',
     purpose: 'Anlagen errichten, prüfen und warten, Prüfungen nachweisen und Mängel beheben',
     legalBasis:
       'Art. 6 Abs. 1 Buchst. b und c DSGVO; für den Nachweis Art. 6 Abs. 1 Buchst. f DSGVO',
@@ -174,7 +174,7 @@ export const processingActivities = [
     title: 'Arbeitszeiten',
     subjects: 'Beschäftigte',
     data: 'Beginn, Ende, Pausen und Fahrten, Notiz und Auftrag; der Standort beim Beginn und Ende nur mit Einwilligung der Person',
-    deletion: 'mit Urlaub und Rufbereitschaft des Jahres sechs Jahre nach dessen Ende',
+    deletion: 'mit Urlaub und Rufbereitschaft des Jahres acht Jahre nach dessen Ende',
     purpose: 'Arbeitszeit erfassen, den Lohn abrechnen und die Aufzeichnungen aufbewahren',
     legalBasis:
       'Art. 6 Abs. 1 Buchst. b und c DSGVO mit § 17 MiLoG, § 16 ArbZG und § 147 AO; für den Standort Art. 6 Abs. 1 Buchst. a DSGVO',

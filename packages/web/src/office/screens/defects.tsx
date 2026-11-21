@@ -742,6 +742,12 @@ export function DefectScreen() {
                             : 'Nach der Gewährleistung.'}
                         </b>
                         {` Gemeldet am ${reportedOn(defect)}, die Gewährleistung ${warranty.kind === 'within' ? 'läuft bis' : 'endete am'} ${date(window.endsOn)}${window.acceptedOn ? `, aus der Abnahme vom ${date(window.acceptedOn)}` : ''}.`}
+                        {/* A defect reported in time can outlast the end above:
+                            talks about it suspend the limitation, and under VOB/B
+                            a written complaint before the end starts two years of its own (#1027). */}
+                        {warranty.kind === 'within'
+                          ? ' Solange über den Mangel verhandelt wird, ist die Verjährung gehemmt (§ 203 BGB); nach VOB/B verjährt seine Beseitigung frühestens zwei Jahre nach Zugang einer schriftlichen Rüge, die vor dem Ende der Gewährleistung zugeht (§ 13 Abs. 5 Nr. 1).'
+                          : null}
                       </p>
                     </div>
                   ) : null}

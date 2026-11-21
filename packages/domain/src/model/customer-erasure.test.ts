@@ -38,9 +38,14 @@ describe('the retention of a document', () => {
     }
   })
 
+  it('keeps a signed time and material report as part of the voucher of the invoice it feeds (#1019)', () => {
+    expect(documentRetentionKind('time_and_material_report', 'signed')).toBe('booking_vouchers')
+    expect(documentRetentionKind('time_and_material_report', 'cancelled')).toBe('booking_vouchers')
+    expect(documentRetentionKind('time_and_material_report', 'draft')).toBeNull()
+  })
+
   it('keeps every other fixed or signed document as a business letter', () => {
     expect(documentRetentionKind('quote', 'issued')).toBe('business_letters')
-    expect(documentRetentionKind('time_and_material_report', 'signed')).toBe('business_letters')
     expect(documentRetentionKind('delivery_note', 'signed')).toBe('business_letters')
   })
 

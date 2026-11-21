@@ -8,8 +8,8 @@
       "validUntil": null,
       "unit": "microamperes",
       "value": 30000,
-      "source": "DIN VDE 0100-722:2019-06, 722.411.3.3",
-      "note": "Je Anschlusspunkt ein zusätzlicher Schutz durch eine Fehlerstrom-Schutzeinrichtung mit einem Bemessungsdifferenzstrom von höchstens 30 mA. Der gemessene Auslösestrom liegt darunter."
+      "source": "DIN VDE 0100-722 (VDE 0100-722):2019-06, 722.531.3.101",
+      "note": "Je Anschlusspunkt eine eigene Fehlerstrom-Schutzeinrichtung, mindestens Typ A, mit einem Bemessungsdifferenzstrom von höchstens 30 mA. Der gemessene Auslösestrom liegt darunter."
     },
     {
       "key": "elektro.charging.dc_residual_current",

@@ -262,7 +262,7 @@ describe('the capacity and the power an installation names (#307)', () => {
     expect(jobs[0]?.html).toContain('<th>Bemessungsleistung</th><td>11 kW</td>')
     // One wallbox of 11 kVA at the site: a notice is enough (§ 19 Abs. 2 NAV).
     expect(jobs[0]?.html).toContain(
-      '<th>Zustimmung des Netzbetreibers</th><td>nicht nötig, die Mitteilung reicht: 11 kVA',
+      '<th>Zustimmung des Netzbetreibers</th><td>nicht nötig, die Mitteilung reicht, sofern am selben Netzanschluss keine weitere Ladeeinrichtung hängt: 11 kVA',
     )
 
     // A second one at the same site, 11 kVA again: together above 12 kVA.
@@ -276,7 +276,7 @@ describe('the capacity and the power an installation names (#307)', () => {
     try {
       await papers(`/installations/${wallbox}/grid-application`)
       expect(jobs[0]?.html).toContain(
-        '<th>Zustimmung des Netzbetreibers</th><td>nötig: 22 kVA Summen-Bemessungsleistung der Wallboxen am Objekt, über 12 kVA',
+        '<th>Zustimmung des Netzbetreibers</th><td>nötig, sofern diese Wallboxen am selben Netzanschluss hängen: 22 kVA Summen-Bemessungsleistung der Wallboxen am Objekt, über 12 kVA',
       )
       // The battery names no wallbox, so its papers do not ask.
       await papers(`/installations/${battery}/grid-application`)

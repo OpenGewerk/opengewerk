@@ -59,11 +59,24 @@ const invoices: ReadonlySet<DocumentKind> = new Set<DocumentKind>([
 ])
 
 /**
+ * Documents that are not invoices but carry what an invoice bills. A signed
+ * time and material report is what the invoice made from it takes its hours
+ * and material from, and the invoice names it by number and day
+ * (`documents/collective.ts` on the server). It belongs to the voucher of
+ * that invoice, the way a delivery note that is a booking voucher does
+ * (#1019). Every signed report counts, billed or not: a report is written to
+ * be billed, and two years more for one that never was costs less than
+ * losing the one that was.
+ */
+const voucherParts: ReadonlySet<DocumentKind> = new Set<DocumentKind>(['time_and_material_report'])
+
+/**
  * The kind of paper a document is for its retention, or null for one that
  * is kept for no one: a draft never left the business. Every invoice,
  * credit note and cancellation is a booking voucher (section 147 (1) no. 4
- * AO, section 14b UStG); every other document that was issued or signed is
- * a business letter sent (section 147 (1) no. 3 AO, section 257 (1) no. 3
+ * AO, section 14b UStG), and so is a time and material report (see
+ * `voucherParts`); every other document that was issued or signed is a
+ * business letter sent (section 147 (1) no. 3 AO, section 257 (1) no. 3
  * HGB). A cancelled document was issued and is kept as what it was.
  */
 export function documentRetentionKind(
@@ -74,7 +87,7 @@ export function documentRetentionKind(
     return null
   }
 
-  return invoices.has(kind) ? 'booking_vouchers' : 'business_letters'
+  return invoices.has(kind) || voucherParts.has(kind) ? 'booking_vouchers' : 'business_letters'
 }
 
 function latest(days: readonly IsoDate[]): IsoDate | null {

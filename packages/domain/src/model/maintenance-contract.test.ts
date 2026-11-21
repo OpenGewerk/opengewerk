@@ -160,6 +160,29 @@ describe('the terms towards a consumer (§ 309 Nr. 9 BGB, #294)', () => {
     )
   })
 
+  it('hold a contract quoted from the 1st of March 2022 on to the law of then, even when it began before (#1020)', () => {
+    // Art. 229 § 60 EGBGB asks when the contract was concluded, and that is
+    // after its quote: the begin alone would give such a contract the old law.
+    const before = { ...terms, startsOn: day('2022-02-01') }
+
+    expect(consumerTermsNotice(shippedRules, before)).toBeNull()
+    expect(consumerTermsNotice(shippedRules, before, day('2022-03-15'))).toContain(
+      'eine stillschweigende Verlängerung um eine feste Zeit',
+    )
+    // A quote before the day changes nothing about a contract begun before it.
+    expect(consumerTermsNotice(shippedRules, before, day('2022-01-10'))).toBeNull()
+    // And a contract begun after the day counts from its begin, also when it
+    // was quoted before: concluded in between, on a day OpenGewerk does not
+    // hold, it may have been either, and the notice says rather too much.
+    expect(
+      consumerTermsNotice(
+        shippedRules,
+        { ...terms, startsOn: day('2022-04-01') },
+        day('2022-02-10'),
+      ),
+    ).toContain('eine stillschweigende Verlängerung um eine feste Zeit')
+  })
+
   it('say nothing where the rules have no limit', () => {
     expect(consumerTermsNotice(ruleSet([]), { ...terms, termMonths: 60 })).toBeNull()
   })

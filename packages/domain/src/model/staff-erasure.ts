@@ -10,7 +10,7 @@ import { retentionOf } from './retention.js'
  * - a sickness, a year after its last day (`sickness_records`): a health
  *   datum (Art. 9 GDPR) goes once the integration management and the
  *   continued pay no longer need it;
- * - the time and leave of one year of one person, six years after the end of
+ * - the time and leave of one year of one person, eight years after the end of
  *   the year (`payroll_records`): the time is a paper of the payroll where the
  *   pay goes by the hour, and the leave of a year and what it was entitled to
  *   go with the time of the same year;
@@ -27,7 +27,7 @@ export function sicknessErasureDueOn(lastDay: IsoDate, today: IsoDate, rules: Ru
 
 /**
  * The first day the time and leave of a year may go. The two years of the
- * minimum wage and working time acts lie well inside the six of the payroll,
+ * minimum wage and working time acts lie well inside the eight of the payroll,
  * and the database keeps the shorter bound on every record of time as well
  * (migration 0036).
  */

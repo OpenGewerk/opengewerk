@@ -120,7 +120,7 @@ export const withCustomer =
 
 /** What goes with a year of a person (#846), before it goes. */
 export const withYear =
-  'Mit einem Jahr gehen die Arbeitszeiten, die Rufbereitschaft, der Urlaub und der Urlaubsanspruch dieses Jahres.'
+  'Mit einem Jahr gehen die Arbeitszeiten, die Rufbereitschaft, der Urlaub und der Urlaubsanspruch dieses Jahres. Lohnunterlagen eines Jahres, das die Rentenversicherung noch nicht geprüft hat, bleiben bis zum Ende des Jahres nach ihrer Prüfung (§ 28f Abs. 1 SGB IV).'
 
 /** What goes with the file of somebody who left (#846), and what stays a while. */
 export const withPerson =
@@ -201,7 +201,7 @@ function DueTable({
   const [problem, setProblem] = useState<string | null>(null)
   const chosen = due.filter((entry) => !unselected.has(entry.recordId))
   const note =
-    'Ein Lead, der nie Kunde wurde, kommt nach dem letzten Kontakt hierher, vorgegeben nach zwölf Monaten; ein Kunde, wenn mit ihm nichts mehr läuft, vorgegeben drei Jahre nach dem letzten Kontakt, oder auf seine Löschanfrage. Die Dauer steht unter Fristen bei „Lead löschen“ und „Kunde löschen“. Eine Krankheit kommt zwölf Monate nach ihrem letzten Tag, Arbeitszeiten und Urlaub eines Jahres sechs Jahre nach dessen Ende und die Akte einer Person drei Jahre nach dem Ende ihres Austrittsjahres, sobald ihr Zugang geendet hat. Das Objekt eines gelöschten Kunden kommt zehn Jahre nach dem letzten unterschriebenen Protokoll daran, ohne Protokoll nach dem letzten Auftrag dort.'
+    'Ein Lead, der nie Kunde wurde, kommt nach dem letzten Kontakt hierher, vorgegeben nach zwölf Monaten; ein Kunde, wenn mit ihm nichts mehr läuft, vorgegeben drei Jahre nach dem letzten Kontakt, oder auf seine Löschanfrage. Die Dauer steht unter Fristen bei „Lead löschen“ und „Kunde löschen“. Eine Krankheit kommt zwölf Monate nach ihrem letzten Tag, Arbeitszeiten und Urlaub eines Jahres acht Jahre nach dessen Ende und die Akte einer Person drei Jahre nach dem Ende ihres Austrittsjahres, sobald ihr Zugang geendet hat. Das Objekt eines gelöschten Kunden kommt dreißig Jahre nach dem letzten unterschriebenen Protokoll oder Auftrag dort, je nachdem, was später kam.'
   const counts = Object.fromEntries(
     erasureKinds.map((kind) => [kind, chosen.filter((entry) => entry.kind === kind).length]),
   ) as Readonly<Record<ErasureKind, number>>
@@ -365,10 +365,10 @@ const automaticWords: Readonly<Record<ErasureKind, string>> = {
   sickness:
     'Eingeschaltet löscht der Lauf jede Krankheit zwölf Monate nach ihrem letzten Tag von selbst. Danach zählt ein Tag darin, der in einem Urlaub lag, wieder als Urlaub.',
   staff_year:
-    'Eingeschaltet löscht der Lauf die Arbeitszeiten, die Rufbereitschaft, den Urlaub und den Urlaubsanspruch eines Jahres von selbst, sobald sie als Lohnunterlage nicht mehr aufzubewahren sind.',
+    'Eingeschaltet löscht der Lauf die Arbeitszeiten, die Rufbereitschaft, den Urlaub und den Urlaubsanspruch eines Jahres von selbst, sobald sie als Lohnunterlage nicht mehr aufzubewahren sind. Ob die Rentenversicherung das Jahr bis dahin geprüft hat (§ 28f Abs. 1 SGB IV), weiß der Lauf nicht.',
   person:
     'Eingeschaltet löscht der Lauf die Akte einer ausgetretenen Person von selbst, mit ihrer Arbeitszeit, ihren Qualifikationen und ihrem Zugang.',
-  site: 'Eingeschaltet löscht der Lauf das Objekt eines gelöschten Kunden zehn Jahre nach dem letzten Protokoll von selbst, mit seinen Anlagen, Geräten, Protokollen, Mängeln und Dateien.',
+  site: 'Eingeschaltet löscht der Lauf das Objekt eines gelöschten Kunden dreißig Jahre nach dem letzten unterschriebenen Protokoll oder abgeschlossenen Auftrag dort, je nachdem, was später kam, von selbst, mit seinen Anlagen, Geräten, Protokollen, Mängeln und Dateien.',
 }
 
 /**
@@ -710,7 +710,7 @@ function RetentionSection() {
     <TablePanel
       title="Aufbewahrungsfristen"
       caption="Aufbewahrungsfristen"
-      note="Eine Frist läuft nicht ab, solange die Unterlagen für Steuern von Bedeutung sind, deren Festsetzungsfrist noch läuft (§ 147 Abs. 3 Satz 5 AO). Deshalb schlägt der Löschlauf vor, und wer den Betrieb führt, bestätigt. Rechnungen, Gutschriften und Stornos eines Kunden zählen als Buchungsbelege, seine übrigen Belege als Geschäftsbriefe. Urlaub und Urlaubsanspruch eines Jahres bleiben so lange wie die Arbeitszeiten desselben Jahres."
+      note="Eine Frist läuft nicht ab, solange die Unterlagen für Steuern von Bedeutung sind, deren Festsetzungsfrist noch läuft (§ 147 Abs. 3 Satz 5 AO). Deshalb schlägt der Löschlauf vor, und wer den Betrieb führt, bestätigt. Rechnungen, Gutschriften, Stornos und Regieberichte eines Kunden zählen als Buchungsbelege, seine übrigen Belege als Geschäftsbriefe. Urlaub und Urlaubsanspruch eines Jahres bleiben so lange wie die Arbeitszeiten desselben Jahres. Lohnunterlagen eines Jahres, das die Rentenversicherung noch nicht geprüft hat, bleiben bis zum Ende des Jahres nach ihrer Prüfung (§ 28f Abs. 1 SGB IV)."
       cards={rows.map((row) => ({
         key: row.kind,
         title: row.label,

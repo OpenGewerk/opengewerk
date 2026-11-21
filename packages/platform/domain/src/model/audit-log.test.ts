@@ -327,6 +327,14 @@ describe('the way a change took', () => {
 
   it("is in the foundation's words for its reasons, and in the application's for those that name a tenant", () => {
     expect(language.way('session.start', applicationRoleName).text).toBe('Anmeldung')
+    // The sweep of sessions that ran out writes this one (opengewerk#1029).
+    expect(language.way('session.expire', applicationRoleName).text).toBe(
+      'Von selbst, Sitzung abgelaufen',
+    )
+    expect(language.way('session.second-factor', applicationRoleName).text).toBe(
+      'Von selbst, Sitzung ohne zweiten Faktor beendet',
+    )
+    expect(language.way('password.change', applicationRoleName).text).toBe('Passwort geändert')
     expect(language.way('sync.write', applicationRoleName).text).toBe('Abgleich')
     expect(language.way('session.switch', applicationRoleName).text).toBe(
       'Wechsel in einen anderen Mandanten',

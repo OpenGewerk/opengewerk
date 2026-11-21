@@ -19,7 +19,7 @@ import type { SiteErasureAnchor } from './site-erasure.js'
  * months after its last day, the time and leave of a year of one person once
  * the payroll no longer needs them, and the file of somebody who left three
  * years after the end of that year, decided on 04.11.2026. The last is the
- * site of a deleted customer with all that hangs on it, ten years after its
+ * site of a deleted customer with all that hangs on it, thirty years after its
  * last protocol (#848).
  */
 export const erasureKinds = [
@@ -98,9 +98,9 @@ export const erasureKindWords: Readonly<Record<ErasureKind, ErasureKindWords>> =
     deadline: 'privacy.site_erasure',
     read: 'site.read',
     one: 'Objekt',
-    title: 'Objekte gelöschter Kunden nach zehn Jahren',
+    title: 'Objekte gelöschter Kunden nach dreißig Jahren',
     reason:
-      'Gelöscht nach dem Löschkonzept: ein Objekt eines gelöschten Kunden mit seinen Anlagen, zehn Jahre nach dem letzten Protokoll.',
+      'Gelöscht nach dem Löschkonzept: ein Objekt eines gelöschten Kunden mit seinen Anlagen, dreißig Jahre nach dem letzten Protokoll oder Auftrag dort.',
   },
 }
 
@@ -174,17 +174,23 @@ export function personErasureLabel(leftOn: IsoDate): string {
 
 /**
  * What the site of a deleted customer is called where its address must not
- * go: the day the ten years count from, and whether it is the last protocol,
- * the last job or neither, when the site goes with its customer.
+ * go: the day the thirty years count from, and whether it is the last protocol,
+ * a job closed after it, the last job of a site without any protocol, or
+ * neither, when the site goes with its customer.
  */
 export function siteErasureLabel(anchor: SiteErasureAnchor | null): string {
   if (anchor === null) {
     return 'Objekt ohne Protokoll und Auftrag'
   }
 
-  return anchor.kind === 'protocol'
-    ? `Objekt, letztes Protokoll ${germanDay(anchor.on)}`
-    : `Objekt ohne Protokoll, letzter Auftrag ${germanDay(anchor.on)}`
+  switch (anchor.kind) {
+    case 'protocol':
+      return `Objekt, letztes Protokoll ${germanDay(anchor.on)}`
+    case 'job_after_protocol':
+      return `Objekt, letzter Auftrag ${germanDay(anchor.on)} nach dem letzten Protokoll`
+    case 'job':
+      return `Objekt ohne Protokoll, letzter Auftrag ${germanDay(anchor.on)}`
+  }
 }
 
 /** A record that is due, as the office reads it before confirming. */

@@ -210,4 +210,15 @@ describe('the deletion concept', () => {
     expect(made).toContain('§ 147')
     expect(made).toContain('## 4. Sicherungen')
   })
+
+  it('names § 28f SGB IV as what the business checks, and as unknown to a kind that goes by itself', () => {
+    expect(erasureWhen('staff_year', settings)).toContain(
+      'das prüft der Betrieb, bevor er das Löschen bestätigt',
+    )
+
+    const automatic = { ...settings, automatic: ['staff_year' as const] }
+
+    expect(erasureWhen('staff_year', automatic)).toContain('weiß der Lauf nicht')
+    expect(erasureWhen('staff_year', automatic)).not.toContain('bevor er das Löschen bestätigt')
+  })
 })

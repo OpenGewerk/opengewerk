@@ -156,9 +156,13 @@ export function chargingApprovalText(charging: GridPapers['charging']): string |
   const total = kilovoltampereText(charging.totalW)
   const limit = kilovoltampereText(charging.approvalAboveW)
 
+  // The law sums per electrical installation, behind one grid connection;
+  // OpenGewerk knows the site. Over the limit at the site is over it at the
+  // connection only if the wallboxes hang on the same one, under it only if
+  // nothing else charges there (#1020).
   return charging.totalW > charging.approvalAboveW
-    ? `nötig: ${total} Summen-Bemessungsleistung der Wallboxen am Objekt, über ${limit} (§ 19 Abs. 2 NAV)`
-    : `nicht nötig, die Mitteilung reicht: ${total} Summen-Bemessungsleistung der Wallboxen am Objekt, bis ${limit} (§ 19 Abs. 2 NAV)`
+    ? `nötig, sofern diese Wallboxen am selben Netzanschluss hängen: ${total} Summen-Bemessungsleistung der Wallboxen am Objekt, über ${limit} (§ 19 Abs. 2 NAV)`
+    : `nicht nötig, die Mitteilung reicht, sofern am selben Netzanschluss keine weitere Ladeeinrichtung hängt: ${total} Summen-Bemessungsleistung der Wallboxen am Objekt, bis ${limit} (§ 19 Abs. 2 NAV)`
 }
 
 /** "9,60 kWp". */
@@ -659,7 +663,7 @@ export function gridPaperJob(
   const wallbox = papers.installation.kind === 'wallbox' || papers.wallboxes.length > 0
   const note = [
     wallbox
-      ? 'Eine Wallbox ist dem Netzbetreiber vor der Inbetriebnahme mitzuteilen; über 12 kVA Summen-Bemessungsleistung je Anlage braucht sie seine Zustimmung (§ 19 Abs. 2 NAV).'
+      ? 'Eine Wallbox ist dem Netzbetreiber vor der Inbetriebnahme mitzuteilen; über 12 kVA Summen-Bemessungsleistung je elektrischer Anlage, also je Netzanschluss, braucht sie seine Zustimmung (§ 19 Abs. 2 NAV).'
       : null,
     'Leere Zeilen nennt die Anlagenakte noch nicht, sie werden von Hand ergänzt.',
   ]

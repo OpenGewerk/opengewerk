@@ -1,6 +1,6 @@
 {
   "package": "contract",
-  "note": "Grenzen für Verträge über regelmäßige Dienst- oder Werkleistungen in Allgemeinen Geschäftsbedingungen gegenüber Verbrauchern (§ 309 Nr. 9 BGB), für die Hinweise am Wartungsvertrag (#294). Maßgeblich ist der Tag, an dem der Vertrag beginnt. Das Gesetz für faire Verbraucherverträge hat Buchstabe b und c für Verträge ab dem 01.03.2022 verschärft (Art. 229 § 60 EGBGB). Die Werte sind am 03.11.2026 gegen den Gesetzestext bei gesetze-im-internet.de geprüft.",
+  "note": "Grenzen für Verträge über regelmäßige Dienst- oder Werkleistungen in Allgemeinen Geschäftsbedingungen gegenüber Verbrauchern (§ 309 Nr. 9 BGB), für die Hinweise am Wartungsvertrag (#294). Das Gesetz für faire Verbraucherverträge hat Buchstabe b und c verschärft. Die neue Fassung gilt nach Art. 229 § 60 EGBGB für ein Schuldverhältnis, das ab dem 01.03.2022 entstanden ist, also für einen Vertrag, der ab diesem Tag geschlossen wurde. Den Tag des Schlusses hält OpenGewerk nicht; gesucht wird am späteren von Angebotsdatum und Beginn des Vertrags, denn geschlossen wird ein Vertrag nach seinem Angebot (#1020). Die Werte sind am 03.11.2026 gegen den Gesetzestext bei gesetze-im-internet.de geprüft, fachlich am 20.11.2026 in #31.",
   "records": [
     {
       "key": "contract.consumer_maximum_term_months",

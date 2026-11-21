@@ -11,9 +11,10 @@ import {
   Param,
   Patch,
   Post,
+  UnauthorizedException,
 } from '@nestjs/common'
 import type { TenantChoice, TenantId } from '@opengewerk/platform-domain'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, gt, isNull, sql } from 'drizzle-orm'
 
 import { RequiresSession } from '../api/authorization.js'
 import { pick } from '../api/body.js'
@@ -219,16 +220,33 @@ export class AuthenticationController {
         .from(authSessions)
         .where(eq(authSessions.id, user.sessionId))
 
-      await tx
+      // The row decides at the moment it is written, as when a session is
+      // renewed (opengewerk#1029): a session that ran out while the request
+      // was on its way is not brought back, or the sweep that read it a
+      // moment before would end the stretch this route opens below and leave
+      // the session working.
+      const [written] = await tx
         .update(authSessions)
         .set({ activeTenantId: chosen, deviceId, longLived: deviceId !== null, expiresAt })
-        .where(eq(authSessions.id, user.sessionId))
+        .where(
+          and(
+            eq(authSessions.id, user.sessionId),
+            gt(authSessions.expiresAt, sql`clock_timestamp()`),
+          ),
+        )
+        .returning({ id: authSessions.id })
 
-      return {
-        tenantId: before?.activeTenantId ?? null,
-        signInMethod: before?.signInMethod ?? 'password',
-      }
+      return written === undefined
+        ? null
+        : {
+            tenantId: before?.activeTenantId ?? null,
+            signInMethod: before?.signInMethod ?? 'password',
+          }
     }, user.userId)
+
+    if (previous === null) {
+      throw new UnauthorizedException('Keine gültige Anmeldung.')
+    }
 
     // A switch from one tenant to another (#242) ends the work in the first,
     // which would otherwise stay open in its log until the end of time: the

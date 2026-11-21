@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq, gt, sql } from 'drizzle-orm'
 
 import type { Database } from '../database/database.js'
 import { authSessions } from '../schema.js'
@@ -70,7 +70,11 @@ export async function renewSession(
     return false
   }
 
-  await database.forInstance(
+  // The row decides, at the moment it is written, not the copy the request
+  // read nor the time it was read at: a session that ran out while the
+  // request was on its way or waited for a connection stays out, and the
+  // sweep that has just ended its stretch of work takes it (opengewerk#1029).
+  const renewed = await database.forInstance(
     (tx) =>
       tx
         .update(authSessions)
@@ -78,9 +82,12 @@ export async function renewSession(
           expiresAt: new Date(now.getTime() + sessionLifetimes[kind] * 1000),
           updatedAt: now,
         })
-        .where(eq(authSessions.id, session.id)),
+        .where(
+          and(eq(authSessions.id, session.id), gt(authSessions.expiresAt, sql`clock_timestamp()`)),
+        )
+        .returning({ id: authSessions.id }),
     userId,
   )
 
-  return true
+  return renewed.length > 0
 }

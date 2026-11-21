@@ -740,7 +740,7 @@ describe('the test of the DC side of a PV system on site (#305)', () => {
     await user.type(screen.getByLabelText('Isolationswiderstand Riso in MΩ'), '0,8')
     expect(
       screen.getByText(
-        'Außerhalb des Grenzwerts, mindestens 1,00 MΩ. Quelle: DIN EN IEC 62446-1 (VDE 0126-23-1):2019-04, Tabelle 2, Systemspannung ab 120 V.',
+        'Außerhalb des Grenzwerts, mindestens 1,00 MΩ. Quelle: DIN EN IEC 62446-1 (VDE 0126-23-1):2019-04, Tabelle 2 (PV-Generatoren bis 10 kWp), Systemspannung ab 120 V.',
       ),
     ).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Zur Übersicht' }))

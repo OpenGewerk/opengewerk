@@ -4,6 +4,7 @@ import type { Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import type { Database } from '../database/database.js'
 import { newId } from '../database/identifier.js'
 import { auditEntries, authRateLimits, authUsers, invitations } from '../schema.js'
 import { authenticationPath } from './authentication.js'
@@ -17,7 +18,9 @@ import {
   probeOrigin as origin,
   reached,
 } from './probe-application.js'
-import { addStaffMember } from './staff.js'
+import { renewSession } from './session-lifetime.js'
+import { carryStretch, endStretchesOf, sweepExpiredSessions } from './session-sweep.js'
+import { addStaffMember, replacePassword } from './staff.js'
 
 /**
  * The authentication, end to end and through HTTP, because that is the only
@@ -1303,5 +1306,536 @@ describe('an instance that has been closed', () => {
     // Neither is the first run or the far end of a link.
     await ask().get('/setup').expect(404)
     await ask().get(`/invitation/${mintToken().token}`).expect(404)
+  })
+})
+
+/**
+ * A session whose time is up (opengewerk#1029). Its row went only when the
+ * same cookie came back, so the network address and the browser of a device
+ * nobody opens again stayed for as long as the account. The sweep takes it
+ * out, and either way the stretch of work in the tenant ends when the session
+ * ran out, so that the tenant's log does not say somebody is still at work.
+ */
+async function sessionsOf(email: string): Promise<string[]> {
+  const { rows } = await admin.query<{ id: string }>(
+    `select s.id from auth_sessions s join auth_users u on u.id = s.user_id where u.email = $1`,
+    [email],
+  )
+
+  return rows.map((row) => row.id)
+}
+
+/** Signs in, chooses a tenant (the north unless said) and hands back the cookies and the new session. */
+async function atWork(
+  email: string,
+  tenantId: string = north.id,
+): Promise<{ cookies: string; id: string }> {
+  const before = new Set(await sessionsOf(email))
+  const cookies = await signIn(email)
+
+  await instance.chooseTenant(cookies, tenantId)
+
+  const id = (await sessionsOf(email)).find((session) => !before.has(session))
+
+  expect(id).toBeDefined()
+
+  // Begun a day ago, so that a session the test lets run out an hour or two
+  // back still ran out after its stretch began, as one always does.
+  await admin.query(
+    `update tenant_sessions set started_at = now() - interval '1 day' where session_id = $1`,
+    [id],
+  )
+
+  return { cookies, id: id ?? '' }
+}
+
+async function endOfWork(sessionId: string): Promise<Date | null | undefined> {
+  const { rows } = await admin.query<{ ended_at: Date | null }>(
+    'select ended_at from tenant_sessions where session_id = $1',
+    [sessionId],
+  )
+
+  return rows[0]?.ended_at
+}
+
+describe('a session that ran out', () => {
+  it('goes with the sweep, ends its work when it ran out, and one still running stays', async () => {
+    const ran = await atWork(member.email)
+    const runs = await atWork(member.email)
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() - interval '2 hours' where id = $1
+       returning expires_at`,
+      [ran.id],
+    )
+
+    expect(await sweepExpiredSessions(instance.database)).toBeGreaterThanOrEqual(1)
+
+    const left = await sessionsOf(member.email)
+
+    expect(left).not.toContain(ran.id)
+    expect(left).toContain(runs.id)
+    expect((await endOfWork(ran.id))?.getTime()).toBe(rows[0]?.expires_at.getTime())
+    expect(await endOfWork(runs.id)).toBeNull()
+
+    const ended = await instance.database.forTenant({ tenantId: north.id }, (tx) =>
+      tx
+        .select({ reason: auditEntries.reason })
+        .from(auditEntries)
+        .where(
+          and(eq(auditEntries.tableName, 'tenant_sessions'), eq(auditEntries.field, 'ended_at')),
+        ),
+    )
+
+    expect(ended.some((entry) => entry.reason === 'session.expire')).toBe(true)
+  })
+
+  it('is not renewed by a request that read it a moment before it ran out', async () => {
+    const ran = await atWork(member.email)
+    const { rows } = await admin.query<{ expires_at: Date; user_id: string }>(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where id = $1
+       returning expires_at, user_id`,
+      [ran.id],
+    )
+    const read = { id: ran.id, expiresAt: new Date(Date.now() + 60_000), longLived: false }
+
+    expect(await renewSession(instance.database, read, rows[0]?.user_id ?? '')).toBe(false)
+
+    const after = await admin.query<{ expires_at: Date }>(
+      'select expires_at from auth_sessions where id = $1',
+      [ran.id],
+    )
+
+    expect(after.rows[0]?.expires_at.getTime()).toBe(rows[0]?.expires_at.getTime())
+  })
+
+  it('is not brought back by a choice of tenant that read it a moment before it ran out', async () => {
+    const ran = await atWork(member.email)
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where id = $1
+       returning expires_at`,
+      [ran.id],
+    )
+    const expiredAt = rows[0]?.expires_at.getTime() ?? 0
+
+    // The request reads the session by the clock of the process, a moment
+    // before it ran out, and writes after it, by the clock of the database.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(expiredAt - 30_000)
+
+    try {
+      await http()
+        .post('/auth/tenant')
+        .set('cookie', ran.cookies)
+        .set('origin', origin)
+        .send({ tenantId: north.id })
+        .expect(401)
+    } finally {
+      vi.useRealTimers()
+    }
+
+    const after = await admin.query<{ expires_at: Date }>(
+      'select expires_at from auth_sessions where id = $1',
+      [ran.id],
+    )
+    const open = await admin.query(
+      'select 1 from tenant_sessions where session_id = $1 and ended_at is null',
+      [ran.id],
+    )
+
+    expect(after.rows[0]?.expires_at.getTime()).toBe(expiredAt)
+    // The stretch it had stays the one the sweep ends; no second one opens.
+    expect(open.rowCount).toBe(1)
+  })
+
+  it('leaves the work of a session whose renewal is committed while the pass runs', async () => {
+    const renewing = await atWork(member.email)
+
+    await admin.query(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where id = $1`,
+      [renewing.id],
+    )
+
+    // A renewal that checked the row a moment before it ran out, and commits
+    // only once the pass has read the row as run out.
+    const held = await admin.connect()
+    let committed = false
+
+    try {
+      await held.query('begin')
+      await held.query(
+        `update auth_sessions set expires_at = now() + interval '12 hours' where id = $1`,
+        [renewing.id],
+      )
+
+      const holder = await held.query<{ pid: number }>('select pg_backend_pid() as pid')
+      const pass = sweepExpiredSessions(instance.database)
+      let blocked = false
+
+      // Until the pass waits for the row the renewal holds, and no further: a
+      // pass that read the row after the commit would prove nothing.
+      for (let tries = 0; tries < 200 && !blocked; tries += 1) {
+        const { rows } = await admin.query<{ blocked: boolean }>(
+          `select exists (
+             select 1 from pg_stat_activity a where $1 = any(pg_blocking_pids(a.pid))
+           ) as blocked`,
+          [holder.rows[0]?.pid],
+        )
+
+        blocked = rows[0]?.blocked === true
+
+        if (!blocked) {
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+      }
+
+      await held.query('commit')
+      committed = true
+      await pass
+
+      expect(blocked).toBe(true)
+    } finally {
+      // A connection whose transaction did not end goes, and its lock with it,
+      // instead of going back to the pool holding the row.
+      held.release(!committed)
+    }
+
+    expect(await sessionsOf(member.email)).toContain(renewing.id)
+    expect(await endOfWork(renewing.id)).toBeNull()
+  })
+
+  it('closes the orphans also when a round fails, and reports that failure', async () => {
+    const ran = await atWork(member.email)
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where id = $1
+       returning expires_at`,
+      [ran.id],
+    )
+
+    // The close of the round fails once, after its rows went.
+    const failing = vi
+      .spyOn(instance.database, 'forTenant')
+      .mockRejectedValueOnce(new Error('closing failed'))
+
+    try {
+      await expect(sweepExpiredSessions(instance.database)).rejects.toThrow('closing failed')
+    } finally {
+      failing.mockRestore()
+    }
+
+    expect(await sessionsOf(member.email)).not.toContain(ran.id)
+    // Still when it ran out: the pass knew that, and tried once more.
+    expect((await endOfWork(ran.id))?.getTime()).toBe(rows[0]?.expires_at.getTime())
+  })
+
+  it('closes the stretch it carries over again when a revocation took the session meanwhile', async () => {
+    const template = await atWork(member.email)
+    const copy = newId<'session'>()
+
+    // The session better-auth writes in the place of the old one at the setup
+    // of the app, with its tenant, taken out by a revocation before its
+    // stretch is written.
+    await admin.query(
+      `insert into auth_sessions (id, token, user_id, expires_at, credential_generation, active_tenant_id)
+       select $1, $2, user_id, now() + interval '1 hour', credential_generation, active_tenant_id
+         from auth_sessions where id = $3`,
+      [copy, `token-${copy}`, template.id],
+    )
+    await admin.query('delete from auth_sessions where id = $1', [copy])
+
+    await carryStretch(
+      instance.database,
+      { id: copy, userId: userIds.get(member.email) ?? '', activeTenantId: north.id } as {
+        id: string
+        userId: string
+      },
+      true,
+    )
+
+    const { rows } = await admin.query<{ ended: boolean }>(
+      'select ended_at is not null as ended from tenant_sessions where session_id = $1',
+      [copy],
+    )
+
+    expect(rows).toEqual([{ ended: true }])
+  })
+
+  it('never ends a stretch before it began', async () => {
+    const working = await atWork(member.email)
+
+    await admin.query(`update tenant_sessions set started_at = now() where session_id = $1`, [
+      working.id,
+    ])
+
+    // A close worked out an hour before the stretch was opened.
+    await endStretchesOf(
+      instance.database,
+      [{ id: working.id, userId: userIds.get(member.email) ?? '', tenantId: north.id }],
+      { now: new Date(Date.now() - 60 * 60 * 1000) },
+    )
+
+    const { rows } = await admin.query<{ atItsStart: boolean }>(
+      'select ended_at = started_at as "atItsStart" from tenant_sessions where session_id = $1',
+      [working.id],
+    )
+
+    expect(rows).toEqual([{ atItsStart: true }])
+  })
+
+  it('takes a backlog in rounds of a bounded size, all of it in one pass', async () => {
+    const template = await atWork(member.email)
+    const backlog = Array.from({ length: 5 }, () => newId<'session'>())
+
+    for (const id of backlog) {
+      await admin.query(
+        `insert into auth_sessions (id, token, user_id, expires_at, credential_generation)
+         select $1, $2, user_id, now() - interval '1 hour', credential_generation
+           from auth_sessions where id = $3`,
+        [id, `token-${id}`, template.id],
+      )
+    }
+
+    // Rounds of two: the five go in three rounds of the same pass.
+    expect(await sweepExpiredSessions(instance.database, new Date(), 2)).toBeGreaterThanOrEqual(5)
+
+    const left = await sessionsOf(member.email)
+
+    expect(backlog.filter((id) => left.includes(id))).toEqual([])
+    expect(left).toContain(template.id)
+  })
+
+  it('ends the work of a session that went without ending it, a release before this one', async () => {
+    const gone = await atWork(member.email)
+
+    // What better-auth did before #1029 with a session whose cookie came back
+    // after it ran out: the row went, the stretch stayed open.
+    await admin.query('delete from auth_sessions where id = $1', [gone.id])
+    expect(await endOfWork(gone.id)).toBeNull()
+
+    // A pass that began before the stretch did, as one that ran while the
+    // stretch was opened: it does not end the stretch before it began.
+    await sweepExpiredSessions(instance.database, new Date(Date.now() - 60 * 60 * 1000))
+
+    const { rows } = await admin.query<{ ended: boolean }>(
+      `select ended_at is not null and ended_at >= started_at as ended
+         from tenant_sessions where session_id = $1`,
+      [gone.id],
+    )
+
+    expect(rows).toEqual([{ ended: true }])
+  })
+
+  it('ends its work also when better-auth takes it out as its cookie comes back', async () => {
+    const ran = await atWork(member.email)
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where id = $1
+       returning expires_at`,
+      [ran.id],
+    )
+
+    await http().get('/auth/tenants').set('cookie', ran.cookies).expect(401)
+
+    expect(await sessionsOf(member.email)).not.toContain(ran.id)
+    // The stretch stays, ended when the session ran out.
+    expect((await endOfWork(ran.id))?.getTime()).toBe(rows[0]?.expires_at.getTime())
+  })
+})
+
+/**
+ * A new password ends the sessions of the account, and what they had open in
+ * a tenant ends with them, at once, under the reason of the password and, where
+ * the person set it, in their name (opengewerk#1029).
+ */
+describe('the work of a session a new password ends', () => {
+  const another = 'ein-ganz-anderes-langes-passwort'
+
+  async function newcomer(email: string): Promise<string> {
+    const { userId } = await addStaffMember(instance.authentication, instance.database, {
+      email,
+      name: 'Nina Neu',
+      password,
+      tenantId: north.id,
+      roles: ['member'],
+    })
+
+    return userId
+  }
+
+  async function stretchesOf(userId: string) {
+    const { rows } = await admin.query<{
+      open: boolean
+      reason: string | null
+      user: string | null
+    }>(
+      `select t.ended_at is null as open, a.reason, a.user_id as "user"
+         from tenant_sessions t
+         left join audit_entries a
+           on a.table_name = 'tenant_sessions' and a.record_id = t.id and a.field = 'ended_at'
+        where t.user_id = $1`,
+      [userId],
+    )
+
+    return rows
+  }
+
+  it('ends under the new password and in the name of the person when better-auth takes it out', async () => {
+    const email = 'neues-passwort@example.de'
+    const userId = await newcomer(email)
+    const working = await signIn(email)
+
+    await instance.chooseTenant(working, north.id)
+
+    const other = await signIn(email)
+
+    await http()
+      .post(`${authenticationPath}/change-password`)
+      .set('cookie', other)
+      .set('origin', origin)
+      .send({ currentPassword: password, newPassword: another, revokeOtherSessions: true })
+      .expect(200)
+
+    expect(await stretchesOf(userId)).toEqual([
+      { open: false, reason: 'password.change', user: userId },
+    ])
+  })
+
+  it('ends as run out, and in no name, when a session that ran out comes back to set a password', async () => {
+    const email = 'abgelaufen-passwort@example.de'
+    const userId = await newcomer(email)
+    const working = await signIn(email)
+
+    await instance.chooseTenant(working, north.id)
+    await admin.query(
+      `update tenant_sessions set started_at = now() - interval '1 day' where user_id = $1`,
+      [userId],
+    )
+    await admin.query(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where user_id = $1`,
+      [userId],
+    )
+
+    // Refused, and the password stays: nothing the route would do happened.
+    await http()
+      .post(`${authenticationPath}/change-password`)
+      .set('cookie', working)
+      .set('origin', origin)
+      .send({ currentPassword: password, newPassword: another, revokeOtherSessions: true })
+      .expect(401)
+
+    expect(await stretchesOf(userId)).toEqual([
+      { open: false, reason: 'session.expire', user: null },
+    ])
+  })
+
+  it('ends at once and under the reset when the command line sets a new password', async () => {
+    const email = 'kommandozeile@example.de'
+    const userId = await newcomer(email)
+    const working = await signIn(email)
+
+    await instance.chooseTenant(working, north.id)
+    await replacePassword(instance.authentication, instance.database, { email, password: another })
+
+    expect(await stretchesOf(userId)).toEqual([
+      { open: false, reason: 'password.reset', user: null },
+    ])
+  })
+})
+
+describe('work that cannot be closed when its session ends', () => {
+  /**
+   * Makes the closes of work that `fails` picks out fail while `run` runs, and
+   * hands back what the server logged meanwhile.
+   */
+  async function whileClosingFails(
+    fails: (identity: Parameters<Database['forTenant']>[0]) => boolean,
+    run: () => Promise<unknown>,
+  ): Promise<unknown[][]> {
+    const forTenant = instance.database.forTenant.bind(instance.database)
+    const logged: unknown[][] = []
+    const failing = vi
+      .spyOn(instance.database, 'forTenant')
+      .mockImplementation(((
+        identity: Parameters<Database['forTenant']>[0],
+        work: Parameters<Database['forTenant']>[1],
+      ) =>
+        fails(identity)
+          ? Promise.reject(new Error('closing failed'))
+          : forTenant(identity, work)) as unknown as Database['forTenant'])
+    const said = vi.spyOn(console, 'error').mockImplementation((...line: unknown[]) => {
+      logged.push(line)
+    })
+
+    try {
+      await run()
+    } finally {
+      failing.mockRestore()
+      said.mockRestore()
+    }
+
+    return logged
+  }
+
+  async function joinedNorth(email: string): Promise<void> {
+    await addStaffMember(instance.authentication, instance.database, {
+      email,
+      name: 'Sven Schließen',
+      password,
+      tenantId: north.id,
+      roles: ['member'],
+    })
+  }
+
+  it('does not keep a new password from being set, and the sweep closes it after', async () => {
+    const email = 'schliessen-scheitert@example.de'
+
+    await joinedNorth(email)
+
+    const working = await atWork(email)
+    const other = await signIn(email)
+    const logged = await whileClosingFails(
+      (identity) => identity.reason === 'password.change',
+      () =>
+        http()
+          .post(`${authenticationPath}/change-password`)
+          .set('cookie', other)
+          .set('origin', origin)
+          .send({
+            currentPassword: password,
+            newPassword: 'ein-ganz-anderes-langes-passwort',
+            revokeOtherSessions: true,
+          })
+          .expect(200),
+    )
+
+    expect(logged).not.toHaveLength(0)
+    expect(await sessionsOf(email)).not.toContain(working.id)
+    expect(await endOfWork(working.id)).toBeNull()
+
+    await sweepExpiredSessions(instance.database)
+
+    expect(await endOfWork(working.id)).not.toBeNull()
+  })
+
+  it('does not make the command line report a password it set as not set', async () => {
+    const email = 'schliessen-kommandozeile@example.de'
+
+    await joinedNorth(email)
+
+    const working = await atWork(email)
+    let replaced: boolean | undefined
+
+    // The record of the reset writes under the same reason in the person's
+    // name; the close of the command acts for nobody.
+    await whileClosingFails(
+      (identity) => identity.reason === 'password.reset' && identity.userId === undefined,
+      async () => {
+        replaced = await replacePassword(instance.authentication, instance.database, {
+          email,
+          password: 'ein-ganz-anderes-langes-passwort',
+        })
+      },
+    )
+
+    expect(replaced).toBe(true)
+    expect(await sessionsOf(email)).not.toContain(working.id)
   })
 })

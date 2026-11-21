@@ -12,6 +12,7 @@ import {
   authUsers,
   authVerifications,
 } from '../schema.js'
+import { endStretchesOrLeaveThem } from './session-sweep.js'
 
 /**
  * The count of an account's credentials, against a session written after
@@ -49,7 +50,11 @@ export async function revokeCredentials(
   keep: SQL | null = null,
 ): Promise<{
   readonly generation: number
-  readonly ended: readonly { readonly id: string; readonly tenantId: string | null }[]
+  readonly ended: readonly {
+    readonly id: string
+    readonly tenantId: string | null
+    readonly expiresAt: Date
+  }[]
 }> {
   const [counted] = await tx
     .update(authUsers)
@@ -62,7 +67,11 @@ export async function revokeCredentials(
   const ended = await tx
     .delete(authSessions)
     .where(keep === null ? ofTheAccount : and(ofTheAccount, not(keep)))
-    .returning({ id: authSessions.id, tenantId: authSessions.activeTenantId })
+    .returning({
+      id: authSessions.id,
+      tenantId: authSessions.activeTenantId,
+      expiresAt: authSessions.expiresAt,
+    })
 
   if (keep !== null) {
     await tx
@@ -296,8 +305,16 @@ export async function endRevokedSession(database: Database, sessionId: string): 
           sql`${authSessions.credentialGeneration} is distinct from (select ${authUsers.credentialGeneration} from ${authUsers} where ${authUsers.id} = ${authSessions.userId})`,
         ),
       )
-      .returning({ id: authSessions.id }),
+      .returning({
+        id: authSessions.id,
+        userId: authSessions.userId,
+        tenantId: authSessions.activeTenantId,
+        expiresAt: authSessions.expiresAt,
+      }),
   )
+
+  // What it had open in a tenant ends with it (opengewerk#1029).
+  await endStretchesOrLeaveThem(database, ended, { reason: 'session.revoke' })
 
   return ended.length > 0
 }

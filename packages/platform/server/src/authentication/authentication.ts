@@ -58,6 +58,7 @@ import {
   secondFactorSessionRequired,
 } from './second-factor.js'
 import { renewSession, sessionLifetimes } from './session-lifetime.js'
+import { carryStretch, endStretchesOrLeaveThem } from './session-sweep.js'
 import { clearCodesAtSignIn, reserveCodeAtSignIn } from './sign-in-codes.js'
 
 export { sessionLifetimes } from './session-lifetime.js'
@@ -264,6 +265,17 @@ const askingForTheSession = '/get-session'
 
 /** The route that sets a new password through a link. */
 const resettingPassword = '/reset-password'
+
+/**
+ * The reason a stretch of work ends under when better-auth takes its session
+ * out on one of these routes (opengewerk#1029). Elsewhere the session ran out
+ * or ended.
+ */
+const endingReasons: Readonly<Record<string, string>> = {
+  [confirmingTheApp]: 'second-factor.app',
+  [replacingSession]: 'password.change',
+  [resettingPassword]: 'password.reset',
+}
 
 /** The account a link to a new password is for, from the hook before the route to the write. */
 const accountOfReset = 'openGewerkAccountOfReset'
@@ -596,6 +608,41 @@ export function createAuthentication({
                 context?.path === confirmingTheApp && Boolean(context.context.session),
               )
             }
+
+            await carryStretch(database, session, context?.path === confirmingTheApp)
+          },
+        },
+        delete: {
+          // A session better-auth takes out itself, the one whose cookie came
+          // back after it ran out above all, closes its stretch of work in the
+          // tenant like the sweep does (opengewerk#1029). After the row went,
+          // as everywhere a session that may still be valid ends: closed first,
+          // a delete that failed would leave it working without a stretch,
+          // while a close that fails after the delete leaves an orphan the next
+          // pass of the sweep closes. Our own routes that end a session close
+          // it themselves and delete without better-auth.
+          after: async (session, context) => {
+            const { activeTenantId } = session as { activeTenantId?: string | null }
+            // What took it out names the reason, and the person did it: the
+            // app set up, a new password, a password reset through its link.
+            // A session that had run out already names none, also when its
+            // cookie came back on one of those routes, which then refuses: it
+            // ran out, and nothing the route would do happened.
+            const ranOut = new Date(session.expiresAt).getTime() <= Date.now()
+            const reason = ranOut ? undefined : endingReasons[context?.path ?? '']
+
+            await endStretchesOrLeaveThem(
+              database,
+              [
+                {
+                  id: session.id,
+                  userId: session.userId,
+                  tenantId: activeTenantId ?? null,
+                  expiresAt: new Date(session.expiresAt),
+                },
+              ],
+              reason === undefined ? {} : { reason, actor: session.userId },
+            )
           },
         },
       },
@@ -1300,6 +1347,15 @@ async function generationAtSignIn(
  * that a sign in with the password alone that began before the app was there
  * is refused as it writes its session (`credentials.ts`), and the sessions
  * that stay take the new count. Anywhere else only the rows go.
+ *
+ * Either way what the ended sessions had open in a tenant is closed after the
+ * rows went, tenant by tenant, as `endOtherSessions` does (opengewerk#1029):
+ * left open, it would say the person still works there until the sweep of
+ * sessions found it and named the wrong reason and time. The rows go first so
+ * that the sessions end whatever happens next; a stretch closed first would
+ * leave a session working without one should the delete fail, while a close
+ * that fails after the delete leaves an orphan the next pass of the sweep
+ * closes. A session that had run out already ends its stretch when it ran out.
  */
 async function endSessionsWithoutSecondFactor(
   database: Database,
@@ -1307,23 +1363,28 @@ async function endSessionsWithoutSecondFactor(
   keep: string,
   appSetUp: boolean,
 ): Promise<void> {
-  await database.forInstance(async (tx) => {
+  const ended = await database.forInstance(async (tx) => {
     if (!appSetUp) {
-      await tx.delete(authSessions).where(
-        and(
-          eq(authSessions.userId, userId),
-          ne(authSessions.id, keep),
-          eq(authSessions.secondFactor, false),
-          exists(
-            tx
-              .select({ id: authUsers.id })
-              .from(authUsers)
-              .where(and(eq(authUsers.id, userId), eq(authUsers.twoFactorEnabled, true))),
+      return tx
+        .delete(authSessions)
+        .where(
+          and(
+            eq(authSessions.userId, userId),
+            ne(authSessions.id, keep),
+            eq(authSessions.secondFactor, false),
+            exists(
+              tx
+                .select({ id: authUsers.id })
+                .from(authUsers)
+                .where(and(eq(authUsers.id, userId), eq(authUsers.twoFactorEnabled, true))),
+            ),
           ),
-        ),
-      )
-
-      return
+        )
+        .returning({
+          id: authSessions.id,
+          tenantId: authSessions.activeTenantId,
+          expiresAt: authSessions.expiresAt,
+        })
     }
 
     const [account] = await tx
@@ -1332,13 +1393,21 @@ async function endSessionsWithoutSecondFactor(
       .where(eq(authUsers.id, userId))
 
     if (account?.app !== true) {
-      return
+      return []
     }
 
-    await revokeCredentials(
+    const revoked = await revokeCredentials(
       tx,
       userId,
       or(theSession(keep), eq(authSessions.secondFactor, true)) ?? theSession(keep),
     )
+
+    return revoked.ended
   }, userId)
+
+  await endStretchesOrLeaveThem(
+    database,
+    ended.map((session) => ({ ...session, userId })),
+    { reason: appSetUp ? 'second-factor.app' : 'session.second-factor', actor: userId },
+  )
 }

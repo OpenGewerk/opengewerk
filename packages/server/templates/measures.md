@@ -16,7 +16,7 @@ Die technischen und organisatorischen Maßnahmen nach Art. 32 DSGVO, als Anlage 
 - Angemeldet wird mit Passwort oder Passkey. Das Passwort steht nur als Hash in der Datenbank (Argon2id).
 - Der zweite Faktor, ein Code aus einer App, ist Pflicht für den Inhaber eines Betriebs und für den Betreiber der Instanz und für alle anderen empfohlen. Er steht verschlüsselt in der Datenbank.
 - Versuche der Anmeldung werden je Netzadresse und Weg für kurze Zeit gezählt und begrenzt.
-- Eine Sitzung endet nach zwölf Stunden, ein Gerät für die Arbeit ohne Netz bleibt dreißig Tage angemeldet. Wird ein Zugang gesperrt oder ist sein letzter Tag vorbei, endet, was die Person im Betrieb offen hat.
+- Eine Sitzung endet spätestens zwölf Stunden nach ihrer letzten Nutzung, ein Gerät für die Arbeit ohne Netz bleibt bis dreißig Tage nach seiner letzten Nutzung angemeldet. Ihre Zeile mit Gerät und Netzadresse geht spätestens einen Tag nach dem Ende. Wird ein Zugang gesperrt oder ist sein letzter Tag vorbei, endet, was die Person im Betrieb offen hat.
 - Das Cookie der Sitzung geht nur über eine verschlüsselte Verbindung, und Anfragen, die von einer fremden Seite kommen, nimmt der Server nicht an.
 
 ### A.2 Rechte und Trennung
@@ -42,7 +42,7 @@ Die technischen und organisatorischen Maßnahmen nach Art. 32 DSGVO, als Anlage 
 
 ### A.5 Verfügbarkeit und Wiederherstellung
 
-- Die Sicherung der Datenbank und der Dateien läuft jede Nacht ohne Zutun und ist verschlüsselt, bevor sie den Server verlässt.
+- Die Sicherung der Datenbank und der Dateien läuft jede Nacht ohne Zutun. Verschlüsselt ist sie, bevor sie den Server verlässt, sobald der Betreiber einen Schlüssel einträgt (B.4); ohne ihn ist das Archiv lesbar.
 - Beim Rückspielen prüft die Anwendung jede Datei gegen ihren Fingerabdruck.
 
 ### A.6 Geräte der Nutzer

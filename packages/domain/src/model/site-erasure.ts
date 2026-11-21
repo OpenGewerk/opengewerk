@@ -7,37 +7,51 @@ import { retentionOf } from './retention.js'
  * decided on 04. and 05.11.2026). Deleting a customer (#845) leaves its sites
  * with their installations and protocols, without anything of the customer,
  * as the business's proof against a claim for damages. That proof is needed
- * for as long as such a claim can be made, ten years from when it arises
- * (section 199 (3) BGB, the period `site_records` in the rule package
- * `retention`).
+ * for as long as such a claim can be made, at most thirty years from the act
+ * that caused the damage (section 199 (2) and (3) sentence 1 no. 2 BGB, the
+ * period `site_records` in the rule package `retention`, #1019).
  *
- * The ten years count from the youngest signed protocol at the site: of an
+ * The thirty years count from the youngest signed protocol at the site, of an
  * installation, of an appliance of the register (DGUV regulation 3) or the
- * acceptance of a job there, since each of them can be the proof. A site
- * without any counts from its last job closed, since claims come from the
- * work; one without either goes with its customer.
+ * acceptance of a job there, since each of them can be the proof, or from its
+ * last job closed where that came later (#1019): a claim comes from the work,
+ * and a job done after the last protocol is work as well. A site with neither
+ * goes with its customer.
  */
 
-/** What the ten years of a site count from. */
+/**
+ * What the thirty years of a site count from: its youngest signed protocol, a
+ * job closed after it, or a job at a site without any protocol.
+ */
 export interface SiteErasureAnchor {
-  readonly kind: 'protocol' | 'job'
+  readonly kind: 'protocol' | 'job_after_protocol' | 'job'
   readonly on: IsoDate
 }
 
-/** The anchor of a site: its youngest signed protocol, else its last job closed, else none. */
+/** The anchor of a site: its youngest signed protocol or its last job closed, whichever came later, else none. */
 export function siteErasureAnchor(facts: {
   readonly lastProtocolOn: IsoDate | null
   readonly lastJobClosedOn: IsoDate | null
 }): SiteErasureAnchor | null {
-  if (facts.lastProtocolOn !== null) {
+  if (
+    facts.lastProtocolOn !== null &&
+    (facts.lastJobClosedOn === null || facts.lastProtocolOn >= facts.lastJobClosedOn)
+  ) {
     return { kind: 'protocol', on: facts.lastProtocolOn }
   }
 
-  return facts.lastJobClosedOn === null ? null : { kind: 'job', on: facts.lastJobClosedOn }
+  if (facts.lastJobClosedOn === null) {
+    return null
+  }
+
+  return {
+    kind: facts.lastProtocolOn === null ? 'job' : 'job_after_protocol',
+    on: facts.lastJobClosedOn,
+  }
 }
 
 /**
- * The first day the site of a customer deleted on a day may go: ten years
+ * The first day the site of a customer deleted on a day may go: thirty years
  * after its anchor, and never before the customer went. A site without an
  * anchor goes on the day its customer went.
  */

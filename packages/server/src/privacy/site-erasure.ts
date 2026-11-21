@@ -51,8 +51,8 @@ function addressOf(row: StandingRow): string {
  * The sites whose customer the deletion concept deleted (#845) and that are
  * not deleted themselves, or the ones named, with what decides when they go:
  * the youngest signed protocol at them, of an installation, an appliance of
- * the register or the acceptance of a job there, else the last job closed
- * there, and what holds them today. Only the ones due today, unless `all`.
+ * the register or the acceptance of a job there, or the last job closed
+ * there where that came later (#1019), and what holds them today. Only the ones due today, unless `all`.
  */
 export async function siteStandings(
   tx: TenantTransaction,

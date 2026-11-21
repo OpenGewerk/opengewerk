@@ -1592,7 +1592,7 @@ async function plantPeople(base: string, today: IsoDate): Promise<void> {
  * What of the staff the deletion concept proposes (#846), as the boards
  * "Datenschutz" draw it: a sickness of Max Becker that ended more than a year
  * ago, and Dennis Kraft, who left three years and more before this year and
- * has no access, with the days of leave of a year six years past its end. His
+ * has no access, with the days of leave of a year more than eight years past its end. His
  * file and that year come due; nothing goes before somebody confirms.
  */
 async function plantStaffDue(
@@ -1621,7 +1621,7 @@ async function plantStaffDue(
     workingTime: { validFrom: joinedOn, mondayMinutes: 480, tuesdayMinutes: 480 },
   })) as { id: string }
 
-  await send(base, 'PUT', `/absences/people/${kraft.id}/entitlements/${String(year - 7)}`, {
+  await send(base, 'PUT', `/absences/people/${kraft.id}/entitlements/${String(year - 9)}`, {
     entitledHalfDays: 60,
     carriedHalfDays: 0,
   })

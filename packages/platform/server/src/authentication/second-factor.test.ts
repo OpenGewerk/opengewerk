@@ -1,5 +1,5 @@
 import type { Pool } from 'pg'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { Database } from '../database/database.js'
 import { newId } from '../database/identifier.js'
@@ -478,6 +478,124 @@ describe('the second factor of an account', () => {
     expect(rows).toEqual([{ open: 1, renewed: 1 }])
   })
 
+  /**
+   * Setting the app up ends the sessions of the account that began with the
+   * password alone (opengewerk-haustechnik#360), and what one of them had open
+   * in a tenant ends with it, at once and under the reason of the app
+   * (opengewerk#1029). Until then it stayed open, and the sweep of sessions
+   * would later have closed it as one that ran out.
+   */
+  it('ends the work of a session the app ends, at once and named after the app', async () => {
+    const email = 'app-ende@nord.example.de'
+    const userId = await leader(email)
+    const other = await withPassword(email)
+
+    await instance.chooseTenant(other, north.id)
+
+    // It ran out half an hour ago, after its stretch began an hour before, and
+    // the stretch ends then, not now.
+    await admin.query(
+      `update tenant_sessions set started_at = now() - interval '90 minutes' where user_id = $1`,
+      [userId],
+    )
+
+    const ran = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() - interval '30 minutes'
+        where user_id = $1 and active_tenant_id is not null
+       returning expires_at`,
+      [userId],
+    )
+
+    await setUpApp(email)
+
+    const { rows } = await admin.query<{ open: number; app: number; ended: Date | null }>(
+      `select count(*) filter (where t.ended_at is null)::int as open,
+              count(*) filter (where exists (
+                select 1 from audit_entries a
+                 where a.table_name = 'tenant_sessions' and a.record_id = t.id
+                   and a.field = 'ended_at' and a.reason = 'second-factor.app'))::int as app,
+              max(t.ended_at) as ended
+         from tenant_sessions t
+        where t.user_id = $1`,
+      [userId],
+    )
+
+    expect(rows).toEqual([{ open: 0, app: 1, ended: ran.rows[0]?.expires_at }])
+  })
+
+  /**
+   * Set up in a session that works in a tenant, the app makes better-auth
+   * write a new session in its place that takes the tenant along. The work
+   * goes on in it, so it opens a stretch of its own as the old one's closes,
+   * and signing out closes that one (opengewerk#1029).
+   */
+  it('keeps the work going in the session that takes over when the app is set up in a tenant', async () => {
+    const email = 'app-im-betrieb@nord.example.de'
+    const userId = await leader(email)
+    const signedIn = await withPassword(email)
+
+    await instance.chooseTenant(signedIn, north.id)
+
+    const started = await post('/two-factor/enable', signedIn).send({ password }).expect(200)
+    const { totpURI } = started.body as { totpURI: string }
+    const confirmed = cookiesOf(
+      await post('/two-factor/verify-totp', signedIn)
+        .send({ code: await currentCode(totpURI) })
+        .expect(200),
+    )
+    const open = async () =>
+      (
+        await admin.query<{ alive: boolean }>(
+          `select exists (select 1 from auth_sessions s where s.id = t.session_id) as alive
+             from tenant_sessions t
+            where t.user_id = $1 and t.ended_at is null`,
+          [userId],
+        )
+      ).rows
+
+    expect(await open()).toEqual([{ alive: true }])
+
+    await instance
+      .http()
+      .post('/auth/sign-out')
+      .set('cookie', confirmed)
+      .set('origin', origin)
+      .expect(201)
+
+    expect(await open()).toEqual([])
+  })
+
+  /**
+   * Choosing the tenant asks whether the person still works there; the stretch
+   * a session that takes over opens asks the same, or a session kept past the
+   * last day would write a new start of work into the tenant's log.
+   */
+  it('opens no stretch for the session that takes over once the access has ended', async () => {
+    const email = 'app-nach-ende@nord.example.de'
+    const userId = await leader(email)
+    const signedIn = await withPassword(email)
+
+    await instance.chooseTenant(signedIn, north.id)
+    await admin.query(
+      `update memberships set last_day = current_date - 1 where user_id = $1 and tenant_id = $2`,
+      [userId, north.id],
+    )
+
+    const started = await post('/two-factor/enable', signedIn).send({ password }).expect(200)
+    const { totpURI } = started.body as { totpURI: string }
+
+    await post('/two-factor/verify-totp', signedIn)
+      .send({ code: await currentCode(totpURI) })
+      .expect(200)
+
+    const { rows } = await admin.query<{ open: number }>(
+      'select count(*) filter (where ended_at is null)::int as open from tenant_sessions where user_id = $1',
+      [userId],
+    )
+
+    expect(rows).toEqual([{ open: 0 }])
+  })
+
   it('makes no new recovery codes for a day after a reset of the password', async () => {
     const email = 'zurueckgesetzt@nord.example.de'
     const userId = await leader(email)
@@ -503,3 +621,53 @@ async function waitForTold(length: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
 }
+
+describe('work that cannot be closed when the app is set up', () => {
+  /**
+   * Makes every close of work under one reason fail while `run` runs, and hands
+   * back what the server logged meanwhile.
+   */
+  async function whileClosingFails(
+    reason: string,
+    run: () => Promise<unknown>,
+  ): Promise<unknown[][]> {
+    const forTenant = instance.database.forTenant.bind(instance.database)
+    const logged: unknown[][] = []
+    const failing = vi
+      .spyOn(instance.database, 'forTenant')
+      .mockImplementation(((
+        identity: Parameters<Database['forTenant']>[0],
+        work: Parameters<Database['forTenant']>[1],
+      ) =>
+        identity.reason === reason
+          ? Promise.reject(new Error('closing failed'))
+          : forTenant(identity, work)) as unknown as Database['forTenant'])
+    const said = vi.spyOn(console, 'error').mockImplementation((...line: unknown[]) => {
+      logged.push(line)
+    })
+
+    try {
+      await run()
+    } finally {
+      failing.mockRestore()
+      said.mockRestore()
+    }
+
+    return logged
+  }
+
+  it('still sets the app up', async () => {
+    const email = 'app-schliessen@nord.example.de'
+
+    await leader(email)
+
+    const other = await withPassword(email)
+
+    await instance.chooseTenant(other, north.id)
+
+    // `setUpApp` expects every step to answer 200.
+    const logged = await whileClosingFails('second-factor.app', () => setUpApp(email))
+
+    expect(logged).not.toHaveLength(0)
+  })
+})

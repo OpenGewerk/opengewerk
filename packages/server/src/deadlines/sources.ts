@@ -1050,8 +1050,8 @@ export const erasablePeople: SourceQuery<DeadlineValues> = async (tx) => {
 
 /**
  * The sites of deleted customers (#848), once they are due and no maintenance
- * contract there holds them: ten years after the youngest signed protocol at
- * the site, else after its last job closed, else with the customer. Named by
+ * contract there holds them: thirty years after the youngest signed protocol at
+ * the site or its last job closed, whichever came later, else with the customer. Named by
  * that day and not by the address (`siteErasureLabel`); the deadline hangs on
  * the site alone, since its customer is gone.
  */

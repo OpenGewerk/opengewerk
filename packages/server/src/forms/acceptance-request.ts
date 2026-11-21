@@ -32,9 +32,14 @@ export function deemedSentence(until: IsoDate): string {
   return `Die Leistung gilt als abgenommen, wenn Sie die Abnahme nicht bis zum ${day(until)} unter Angabe mindestens eines Mangels verweigern (§ 640 Abs. 2 Satz 1 BGB).`
 }
 
-/** What a consumer is told in text form with the request (§ 640 Abs. 2 Satz 2 BGB). */
+/**
+ * What a consumer is told in text form with the request (§ 640 Abs. 2 Satz 2
+ * BGB). Since #1027 it names the burden of proof as well: after acceptance
+ * the customer has to prove a defect, before it the business has to show
+ * the work is free of them.
+ */
 export const consumerNotice =
-  'Erklären Sie die Abnahme nicht und verweigern Sie sie auch nicht unter Angabe mindestens eines Mangels, treten die Folgen der Abnahme mit dem Ablauf der Frist ein: die Vergütung wird fällig (§ 641 Abs. 1 BGB), die Gefahr geht auf Sie über (§ 644 BGB), und die Frist für Ihre Mängelansprüche beginnt (§ 634a Abs. 2 BGB).'
+  'Erklären Sie die Abnahme nicht und verweigern Sie sie auch nicht unter Angabe mindestens eines Mangels, treten die Folgen der Abnahme mit dem Ablauf der Frist ein: die Vergütung wird fällig (§ 641 Abs. 1 BGB), die Gefahr geht auf Sie über (§ 644 BGB), und die Frist für Ihre Mängelansprüche beginnt (§ 634a Abs. 2 BGB). Außerdem müssen dann Sie einen Mangel beweisen; vorher müssen wir zeigen, dass die Leistung mangelfrei ist.'
 
 /** The request as a letter on portrait A4, with the deadline and, to a consumer, the notice of its consequences. */
 export function acceptanceRequestJob(

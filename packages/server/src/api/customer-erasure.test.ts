@@ -89,7 +89,8 @@ const hex = (letter: string) => letter.repeat(64)
 /**
  * A customer of 2019 with something in every table a deletion reaches, its
  * name and address in each: Ingrid Vossberg, Quittenweg, Vossdorf. Its last
- * invoice is of 2017 and its last report of 2018, so that nothing is kept
+ * invoice is of 2017 and its last report, a booking voucher as well (#1019), of
+ * the same year, so that nothing is kept
  * any more; whatever a test needs to hold it, it adds.
  */
 async function vossberg(): Promise<Fixture> {
@@ -143,7 +144,7 @@ async function vossberg(): Promise<Fixture> {
        values ('${north}', '${invoice}', 1, 'Steckdose bei ${family}', 1000, 'piece', 2400, 2400);
      update documents set status = 'issued' where id = '${invoice}';
      insert into documents (id, tenant_id, customer_id, job_id, kind, status, document_date, subject)
-       values ('${report}', '${north}', '${customer}', '${job}', 'time_and_material_report', 'draft', '2018-02-01',
+       values ('${report}', '${north}', '${customer}', '${job}', 'time_and_material_report', 'draft', '2017-02-01',
                'Bericht ${family}');
      insert into document_snapshots (tenant_id, document_id, content)
        values ('${north}', '${invoice}', '{"recipient": "Ingrid ${family}, Quitten${family} 3"}');
@@ -176,14 +177,14 @@ async function vossberg(): Promise<Fixture> {
     `begin; set local session_replication_role = replica;
      update jobs set closed_at = '2019-05-01' where id = '${job}'; commit;`,
   )
-  // Signed on the device in 2018; what the trigger of the signature does is
+  // Signed on the device in 2017; what the trigger of the signature does is
   // not the subject here.
   await admin.query(
     `begin; set local session_replication_role = replica;
      insert into early_start_requests (id, tenant_id, job_id, signer_name, signed_at, path, content_fingerprint)
        values ('${request}', '${north}', '${job}', 'Ingrid ${family}', '2019-03-02', 'M1,1L2,2', '${hex('c')}');
      insert into document_signatures (tenant_id, document_id, signer_name, signed_at, path, content_fingerprint)
-       values ('${north}', '${report}', 'Ingrid ${family}', '2018-02-01', 'M1,1L2,2', '${hex('d')}');
+       values ('${north}', '${report}', 'Ingrid ${family}', '2017-02-01', 'M1,1L2,2', '${hex('d')}');
      update documents set status = 'signed' where id = '${report}';
      commit;`,
   )

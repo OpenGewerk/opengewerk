@@ -68,11 +68,16 @@ export function erasureWhen(kind: ErasureKind, settings: DeletionSettings): stri
     case 'sickness':
       return 'zwölf Monate nach ihrem letzten Tag'
     case 'staff_year':
-      return 'die Arbeitszeiten, die Rufbereitschaft, der Urlaub und der Urlaubsanspruch eines Jahres sechs Jahre nach dessen Ende'
+      // § 28f SGB IV is a reservation the business checks before it confirms,
+      // not a day OpenGewerk keeps: the engine does not know when the pension
+      // insurance last audited, and a kind set to go by itself does not ask.
+      return settings.automatic.includes('staff_year')
+        ? 'die Arbeitszeiten, die Rufbereitschaft, der Urlaub und der Urlaubsanspruch eines Jahres acht Jahre nach dessen Ende. Ob die Rentenversicherung das Jahr bis dahin geprüft hat (§ 28f Abs. 1 SGB IV), weiß der Lauf nicht; er löscht es trotzdem'
+        : 'die Arbeitszeiten, die Rufbereitschaft, der Urlaub und der Urlaubsanspruch eines Jahres acht Jahre nach dessen Ende. Ein Jahr, das die Rentenversicherung noch nicht geprüft hat, bleibt bis zum Ende des Jahres nach ihrer Prüfung (§ 28f Abs. 1 SGB IV); das prüft der Betrieb, bevor er das Löschen bestätigt'
     case 'person':
       return 'die Akte einer ausgetretenen Person drei Jahre nach dem Ende ihres Austrittsjahres, sobald ihr Zugang geendet hat'
     case 'site':
-      return 'das Objekt eines gelöschten Kunden zehn Jahre nach dem letzten unterschriebenen Protokoll daran, ohne Protokoll nach dem letzten abgeschlossenen Auftrag dort'
+      return 'das Objekt eines gelöschten Kunden dreißig Jahre nach dem letzten unterschriebenen Protokoll oder abgeschlossenen Auftrag dort, je nachdem, was später kam'
   }
 }
 
@@ -115,7 +120,7 @@ export function describeDeletion(made: DeletionMade): string {
     '| Daten | Wann | Wie |',
     '|---|---|---|',
     ...kinds,
-    '| Sitzungen | nach zwölf Stunden, ein Gerät für die Arbeit ohne Netz nach dreißig Tagen | von selbst |',
+    '| Sitzungen | spätestens einen Tag nach ihrem Ablauf; sie läuft spätestens zwölf Stunden nach der letzten Nutzung ab, auf einem Gerät für die Arbeit ohne Netz dreißig Tage danach | von selbst |',
     '| Neue E-Mail-Adressen, die auf den Link in der Mail an sie warten | spätestens einen Tag, nachdem der Link abgelaufen ist; er gilt einen Tag | von selbst |',
     '',
     '## 3. Was aufbewahrt wird',

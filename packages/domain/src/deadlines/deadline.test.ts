@@ -11,6 +11,7 @@ import {
   leadProblem,
   remindOn,
 } from '@opengewerk/platform-domain'
+import { shippedRules } from '../rules/shipped.js'
 import { coreDeadlineKinds } from './core.js'
 import {
   actionsSentence,
@@ -233,5 +234,30 @@ describe('the words of the settings', () => {
 
   it('have words for every source', () => {
     expect(sourceWords.quote.interval.label).toBe('Wiedervorlage nach')
+  })
+})
+
+/**
+ * The texts of the erasure kinds name their years in words, and the rule
+ * package holds the number. When #1019 moved the sites to thirty years and
+ * the years of the staff to eight, the texts of "Fristen" stayed at ten and
+ * six; this holds them together.
+ */
+describe('the erasure kinds of the deletion concept', () => {
+  const yearWords: Readonly<Record<number, string>> = { 3: 'drei', 8: 'acht', 30: 'dreißig' }
+
+  it.each([
+    ['privacy.site_erasure', 'site', 'retention.site_records'],
+    ['privacy.staff_year_erasure', 'staff_year', 'retention.payroll_records'],
+    ['privacy.person_erasure', 'person', 'retention.personnel_files'],
+  ] as const)('name the years of the rule package (%s)', (key, source, rule) => {
+    const years = shippedRules.at(rule, '2026-11-20' as IsoDate)?.value
+    const words = typeof years === 'number' ? yearWords[years] : undefined
+
+    expect(words).toBeDefined()
+    expect(coreDeadlineKinds.find((kind) => kind.key === key)?.about).toContain(
+      `${String(words)} Jahre`,
+    )
+    expect(sourceWords[source].interval.hint).toContain(`${String(words)} Jahre`)
   })
 })

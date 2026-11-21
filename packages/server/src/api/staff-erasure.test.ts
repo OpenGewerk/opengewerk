@@ -17,7 +17,7 @@ import { testIdentities as identities } from './test-identity.js'
 
 /**
  * The staff under the deletion concept (#846, decided on 04.11.2026): a
- * sickness a year after its last day, the time and leave of a year six years
+ * sickness a year after its last day, the time and leave of a year eight years
  * after its end, the file of somebody who left three years after the end of
  * that year, its name with the last year kept. What stays of the person is an
  * empty file and the key of the account the rest of the business points at.
@@ -40,8 +40,8 @@ const technician = person('kurt', ['technician'])
 
 const today = berlinClock(new Date()).day
 const thisYear = Number(today.slice(0, 4))
-/** A year whose time and leave are due: six years after its end have passed. */
-const oldYear = thisYear - 7
+/** A year whose time and leave are due: eight years after its end have passed (#1019). */
+const oldYear = thisYear - 9
 /** The year after it, which is not due yet. */
 const nextYear = oldYear + 1
 /** The day the person left, three years and more before the start of this year. */
@@ -285,7 +285,7 @@ afterAll(async () => {
 })
 
 describe('what of the staff is due (#846)', () => {
-  it('is a sickness a year after its last day, a year six years after its end and a file three years after leaving', async () => {
+  it('is a sickness a year after its last day, a year eight years after its end and a file three years after leaving', async () => {
     const dennis = await kraft()
 
     await pass()
