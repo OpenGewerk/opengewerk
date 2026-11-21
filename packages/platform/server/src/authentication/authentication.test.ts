@@ -1454,6 +1454,7 @@ describe('a session that ran out', () => {
     // A renewal that checked the row a moment before it ran out, and commits
     // only once the pass has read the row as run out.
     const held = await admin.connect()
+    let committed = false
 
     try {
       await held.query('begin')
@@ -1484,11 +1485,14 @@ describe('a session that ran out', () => {
       }
 
       await held.query('commit')
+      committed = true
       await pass
 
       expect(blocked).toBe(true)
     } finally {
-      held.release()
+      // A connection whose transaction did not end goes, and its lock with it,
+      // instead of going back to the pool holding the row.
+      held.release(!committed)
     }
 
     expect(await sessionsOf(member.email)).toContain(renewing.id)
