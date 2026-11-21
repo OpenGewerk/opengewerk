@@ -1797,11 +1797,25 @@ describe('the work of a session a new password ends', () => {
     // session signed in between, goes with the count of the credentials.
     expect(await writePassword(instance.database, userId, 'neuer-hash', undefined)).not.toBeNull()
 
-    const ended = await stretchesOf(userId)
+    // Each stretch with the reason of its own session: the one that ran out
+    // began a day ago, the one at work just now.
+    const { rows } = await admin.query<{
+      ranOut: boolean
+      reason: string | null
+      user: string | null
+    }>(
+      `select t.started_at < now() - interval '12 hours' as "ranOut", a.reason, a.user_id as "user"
+         from tenant_sessions t
+         left join audit_entries a
+           on a.table_name = 'tenant_sessions' and a.record_id = t.id and a.field = 'ended_at'
+        where t.user_id = $1 and t.ended_at is not null
+        order by 1`,
+      [userId],
+    )
 
-    expect(ended.sort((a, b) => String(a.reason).localeCompare(String(b.reason)))).toEqual([
-      { open: false, reason: 'password.reset', user: userId },
-      { open: false, reason: 'session.expire', user: null },
+    expect(rows).toEqual([
+      { ranOut: false, reason: 'password.reset', user: userId },
+      { ranOut: true, reason: 'session.expire', user: null },
     ])
   })
 
