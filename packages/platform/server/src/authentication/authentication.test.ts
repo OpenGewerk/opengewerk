@@ -1904,6 +1904,51 @@ describe('work that cannot be closed when its session ends', () => {
     expect(await endOfWork(working.id)).not.toBeNull()
   })
 
+  it('signs out also when its work cannot be closed, and the sweep closes it after (#1031)', async () => {
+    const email = 'abmelden-schliessen@example.de'
+
+    await joinedNorth(email)
+
+    const working = await atWork(email)
+    const logged = await whileClosingFails(
+      (identity) => identity.reason === 'session.end',
+      () =>
+        http()
+          .post('/auth/sign-out')
+          .set('cookie', working.cookies)
+          .set('origin', origin)
+          .expect(201),
+    )
+
+    expect(logged).not.toHaveLength(0)
+    expect(await sessionsOf(email)).not.toContain(working.id)
+
+    await sweepExpiredSessions(instance.database)
+
+    expect(await endOfWork(working.id)).not.toBeNull()
+  })
+
+  it('cuts a device off also when its work cannot be closed (#1031)', async () => {
+    const email = 'geraet-schliessen@example.de'
+
+    await joinedNorth(email)
+
+    const device = await atWork(email)
+    const keeping = await signIn(email)
+    const logged = await whileClosingFails(
+      (identity) => identity.reason === 'session.revoke',
+      () =>
+        http()
+          .delete(`/auth/devices/${device.id}`)
+          .set('cookie', keeping)
+          .set('origin', origin)
+          .expect(200),
+    )
+
+    expect(logged).not.toHaveLength(0)
+    expect(await sessionsOf(email)).not.toContain(device.id)
+  })
+
   it('does not make the command line report a password it set as not set', async () => {
     const email = 'schliessen-kommandozeile@example.de'
 
@@ -1926,6 +1971,8 @@ describe('work that cannot be closed when its session ends', () => {
 
     expect(replaced).toBe(true)
     expect(await sessionsOf(email)).not.toContain(working.id)
+  })
+})
 
 describe('an access past its last day', () => {
   /** A person of their own in these tenants, so that no other test sees the last day. */

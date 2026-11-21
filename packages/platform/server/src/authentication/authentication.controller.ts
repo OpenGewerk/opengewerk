@@ -33,6 +33,7 @@ import {
 } from './address-confirmation.js'
 import type { CorrectedAccount } from './administration.js'
 import { beforeItsEnd } from './last-day.js'
+import { endStretchesOrLeaveThem } from './session-sweep.js'
 import type { AddressMail } from './notices.js'
 import { changeOwnAccount } from './own-account.js'
 import { rolesHeld } from './roles.js'
@@ -406,8 +407,9 @@ export class AuthenticationController {
    * The row goes first and the stretch closes after, as everywhere a session
    * ends (opengewerk#1031): a delete that fails leaves the session working
    * with its stretch still open, and a close that fails leaves an orphan the
-   * sweep closes within the hour. Closed first, a failed delete would leave a
-   * session at work that the tenant's log no longer shows.
+   * sweep closes within the hour, while the route answers that the device is
+   * out, as it is. Closed first, a failed delete would leave a session at work
+   * that the tenant's log no longer shows.
    */
   @Delete('devices/:sessionId')
   @RequiresSession()
@@ -430,14 +432,11 @@ export class AuthenticationController {
       throw new ForbiddenException('Diese Sitzung gehört nicht zu diesem Konto.')
     }
 
-    if (revoked.activeTenantId) {
-      await this.closeTenantSessions(
-        revoked.activeTenantId,
-        user.userId,
-        sessionId,
-        'session.revoke',
-      )
-    }
+    await endStretchesOrLeaveThem(
+      this.database,
+      [{ id: sessionId, userId: user.userId, tenantId: revoked.activeTenantId }],
+      { reason: 'session.revoke', actor: user.userId },
+    )
 
     return { revoked: sessionId }
   }
@@ -463,14 +462,11 @@ export class AuthenticationController {
       user.userId,
     )
 
-    if (ended?.activeTenantId) {
-      await this.closeTenantSessions(
-        ended.activeTenantId,
-        user.userId,
-        user.sessionId,
-        'session.end',
-      )
-    }
+    await endStretchesOrLeaveThem(
+      this.database,
+      ended ? [{ id: user.sessionId, userId: user.userId, tenantId: ended.activeTenantId }] : [],
+      { reason: 'session.end', actor: user.userId },
+    )
 
     return { signedOut: true }
   }
