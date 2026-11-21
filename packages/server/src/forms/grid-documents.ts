@@ -158,9 +158,10 @@ export function chargingApprovalText(charging: GridPapers['charging']): string |
 
   // The law sums per electrical installation, behind one grid connection;
   // OpenGewerk knows the site. Over the limit at the site is over it at the
-  // connection as well, under it only if nothing else charges there (#1020).
+  // connection only if the wallboxes hang on the same one, under it only if
+  // nothing else charges there (#1020).
   return charging.totalW > charging.approvalAboveW
-    ? `nötig: ${total} Summen-Bemessungsleistung der Wallboxen am Objekt, über ${limit} (§ 19 Abs. 2 NAV)`
+    ? `nötig, sofern diese Wallboxen am selben Netzanschluss hängen: ${total} Summen-Bemessungsleistung der Wallboxen am Objekt, über ${limit} (§ 19 Abs. 2 NAV)`
     : `nicht nötig, die Mitteilung reicht, sofern am selben Netzanschluss keine weitere Ladeeinrichtung hängt: ${total} Summen-Bemessungsleistung der Wallboxen am Objekt, bis ${limit} (§ 19 Abs. 2 NAV)`
 }
 

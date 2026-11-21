@@ -1,5 +1,5 @@
 import type { Pool } from 'pg'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { Database } from '../database/database.js'
 import { newId } from '../database/identifier.js'
@@ -621,3 +621,53 @@ async function waitForTold(length: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 20))
   }
 }
+
+describe('work that cannot be closed when the app is set up', () => {
+  /**
+   * Makes every close of work under one reason fail while `run` runs, and hands
+   * back what the server logged meanwhile.
+   */
+  async function whileClosingFails(
+    reason: string,
+    run: () => Promise<unknown>,
+  ): Promise<unknown[][]> {
+    const forTenant = instance.database.forTenant.bind(instance.database)
+    const logged: unknown[][] = []
+    const failing = vi
+      .spyOn(instance.database, 'forTenant')
+      .mockImplementation(((
+        identity: Parameters<Database['forTenant']>[0],
+        work: Parameters<Database['forTenant']>[1],
+      ) =>
+        identity.reason === reason
+          ? Promise.reject(new Error('closing failed'))
+          : forTenant(identity, work)) as unknown as Database['forTenant'])
+    const said = vi.spyOn(console, 'error').mockImplementation((...line: unknown[]) => {
+      logged.push(line)
+    })
+
+    try {
+      await run()
+    } finally {
+      failing.mockRestore()
+      said.mockRestore()
+    }
+
+    return logged
+  }
+
+  it('still sets the app up', async () => {
+    const email = 'app-schliessen@nord.example.de'
+
+    await leader(email)
+
+    const other = await withPassword(email)
+
+    await instance.chooseTenant(other, north.id)
+
+    // `setUpApp` expects every step to answer 200.
+    const logged = await whileClosingFails('second-factor.app', () => setUpApp(email))
+
+    expect(logged).not.toHaveLength(0)
+  })
+})

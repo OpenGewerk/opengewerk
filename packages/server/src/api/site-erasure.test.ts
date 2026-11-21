@@ -483,6 +483,21 @@ describe('what is due (#848)', () => {
     ])
   })
 
+  it('keeps a site thirty years after a later job, though its protocol is older than that (#1019)', async () => {
+    const { customer, site } = await hollberg()
+
+    // Thirty years after the test of 20.04.1995 are over; after a job closed
+    // twenty-five years ago they are not, so the site is not due.
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       update jobs set closed_at = '${addMonths(today, -300)}' where site_id = '${site}'; commit;`,
+    )
+    await deleteCustomer(customer)
+    await pass()
+
+    expect(await siteDeadlines()).toEqual([])
+  })
+
   it('counts from the last job closed without a protocol, and goes with its customer without either', async () => {
     const worked = await bare('1995-09-30')
     const empty = await bare(null)

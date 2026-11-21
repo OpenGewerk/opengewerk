@@ -9,7 +9,7 @@ import { addressUnconfirmed } from './address-confirmation.js'
 import type { Authentication } from './authentication.js'
 import { recordPasswordReset } from './password-resets.js'
 import { revokeCredentials } from './credentials.js'
-import { endStretchesOf } from './session-sweep.js'
+import { endStretchesOrLeaveThem } from './session-sweep.js'
 
 /** What better-auth hands out once it has read its own configuration. */
 export type AuthenticationContext = Awaited<Authentication['$context']>
@@ -269,7 +269,7 @@ export async function replacePassword(
   // of the new password (opengewerk#1029), after the reset is recorded: a close
   // that fails leaves an orphan the sweep of sessions closes, and must not
   // cost the record. The command acts for no person.
-  await endStretchesOf(
+  await endStretchesOrLeaveThem(
     database,
     replaced.ended.map((session) => ({ ...session, userId: replaced.userId })),
     { reason: 'password.reset' },

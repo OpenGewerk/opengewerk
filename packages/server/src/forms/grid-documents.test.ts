@@ -205,7 +205,7 @@ describe('the consent of the grid operator to wallboxes (#307, § 19 Abs. 2 NAV)
 
   it('is needed above 12 kVA of all wallboxes at the site, and a notice is enough up to them', () => {
     expect(chargingApprovalText({ totalW: 22_000, approvalAboveW: limit })).toBe(
-      'nötig: 22 kVA Summen-Bemessungsleistung der Wallboxen am Objekt, über 12 kVA (§ 19 Abs. 2 NAV)',
+      'nötig, sofern diese Wallboxen am selben Netzanschluss hängen: 22 kVA Summen-Bemessungsleistung der Wallboxen am Objekt, über 12 kVA (§ 19 Abs. 2 NAV)',
     )
     expect(chargingApprovalText({ totalW: 12_000, approvalAboveW: limit })).toBe(
       // The law sums behind one grid connection, the site is what OpenGewerk

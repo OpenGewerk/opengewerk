@@ -82,6 +82,29 @@ export async function endStretchesOf(
 }
 
 /**
+ * `endStretchesOf` for sessions that are already gone, where what ended them
+ * must not fail with the close: a new password, a revocation or the setup of
+ * the app has done its work once the rows went, and a close that fails leaves
+ * orphans the next pass of the sweep closes within the hour. The failure goes
+ * to the log of the server, not to the person.
+ */
+export async function endStretchesOrLeaveThem(
+  database: Database,
+  sessions: readonly EndedSession[],
+  how: { readonly now?: Date; readonly reason?: string; readonly actor?: string } = {},
+): Promise<void> {
+  try {
+    await endStretchesOf(database, sessions, how)
+  } catch (error) {
+    console.error(
+      'Die Arbeitsabschnitte beendeter Sitzungen ließen sich nicht schließen; ' +
+        'der nächste Lauf über die Sitzungen schließt sie.',
+      error,
+    )
+  }
+}
+
+/**
  * A session better-auth writes in the place of another, when the app is set
  * up or the second factor changes, takes over the tenant the old one had
  * chosen, while the old one and its stretch of work end (opengewerk#1029). It

@@ -12,7 +12,7 @@ import {
   authUsers,
   authVerifications,
 } from '../schema.js'
-import { endStretchesOf } from './session-sweep.js'
+import { endStretchesOrLeaveThem } from './session-sweep.js'
 
 /**
  * The count of an account's credentials, against a session written after
@@ -314,7 +314,7 @@ export async function endRevokedSession(database: Database, sessionId: string): 
   )
 
   // What it had open in a tenant ends with it (opengewerk#1029).
-  await endStretchesOf(database, ended, { reason: 'session.revoke' })
+  await endStretchesOrLeaveThem(database, ended, { reason: 'session.revoke' })
 
   return ended.length > 0
 }

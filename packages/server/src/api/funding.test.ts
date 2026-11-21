@@ -276,7 +276,7 @@ describe('the capacity and the power an installation names (#307)', () => {
     try {
       await papers(`/installations/${wallbox}/grid-application`)
       expect(jobs[0]?.html).toContain(
-        '<th>Zustimmung des Netzbetreibers</th><td>nötig: 22 kVA Summen-Bemessungsleistung der Wallboxen am Objekt, über 12 kVA',
+        '<th>Zustimmung des Netzbetreibers</th><td>nötig, sofern diese Wallboxen am selben Netzanschluss hängen: 22 kVA Summen-Bemessungsleistung der Wallboxen am Objekt, über 12 kVA',
       )
       // The battery names no wallbox, so its papers do not ask.
       await papers(`/installations/${battery}/grid-application`)

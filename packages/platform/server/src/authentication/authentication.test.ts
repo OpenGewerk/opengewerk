@@ -4,6 +4,7 @@ import type { Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import type { Database } from '../database/database.js'
 import { newId } from '../database/identifier.js'
 import { auditEntries, authRateLimits, authUsers, invitations } from '../schema.js'
 import { authenticationPath } from './authentication.js'
@@ -1315,46 +1316,49 @@ describe('an instance that has been closed', () => {
  * out, and either way the stretch of work in the tenant ends when the session
  * ran out, so that the tenant's log does not say somebody is still at work.
  */
+async function sessionsOf(email: string): Promise<string[]> {
+  const { rows } = await admin.query<{ id: string }>(
+    `select s.id from auth_sessions s join auth_users u on u.id = s.user_id where u.email = $1`,
+    [email],
+  )
+
+  return rows.map((row) => row.id)
+}
+
+/** Signs in, chooses a tenant (the north unless said) and hands back the cookies and the new session. */
+async function atWork(
+  email: string,
+  tenantId: string = north.id,
+): Promise<{ cookies: string; id: string }> {
+  const before = new Set(await sessionsOf(email))
+  const cookies = await signIn(email)
+
+  await instance.chooseTenant(cookies, tenantId)
+
+  const id = (await sessionsOf(email)).find((session) => !before.has(session))
+
+  expect(id).toBeDefined()
+
+  // Begun a day ago, so that a session the test lets run out an hour or two
+  // back still ran out after its stretch began, as one always does.
+  await admin.query(
+    `update tenant_sessions set started_at = now() - interval '1 day' where session_id = $1`,
+    [id],
+  )
+
+  return { cookies, id: id ?? '' }
+}
+
+async function endOfWork(sessionId: string): Promise<Date | null | undefined> {
+  const { rows } = await admin.query<{ ended_at: Date | null }>(
+    'select ended_at from tenant_sessions where session_id = $1',
+    [sessionId],
+  )
+
+  return rows[0]?.ended_at
+}
+
 describe('a session that ran out', () => {
-  async function sessionsOf(email: string): Promise<string[]> {
-    const { rows } = await admin.query<{ id: string }>(
-      `select s.id from auth_sessions s join auth_users u on u.id = s.user_id where u.email = $1`,
-      [email],
-    )
-
-    return rows.map((row) => row.id)
-  }
-
-  /** Signs in, chooses the north and hands back the cookies and the new session. */
-  async function atWork(email: string): Promise<{ cookies: string; id: string }> {
-    const before = new Set(await sessionsOf(email))
-    const cookies = await signIn(email)
-
-    await instance.chooseTenant(cookies, north.id)
-
-    const id = (await sessionsOf(email)).find((session) => !before.has(session))
-
-    expect(id).toBeDefined()
-
-    // Begun a day ago, so that a session the test lets run out an hour or two
-    // back still ran out after its stretch began, as one always does.
-    await admin.query(
-      `update tenant_sessions set started_at = now() - interval '1 day' where session_id = $1`,
-      [id],
-    )
-
-    return { cookies, id: id ?? '' }
-  }
-
-  async function endOfWork(sessionId: string): Promise<Date | null | undefined> {
-    const { rows } = await admin.query<{ ended_at: Date | null }>(
-      'select ended_at from tenant_sessions where session_id = $1',
-      [sessionId],
-    )
-
-    return rows[0]?.ended_at
-  }
-
   it('goes with the sweep, ends its work when it ran out, and one still running stays', async () => {
     const ran = await atWork(member.email)
     const runs = await atWork(member.email)
@@ -1733,5 +1737,105 @@ describe('the work of a session a new password ends', () => {
     expect(await stretchesOf(userId)).toEqual([
       { open: false, reason: 'password.reset', user: null },
     ])
+  })
+})
+
+describe('work that cannot be closed when its session ends', () => {
+  /**
+   * Makes the closes of work that `fails` picks out fail while `run` runs, and
+   * hands back what the server logged meanwhile.
+   */
+  async function whileClosingFails(
+    fails: (identity: Parameters<Database['forTenant']>[0]) => boolean,
+    run: () => Promise<unknown>,
+  ): Promise<unknown[][]> {
+    const forTenant = instance.database.forTenant.bind(instance.database)
+    const logged: unknown[][] = []
+    const failing = vi
+      .spyOn(instance.database, 'forTenant')
+      .mockImplementation(((
+        identity: Parameters<Database['forTenant']>[0],
+        work: Parameters<Database['forTenant']>[1],
+      ) =>
+        fails(identity)
+          ? Promise.reject(new Error('closing failed'))
+          : forTenant(identity, work)) as unknown as Database['forTenant'])
+    const said = vi.spyOn(console, 'error').mockImplementation((...line: unknown[]) => {
+      logged.push(line)
+    })
+
+    try {
+      await run()
+    } finally {
+      failing.mockRestore()
+      said.mockRestore()
+    }
+
+    return logged
+  }
+
+  async function joinedNorth(email: string): Promise<void> {
+    await addStaffMember(instance.authentication, instance.database, {
+      email,
+      name: 'Sven Schließen',
+      password,
+      tenantId: north.id,
+      roles: ['member'],
+    })
+  }
+
+  it('does not keep a new password from being set, and the sweep closes it after', async () => {
+    const email = 'schliessen-scheitert@example.de'
+
+    await joinedNorth(email)
+
+    const working = await atWork(email)
+    const other = await signIn(email)
+    const logged = await whileClosingFails(
+      (identity) => identity.reason === 'password.change',
+      () =>
+        http()
+          .post(`${authenticationPath}/change-password`)
+          .set('cookie', other)
+          .set('origin', origin)
+          .send({
+            currentPassword: password,
+            newPassword: 'ein-ganz-anderes-langes-passwort',
+            revokeOtherSessions: true,
+          })
+          .expect(200),
+    )
+
+    expect(logged).not.toHaveLength(0)
+    expect(await sessionsOf(email)).not.toContain(working.id)
+    expect(await endOfWork(working.id)).toBeNull()
+
+    await sweepExpiredSessions(instance.database)
+
+    expect(await endOfWork(working.id)).not.toBeNull()
+  })
+
+  it('does not make the command line report a password it set as not set', async () => {
+    const email = 'schliessen-kommandozeile@example.de'
+
+    await joinedNorth(email)
+
+    const working = await atWork(email)
+    let replaced: boolean | undefined
+
+    // The record of the reset writes under the same reason in the person's
+    // name; the close of the command acts for nobody.
+    await whileClosingFails(
+      (identity) => identity.reason === 'password.reset' && identity.userId === undefined,
+      async () => {
+        replaced = await replacePassword(instance.authentication, instance.database, {
+          email,
+          password: 'ein-ganz-anderes-langes-passwort',
+        })
+      },
+    )
+
+    expect(replaced).toBe(true)
+    expect(await sessionsOf(email)).not.toContain(working.id)
   })
 })

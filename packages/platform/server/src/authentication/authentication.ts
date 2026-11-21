@@ -58,7 +58,7 @@ import {
   secondFactorSessionRequired,
 } from './second-factor.js'
 import { renewSession, sessionLifetimes } from './session-lifetime.js'
-import { carryStretch, endStretchesOf } from './session-sweep.js'
+import { carryStretch, endStretchesOrLeaveThem } from './session-sweep.js'
 import { clearCodesAtSignIn, reserveCodeAtSignIn } from './sign-in-codes.js'
 
 export { sessionLifetimes } from './session-lifetime.js'
@@ -631,7 +631,7 @@ export function createAuthentication({
             const ranOut = new Date(session.expiresAt).getTime() <= Date.now()
             const reason = ranOut ? undefined : endingReasons[context?.path ?? '']
 
-            await endStretchesOf(
+            await endStretchesOrLeaveThem(
               database,
               [
                 {
@@ -1405,7 +1405,7 @@ async function endSessionsWithoutSecondFactor(
     return revoked.ended
   }, userId)
 
-  await endStretchesOf(
+  await endStretchesOrLeaveThem(
     database,
     ended.map((session) => ({ ...session, userId })),
     { reason: appSetUp ? 'second-factor.app' : 'session.second-factor', actor: userId },
