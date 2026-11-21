@@ -704,6 +704,7 @@ const foundationReasonWords: Readonly<Record<string, string>> = {
   'instance.setup': 'Ersteinrichtung',
   'invitation.redeem': 'Einladung eingelöst',
   'membership.create': 'Zugang über die Kommandozeile',
+  'membership.end': 'Von selbst, letzter Tag des Zugangs vorbei',
   'instance.settings': 'Einstellungen der Instanz ändern',
   'instance.legal': 'Rechtstexte ändern',
   'instance.measures': 'Maßnahmen ändern',

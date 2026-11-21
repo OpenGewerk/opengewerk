@@ -21,6 +21,11 @@ export function beforeItsEnd(): SQL {
   return sql`(${memberships.lastDay} is null or ${memberships.lastDay} >= (now() at time zone 'Europe/Berlin')::date)`
 }
 
+/** A membership whose last day has passed, as a condition on its row; the opposite of `beforeItsEnd`. */
+export function pastItsEnd(): SQL {
+  return sql`(${memberships.lastDay} < (now() at time zone 'Europe/Berlin')::date)`
+}
+
 /** Whether a membership with this last day has ended by now. */
 export function hasEnded(lastDay: string | null, now: Date = new Date()): boolean {
   return lastDay !== null && lastDay < berlinClock(now).day

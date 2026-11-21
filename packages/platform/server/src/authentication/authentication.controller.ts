@@ -402,6 +402,12 @@ export class AuthenticationController {
    * tenant is closed. The second part is why this is not simply a delete:
    * a tenant session left open would tell a tenant somebody is still working
    * in it, and would do so forever, because the row it pointed at is gone.
+   *
+   * The row goes first and the stretch closes after, as everywhere a session
+   * ends (opengewerk#1031): a delete that fails leaves the session working
+   * with its stretch still open, and a close that fails leaves an orphan the
+   * sweep closes within the hour. Closed first, a failed delete would leave a
+   * session at work that the tenant's log no longer shows.
    */
   @Delete('devices/:sessionId')
   @RequiresSession()
@@ -409,68 +415,62 @@ export class AuthenticationController {
     @CurrentUser() user: SignedInUser,
     @Param('sessionId') sessionId: string,
   ): Promise<{ revoked: string }> {
-    const owned = await this.database.forInstance(async (tx) => {
-      const [row] = await tx
-        .select({ activeTenantId: authSessions.activeTenantId })
-        .from(authSessions)
-        .where(and(eq(authSessions.id, sessionId), eq(authSessions.userId, user.userId)))
-        .limit(1)
+    const [revoked] = await this.database.forInstance(
+      (tx) =>
+        tx
+          .delete(authSessions)
+          .where(and(eq(authSessions.id, sessionId), eq(authSessions.userId, user.userId)))
+          .returning({ activeTenantId: authSessions.activeTenantId }),
+      user.userId,
+    )
 
-      return row
-    }, user.userId)
-
-    if (!owned) {
+    if (!revoked) {
       // Somebody else's session, or none. One answer for both, so that this
       // cannot be used to find out which session identifiers exist.
       throw new ForbiddenException('Diese Sitzung gehört nicht zu diesem Konto.')
     }
 
-    if (owned.activeTenantId) {
-      await this.closeTenantSessions(owned.activeTenantId, user.userId, sessionId, 'session.revoke')
+    if (revoked.activeTenantId) {
+      await this.closeTenantSessions(
+        revoked.activeTenantId,
+        user.userId,
+        sessionId,
+        'session.revoke',
+      )
     }
-
-    await this.database.forInstance(
-      (tx) => tx.delete(authSessions).where(eq(authSessions.id, sessionId)),
-      user.userId,
-    )
 
     return { revoked: sessionId }
   }
 
   /**
-   * Signs out, and closes the stretch of work in the tenant first.
+   * Signs out, and closes the stretch of work in the tenant.
    *
    * better-auth has a sign out of its own and it is not enough on its own: it
    * knows nothing about tenant sessions, so it would take the session away and
    * leave the tenant's log saying somebody is still at work. This route does
-   * both and is the one a client calls.
+   * both and is the one a client calls. The row goes first and the stretch
+   * closes after, for the reason `revokeDevice` gives.
    */
   @Post('sign-out')
   @RequiresSession()
   async signOut(@CurrentUser() user: SignedInUser): Promise<{ signedOut: true }> {
-    const current = await this.database.forInstance(async (tx) => {
-      const [row] = await tx
-        .select({ activeTenantId: authSessions.activeTenantId })
-        .from(authSessions)
-        .where(eq(authSessions.id, user.sessionId))
-        .limit(1)
+    const [ended] = await this.database.forInstance(
+      (tx) =>
+        tx
+          .delete(authSessions)
+          .where(eq(authSessions.id, user.sessionId))
+          .returning({ activeTenantId: authSessions.activeTenantId }),
+      user.userId,
+    )
 
-      return row
-    }, user.userId)
-
-    if (current?.activeTenantId) {
+    if (ended?.activeTenantId) {
       await this.closeTenantSessions(
-        current.activeTenantId,
+        ended.activeTenantId,
         user.userId,
         user.sessionId,
         'session.end',
       )
     }
-
-    await this.database.forInstance(
-      (tx) => tx.delete(authSessions).where(eq(authSessions.id, user.sessionId)),
-      user.userId,
-    )
 
     return { signedOut: true }
   }
