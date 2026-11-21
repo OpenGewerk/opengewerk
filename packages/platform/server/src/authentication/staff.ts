@@ -264,14 +264,16 @@ export async function replacePassword(
     return false
   }
 
+  await recordPasswordReset(database, replaced.userId)
   // What the ended sessions had open in a tenant ends now, under the reason
-  // of the new password (opengewerk#1029). The command acts for no person.
+  // of the new password (opengewerk#1029), after the reset is recorded: a close
+  // that fails leaves an orphan the sweep of sessions closes, and must not
+  // cost the record. The command acts for no person.
   await endStretchesOf(
     database,
     replaced.ended.map((session) => ({ ...session, userId: replaced.userId })),
     { reason: 'password.reset' },
   )
-  await recordPasswordReset(database, replaced.userId)
 
   return true
 }
