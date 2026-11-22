@@ -673,8 +673,9 @@ describe('the ground of a customer at its route', () => {
    * holds (#1026, the review): the confirmation goes with a customer of the
    * business, the day with any ground, and neither without one. The
    * confirmation names the address: a new one written alone, as a client
-   * that does not know the field writes it, leaves it confirming nothing,
-   * and one for another address than the customer's is refused.
+   * that does not know the field writes it, takes it away, also for the way
+   * back to the old address, and one for another address than the
+   * customer's is refused.
    */
   it('takes the confirmation and the day alone, checked against the stored ground', async () => {
     const created = async (body: Record<string, unknown>) =>
@@ -711,6 +712,12 @@ describe('the ground of a customer at its route', () => {
 
     await send('patch', `/customers/${albers}`, { email: 'neu.albers@example.com' }).expect(200)
     expect(await stored(albers)).toEqual({ confirmed: false, on: '2024-04-02' })
+
+    // The new address took the confirmation for the old one away, so going
+    // back to the old address does not make it hold again (CodeRabbit).
+    await send('patch', `/customers/${albers}`, { email: 'albers@example.com' }).expect(200)
+    expect(await stored(albers)).toEqual({ confirmed: false, on: '2024-04-02' })
+    await send('patch', `/customers/${albers}`, { email: 'neu.albers@example.com' }).expect(200)
 
     await send('patch', `/customers/${albers}`, {
       objectionNoticeAddress: 'albers@example.com',

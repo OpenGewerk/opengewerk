@@ -79,6 +79,18 @@ function requireReminderGround(
   values: Record<string, unknown>,
   stored: StoredGround = noGround,
 ): void {
+  // A new address takes a confirmation for another one away (#1026,
+  // CodeRabbit): it confirms nothing for the new one, and going back to the
+  // old address later must not make it hold again without the box.
+  if (
+    'email' in values &&
+    !('objectionNoticeAddress' in values) &&
+    stored.confirmedFor !== null &&
+    !objectionNoticeConfirmedFor(values['email'], stored.confirmedFor)
+  ) {
+    values['objectionNoticeAddress'] = null
+  }
+
   if (!touchesReminderGround(values)) {
     return
   }
@@ -161,8 +173,9 @@ export class CustomersController {
 
     const [updated] = await this.database.forTenant(identity, async (tx) => {
       // The stored ground, held until the write, so that the check and the
-      // write see the same one.
-      if (touchesReminderGround(values)) {
+      // write see the same one; also for a new address, which takes a
+      // confirmation for another one away.
+      if (touchesReminderGround(values) || 'email' in values) {
         const [stored] = await tx
           .select({
             ground: customers.reminderGround,
