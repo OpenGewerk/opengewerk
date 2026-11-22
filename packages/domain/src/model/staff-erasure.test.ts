@@ -26,6 +26,13 @@ describe('when the staff fall due (#846)', () => {
     expect(staffYearErasureDueOn(2026, today, shippedRules)).toBe('2035-01-01')
   })
 
+  it('counts from the later year its last record was entered in, never from an earlier one (#1033)', () => {
+    // The last days of 2017 entered in January 2018 keep the year a year longer.
+    expect(staffYearErasureDueOn(2017, today, shippedRules, 2018)).toBe('2027-01-01')
+    // Leave of 2017 entered ahead in 2016 does not shorten it.
+    expect(staffYearErasureDueOn(2017, today, shippedRules, 2016)).toBe('2026-01-01')
+  })
+
   it('keeps a year at least as long as the minimum wage and working time acts keep its last record', () => {
     // The last entry of a year may be written seven days later (§ 17 (1) MiLoG).
     const written = '2020-01-07' as IsoDate

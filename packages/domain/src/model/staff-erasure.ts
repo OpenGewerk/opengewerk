@@ -11,7 +11,8 @@ import { retentionOf } from './retention.js'
  *   datum (Art. 9 GDPR) goes once the integration management and the
  *   continued pay no longer need it;
  * - the time and leave of one year of one person, eight years after the end of
- *   the year (`payroll_records`): the time is a paper of the payroll where the
+ *   the year, or of the later year its last record was entered or corrected in
+ *   (`payroll_records`): the time is a paper of the payroll where the
  *   pay goes by the hour, and the leave of a year and what it was entitled to
  *   go with the time of the same year;
  * - the file of somebody who left, three years after the end of the year they
@@ -30,9 +31,23 @@ export function sicknessErasureDueOn(lastDay: IsoDate, today: IsoDate, rules: Ru
  * minimum wage and working time acts lie well inside the eight of the payroll,
  * and the database keeps the shorter bound on every record of time as well
  * (migration 0036).
+ *
+ * Counted from the end of the year, or of the later year in which the last of
+ * its records was entered (opengewerk#1033): a paper of the bookkeeping is
+ * kept from the end of the year it came into being (§ 147 Abs. 4 AO), and the
+ * last days of December are often entered in January, a correction months
+ * after. An earlier year of entry, such as leave entered ahead, changes
+ * nothing.
  */
-export function staffYearErasureDueOn(year: number, today: IsoDate, rules: RuleSet): IsoDate {
-  return retentionOf('payroll_records', `${String(year)}-12-31` as IsoDate, today, rules).mayGoOn
+export function staffYearErasureDueOn(
+  year: number,
+  today: IsoDate,
+  rules: RuleSet,
+  lastEntered: number = year,
+): IsoDate {
+  const counted = Math.max(year, lastEntered)
+
+  return retentionOf('payroll_records', `${String(counted)}-12-31` as IsoDate, today, rules).mayGoOn
 }
 
 /** The first day the file of somebody who left on a day may go. */

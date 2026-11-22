@@ -108,6 +108,8 @@ export interface DueStaffYear {
   readonly personName: string
   readonly userId: string | null
   readonly year: number
+  /** The year whose end the period counts from: this one, or a later one of entry. */
+  readonly countsFrom: number
   readonly dueOn: IsoDate
 }
 
@@ -126,24 +128,48 @@ function lastYearDue(today: IsoDate): number {
  * The years of a person that hold anything: records of time (a correction
  * counts with the entry it corrects), times on call, absences by their first
  * day and days of leave. A person without an account has no time of their own.
+ *
+ * With each, the year it was last written in, in Germany (opengewerk#1033): a
+ * year is kept from the end of the last year one of its records came into
+ * being or was corrected. A correction of time is a record of its own; days
+ * of leave, an absence and a time on call are corrected in their row, so it
+ * is `updated_at`, which `stamp_sync_columns` sets on every write and which
+ * nothing but a write of a person moves. A record that runs into the next
+ * year, an absence, a time on call, a record of time over midnight on New
+ * Year's Eve or a correction that moves its time past it, counts with its
+ * year and holds it until the end of the year it ends in: the time after New
+ * Year is a paper of that year's pay.
  */
 function yearsOf(upTo: number | null): SQL {
   const bound = (year: SQL) => (upTo === null ? sql`true` : sql`${year} <= ${upTo}`)
-  const timeYear = sql`extract(year from (t.started_at at time zone 'Europe/Berlin'))::int`
+  const entered = (table: SQL) =>
+    sql`extract(year from (${table}.updated_at at time zone 'Europe/Berlin'))::int`
+  const timeYear = sql`time_entry_year(t.id)`
   const callYear = sql`extract(year from (s.starts_at at time zone 'Europe/Berlin'))::int`
   const absenceYear = sql`extract(year from a.first_day)::int`
 
   return sql`(
-    select ${timeYear} as year from time_entries t
-     where p.user_id is not null and t.user_id = p.user_id and t.corrects_entry_id is null and ${bound(timeYear)}
-    union select ${callYear} from on_call_shifts s
+    select ${timeYear} as year,
+           greatest(${entered(sql`t`)}, extract(year from ((t.ended_at - interval '1 millisecond') at time zone 'Europe/Berlin'))::int) as entered
+      from time_entries t
+     where p.user_id is not null and t.user_id = p.user_id and ${bound(timeYear)}
+    union select ${callYear},
+           greatest(${entered(sql`s`)}, extract(year from ((s.ends_at - interval '1 millisecond') at time zone 'Europe/Berlin'))::int)
+      from on_call_shifts s
      where p.user_id is not null and s.user_id = p.user_id and ${bound(callYear)}
-    union select ${absenceYear} from absences a where a.person_id = p.id and ${bound(absenceYear)}
-    union select l.year from leave_entitlements l where l.person_id = p.id and ${bound(sql`l.year`)}
+    union select ${absenceYear}, greatest(${entered(sql`a`)}, extract(year from a.last_day)::int)
+      from absences a
+     where a.person_id = p.id and ${bound(absenceYear)}
+    union select l.year, ${entered(sql`l`)} from leave_entitlements l
+     where l.person_id = p.id and ${bound(sql`l.year`)}
   )`
 }
 
-/** Every year of every person due today, or of those keys asked for. */
+/**
+ * Every year of every person due today, or of those keys asked for. The
+ * years read are those whose own end is far enough back; a year whose last
+ * record was entered later is due only when that end is.
+ */
 export async function dueStaffYears(
   tx: TenantTransaction,
   today: IsoDate,
@@ -154,17 +180,21 @@ export async function dueStaffYears(
     name: string
     user_id: string | null
     year: number
+    entered: number
   }>(sql`
-    select p.id as person_id, p.name, p.user_id, y.year
+    select p.id as person_id, p.name, p.user_id, y.year, max(y.entered) as entered
       from people p cross join lateral ${yearsOf(lastYearDue(today))} as y
+     group by p.id, p.name, p.user_id, y.year
      order by y.year, p.name, p.id`)
   const wanted = only === undefined ? null : new Set(only.map((key) => key.toLowerCase()))
 
   return rows.flatMap((row) => {
     const year = Number(row.year)
     const key = staffYearKey(row.person_id, year)
+    const countsFrom = Math.max(year, Number(row.entered))
+    const dueOn = staffYearErasureDueOn(year, today, shippedRules, countsFrom)
 
-    return wanted !== null && !wanted.has(key)
+    return dueOn > today || (wanted !== null && !wanted.has(key))
       ? []
       : [
           {
@@ -173,7 +203,8 @@ export async function dueStaffYears(
             personName: row.name,
             userId: row.user_id,
             year,
-            dueOn: staffYearErasureDueOn(year, today, shippedRules),
+            countsFrom,
+            dueOn,
           },
         ]
   })
@@ -254,6 +285,33 @@ async function taken(tx: TenantTransaction, table: string, query: SQL): Promise<
   return { table, ids: rows.map((row) => row.id) }
 }
 
+/**
+ * Reads a sickness again in the transaction of its deletion, before its line
+ * of the protocol, and holds it there (opengewerk#1033): due still, as the
+ * list found it, or its last day was corrected since. Held before the line,
+ * as a year of a person is, so that the deletions of the staff take a row
+ * before the counter and the chain of the business and never the other way
+ * round.
+ */
+export async function holdSickness(
+  tx: TenantTransaction,
+  absenceId: string,
+  today: IsoDate,
+): Promise<{ readonly lastDay: IsoDate; readonly dueOn: IsoDate } | null> {
+  const { rows } = await tx.execute<{ last_day: string }>(sql`
+    select last_day::text from absences where id = ${absenceId} and kind = 'sickness' for update`)
+  const [sickness] = rows
+
+  if (sickness === undefined) {
+    return null
+  }
+
+  const lastDay = sickness.last_day as IsoDate
+  const dueOn = sicknessErasureDueOn(lastDay, today, shippedRules)
+
+  return dueOn <= today ? { lastDay, dueOn } : null
+}
+
 /** Deletes one sickness; the line of the protocol is written already. */
 export async function takeSickness(
   tx: TenantTransaction,
@@ -312,44 +370,131 @@ async function takeName(
 }
 
 /**
- * Deletes one year of one person: the records of time from the end of each
- * chain of corrections, the times on call, the absences and the days of leave
- * of that year. Takes the name as well where the file went and this was the
- * last year kept. The line of the protocol is written already.
+ * What one year of one person holds when it is deleted, and whether it is due
+ * still (opengewerk#1033). The list read it without locks, and since a year
+ * counts from the last time one of its records was written, a correction
+ * committed between that reading and the deletion can make it not due.
+ *
+ * So it is read again here, in the transaction of the deletion and before its
+ * line of the protocol. Times on call, absences and days of leave are
+ * corrected in their row and read `for update`: a correction committed before
+ * is seen, one after waits until the deletion is through and then finds
+ * nothing. A record of time is never changed in its row, the application may
+ * not; a correction is a record of its own, and one that comes in meanwhile is
+ * not among those read and stays, or it corrects one of them and the deletion
+ * of that one is refused (`on delete restrict`, `ErasureInterrupted`). What is
+ * deleted is what was read here, by its id. The rows are locked in the order
+ * of their ids, so two deletions of the same year wait for each other in a
+ * line.
+ */
+export interface HeldStaffYear {
+  /** The day it was due on, from what was read here. */
+  readonly dueOn: IsoDate
+  /** The records of time, each with how far it stands from the end of its chain of corrections. */
+  readonly entries: readonly { readonly id: string; readonly height: number }[]
+  readonly onCall: readonly string[]
+  readonly absences: readonly string[]
+  readonly entitlements: readonly string[]
+}
+
+export async function holdStaffYear(
+  tx: TenantTransaction,
+  year: DueStaffYear,
+  today: IsoDate,
+): Promise<HeldStaffYear | null> {
+  const written = sql`extract(year from (updated_at at time zone 'Europe/Berlin'))::int`
+  const read = async (query: SQL) => (await tx.execute<{ id: string; written: number }>(query)).rows
+
+  // How far each entry of the year stands from the end of its chain of
+  // corrections: 0 for one nothing corrects, one more for each correction
+  // after it. Worked out once, and the entries go a level at a time, the
+  // end of every chain first: the trigger works the year of a correction
+  // out of the entry it corrects, which has to be there still. Each level
+  // names its own entries only; a round per link with every id left grew
+  // with the square of the length of a chain.
+  const entries =
+    year.userId === null
+      ? []
+      : (
+          await tx.execute<{ id: string; height: number; written: number }>(sql`
+            with recursive year_entries as (
+              select id, corrects_entry_id,
+                     greatest(${written}, extract(year from ((ended_at - interval '1 millisecond') at time zone 'Europe/Berlin'))::int) as written
+                from time_entries
+               where user_id = ${year.userId} and time_entry_year(id) = ${year.year}
+            ), heights as (
+              select e.id, e.corrects_entry_id, 0 as height from year_entries e
+               where not exists (select 1 from year_entries c where c.corrects_entry_id = e.id)
+              union all
+              select p.id, p.corrects_entry_id, h.height + 1
+                from heights h join year_entries p on p.id = h.corrects_entry_id
+            )
+            select h.id, max(h.height)::int as height, max(y.written)::int as written
+              from heights h join year_entries y on y.id = h.id
+             group by h.id`)
+        ).rows
+  const onCall =
+    year.userId === null
+      ? []
+      : await read(sql`select id,
+             greatest(${written}, extract(year from ((ends_at - interval '1 millisecond') at time zone 'Europe/Berlin'))::int) as written
+             from on_call_shifts
+           where user_id = ${year.userId}
+             and extract(year from (starts_at at time zone 'Europe/Berlin'))::int = ${year.year}
+           order by id for update`)
+  const absences = await read(sql`select id,
+       greatest(${written}, extract(year from last_day)::int) as written from absences
+     where person_id = ${year.personId} and extract(year from first_day)::int = ${year.year}
+     order by id for update`)
+  const entitlements = await read(sql`select id, ${written} as written from leave_entitlements
+     where person_id = ${year.personId} and year = ${year.year}
+     order by id for update`)
+  const rows = [...entries, ...onCall, ...absences, ...entitlements]
+
+  // Nothing left: another deletion took the year meanwhile, and a line of the
+  // protocol would report a deletion that removed nothing.
+  if (rows.length === 0) {
+    return null
+  }
+
+  const lastWritten = Math.max(year.year, ...rows.map((row) => Number(row.written)))
+  const dueOn = staffYearErasureDueOn(year.year, today, shippedRules, lastWritten)
+
+  if (dueOn > today) {
+    return null
+  }
+
+  return {
+    dueOn,
+    entries: entries.map((row) => ({ id: row.id, height: Number(row.height) })),
+    onCall: onCall.map((row) => row.id),
+    absences: absences.map((row) => row.id),
+    entitlements: entitlements.map((row) => row.id),
+  }
+}
+
+/**
+ * Deletes one year of one person, what `holdStaffYear` read of it: the
+ * records of time from the end of each chain of corrections, the times on
+ * call, the absences and the days of leave of that year. Takes the name as
+ * well where the file went and this was the last year kept. The line of the
+ * protocol is written already.
  */
 export async function takeStaffYear(
   tx: TenantTransaction,
   year: DueStaffYear,
+  held: HeldStaffYear,
 ): Promise<StaffTouched[]> {
   const touched: StaffTouched[] = []
 
   if (year.userId !== null) {
-    // How far each entry of the year stands from the end of its chain of
-    // corrections: 0 for one nothing corrects, one more for each correction
-    // after it. Worked out once, and the entries go a level at a time, the
-    // end of every chain first: the trigger works the year of a correction
-    // out of the entry it corrects, which has to be there still. Each level
-    // names its own entries only; a round per link with every id left grew
-    // with the square of the length of a chain.
-    const { rows } = await tx.execute<{ id: string; height: number }>(sql`
-      with recursive year_entries as (
-        select id, corrects_entry_id from time_entries
-         where user_id = ${year.userId} and time_entry_year(id) = ${year.year}
-      ), heights as (
-        select e.id, e.corrects_entry_id, 0 as height from year_entries e
-         where not exists (select 1 from year_entries c where c.corrects_entry_id = e.id)
-        union all
-        select p.id, p.corrects_entry_id, h.height + 1
-          from heights h join year_entries p on p.id = h.corrects_entry_id
-      )
-      select id, max(height)::int as height from heights group by id`)
     const levels = new Map<number, string[]>()
 
-    for (const row of rows) {
-      const level = levels.get(row.height) ?? []
+    for (const entry of held.entries) {
+      const level = levels.get(entry.height) ?? []
 
-      level.push(row.id)
-      levels.set(row.height, level)
+      level.push(entry.id)
+      levels.set(entry.height, level)
     }
 
     const gone: string[] = []
@@ -369,10 +514,7 @@ export async function takeStaffYear(
       await taken(
         tx,
         'on_call_shifts',
-        sql`delete from on_call_shifts
-             where user_id = ${year.userId}
-               and extract(year from (starts_at at time zone 'Europe/Berlin'))::int = ${year.year}
-            returning id`,
+        sql`delete from on_call_shifts where id = any(${uuids(held.onCall)}) returning id`,
       ),
     )
   }
@@ -381,15 +523,12 @@ export async function takeStaffYear(
     await taken(
       tx,
       'absences',
-      sql`delete from absences
-           where person_id = ${year.personId} and extract(year from first_day)::int = ${year.year}
-          returning id`,
+      sql`delete from absences where id = any(${uuids(held.absences)}) returning id`,
     ),
     await taken(
       tx,
       'leave_entitlements',
-      sql`delete from leave_entitlements where person_id = ${year.personId} and year = ${year.year}
-          returning id`,
+      sql`delete from leave_entitlements where id = any(${uuids(held.entitlements)}) returning id`,
     ),
   )
 

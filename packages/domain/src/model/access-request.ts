@@ -196,7 +196,7 @@ export const accessStorage: Readonly<Record<PersonalSubject, string>> = {
   prospect:
     'Wird aus Ihrer Anfrage kein Auftrag, gehen Ihre Daten eine Zeit nach dem letzten Kontakt, die der Betrieb festlegt; vorgegeben sind zwölf Monate.',
   person:
-    'Eine Krankheit geht zwölf Monate nach ihrem letzten Tag; Arbeitszeiten, Rufbereitschaft und Urlaub eines Jahres gehen acht Jahre nach dessen Ende (§ 147 AO, § 41 EStG); die Akte geht drei Jahre nach dem Ende des Jahres, in dem Sie ausgetreten sind (§ 195, § 199 BGB).',
+    'Eine Krankheit geht zwölf Monate nach ihrem letzten Tag; Arbeitszeiten, Rufbereitschaft und Urlaub eines Jahres gehen acht Jahre nach dessen Ende, bei einem später erfassten oder berichtigten Eintrag oder einem, der ins nächste Jahr reicht, nach dem Ende dieses späteren Jahres (§ 147 AO, § 41 EStG); die Akte geht drei Jahre nach dem Ende des Jahres, in dem Sie ausgetreten sind (§ 195, § 199 BGB).',
 }
 
 /**

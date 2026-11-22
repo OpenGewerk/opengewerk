@@ -17,7 +17,12 @@ import {
   staffYearErasureLabel,
   type TenantId,
 } from '@opengewerk/domain'
-import { idArray, leadsItsTenant, type TenantTransaction } from '@opengewerk/platform-server'
+import {
+  databaseCode,
+  idArray,
+  leadsItsTenant,
+  type TenantTransaction,
+} from '@opengewerk/platform-server'
 import { auditEntries, auditRedactions, memberships } from '@opengewerk/platform-server/schema'
 import { and, asc, desc, eq, inArray, isNull, lte, sql } from 'drizzle-orm'
 
@@ -37,8 +42,11 @@ import {
   dueStaffYears,
   type StaffTouched,
   takePerson,
+  holdSickness,
   takeSickness,
   takeStaffYear,
+  type HeldStaffYear,
+  holdStaffYear,
 } from './staff-erasure.js'
 
 /** What the change log calls a deletion under the concept, and its switch. */
@@ -142,6 +150,16 @@ async function dueDeadlinesOf(tx: TenantTransaction, kind: ErasureKind, today: I
 
 /** Why a record is not deleted as asked, by its key. */
 export class ErasureRefused extends Error {}
+
+/**
+ * A record of the staff that changed while it was deleted, after it was read
+ * again (opengewerk#1033): a correction of a record of time that came in
+ * between, which the deletion of the record it corrects runs into. Nothing
+ * went. Not a refusal: the pass that deletes by itself takes one for nothing
+ * to delete and goes on in its transaction, which this one has broken off;
+ * so it fails there, and the next pass reads the year again.
+ */
+export class ErasureInterrupted extends Error {}
 
 /**
  * Deletes leads under the deletion concept (#317), each one that is due and
@@ -331,6 +349,17 @@ interface StaffRecord {
   /** What it is without a name, for the list and the protocol. */
   readonly label: string
   readonly dueOn: IsoDate
+  /** Whose it is, for the lock of `eraseStaff`. */
+  readonly personId: string
+  /**
+   * Reads the record again in the transaction of the deletion, under the
+   * locks it needs, before any line of the protocol: its day and what the
+   * protocol calls it, as read now, or null when it is gone or not due any
+   * more. A sickness and a year of a person have one (opengewerk#1033).
+   */
+  readonly hold?: (
+    tx: TenantTransaction,
+  ) => Promise<{ readonly dueOn: IsoDate; readonly label: string } | null>
   readonly take: (tx: TenantTransaction) => Promise<StaffTouched[]>
 }
 
@@ -356,16 +385,40 @@ async function staffRecords(
         recordId: sickness.absenceId,
         name: sickness.personName,
         label: sicknessErasureLabel(sickness.lastDay),
+        personId: sickness.personId,
+        hold: async (inner) => {
+          const held = await holdSickness(inner, sickness.absenceId, today)
+
+          return held === null
+            ? null
+            : { dueOn: held.dueOn, label: sicknessErasureLabel(held.lastDay) }
+        },
         take: (inner) => takeSickness(inner, sickness.absenceId),
       })
     }
   } else if (kind === 'staff_year') {
     for (const year of await dueStaffYears(tx, today, ids)) {
+      let held: HeldStaffYear | undefined
+
       records.push({
         recordId: year.key,
         name: year.personName,
         label: staffYearErasureLabel(year.year),
-        take: (inner) => takeStaffYear(inner, year),
+        personId: year.personId,
+        hold: async (inner) => {
+          held = (await holdStaffYear(inner, year, today)) ?? undefined
+
+          return held === undefined
+            ? null
+            : { dueOn: held.dueOn, label: staffYearErasureLabel(year.year) }
+        },
+        take: (inner) => {
+          if (held === undefined) {
+            throw new Error('A year of a person is held before it is taken')
+          }
+
+          return takeStaffYear(inner, year, held)
+        },
       })
     }
   } else {
@@ -375,6 +428,7 @@ async function staffRecords(
           recordId: person.personId,
           name: person.personName,
           label: personErasureLabel(person.leftOn),
+          personId: person.personId,
           take: (inner) => takePerson(inner, person),
         })
       }
@@ -428,25 +482,60 @@ async function eraseStaff(
     }
   }
 
-  const written: Erasure[] = []
-
-  for (const key of input.ids.map((id) => id.toLowerCase())) {
-    const record = records.get(key)
+  const gone = `${erasureKindWords[kind].one}: ein ausgewählter Eintrag ist nicht mehr da oder nicht zum Löschen fällig.`
+  const chosen = input.ids.map((id) => {
+    const record = records.get(id.toLowerCase())
 
     if (record === undefined) {
-      throw new ErasureRefused(
-        `${erasureKindWords[kind].one}: ein ausgewählter Eintrag ist nicht mehr da oder nicht zum Löschen fällig.`,
-      )
+      throw new ErasureRefused(gone)
     }
 
+    return record
+  })
+
+  // Two deletions of the staff of one person one after the other
+  // (opengewerk#1033): a year and a sickness in it, or two requests for the
+  // same year, lock the same rows, and each in an order of its own. Taken by
+  // person, in the order of their ids, before any row.
+  for (const personId of [...new Set(chosen.map((record) => record.personId))].sort()) {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`staff-erasure:${personId}`}, 0))`,
+    )
+  }
+
+  // Every record held before the first line of the protocol, and in the
+  // order of their keys (opengewerk#1033): a line takes the counter and the
+  // chain of the business until the end, and a write of the staff takes its
+  // row before them. Held after a line, a row could wait for a write that
+  // waits for the chain, and PostgreSQL would break one of them off. What
+  // the line says is what was read here.
+  const read = new Map<StaffRecord, { readonly dueOn: IsoDate; readonly label: string }>()
+
+  for (const record of [...chosen].sort((one, other) =>
+    one.recordId.localeCompare(other.recordId),
+  )) {
+    if (record.hold !== undefined) {
+      const held = await record.hold(tx)
+
+      if (held === null) {
+        throw new ErasureRefused(gone)
+      }
+
+      read.set(record, held)
+    }
+  }
+
+  const written: Erasure[] = []
+
+  for (const record of chosen) {
     const [line] = await tx
       .insert(erasures)
       .values({
         tenantId: input.tenantId,
         kind,
         recordId: record.recordId,
-        label: record.label,
-        dueOn: record.dueOn,
+        label: read.get(record)?.label ?? record.label,
+        dueOn: read.get(record)?.dueOn ?? record.dueOn,
         automatic: input.automatic,
         redactions: 0,
         // Set by `record_note_author` from the person of the transaction.
@@ -458,7 +547,20 @@ async function eraseStaff(
       throw new Error('The protocol of the deletion concept took no line')
     }
 
-    const touched = await record.take(tx)
+    const touched = await record.take(tx).catch((error: unknown) => {
+      // A record that something written meanwhile still points at:
+      // `on delete restrict` answers 23001, `no action` 23503.
+      const code = databaseCode(error)
+
+      if (code === '23001' || code === '23503') {
+        throw new ErasureInterrupted(
+          `${erasureKindWords[kind].one}: ein ausgewählter Eintrag wurde während des Löschens ` +
+            'berichtigt. Gelöscht ist nichts; ob er noch fällig ist, sagt die Liste neu.',
+        )
+      }
+
+      throw error
+    })
     const redactions = await redactRecords(tx, {
       tenantId: input.tenantId,
       userId: input.userId,

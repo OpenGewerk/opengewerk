@@ -1022,7 +1022,7 @@ export const erasableStaffYears: SourceQuery<DeadlineValues> = async (tx) => {
   return (await dueStaffYears(tx, today)).map((year) => ({
     sourceId: year.key,
     sourceLabel: staffYearErasureLabel(year.year),
-    anchorOn: `${String(year.year)}-12-31` as IsoDate,
+    anchorOn: `${String(year.countsFrom)}-12-31` as IsoDate,
     namedDueOn: year.dueOn,
     naturalUserId: null,
     values: aboutNoCustomer,
