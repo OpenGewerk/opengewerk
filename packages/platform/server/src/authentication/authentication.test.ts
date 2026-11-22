@@ -7,9 +7,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { Database } from '../database/database.js'
 import { newId } from '../database/identifier.js'
 import { auditEntries, authRateLimits, authUsers, invitations } from '../schema.js'
+import { removeAccountData, revokeDeviceOf, setBlocked } from './administration.js'
 import { authenticationPath } from './authentication.js'
 import { mintToken } from './invitation.js'
 import {
+  probeAccess,
   type ProbeFoundation,
   probeFoundation,
   probeIdentities,
@@ -1890,6 +1892,37 @@ describe('the work of a session a new password ends', () => {
     ])
   })
 
+  it('ends as run out a session that had run out when the command line sets a new password (#1030)', async () => {
+    const email = 'kommandozeile-abgelaufen@example.de'
+    const userId = await newcomer(email)
+    const working = await signIn(email)
+
+    await instance.chooseTenant(working, north.id)
+    await admin.query(
+      `update tenant_sessions set started_at = now() - interval '2 hours' where user_id = $1`,
+      [userId],
+    )
+
+    const ran = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() - interval '1 hour' where user_id = $1
+       returning expires_at`,
+      [userId],
+    )
+
+    await replacePassword(instance.authentication, instance.database, { email, password: another })
+
+    expect(await stretchesOf(userId)).toEqual([
+      { open: false, reason: 'session.expire', user: null },
+    ])
+
+    const { rows } = await admin.query<{ ended_at: Date }>(
+      'select ended_at from tenant_sessions where user_id = $1',
+      [userId],
+    )
+
+    expect(rows[0]?.ended_at).toEqual(ran.rows[0]?.expires_at)
+  })
+
   it('ends at once and under the reset when the command line sets a new password', async () => {
     const email = 'kommandozeile@example.de'
     const userId = await newcomer(email)
@@ -2184,6 +2217,109 @@ describe('an access past its last day', () => {
     expect((await endOfWork(other.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
     expect(await reasonOfEnd(other.id)).toBe('membership.end')
   })
+
+  it('ends the work with the access when the session switches to another tenant after the last day', async () => {
+    const email = 'letzter-tag-wechsel@example.de'
+    const userId = await joined(email, [north.id, south.id])
+    const working = await atWork(email)
+
+    await begunDaysAgo(working.id)
+    await lastDayAgo(north.id, userId, 2)
+    await instance.chooseTenant(working.cookies, south.id)
+
+    const { rows } = await admin.query<{ ended_at: Date | null }>(
+      'select ended_at from tenant_sessions where session_id = $1 and tenant_id = $2',
+      [working.id, north.id],
+    )
+
+    expect(rows[0]?.ended_at?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(working.id)).toBe('membership.end')
+  })
+
+  for (const way of [
+    {
+      what: 'the office cuts the device off',
+      email: 'letzter-tag-buero-geraet@example.de',
+      run: (userId: string, sessionId: string) =>
+        revokeDeviceOf(
+          probeAccess,
+          instance.database,
+          { tenantId: north.id, userId },
+          userId,
+          sessionId,
+        ),
+    },
+    {
+      what: 'the office blocks the access',
+      email: 'letzter-tag-sperre@example.de',
+      run: (userId: string) =>
+        setBlocked(probeAccess, instance.database, { tenantId: north.id, userId }, userId, true),
+    },
+    {
+      what: 'the data of the access are removed',
+      email: 'letzter-tag-daten@example.de',
+      run: async (userId: string) => {
+        await removeAccountData(
+          probeAccess,
+          instance.database,
+          { tenantId: north.id, userId },
+          userId,
+        )
+      },
+    },
+  ]) {
+    it(`ends the work with the access when ${way.what} after the last day, before the pass`, async () => {
+      const userId = await joined(way.email, [north.id])
+      const working = await atWork(way.email)
+
+      await begunDaysAgo(working.id)
+      await lastDayAgo(north.id, userId, 2)
+      await way.run(userId, working.id)
+
+      expect((await endOfWork(working.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+      expect(await reasonOfEnd(working.id)).toBe('membership.end')
+    })
+  }
+
+  for (const device of [
+    { past: true, email: 'letzter-tag-geraet-abgelaufen@example.de' },
+    { past: false, email: 'geraet-abgelaufen@example.de' },
+  ]) {
+    it(`ends when it ran out a device cut off after it ran out, before the pass${device.past ? ', the access ended after' : ''}`, async () => {
+      const userId = await joined(device.email, [north.id])
+      const gone = await atWork(device.email)
+      const other = await atWork(device.email)
+
+      await begunDaysAgo(gone.id)
+
+      if (device.past) {
+        await lastDayAgo(north.id, userId, 2)
+      }
+
+      // The list of devices shows one that ran out and the sweep has not
+      // taken yet: an hour before the access ended, or an hour ago.
+      const { rows } = await admin.query<{ expires_at: Date }>(
+        device.past
+          ? `update auth_sessions s
+                set expires_at = ((m.last_day + 1)::timestamp at time zone 'Europe/Berlin') - interval '1 hour'
+               from memberships m
+              where s.id = $1 and m.user_id = s.user_id and m.tenant_id = $2
+             returning s.expires_at`
+          : `update auth_sessions set expires_at = now() - interval '1 hour' where id = $1
+             returning expires_at`,
+        device.past ? [gone.id, north.id] : [gone.id],
+      )
+
+      await http()
+        .delete(`/auth/devices/${gone.id}`)
+        .set('cookie', other.cookies)
+        .set('origin', origin)
+        .expect(200)
+
+      expect((await endOfWork(gone.id))?.getTime()).toBe(rows[0]?.expires_at.getTime())
+      expect(await reasonOfEnd(gone.id)).toBe('session.expire')
+    })
+  }
 
   it('ends at the end of the day a stretch whose session is already gone', async () => {
     const email = 'letzter-tag-verwaist@example.de'

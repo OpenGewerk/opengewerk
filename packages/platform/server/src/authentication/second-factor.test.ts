@@ -483,44 +483,50 @@ describe('the second factor of an account', () => {
    * password alone (opengewerk-haustechnik#360), and what one of them had open
    * in a tenant ends with it, at once and under the reason of the app
    * (opengewerk#1029). Until then it stayed open, and the sweep of sessions
-   * would later have closed it as one that ran out.
+   * would later have closed it as one that ran out. One that had run out
+   * already ends when it did and as run out, as the sweep would have closed
+   * it (opengewerk#1030).
    */
-  it('ends the work of a session the app ends, at once and named after the app', async () => {
+  it('ends the work of a session the app ends, at once and named after the app, and of one that ran out when it did', async () => {
     const email = 'app-ende@nord.example.de'
     const userId = await leader(email)
     const other = await withPassword(email)
 
     await instance.chooseTenant(other, north.id)
 
-    // It ran out half an hour ago, after its stretch began an hour before, and
-    // the stretch ends then, not now.
+    const running = await withPassword(email)
+
+    await instance.chooseTenant(running, north.id)
     await admin.query(
       `update tenant_sessions set started_at = now() - interval '90 minutes' where user_id = $1`,
       [userId],
     )
 
+    // The first ran out half an hour ago, after its stretch began an hour
+    // before, and its stretch ends then, not now.
     const ran = await admin.query<{ expires_at: Date }>(
       `update auth_sessions set expires_at = now() - interval '30 minutes'
-        where user_id = $1 and active_tenant_id is not null
+        where id = (select id from auth_sessions
+                     where user_id = $1 and active_tenant_id is not null
+                     order by created_at limit 1)
        returning expires_at`,
       [userId],
     )
 
     await setUpApp(email)
 
-    const { rows } = await admin.query<{ open: number; app: number; ended: Date | null }>(
-      `select count(*) filter (where t.ended_at is null)::int as open,
-              count(*) filter (where exists (
-                select 1 from audit_entries a
-                 where a.table_name = 'tenant_sessions' and a.record_id = t.id
-                   and a.field = 'ended_at' and a.reason = 'second-factor.app'))::int as app,
-              max(t.ended_at) as ended
+    const { rows } = await admin.query<{ reason: string | null; ended: Date | null }>(
+      `select a.reason, t.ended_at as ended
          from tenant_sessions t
-        where t.user_id = $1`,
+         left join audit_entries a
+           on a.table_name = 'tenant_sessions' and a.record_id = t.id and a.field = 'ended_at'
+        where t.user_id = $1
+        order by t.ended_at`,
       [userId],
     )
 
-    expect(rows).toEqual([{ open: 0, app: 1, ended: ran.rows[0]?.expires_at }])
+    expect(rows.map((row) => row.reason)).toEqual(['session.expire', 'second-factor.app'])
+    expect(rows[0]?.ended).toEqual(ran.rows[0]?.expires_at)
   })
 
   /**

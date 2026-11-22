@@ -9,7 +9,7 @@ import { addressUnconfirmed } from './address-confirmation.js'
 import type { Authentication } from './authentication.js'
 import { recordPasswordReset } from './password-resets.js'
 import { revokeCredentials } from './credentials.js'
-import { endStretchesOrLeaveThem } from './session-sweep.js'
+import { endStretchesOfTakenOut } from './session-sweep.js'
 
 /** What better-auth hands out once it has read its own configuration. */
 export type AuthenticationContext = Awaited<Authentication['$context']>
@@ -255,9 +255,9 @@ export async function replacePassword(
     // A new password ends every session, and counts the credentials up, so
     // that a sign in with the old one written a moment later is refused
     // (`credentials.ts`).
-    const { ended } = await revokeCredentials(tx, user.id)
+    const { ended, at } = await revokeCredentials(tx, user.id)
 
-    return { userId: user.id, ended }
+    return { userId: user.id, ended, at }
   })
 
   if (replaced === null) {
@@ -268,10 +268,12 @@ export async function replacePassword(
   // What the ended sessions had open in a tenant ends now, under the reason
   // of the new password (opengewerk#1029), after the reset is recorded: a close
   // that fails leaves an orphan the sweep of sessions closes, and must not
-  // cost the record. The command acts for no person.
-  await endStretchesOrLeaveThem(
+  // cost the record. The command acts for no person. A session that had run
+  // out already ends when it did (opengewerk#1030).
+  await endStretchesOfTakenOut(
     database,
     replaced.ended.map((session) => ({ ...session, userId: replaced.userId })),
+    replaced.at,
     { reason: 'password.reset' },
   )
 

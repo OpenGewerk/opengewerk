@@ -33,7 +33,7 @@ import {
 } from './address-confirmation.js'
 import type { CorrectedAccount } from './administration.js'
 import { beforeItsEnd } from './last-day.js'
-import { endStretchesOrLeaveThem } from './session-sweep.js'
+import { endStretchesOf, endStretchesOfTakenOut, endStretchesOrLeaveThem } from './session-sweep.js'
 import type { AddressMail } from './notices.js'
 import { changeOwnAccount } from './own-account.js'
 import { rolesHeld } from './roles.js'
@@ -252,12 +252,13 @@ export class AuthenticationController {
     // A switch from one tenant to another (#242) ends the work in the first,
     // which would otherwise stay open in its log until the end of time: the
     // sign out closes only what is open in the tenant chosen last.
+    // Where the access there ended meanwhile, the work ended with it
+    // (opengewerk#1030).
     if (previous.tenantId !== null && previous.tenantId !== chosen) {
-      await this.closeTenantSessions(
-        previous.tenantId,
-        user.userId,
-        user.sessionId,
-        'session.switch',
+      await endStretchesOf(
+        this.database,
+        [{ id: user.sessionId, userId: user.userId, tenantId: previous.tenantId }],
+        { reason: 'session.switch', actor: user.userId },
       )
     }
 
@@ -417,12 +418,16 @@ export class AuthenticationController {
     @CurrentUser() user: SignedInUser,
     @Param('sessionId') sessionId: string,
   ): Promise<{ revoked: string }> {
+    const at = new Date()
     const [revoked] = await this.database.forInstance(
       (tx) =>
         tx
           .delete(authSessions)
           .where(and(eq(authSessions.id, sessionId), eq(authSessions.userId, user.userId)))
-          .returning({ activeTenantId: authSessions.activeTenantId }),
+          .returning({
+            activeTenantId: authSessions.activeTenantId,
+            expiresAt: authSessions.expiresAt,
+          }),
       user.userId,
     )
 
@@ -432,9 +437,19 @@ export class AuthenticationController {
       throw new ForbiddenException('Diese Sitzung gehört nicht zu diesem Konto.')
     }
 
-    await endStretchesOrLeaveThem(
+    // The list shows a device that ran out and the sweep has not taken yet:
+    // cut off now, its work ended when it ran out (opengewerk#1030).
+    await endStretchesOfTakenOut(
       this.database,
-      [{ id: sessionId, userId: user.userId, tenantId: revoked.activeTenantId }],
+      [
+        {
+          id: sessionId,
+          userId: user.userId,
+          tenantId: revoked.activeTenantId,
+          expiresAt: revoked.expiresAt,
+        },
+      ],
+      at,
       { reason: 'session.revoke', actor: user.userId },
     )
 
@@ -469,30 +484,5 @@ export class AuthenticationController {
     )
 
     return { signedOut: true }
-  }
-
-  /**
-   * Closes whatever this session had open in that tenant. An update and not
-   * a delete, because the row is the tenant's record that somebody worked in
-   * it, and the change itself is what the audit log picks up.
-   */
-  private async closeTenantSessions(
-    tenantId: TenantId,
-    userId: string,
-    sessionId: string,
-    reason: string,
-  ): Promise<void> {
-    await this.database.forTenant({ tenantId, userId, reason }, (tx) =>
-      tx
-        .update(tenantSessions)
-        .set({ endedAt: new Date() })
-        .where(
-          and(
-            eq(tenantSessions.sessionId, sessionId),
-            eq(tenantSessions.userId, userId),
-            isNull(tenantSessions.endedAt),
-          ),
-        ),
-    )
   }
 }

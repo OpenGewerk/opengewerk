@@ -58,7 +58,7 @@ import {
   secondFactorSessionRequired,
 } from './second-factor.js'
 import { renewSession, sessionLifetimes } from './session-lifetime.js'
-import { carryStretch, endStretchesOrLeaveThem } from './session-sweep.js'
+import { carryStretch, endStretchesOfTakenOut, endStretchesOrLeaveThem } from './session-sweep.js'
 import { clearCodesAtSignIn, reserveCodeAtSignIn } from './sign-in-codes.js'
 
 export { sessionLifetimes } from './session-lifetime.js'
@@ -1363,9 +1363,10 @@ async function endSessionsWithoutSecondFactor(
   keep: string,
   appSetUp: boolean,
 ): Promise<void> {
-  const ended = await database.forInstance(async (tx) => {
+  const { ended, at } = await database.forInstance(async (tx) => {
     if (!appSetUp) {
-      return tx
+      const now = new Date()
+      const rows = await tx
         .delete(authSessions)
         .where(
           and(
@@ -1385,6 +1386,8 @@ async function endSessionsWithoutSecondFactor(
           tenantId: authSessions.activeTenantId,
           expiresAt: authSessions.expiresAt,
         })
+
+      return { ended: rows, at: now }
     }
 
     const [account] = await tx
@@ -1393,7 +1396,7 @@ async function endSessionsWithoutSecondFactor(
       .where(eq(authUsers.id, userId))
 
     if (account?.app !== true) {
-      return []
+      return { ended: [], at: new Date() }
     }
 
     const revoked = await revokeCredentials(
@@ -1402,12 +1405,13 @@ async function endSessionsWithoutSecondFactor(
       or(theSession(keep), eq(authSessions.secondFactor, true)) ?? theSession(keep),
     )
 
-    return revoked.ended
+    return { ended: revoked.ended, at: revoked.at }
   }, userId)
 
-  await endStretchesOrLeaveThem(
+  await endStretchesOfTakenOut(
     database,
     ended.map((session) => ({ ...session, userId })),
+    at,
     { reason: appSetUp ? 'second-factor.app' : 'session.second-factor', actor: userId },
   )
 }

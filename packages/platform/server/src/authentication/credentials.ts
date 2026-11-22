@@ -12,7 +12,7 @@ import {
   authUsers,
   authVerifications,
 } from '../schema.js'
-import { endStretchesOrLeaveThem } from './session-sweep.js'
+import { endStretchesOfTakenOut, endStretchesOrLeaveThem } from './session-sweep.js'
 
 /**
  * The count of an account's credentials, against a session written after
@@ -166,17 +166,11 @@ export async function endStretchesOfRevoked(
   revoked: Pick<Awaited<ReturnType<typeof revokeCredentials>>, 'ended' | 'at'>,
   reason: string,
 ): Promise<void> {
-  const ended = revoked.ended.map((session) => ({ ...session, userId }))
-
-  await endStretchesOrLeaveThem(
+  await endStretchesOfTakenOut(
     database,
-    ended.filter((session) => session.expiresAt > revoked.at),
-    { now: revoked.at, reason, actor: userId },
-  )
-  await endStretchesOrLeaveThem(
-    database,
-    ended.filter((session) => session.expiresAt <= revoked.at),
-    { now: revoked.at },
+    revoked.ended.map((session) => ({ ...session, userId })),
+    revoked.at,
+    { reason, actor: userId },
   )
 }
 
