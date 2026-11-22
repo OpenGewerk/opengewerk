@@ -33,8 +33,10 @@ export { lineKind, lineUnit, vatRate } from './line-enums.js'
  *
  * **The amounts live here and not on the document.** A total on the head would
  * be a second place for the same number, and two places drift. What the head
- * shows is worked out from these rows by `totalsFor`, with the document date,
- * so an invoice from 2020 is still an invoice at sixteen percent.
+ * shows is worked out from these rows by `totalsFor`, by the day of the work
+ * (the end of its period, its only day, or else the document date, #1017), so
+ * an invoice for work of the second half of 2020 is still one at sixteen
+ * percent.
  *
  * **`net_cents` is stored and held by a check constraint.** Stored, because
  * quantity times price has to be rounded and the rounded figure is what the

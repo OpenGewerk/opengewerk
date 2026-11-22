@@ -1,5 +1,14 @@
 import { ConflictException, NotFoundException, UnprocessableEntityException } from '@nestjs/common'
-import { type AppointmentId, berlinClock, type JobId, RuleError } from '@opengewerk/domain'
+import {
+  type AppointmentId,
+  berlinClock,
+  type DocumentId,
+  formatFor,
+  type IsoDate,
+  type JobId,
+  RuleError,
+  shippedRules,
+} from '@opengewerk/domain'
 import {
   type Database,
   type MailAttachment,
@@ -9,6 +18,9 @@ import {
 import { eq } from 'drizzle-orm'
 
 import type { DocumentFiles, MailedFile } from '../api/document-files.js'
+import { dutyOf } from '../api/e-invoice.controller.js'
+import { frozenContent } from '../documents/content.js'
+import { todayInGermany } from '../today.js'
 import { appointments, documents, jobs } from '../database/schema/index.js'
 import { customerRestricted } from '../privacy/customer-erasure.js'
 import { appointmentInvitation } from '../notifications/confirmation-mail.js'
@@ -238,6 +250,104 @@ export const restrictedCustomerMail =
 /** Why a message about a job that belongs to another customer now stays unsent. */
 export const reassignedCustomerMail =
   'Der Auftrag gehört inzwischen zu einem anderen Kunden. Die Nachricht geht deshalb nicht mehr hinaus.'
+
+/** Why an invoice that was to go as a PDF stays unsent once its transition ended. */
+export const lapsedTransitionMail =
+  'Diese Rechnung sollte als PDF hinausgehen, wie es der Übergang nach § 27 Abs. 38 UStG erlaubte. ' +
+  'Der Übergang endete vor dem Versand, und eine Rechnung, die danach übermittelt wird, muss eine ' +
+  'E-Rechnung sein. Dieser fehlen dafür Angaben, und was sie bei der Ausstellung festgeschrieben hat, ' +
+  'ändert sich nicht mehr. Die Nachricht geht deshalb nicht hinaus: Die Rechnung lässt sich stornieren ' +
+  'und mit den fehlenden Angaben neu stellen; welche das sind, sagt das Verschicken.'
+
+/**
+ * Why such an invoice stays unsent in the last minutes before its transition
+ * ends: asked for while a PDF was still allowed, it would reach the mail
+ * server only after midnight (`transmittedBy`). Until then sending it again
+ * gives the same answer, from midnight on it names what is missing.
+ */
+export const closingTransitionMail =
+  'Diese Rechnung sollte als PDF hinausgehen, wie es der Übergang nach § 27 Abs. 38 UStG erlaubt. ' +
+  'Der Übergang endet um Mitternacht, und vorher erreicht die Nachricht den Mailserver nicht sicher; ' +
+  'eine Rechnung, die danach übermittelt wird, muss eine E-Rechnung sein. Dieser fehlen dafür Angaben, ' +
+  'und was sie bei der Ausstellung festgeschrieben hat, ändert sich nicht mehr. Die Nachricht geht ' +
+  'deshalb nicht hinaus: Die Rechnung lässt sich stornieren und mit den fehlenden Angaben neu stellen; ' +
+  'welche das sind, sagt das Verschicken ab Mitternacht.'
+
+/**
+ * How far ahead of the moment it asks the outbox looks for the end of a
+ * transition, so that a message that passes the question cannot reach the
+ * mail server after midnight. After the last question the way is bounded:
+ * the question's own transaction, half a minute for a connection and two
+ * minutes for each of its six statements (its begin, the settings of the
+ * business, the frozen content, the claim of the transition twice, its
+ * commit), fifteen seconds for the name of the server (`destinationOf`) and
+ * two minutes for the message (`whole` in `smtpTransport`): 14 minutes 45
+ * seconds at the most, so that the twenty leave room and are not to be cut.
+ * The two minutes end the wait for the server, not yet the conversation with
+ * it: a server that takes the message only after them can still have it
+ * after midnight (opengewerk#1036).
+ */
+const transmittingAhead = 20 * 60 * 1000
+
+/**
+ * The day a message sent from this moment reaches the mail server by, at the
+ * latest, in Germany: the day the outbox asks the transition about.
+ */
+export function transmittedBy(now: Date): IsoDate {
+  return todayInGermany(new Date(now.getTime() + transmittingAhead))
+}
+
+/**
+ * Whether an invoice asked for as a PDF may still leave as one (#1018). The
+ * transition of section 27 (38) UStG asks when an invoice is transmitted, and
+ * the answer at the request (`attachmentFor`) holds for the day it was asked
+ * for: a message asked for on the last day of the transition and sent after
+ * midnight would carry a PDF the law no longer allows. So the worker asks
+ * again, for the day it reaches the mail server by (`transmittedBy`), before
+ * the file is made and once more after, and gives the message up with the
+ * reason rather than send it: that the transition ended, or, asked on the
+ * day it ends (`askedOn`), that it ends before the message would arrive. A
+ * message whose invoice goes as an e-invoice, or whose customer needs none,
+ * is not touched.
+ */
+export async function refuseLapsedTransition(
+  database: Database,
+  row: OutboxRow,
+  sentOn: IsoDate = todayInGermany(),
+  askedOn: IsoDate = sentOn,
+): Promise<void> {
+  if (row.kind !== 'document' || row.attachment !== 'pdf' || row.documentId === null) {
+    return
+  }
+
+  const documentId = row.documentId as DocumentId
+  const lapsed = await database.forTenant(
+    { tenantId: row.tenantId, reason: 'mail' },
+    async (tx) => {
+      const content = await frozenContent(tx, documentId)
+
+      if (content === null || formatFor(shippedRules, content).format !== 'e_invoice') {
+        return false
+      }
+
+      if (!(await dutyOf(tx, content, sentOn)).required) {
+        return false
+      }
+
+      // Ended already, or ending before the message reaches the server.
+      return (await dutyOf(tx, content, askedOn)).required ? 'ended' : 'ending'
+    },
+  )
+
+  if (lapsed !== false) {
+    throw new MailDeliveryError(
+      lapsed === 'ended' ? lapsedTransitionMail : closingTransitionMail,
+      'ETRANSITION',
+      null,
+      { permanent: true },
+    )
+  }
+}
 
 /**
  * Whether a message to a customer may still go, asked by the worker of every

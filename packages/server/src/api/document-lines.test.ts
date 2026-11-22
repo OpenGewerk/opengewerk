@@ -358,6 +358,25 @@ describe('the totals of a document', () => {
     expect(totals.grossCents).toBe(1_211_900)
   })
 
+  it('refuse a day the rules do not cover with their sentence, rather than fail (#1017)', async () => {
+    // The zero rate for photovoltaics starts in 2023, and the rate is the one
+    // of the day of the work: work of 2022 has none.
+    const document = await draft({ serviceFrom: '2022-05-02', serviceUntil: '2022-05-31' })
+    await addLine(document.id, {
+      designation: 'Solarmodule liefern und montieren',
+      quantityMilli: 1000,
+      unitPriceCents: 1_200_000,
+      vatRate: 'zero',
+    })
+
+    const refused = await http()
+      .get(`/documents/${document.id}/totals`)
+      .set('x-test-identity', office())
+      .expect(422)
+
+    expect((refused.body as { message: string }).message).not.toBe('')
+  })
+
   it('leave out a deleted line', async () => {
     const document = await draft()
     const keep = await addLine(document.id, { quantityMilli: 1000, unitPriceCents: 10000 })

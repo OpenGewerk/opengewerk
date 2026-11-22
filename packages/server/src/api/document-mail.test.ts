@@ -22,7 +22,15 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { aMailServer, testKey } from '@opengewerk/platform-server/testing'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
-import { documentAttachments, restrictedCustomerMail } from '../mail/attachments.js'
+import type { IsoDate } from '@opengewerk/domain'
+import {
+  documentAttachments,
+  closingTransitionMail,
+  lapsedTransitionMail,
+  refuseLapsedTransition,
+  restrictedCustomerMail,
+} from '../mail/attachments.js'
+import type { OutboxRow } from '../mail/outbox.js'
 import { runMailCycle } from '../mail/worker.js'
 import { ApiModule } from './api.module.js'
 import { DocumentFiles } from './document-files.js'
@@ -414,6 +422,100 @@ describe('an invoice to a business after the transition has ended', () => {
     expect(body.message).toContain('31.12.2026')
     expect(body.missing.map((gap) => gap.detail)).toEqual(['recipient_vat_id_format'])
     expect(await messagesOf(late)).toEqual([])
+  })
+
+  it('stays unsent when the outbox reaches it after the transition ended (#1018)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-12-31T23:50:00+01:00') })
+
+    const asked = await issuedInvoice(await customer(lacking), north, december)
+    const sent = await sending(asked).expect(202)
+
+    expect((sent.body as DocumentMail).attachment).toBe('pdf')
+
+    // What the worker reads of the message: an invoice to go as a PDF.
+    const row = {
+      tenantId: north.id,
+      kind: 'document',
+      attachment: 'pdf',
+      documentId: asked,
+    } as unknown as OutboxRow
+
+    // Sent the same day it was asked for, it may go.
+    await expect(
+      refuseLapsedTransition(database, row, '2026-12-31' as IsoDate),
+    ).resolves.toBeUndefined()
+    // Reached after midnight, it would be transmitted in 2027 and is given up.
+    await expect(refuseLapsedTransition(database, row, '2027-01-01' as IsoDate)).rejects.toThrow(
+      lapsedTransitionMail,
+    )
+    // An invoice that goes as an e-invoice is not the outbox's to stop.
+    await expect(
+      refuseLapsedTransition(
+        database,
+        { ...row, attachment: 'zugferd' } as OutboxRow,
+        '2027-01-01' as IsoDate,
+      ),
+    ).resolves.toBeUndefined()
+  })
+
+  it('stays unsent when it would reach the mail server only after the transition ended (#1018)', async () => {
+    // A quarter of an hour before midnight on the last day, within the twenty
+    // minutes the outbox looks ahead: asked for, it may go as a PDF, but the
+    // outbox gives it up, since it could arrive after midnight.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-12-31T23:45:00+01:00') })
+
+    const asked = await issuedInvoice(await customer(lacking), north, december)
+
+    expect(((await sending(asked).expect(202)).body as DocumentMail).attachment).toBe('pdf')
+
+    const post = recording()
+
+    expect(await cycle(post.transport)).toMatchObject({ sent: 0 })
+    expect(post.sent).toEqual([])
+
+    // Given up for good, not tried again for two days, and told that the
+    // transition ends at midnight, not that it ended.
+    const [message] = await messagesOf(asked)
+
+    expect(message?.status).toBe('failed')
+    expect(message?.lastError).toContain(closingTransitionMail)
+    // The office reads the way out that there is: what an issued invoice froze
+    // does not change, so it is cancelled and written anew.
+    expect(closingTransitionMail).toContain('stornieren und mit den fehlenden Angaben neu stellen')
+  })
+
+  it('stays unsent when making its file takes it past the end of the transition (#1018)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-12-31T23:30:00+01:00') })
+
+    const asked = await issuedInvoice(await customer(lacking), north, december)
+
+    expect(((await sending(asked).expect(202)).body as DocumentMail).attachment).toBe('pdf')
+
+    const post = recording()
+    const making = documentAttachments(files)
+    const report = await runMailCycle({
+      database,
+      connect: () => post.transport,
+      key: testKey,
+      origin: 'https://opengewerk.example.de',
+      // The file is ready only after midnight.
+      attachments: async (row) => {
+        const made = await making(row)
+
+        vi.setSystemTime(new Date('2027-01-01T00:05:00+01:00'))
+
+        return made
+      },
+      now: () => new Date(Date.now() + 1_000),
+    })
+
+    expect(report).toMatchObject({ sent: 0 })
+    expect(post.sent).toEqual([])
+
+    const [message] = await messagesOf(asked)
+
+    expect(message?.status).toBe('failed')
+    expect(message?.lastError).toContain(lapsedTransitionMail)
   })
 })
 

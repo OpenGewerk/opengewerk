@@ -1361,7 +1361,7 @@ function ContractForm({
               <p className="text-[13px] leading-[1.4] text-ink-muted">
                 {draft.paymentRhythm === 'visit'
                   ? 'Abgerechnet wird je Wartung, nach der Ausführung.'
-                  : 'Zu Beginn jedes Zeitraums entsteht eine Dauerrechnung über ihn, mit dem Steuersatz, der dann gilt.'}
+                  : 'Zu Beginn jedes Zeitraums entsteht eine Dauerrechnung über ihn, mit dem Steuersatz, der an seinem Ende gilt.'}
               </p>
             </div>
           </Panel>

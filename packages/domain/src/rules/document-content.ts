@@ -190,15 +190,18 @@ export function documentContent(rules: RuleSet, sources: ContentSources): Docume
   const totals = totalsFor(rules, lines, document)
   const billed = billedAfter(totals, sources.deductions, document.taxTreatment)
 
-  // From 2028 an invoice says that the business pays the tax it shows on what
-  // it receives, because the customer may only deduct it once it is paid.
-  // Only an invoice that shows tax: under section 19 there is none, and under
-  // section 13b the customer owes it and deducts it without waiting for a
-  // payment. The note of the rule record says so and sends it to #31.
+  // From 2028 an invoice says that the business pays its tax on what it
+  // receives, because the customer may only deduct it once it is paid.
+  // Number 6a of section 14 (4) UStG asks it of the business that reckons its
+  // tax that way, not of the invoice that shows tax, and an invoice under
+  // section 13b needs every detail of section 14 (4) but the tax amount
+  // (section 14a (5)): so every invoice of such a business carries it (#1018).
+  // A small business reckons no tax at all, and its invoice follows section
+  // 34a UStDV, which has no such detail.
   const statesCashAccounting =
     sources.cashAccounting &&
     isInvoice(document.kind) &&
-    document.taxTreatment === 'standard' &&
+    document.taxTreatment !== 'small_business' &&
     rules.valueAt('invoice.cash_accounting_statement', 'flag', document.documentDate) === 1
 
   return {

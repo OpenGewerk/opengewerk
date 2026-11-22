@@ -3,7 +3,8 @@ import { applyRate, type RuleSet } from '@opengewerk/platform-domain'
 
 /**
  * The rates a line can be taxed at, by name. The figure behind each comes
- * from the package `vat` on the day of the document.
+ * from the package `vat` on the day the tax belongs to: the day of the work,
+ * or the document's own without one (`totalsFor`, #1017).
  *
  * `zero` is the rate of section 12 (3) UStG since 1 January 2023: 0 percent
  * on solar modules, the components essential for running the installation

@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:net'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { checkMailServer } from './check.js'
 import type { MailConfiguration } from './configuration.js'
@@ -74,6 +74,24 @@ describe('the destination of a mail server', () => {
       expect(refused.code).toBe('EDESTINATION')
       expect(refused.message).toContain('Mailserver im eigenen Netz')
       expect(refused.permanent).toBe(true)
+    }
+  })
+
+  it('is refused like a name that does not resolve when the resolver does not answer in time', async () => {
+    vi.useFakeTimers()
+
+    try {
+      // A resolver that never answers.
+      const waiting = refusal(destinationOf(settings(), nobody, () => new Promise(() => undefined)))
+
+      await vi.advanceTimersByTimeAsync(15_000)
+
+      const refused = await waiting
+
+      expect(refused.code).toBe('EDNS')
+      expect(refused.message).toBe(unreachableName('smtp.ionos.de'))
+    } finally {
+      vi.useRealTimers()
     }
   })
 

@@ -22,9 +22,14 @@ import { proposedTreatment } from '../documents/treatment.js'
  * The invoice of a period of a maintenance contract paid per period (#295),
  * made when the deadline "Rechnung eines Wartungsvertrags" falls due on the
  * first day of the period: a recurring invoice with the period as the time of
- * service and the flat price as its one line. Dated on the first day of the
- * period, also when it is made later, after a time the instance was down:
- * the rules tax a document by its date, and the rate is the one of the period.
+ * service and the flat price as its one line. Dated on the day it is made,
+ * which is the day of its issue where it is issued by itself (section 14 (4)
+ * sentence 1 no. 3 UStG), and never before the first day of its period; one
+ * that waits as a draft keeps that day as every draft keeps its date, until
+ * the office changes it. Until #1017 it was dated on that
+ * first day also when it was made later, after a time the instance was down,
+ * because the rules taxed a document by its date; they tax by the day of the
+ * work now, and the period of service carries that.
  *
  * The first invoice of a contract waits as a draft, so that somebody looks at
  * it once. After it, a contract that wants it has each one issued at once,
@@ -36,7 +41,11 @@ import { proposedTreatment } from '../documents/treatment.js'
  * Once per contract and start of a period: the key on the documents holds
  * that, and the deadline moves on to the next period once this one exists.
  */
-export async function contractInvoice(tx: TenantTransaction, deadline: DeadlineRow): Promise<void> {
+export async function contractInvoice(
+  tx: TenantTransaction,
+  deadline: DeadlineRow,
+  today: IsoDate,
+): Promise<void> {
   const [contract] = await tx
     .select()
     .from(maintenanceContracts)
@@ -80,7 +89,7 @@ export async function contractInvoice(tx: TenantTransaction, deadline: DeadlineR
       customerId: contract.customerId,
       siteId: contract.siteId,
       kind: 'recurring_invoice',
-      documentDate: period.from,
+      documentDate: today > period.from ? today : period.from,
       subject: `${contract.designation}, ${periodText(period)}`,
       serviceFrom: period.from,
       serviceUntil: period.until,

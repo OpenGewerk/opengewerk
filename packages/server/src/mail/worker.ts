@@ -15,7 +15,13 @@ import {
 } from '@opengewerk/platform-server'
 
 import { occasions } from '../notifications/occasions.js'
-import { type AttachmentSource, refuseWithheldCustomerMail } from './attachments.js'
+import {
+  type AttachmentSource,
+  refuseLapsedTransition,
+  refuseWithheldCustomerMail,
+  transmittedBy,
+} from './attachments.js'
+import { todayInGermany } from '../today.js'
 import { outbox, type OutboxRow } from './outbox.js'
 import { mailServersOfBusinesses } from './server-settings.js'
 
@@ -65,6 +71,17 @@ async function attachmentsOf(job: MailJob, row: OutboxRow): Promise<readonly Mai
   // Every message, with a file or without: whether its customer was
   // restricted since it was written, or what it is about is another's now.
   await refuseWithheldCustomerMail(job.database, row)
+  // An invoice asked for as a PDF while a transition allowed it, and sent
+  // after the transition ended (#1018): asked for the day the message reaches
+  // the mail server by, before its file is made and again after.
+  const clock = () => (job.now ? job.now() : new Date())
+  const askTransition = async () => {
+    const now = clock()
+
+    await refuseLapsedTransition(job.database, row, transmittedBy(now), todayInGermany(now))
+  }
+
+  await askTransition()
 
   const carries =
     row.kind === 'document' ||
@@ -84,7 +101,13 @@ async function attachmentsOf(job: MailJob, row: OutboxRow): Promise<readonly Mai
     )
   }
 
-  return job.attachments(row)
+  const files = await job.attachments(row)
+
+  // Making the file can take a while; from here the message goes straight to
+  // the mail server.
+  await askTransition()
+
+  return files
 }
 
 /**

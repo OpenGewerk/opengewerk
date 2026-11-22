@@ -9,6 +9,7 @@ import {
   Param,
   Patch,
   Post,
+  UnprocessableEntityException,
 } from '@nestjs/common'
 import {
   type DocumentId,
@@ -20,6 +21,7 @@ import {
   lineUnits,
   lumpSumPriceBaseProblem,
   priceBaseProblem,
+  RuleError,
   shippedRules,
   tooManyLines,
   totalsFor,
@@ -368,7 +370,9 @@ export class DocumentLinesController {
  * A route of its own rather than a field on the document, and that is the
  * whole point of issue #54: a total kept on the head would be the same number
  * in a second place, and two places drift. This one is worked out from the
- * lines every time it is asked for, by the rules of the document's own date.
+ * lines every time it is asked for, by the rules of the day its tax belongs
+ * to (`totalsFor`, #1017). A day the rules do not cover is refused with their
+ * sentence, as issuing the document refuses it.
  */
 @Controller('documents/:documentId/totals')
 export class DocumentTotalsController {
@@ -402,7 +406,15 @@ export class DocumentTotalsController {
           ),
         )
 
-      return totalsFor(shippedRules, lines, document)
+      try {
+        return totalsFor(shippedRules, lines, document)
+      } catch (error) {
+        if (error instanceof RuleError) {
+          throw new UnprocessableEntityException(error.message)
+        }
+
+        throw error
+      }
     })
   }
 }

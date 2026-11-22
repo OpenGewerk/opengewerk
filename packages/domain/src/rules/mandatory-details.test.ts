@@ -384,15 +384,20 @@ describe('the printed notes', () => {
     expect(invoice({ documentDate: '2028-01-03' }).notes).toEqual([retentionNote])
   })
 
-  it('leave that statement off a document that shows no tax, or a quote', () => {
+  it('put that statement on an invoice under section 13b too, which needs every detail but the tax (#1018)', () => {
     const permitted = { cashAccounting: true }
 
-    for (const taxTreatment of ['small_business', 'reverse_charge'] as const) {
-      expect(invoice({ documentDate: '2028-01-03', taxTreatment }, permitted).notes).not.toContain(
-        cashAccountingNote,
-      )
-    }
+    expect(
+      invoice({ documentDate: '2028-01-03', taxTreatment: 'reverse_charge' }, permitted).notes,
+    ).toContain(cashAccountingNote)
+  })
 
+  it('leave that statement off the invoice of a small business, or a quote', () => {
+    const permitted = { cashAccounting: true }
+
+    expect(
+      invoice({ documentDate: '2028-01-03', taxTreatment: 'small_business' }, permitted).notes,
+    ).not.toContain(cashAccountingNote)
     expect(invoice({ documentDate: '2028-01-03', kind: 'quote' }, permitted).notes).not.toContain(
       cashAccountingNote,
     )
@@ -434,9 +439,22 @@ describe('the content record', () => {
     )
   })
 
-  it('adds up by the rules of the document date', () => {
-    // The second half of 2020 had sixteen percent.
-    expect(invoice({ documentDate: '2020-08-14' }).totals.taxCents).toBe(16000)
+  it('adds up by the rules of the day of the work (#1017)', () => {
+    // The second half of 2020 had sixteen percent, and what counts is when the
+    // work was done: the period of service, without one the document date.
+    expect(
+      invoice({ documentDate: '2020-08-14', serviceFrom: '2020-08-01', serviceUntil: '2020-08-10' })
+        .totals.taxCents,
+    ).toBe(16000)
+    expect(
+      invoice({ documentDate: '2020-08-14', serviceFrom: null, serviceUntil: null }).totals
+        .taxCents,
+    ).toBe(16000)
+    // Work of June 2020 kept nineteen, invoiced in August or not.
+    expect(
+      invoice({ documentDate: '2020-08-14', serviceFrom: '2020-06-01', serviceUntil: '2020-06-30' })
+        .totals.taxCents,
+    ).toBe(19000)
     expect(invoice({ documentDate: '2026-09-21' }).totals.taxCents).toBe(19000)
   })
 })

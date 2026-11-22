@@ -1,6 +1,13 @@
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
-import { addDays, addMonths, berlinClock, type DocumentId, type TenantId } from '@opengewerk/domain'
+import {
+  addDays,
+  addMonths,
+  berlinClock,
+  berlinInstant,
+  type DocumentId,
+  type TenantId,
+} from '@opengewerk/domain'
 import { Database, newId } from '@opengewerk/platform-server'
 import type { Pool } from 'pg'
 import request from 'supertest'
@@ -15,9 +22,10 @@ import { invoiceable, readyToInvoice } from './test-invoice.js'
 
 /**
  * The recurring invoices of maintenance contracts paid per period (#295): one
- * per period and never two, dated on the first day of the period and taxed by
- * its rate, the first of a contract a draft and the next issued by nobody
- * where the contract wants it, and those sent to the customer once.
+ * per period and never two, dated on the day it is made and never before the
+ * first day of its period, taxed by the rate of the period's end (#1017), the
+ * first of a contract a draft and the next issued by nobody where the contract
+ * wants it, and those sent to the customer once.
  */
 
 const north = newId<'tenant'>() as TenantId
@@ -178,7 +186,9 @@ describe('the recurring invoices of a contract (#295)', () => {
       [addMonths(startsOn, 2), 'issued'],
     ])
     expect(invoices[0]?.service_until).toBe(addDays(addMonths(startsOn, 1), -1))
-    expect(invoices.every((invoice) => invoice.document_date === invoice.service_from)).toBe(true)
+    // Dated the day they were made, which is the day of issue, also the two
+    // the run caught up on (#1017); the rate comes from the period of service.
+    expect(invoices.map((invoice) => invoice.document_date)).toEqual([today, today, today])
     expect(
       invoices.slice(1).every((invoice) => invoice.number !== null && invoice.issued_by === null),
     ).toBe(true)
@@ -195,6 +205,22 @@ describe('the recurring invoices of a contract (#295)', () => {
       .delete(`/maintenance-contracts/${made}`)
       .set('x-test-identity', office())
       .expect(409)
+  })
+
+  it('are dated the day they are made, also by a pass that began the day before (#1017)', async () => {
+    const startsOn = addMonths(today, -1)
+    const made = await contract(startsOn)
+    const tomorrow = addDays(today, 1)
+
+    // The pass of the business begins a second before midnight in Germany,
+    // and makes the invoice of the first period five seconds after it.
+    await runDeadlinesOf(
+      { database, now: () => new Date(berlinInstant(tomorrow, 0).getTime() + 5_000) },
+      north,
+      new Date(berlinInstant(today, 24 * 60).getTime() - 1_000),
+    )
+
+    expect((await invoicesOf(made)).map((invoice) => invoice.document_date)).toEqual([tomorrow])
   })
 
   it('stay drafts without the wish of the contract, and so does a period cut short by its end', async () => {
@@ -228,8 +254,11 @@ describe('the recurring invoices of a contract (#295)', () => {
     )
 
     expect(rows.map((row) => row.service_from)).toEqual(['2020-07-01'])
-    // The reduced standard rate of the second half of 2020, 16 instead of 19 per cent.
+    // The reduced standard rate of the second half of 2020, 16 instead of 19
+    // per cent, though the invoice is dated today: the rate is the one of the
+    // work (#1017).
     expect(JSON.stringify(rows[0]?.content)).toContain('"basisPoints":1600')
+    expect(JSON.stringify(rows[0]?.content)).toContain(`"documentDate":"${today}"`)
   })
 
   it('go to the customer once those were issued by nobody, and to nobody without an address', async () => {

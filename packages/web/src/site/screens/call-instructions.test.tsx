@@ -368,6 +368,46 @@ describe('the invoice made on site (#292)', () => {
     expect(screen.getByText(/Das Büro prüft ihn, schreibt die Rechnung fest/)).toBeTruthy()
   })
 
+  it('shows the tax of the day of the work, not of the date of the invoice (#1017)', async () => {
+    // Work of December 2020, taxed at sixteen percent, on an invoice dated
+    // in January 2021, when the rate was nineteen again.
+    await mount('/auftraege/j-1/rechnungen/inv-2', {
+      documents: [
+        report,
+        {
+          id: 'inv-2',
+          customerId: 'c-1',
+          jobId: 'j-1',
+          kind: 'final_invoice',
+          status: 'draft',
+          number: null,
+          documentDate: '2021-01-04',
+          predecessorDocumentId: 'r-1',
+          taxTreatment: 'standard',
+          serviceFrom: '2020-12-14',
+          serviceUntil: '2020-12-15',
+        },
+      ],
+      document_lines: [
+        {
+          id: 'il-2',
+          documentId: 'inv-2',
+          kind: 'item',
+          position: 1,
+          designation: 'Herdanschlussdose getauscht',
+          quantityMilli: 1000,
+          unit: 'piece',
+          unitPriceCents: 10000,
+          netCents: 10000,
+          vatRate: 'standard',
+        },
+      ],
+    })
+
+    expect(await screen.findByText(/Umsatzsteuer 16/)).toBeTruthy()
+    expect(screen.queryByText(/Umsatzsteuer 19/)).toBeNull()
+  })
+
   it('is not offered under a report nobody signed', async () => {
     await mount('/auftraege/j-1/berichte/r-1', {
       documents: [{ ...report, status: 'draft' }],

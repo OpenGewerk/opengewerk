@@ -30,7 +30,12 @@ function line(netCents: number, vatRate: VatRate = 'standard') {
   return { netCents, vatRate }
 }
 
-const standard = { documentDate: '2026-09-20', taxTreatment: 'standard' } as const
+const standard = {
+  documentDate: '2026-09-20',
+  serviceFrom: null,
+  serviceUntil: null,
+  taxTreatment: 'standard',
+} as const
 
 describe('a line total', () => {
   it('is quantity times price, in whole cents', () => {
@@ -96,6 +101,8 @@ describe('the totals of a document', () => {
   it('uses the rates of the document date and not of today', () => {
     const then = totalsFor(rules, [line(10000)], {
       documentDate: '2020-08-01',
+      serviceFrom: null,
+      serviceUntil: null,
       taxTreatment: 'standard',
     })
 
@@ -103,10 +110,60 @@ describe('the totals of a document', () => {
     expect(then.byRate[0]?.basisPoints).toBe(1600)
   })
 
+  it('taxes work by the day it was done, not by the day it was invoiced (#1017)', () => {
+    // Section 27 (1) UStG: a change applies to supplies carried out from its
+    // day on. Work finished in June 2020 kept nineteen percent, however late
+    // in the second half of the year it was invoiced.
+    const june = totalsFor(rules, [line(10000)], {
+      documentDate: '2020-07-15',
+      serviceFrom: '2020-06-01',
+      serviceUntil: '2020-06-30',
+      taxTreatment: 'standard',
+    })
+    const july = totalsFor(rules, [line(10000)], {
+      documentDate: '2021-01-10',
+      serviceFrom: null,
+      serviceUntil: '2020-12-31',
+      taxTreatment: 'standard',
+    })
+
+    expect(june.taxCents).toBe(1900)
+    expect(july.taxCents).toBe(1600)
+    // Only a day: the day it names.
+    expect(
+      totalsFor(rules, [line(10000)], {
+        documentDate: '2021-01-10',
+        serviceFrom: '2020-12-01',
+        serviceUntil: null,
+        taxTreatment: 'standard',
+      }).taxCents,
+    ).toBe(1600)
+  })
+
+  it('taxes a period across a change of the rates by its end, as the e-invoice dates it (#1017)', () => {
+    // Work from June into July 2020 was finished at sixteen percent, and
+    // work from December 2020 into January 2021 at nineteen again.
+    for (const [serviceFrom, serviceUntil, cents] of [
+      ['2020-06-15', '2020-07-15', 1600],
+      ['2020-12-15', '2021-01-15', 1900],
+    ] as const) {
+      expect(
+        totalsFor(rules, [line(10000)], {
+          documentDate: '2021-02-01',
+          serviceFrom,
+          serviceUntil,
+          taxTreatment: 'standard',
+        }).taxCents,
+      ).toBe(cents)
+    }
+  })
+
   it('carries no rate block and no zero when no tax is shown', () => {
     for (const treatment of ['small_business', 'reverse_charge'] as const) {
       const totals = totalsFor(rules, [line(10000), line(5000, 'reduced')], {
         documentDate: '2026-09-20',
+        serviceFrom: null,
+        serviceUntil: null,
         taxTreatment: treatment,
       })
 
@@ -123,10 +180,14 @@ describe('the totals of a document', () => {
   it('names the paragraph in the sentence, because that is what makes it valid', () => {
     const small = totalsFor(rules, [line(100)], {
       documentDate: '2026-09-20',
+      serviceFrom: null,
+      serviceUntil: null,
       taxTreatment: 'small_business',
     })
     const reverse = totalsFor(rules, [line(100)], {
       documentDate: '2026-09-20',
+      serviceFrom: null,
+      serviceUntil: null,
       taxTreatment: 'reverse_charge',
     })
 
@@ -214,7 +275,12 @@ function billedChain(
   const earlier: Deducted[] = []
 
   states.forEach((state, index) => {
-    const document = { documentDate: dates[index] ?? '2026-09-20', taxTreatment }
+    const document = {
+      documentDate: dates[index] ?? '2026-09-20',
+      serviceFrom: null,
+      serviceUntil: null,
+      taxTreatment,
+    }
     const billed = billedAfter(totalsFor(rules, state, document), earlier, taxTreatment)
 
     earlier.push({ number: `RE-2026-000${String(index + 1)}`, taxTreatment, billed })
