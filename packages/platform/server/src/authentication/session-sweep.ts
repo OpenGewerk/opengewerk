@@ -556,9 +556,10 @@ export async function endPastLastDayOf(
   database: Database,
   tenantId: TenantId,
   userId: string,
+  batch: number = sweepBatch,
 ): Promise<number> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const closed = await endPastLastDayOnce(database, tenantId, userId)
+    const closed = await endPastLastDayOnce(database, tenantId, userId, batch)
 
     if (closed !== null) {
       return closed
@@ -573,6 +574,7 @@ async function endPastLastDayOnce(
   database: Database,
   tenantId: TenantId,
   userId: string,
+  batch: number,
 ): Promise<number | null> {
   const accessEnd = sql<
     Date | string
@@ -615,22 +617,34 @@ async function endPastLastDayOnce(
         return null
       }
 
-      // Never before the stretch began.
-      const rows = await tx
-        .update(tenantSessions)
-        .set({
-          endedAt: sql`greatest(${tenantSessions.startedAt}, ${over.toISOString()}::timestamptz)`,
-        })
-        .where(
-          and(
-            eq(tenantSessions.tenantId, tenantId),
-            eq(tenantSessions.userId, userId),
-            isNull(tenantSessions.endedAt),
-          ),
-        )
-        .returning({ id: tenantSessions.id })
-
-      return rows.length
+      // Never before the stretch began, and in pieces (`inPieces`).
+      return inPieces(batch, (most) =>
+        tx
+          .update(tenantSessions)
+          .set({
+            endedAt: sql`greatest(${tenantSessions.startedAt}, ${over.toISOString()}::timestamptz)`,
+          })
+          .where(
+            and(
+              inArray(
+                tenantSessions.id,
+                tx
+                  .select({ id: tenantSessions.id })
+                  .from(tenantSessions)
+                  .where(
+                    and(
+                      eq(tenantSessions.tenantId, tenantId),
+                      eq(tenantSessions.userId, userId),
+                      isNull(tenantSessions.endedAt),
+                    ),
+                  )
+                  .limit(most),
+              ),
+              isNull(tenantSessions.endedAt),
+            ),
+          )
+          .returning({ id: tenantSessions.id }),
+      )
     },
   )
 
@@ -718,28 +732,42 @@ async function endPastLastDaysIn(
       // membership is asked again here, under the lock the round holds. The
       // stretches of the sessions that ran out are closed and committed by
       // now, so `endedAt` keeps them out, without a list of them.
-      const stretches = await tx
-        .update(tenantSessions)
-        .set({
-          endedAt: sql`greatest(${tenantSessions.startedAt}, (
-            select ((${memberships.lastDay} + 1)::timestamp at time zone 'Europe/Berlin')
-              from ${memberships}
-             where ${memberships.tenantId} = ${tenantSessions.tenantId}
-               and ${memberships.userId} = ${tenantSessions.userId}))`,
-        })
-        .where(
-          and(
-            eq(tenantSessions.tenantId, tenantId),
-            inArray(tenantSessions.userId, users),
-            isNull(tenantSessions.endedAt),
-            sql`exists (
-              select 1 from ${memberships}
+      const stretches = await inPieces(batch, (open) =>
+        tx
+          .update(tenantSessions)
+          .set({
+            endedAt: sql`greatest(${tenantSessions.startedAt}, (
+              select ((${memberships.lastDay} + 1)::timestamp at time zone 'Europe/Berlin')
+                from ${memberships}
                where ${memberships.tenantId} = ${tenantSessions.tenantId}
-                 and ${memberships.userId} = ${tenantSessions.userId}
-                 and ${pastItsEnd()})`,
-          ),
-        )
-        .returning({ id: tenantSessions.id })
+                 and ${memberships.userId} = ${tenantSessions.userId}))`,
+          })
+          .where(
+            and(
+              inArray(
+                tenantSessions.id,
+                tx
+                  .select({ id: tenantSessions.id })
+                  .from(tenantSessions)
+                  .where(
+                    and(
+                      eq(tenantSessions.tenantId, tenantId),
+                      inArray(tenantSessions.userId, users),
+                      isNull(tenantSessions.endedAt),
+                      sql`exists (
+                        select 1 from ${memberships}
+                         where ${memberships.tenantId} = ${tenantSessions.tenantId}
+                           and ${memberships.userId} = ${tenantSessions.userId}
+                           and ${pastItsEnd()})`,
+                    ),
+                  )
+                  .limit(open),
+              ),
+              isNull(tenantSessions.endedAt),
+            ),
+          )
+          .returning({ id: tenantSessions.id }),
+      )
 
       // Then the sessions it read go, as a block takes them, while the
       // round still holds the memberships; one that changed to another
@@ -762,11 +790,35 @@ async function endPastLastDaysIn(
         })
       }
 
-      return stretches.length + ranOutClosed
+      return stretches + ranOutClosed
     })
   }
 
   return closed
+}
+
+/**
+ * Runs a close of stretches again and again, at most `batch` of them each
+ * time, until one closes fewer: the people or the session a close is for are
+ * bounded, the stretches they have open are not, and a statement over all of
+ * them at once could outlast the time a statement has (opengewerk#1030). Says
+ * how many it closed in all.
+ */
+async function inPieces(
+  batch: number,
+  close: (most: number) => Promise<readonly unknown[]>,
+): Promise<number> {
+  let closed = 0
+
+  for (;;) {
+    const piece = await close(batch)
+
+    closed += piece.length
+
+    if (piece.length < batch) {
+      return closed
+    }
+  }
 }
 
 /**
@@ -801,11 +853,7 @@ export async function endOrphanedStretches(
       // and came back between the two would lose the stretch it works in.
       const stretches = await database.forTenant({ tenantId }, (tx) =>
         tx
-          .select({
-            id: tenantSessions.id,
-            sessionId: tenantSessions.sessionId,
-            startedAt: tenantSessions.startedAt,
-          })
+          .select({ id: tenantSessions.id, sessionId: tenantSessions.sessionId })
           .from(tenantSessions)
           .where(
             and(
@@ -813,14 +861,8 @@ export async function endOrphanedStretches(
               inArray(tenantSessions.sessionId, ids),
               isNull(tenantSessions.endedAt),
             ),
-          )
-          .orderBy(
-            asc(tenantSessions.sessionId),
-            asc(tenantSessions.startedAt),
-            asc(tenantSessions.id),
           ),
       )
-      const latest = new Map(stretches.map((stretch) => [stretch.sessionId, stretch.id]))
       const alive = await database.forInstance((tx) =>
         tx
           .select({ id: authSessions.id, tenantId: authSessions.activeTenantId })
@@ -828,9 +870,9 @@ export async function endOrphanedStretches(
           .where(inArray(authSessions.id, ids)),
       )
       const living = new Map(alive.map((row) => [row.id, row.tenantId]))
-      // Gone, working in another tenant since a switch whose close of the
-      // stretch here failed (opengewerk#1030), or back here since and at work
-      // in a newer one: the work of this stretch ended either way.
+      // Gone, or working in another tenant since a switch whose close of the
+      // stretch here failed (opengewerk#1030): the work of this stretch ended
+      // either way. One that chose this tenant again works on in it.
       const groups = [
         {
           reason: 'session.expire',
@@ -840,50 +882,61 @@ export async function endOrphanedStretches(
           reason: 'session.switch',
           stretches: stretches.filter(
             (stretch) =>
-              living.has(stretch.sessionId) &&
-              (living.get(stretch.sessionId) !== tenantId ||
-                latest.get(stretch.sessionId) !== stretch.id),
+              living.has(stretch.sessionId) && living.get(stretch.sessionId) !== tenantId,
           ),
         },
       ]
 
+      // In pieces of the size of a round: the sessions of a round are
+      // bounded, their stretches are not, and a statement takes at most
+      // 65,535 values.
       for (const { reason, stretches: closing } of groups) {
-        if (closing.length === 0) {
-          continue
+        for (let piece = 0; piece < closing.length; piece += batch) {
+          closed += await closeOrphans(
+            database,
+            tenantId,
+            reason,
+            closing.slice(piece, piece + batch).map((stretch) => stretch.id),
+          )
         }
-
-        const ended = await database.forTenant({ tenantId, reason }, (tx) =>
-          tx
-            .update(tenantSessions)
-            .set({ endedAt: sql`clock_timestamp()` })
-            .where(
-              and(
-                eq(tenantSessions.tenantId, tenantId),
-                inArray(
-                  tenantSessions.id,
-                  closing.map((stretch) => stretch.id),
-                ),
-                isNull(tenantSessions.endedAt),
-                // Not the stretches of an access past its last day: those end
-                // at the end of that day and for that reason (`endPastLastDays`),
-                // also after a pass that failed to close them, and one whose
-                // last day passed since they were read. Asked as they close.
-                sql`not exists (
-                  select 1 from ${memberships}
-                   where ${memberships.tenantId} = ${tenantSessions.tenantId}
-                     and ${memberships.userId} = ${tenantSessions.userId}
-                     and ${pastItsEnd()})`,
-              ),
-            )
-            .returning({ id: tenantSessions.id }),
-        )
-
-        closed += ended.length
       }
     }
   }
 
   return closed
+}
+
+/** Closes these orphans of a tenant now, for that reason. Says how many it closed. */
+async function closeOrphans(
+  database: Database,
+  tenantId: TenantId,
+  reason: string,
+  ids: readonly (typeof tenantSessions.$inferSelect)['id'][],
+): Promise<number> {
+  const ended = await database.forTenant({ tenantId, reason }, (tx) =>
+    tx
+      .update(tenantSessions)
+      .set({ endedAt: sql`clock_timestamp()` })
+      .where(
+        and(
+          eq(tenantSessions.tenantId, tenantId),
+          inArray(tenantSessions.id, [...ids]),
+          isNull(tenantSessions.endedAt),
+          // Not the stretches of an access past its last day: those end
+          // at the end of that day and for that reason (`endPastLastDays`),
+          // also after a pass that failed to close them, and one whose
+          // last day passed since they were read. Asked as they close.
+          sql`not exists (
+                  select 1 from ${memberships}
+                   where ${memberships.tenantId} = ${tenantSessions.tenantId}
+                     and ${memberships.userId} = ${tenantSessions.userId}
+                     and ${pastItsEnd()})`,
+        ),
+      )
+      .returning({ id: tenantSessions.id }),
+  )
+
+  return ended.length
 }
 
 /**

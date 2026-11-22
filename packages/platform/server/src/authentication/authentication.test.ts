@@ -26,6 +26,8 @@ import { renewSession } from './session-lifetime.js'
 import {
   carryStretch,
   endOrphanedStretches,
+  endPastLastDayOf,
+  endPastLastDays,
   endStretchesOf,
   sweepExpiredSessions,
 } from './session-sweep.js'
@@ -2077,7 +2079,7 @@ describe('work that cannot be closed when its session ends', () => {
     expect(await sessionsOf(email)).toContain(working.id)
   })
 
-  it('closes the stretch a failed switch left open when the session came back before the sweep, and not the new one', async () => {
+  it('closes the stretch a failed switch left open when the session comes back, and not the new one', async () => {
     const email = 'wechsel-zurueck@example.de'
 
     await joinedNorth(email)
@@ -2112,7 +2114,7 @@ describe('work that cannot be closed when its session ends', () => {
     }
 
     expect(await inNorth()).toEqual([
-      { open: true, reason: null },
+      { open: false, reason: 'session.switch' },
       { open: true, reason: null },
     ])
 
@@ -2124,81 +2126,109 @@ describe('work that cannot be closed when its session ends', () => {
     ])
   })
 
-  it('leaves the stretch of a session that left and came back while the sweep read it', async () => {
-    const email = 'wechsel-im-lauf@example.de'
+  it('leaves both stretches open when a session chooses its tenant again for its device', async () => {
+    const email = 'geraet-registrieren@example.de'
 
     await joinedNorth(email)
-    await addStaffMember(instance.authentication, instance.database, {
-      email,
-      name: 'Sven Schließen',
-      password,
-      tenantId: south.id,
-      roles: ['member'],
-    })
 
     const working = await atWork(email)
-    const query = Client.prototype.query
-    let state: 'before' | 'away' | 'gone' | 'back' | 'done' = 'before'
 
-    // Into the south once the sweep has read which sessions have a stretch
-    // open in the north, and back once it has asked where they work.
-    Client.prototype.query = function (this: Client, ...args: unknown[]) {
-      const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
-      const text = typeof config === 'string' ? config : (config?.text ?? '')
-      const values = (typeof config === 'string' ? args[1] : (config?.values ?? args[1])) as
-        unknown[] | undefined
-      const forward = () => (query as (...given: unknown[]) => Promise<unknown>).apply(this, args)
+    // The site registers the device: the same tenant once more, with a device.
+    await instance.chooseTenant(working.cookies, north.id, newId<'device'>())
+    await sweepExpiredSessions(instance.database)
 
-      if (
-        state === 'before' &&
-        /select distinct "session_id" from "tenant_sessions"/i.test(text) &&
-        (values ?? []).includes(north.id)
-      ) {
-        state = 'away'
+    const { rows } = await admin.query<{ open: boolean }>(
+      'select ended_at is null as open from tenant_sessions where session_id = $1 and tenant_id = $2',
+      [working.id, north.id],
+    )
 
-        return forward().then(async (result) => {
-          await instance.chooseTenant(working.cookies, south.id)
-          state = 'gone'
+    expect(rows).toEqual([{ open: true }, { open: true }])
+  })
 
-          return result
-        })
+  for (const when of [
+    {
+      after: 'which sessions have a stretch open',
+      reads: /select distinct "session_id" from "tenant_sessions"/i,
+      email: 'wechsel-im-lauf@example.de',
+    },
+    {
+      after: 'the stretches themselves',
+      reads: /select "id", "session_id" from "tenant_sessions"/i,
+      email: 'wechsel-im-lauf-2@example.de',
+    },
+  ]) {
+    it(`leaves the stretch of a session that left and came back while the sweep read it, away after ${when.after}`, async () => {
+      const email = when.email
+
+      await joinedNorth(email)
+      await addStaffMember(instance.authentication, instance.database, {
+        email,
+        name: 'Sven Schließen',
+        password,
+        tenantId: south.id,
+        roles: ['member'],
+      })
+
+      const working = await atWork(email)
+      const query = Client.prototype.query
+      let state: 'before' | 'away' | 'gone' | 'back' | 'done' = 'before'
+
+      // Into the south once the sweep has read which sessions have a stretch
+      // open in the north, and back once it has asked where they work.
+      Client.prototype.query = function (this: Client, ...args: unknown[]) {
+        const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
+        const text = typeof config === 'string' ? config : (config?.text ?? '')
+        const values = (typeof config === 'string' ? args[1] : (config?.values ?? args[1])) as
+          unknown[] | undefined
+        const forward = () => (query as (...given: unknown[]) => Promise<unknown>).apply(this, args)
+
+        if (state === 'before' && when.reads.test(text) && (values ?? []).includes(north.id)) {
+          state = 'away'
+
+          return forward().then(async (result) => {
+            await instance.chooseTenant(working.cookies, south.id)
+            state = 'gone'
+
+            return result
+          })
+        }
+
+        if (state === 'gone' && /"active_tenant_id" from "auth_sessions"/i.test(text)) {
+          state = 'back'
+
+          return forward().then(async (result) => {
+            await instance.chooseTenant(working.cookies, north.id)
+            state = 'done'
+
+            return result
+          })
+        }
+
+        return forward()
+      } as typeof query
+
+      try {
+        await endOrphanedStretches(instance.database)
+      } finally {
+        Client.prototype.query = query
       }
 
-      if (state === 'gone' && /"active_tenant_id" from "auth_sessions"/i.test(text)) {
-        state = 'back'
-
-        return forward().then(async (result) => {
-          await instance.chooseTenant(working.cookies, north.id)
-          state = 'done'
-
-          return result
-        })
-      }
-
-      return forward()
-    } as typeof query
-
-    try {
-      await endOrphanedStretches(instance.database)
-    } finally {
-      Client.prototype.query = query
-    }
-
-    const { rows } = await admin.query<{ open: boolean; reason: string | null }>(
-      `select t.ended_at is null as open, a.reason from tenant_sessions t
+      const { rows } = await admin.query<{ open: boolean; reason: string | null }>(
+        `select t.ended_at is null as open, a.reason from tenant_sessions t
          left join audit_entries a
            on a.table_name = 'tenant_sessions' and a.record_id = t.id and a.field = 'ended_at'
         where t.session_id = $1 and t.tenant_id = $2
         order by t.started_at, t.id`,
-      [working.id, north.id],
-    )
+        [working.id, north.id],
+      )
 
-    expect(state).toBe('done')
-    expect(rows).toEqual([
-      { open: false, reason: 'session.switch' },
-      { open: true, reason: null },
-    ])
-  })
+      expect(state).toBe('done')
+      expect(rows).toEqual([
+        { open: false, reason: 'session.switch' },
+        { open: true, reason: null },
+      ])
+    })
+  }
 
   it('cuts a device off also when its work cannot be closed (#1031)', async () => {
     const email = 'geraet-schliessen@example.de'
@@ -2619,6 +2649,77 @@ describe('an access past its last day', () => {
       expect(await reasonOfEnd(ran.id)).toBe('session.expire')
     })
   }
+
+  /** A session at work in the north with five stretches open there, as choosing it again opens them. */
+  async function fiveStretches(email: string, tenants: readonly (typeof north.id)[]) {
+    const userId = await joined(email, tenants)
+    const working = await atWork(email)
+
+    for (let again = 0; again < 4; again += 1) {
+      await instance.chooseTenant(working.cookies, north.id)
+    }
+
+    await begunDaysAgo(working.id)
+
+    return { userId, working }
+  }
+
+  async function endsIn(sessionId: string, tenantId: string) {
+    const { rows } = await admin.query<{ ended_at: Date | null; reason: string | null }>(
+      `select t.ended_at, a.reason from tenant_sessions t
+         left join audit_entries a
+           on a.table_name = 'tenant_sessions' and a.record_id = t.id and a.field = 'ended_at'
+        where t.session_id = $1 and t.tenant_id = $2`,
+      [sessionId, tenantId],
+    )
+
+    return rows.map((row) => ({ at: row.ended_at?.getTime() ?? null, reason: row.reason }))
+  }
+
+  it('closes in pieces every stretch of an access that ended, however many a session opened', async () => {
+    const { userId, working } = await fiveStretches('letzter-tag-stuecke@example.de', [north.id])
+
+    await lastDayAgo(north.id, userId, 2)
+    await endPastLastDays(instance.database, 2)
+
+    const over = await endOfLastDay(north.id, userId)
+
+    expect(await endsIn(working.id, north.id)).toEqual(
+      Array.from({ length: 5 }, () => ({ at: over, reason: 'membership.end' })),
+    )
+  })
+
+  it('closes in pieces every stretch before a block of an access that ended', async () => {
+    const { userId, working } = await fiveStretches('letzter-tag-stuecke-sperre@example.de', [
+      north.id,
+    ])
+
+    await lastDayAgo(north.id, userId, 2)
+    await endPastLastDayOf(instance.database, north.id, userId, 2)
+
+    const over = await endOfLastDay(north.id, userId)
+
+    expect(await endsIn(working.id, north.id)).toEqual(
+      Array.from({ length: 5 }, () => ({ at: over, reason: 'membership.end' })),
+    )
+  })
+
+  it('closes in pieces the stretches a session left behind in a tenant it works in no more', async () => {
+    const { working } = await fiveStretches('waisen-stuecke@example.de', [north.id, south.id])
+
+    // At work in the south now, the stretches in the north left open, as a
+    // failed close leaves them.
+    await admin.query('update auth_sessions set active_tenant_id = $2 where id = $1', [
+      working.id,
+      south.id,
+    ])
+    await endOrphanedStretches(instance.database, 2)
+
+    const ends = await endsIn(working.id, north.id)
+
+    expect(ends.map((end) => end.reason)).toEqual(Array.from({ length: 5 }, () => 'session.switch'))
+    expect(ends.every((end) => end.at !== null)).toBe(true)
+  })
 
   it('ends at the end of the day a stretch whose session is already gone', async () => {
     const email = 'letzter-tag-verwaist@example.de'

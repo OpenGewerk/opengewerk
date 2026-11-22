@@ -265,6 +265,18 @@ export class AuthenticationController {
       )
     }
 
+    // Back in a tenant it left while the close of its stretch there failed:
+    // that stretch ended when the session left, and closes now, before the
+    // new one opens (opengewerk#1030). The same tenant chosen again, to
+    // register the device, leaves the open stretch as it is.
+    if (previous.tenantId !== chosen) {
+      await endStretchesOrLeaveThem(
+        this.database,
+        [{ id: user.sessionId, userId: user.userId, tenantId: chosen }],
+        { reason: 'session.switch', actor: user.userId },
+      )
+    }
+
     // Inside the tenant now, so this row lands in its audit log with the
     // user on it. The reason the log records comes from the route, as always,
     // and with it how the session was signed in, so that a sign in with a
