@@ -1203,6 +1203,14 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
   const tagged = useTagsBy('customer')
   const held = customerId ? (tagged.get(customerId)?.ids ?? []) : []
   const [draft, setDraft] = useState<CustomerDraft>(() => draftOf(customer))
+  // The confirmation and the address the form opened with, none where the
+  // row on this device is from before the question (#1026): what changed in
+  // the form is measured against them, not against a row another device
+  // changed while it was open (the review).
+  const [opened] = useState(() => ({
+    confirmed: customer?.['objectionNoticeConfirmed'] === true,
+    email: asTextOrNull(String(customer?.['email'] ?? '')),
+  }))
   // Null until somebody changes the tags: until then the form shows what the
   // record has, also once rows arrive after it opened, and sends nothing.
   const [chosen, setChosen] = useState<ChosenTags | null>(null)
@@ -1221,22 +1229,17 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
     )
   }
 
-  // What the customer holds of the confirmation, none where the row on this
-  // device is from before the question (#1026).
-  const storedConfirmation = customer?.['objectionNoticeConfirmed'] === true
   const set = (field: keyof CustomerDraft) => (value: string) => {
     setDraft((current) => ({
       ...current,
       [field]: value,
       // The notice is confirmed for the address it was given with (#1026): a
-      // new one asks for it again, and the stored one, typed again, has what
-      // it had (the review).
+      // new one asks for it again, and the one the form opened with, typed
+      // again, has what it had (the review).
       ...(field === 'email'
         ? {
             objectionNoticeConfirmed:
-              asTextOrNull(value) === asTextOrNull(String(customer?.['email'] ?? ''))
-                ? String(storedConfirmation)
-                : 'false',
+              asTextOrNull(value) === opened.email ? String(opened.confirmed) : 'false',
           }
         : {}),
     }))
@@ -1261,8 +1264,8 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
       // for the old address does not stay with the new one (CodeRabbit).
       if (
         editing &&
-        values['objectionNoticeConfirmed'] === storedConfirmation &&
-        values['email'] === asTextOrNull(String(customer?.['email'] ?? ''))
+        values['objectionNoticeConfirmed'] === opened.confirmed &&
+        values['email'] === opened.email
       ) {
         delete values['objectionNoticeConfirmed']
       }

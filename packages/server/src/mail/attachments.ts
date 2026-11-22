@@ -7,6 +7,7 @@ import {
   type IsoDate,
   type JobId,
   type CustomerId,
+  type DeadlineId,
   lastServiceDay,
   reminderContract,
   reminderStillHolds,
@@ -19,7 +20,7 @@ import {
   MailDeliveryError,
   type TenantTransaction,
 } from '@opengewerk/platform-server'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 
 import type { DocumentFiles, MailedFile } from '../api/document-files.js'
 import { dutyOf } from '../api/e-invoice.controller.js'
@@ -28,6 +29,7 @@ import { todayInGermany } from '../today.js'
 import {
   appointments,
   customers,
+  deadlines,
   documents,
   jobs,
   maintenanceContracts,
@@ -453,7 +455,11 @@ export async function refuseWithheldCustomerMail(
  * about, the last part of its cause (#1026, CodeRabbit): as the reminder
  * asked when it was written (`contractOf`), its last day of service on or
  * after that day. A contract given notice covers it until its end, as when
- * the reminder was written; one deleted since covers nothing.
+ * the reminder was written; one deleted since covers nothing. A reminder of
+ * an installation needs the contract to cover the installation still, as
+ * `contractOf` asks (the review): its deadline, which the cause names, says
+ * which one. Shared reminders name a site instead, and those of appliances
+ * never rest on a contract.
  */
 async function stillCovers(
   tx: TenantTransaction,
@@ -461,7 +467,17 @@ async function stillCovers(
   number: string,
   cause: string,
 ): Promise<boolean> {
-  const dueOn = cause.slice(cause.lastIndexOf(':') + 1)
+  const parts = cause.split(':')
+  const dueOn = parts[parts.length - 1] ?? ''
+  const [deadline] = await tx
+    .select({ installationId: deadlines.installationId })
+    .from(deadlines)
+    .where(eq(deadlines.id, (parts[3] ?? '') as DeadlineId))
+
+  if (!deadline) {
+    return false
+  }
+
   const [contract] = await tx
     .select({
       startsOn: maintenanceContracts.startsOn,
@@ -476,6 +492,9 @@ async function stillCovers(
       and(
         eq(maintenanceContracts.customerId, customerId as CustomerId),
         eq(maintenanceContracts.number, number),
+        ...(deadline.installationId === null
+          ? []
+          : [sql`${deadline.installationId}::uuid = any(${maintenanceContracts.installationIds})`]),
       ),
     )
 

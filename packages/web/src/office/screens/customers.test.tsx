@@ -28,6 +28,8 @@ import { aTenantChoice } from '../../session/test-tenants.js'
  */
 
 let server: TestServer
+/** The client of the screen mounted last, to hear of a change of another device. */
+let lastClient: SyncClient | undefined
 let counter = 0
 
 /** A window of this width, as far as `matchMedia` is asked about it. */
@@ -70,6 +72,7 @@ async function mount(path: string) {
     onSignedOut: () => {},
   })
 
+  lastClient = client
   await client.synchronise()
 
   const root = createRootRoute()
@@ -536,6 +539,49 @@ describe('the reminders of a customer (#316)', () => {
       expect(sent).toEqual([{ email: 'neu.lehmann@example.com', objectionNoticeConfirmed: false }])
     })
   })
+
+  /**
+   * What changed in the form is measured against what it opened with (#1026,
+   * the review): a confirmation another device gave or took away while the
+   * form was open stays as that device left it, in both directions.
+   */
+  it.each([
+    ['given', false, true],
+    ['taken away', true, false],
+  ])(
+    'leave a confirmation another device %s while the form was open',
+    async (_how, before, after) => {
+      server.put('customers', {
+        ...customer('c-4', 'Familie Berg', 'private', 'Hamburg'),
+        email: 'berg@example.com',
+        reminderGround: 'existing_customer',
+        reminderGroundOn: '2024-03-12',
+        objectionNoticeConfirmed: before,
+      })
+      const sent = recording()
+
+      await mount('/kunden/c-4/bearbeiten')
+      const user = userEvent.setup()
+      const phone = await screen.findByLabelText('Telefon')
+
+      server.put('customers', {
+        ...(server.all('customers').find((row) => row['id'] === 'c-4') ?? {}),
+        objectionNoticeConfirmed: after,
+        version: 2,
+      })
+      await lastClient?.synchronise()
+
+      await user.type(phone, '040 789')
+      await user.click(screen.getByRole('button', { name: 'Speichern' }))
+
+      await waitFor(() => {
+        expect(sent).toEqual([{ phone: '040 789' }])
+      })
+      expect(
+        server.all('customers').find((row) => row['id'] === 'c-4')?.['objectionNoticeConfirmed'],
+      ).toBe(after)
+    },
+  )
 
   it('send a ground with its day, today until somebody says otherwise', async () => {
     await mount('/kunden/neu')

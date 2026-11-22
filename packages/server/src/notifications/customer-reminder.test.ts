@@ -310,6 +310,11 @@ describe('a reminder that waits to go out', () => {
 
     await runDeadlinesOf(engine(), north, now)
 
+    const { rows: covered } = await admin.query<{ installations: string[] }>(
+      `select installation_ids::text[] as installations from maintenance_contracts
+        where number = 'WV-2037-vertrag'`,
+    )
+
     try {
       await expect(refuseWithheldCustomerMail(database, await waiting('lehmann'))).resolves.toBe(
         undefined,
@@ -357,6 +362,18 @@ describe('a reminder that waits to go out', () => {
       await expect(refuseWithheldCustomerMail(database, await waiting('vertrag'))).rejects.toThrow(
         lapsedReminderMail,
       )
+
+      // The installation taken out of the contract since, which a new run
+      // would not remind of either (the review).
+      await admin.query(
+        `update maintenance_contracts set cancelled_on = null, ends_on = null,
+            installation_ids = array[$1]::uuid[]
+          where number = 'WV-2037-vertrag'`,
+        [installations['lehmann']],
+      )
+      await expect(refuseWithheldCustomerMail(database, await waiting('vertrag'))).rejects.toThrow(
+        lapsedReminderMail,
+      )
     } finally {
       await stored('lehmann', 'existing_customer', true)
       await stored('vertrag', null, false)
@@ -365,8 +382,10 @@ describe('a reminder that waits to go out', () => {
         [customers['lehmann']],
       )
       await admin.query(
-        `update maintenance_contracts set cancelled_on = null, ends_on = null
+        `update maintenance_contracts set cancelled_on = null, ends_on = null,
+            installation_ids = $1::uuid[]
           where number = 'WV-2037-vertrag'`,
+        [covered[0]?.installations ?? []],
       )
     }
   })
