@@ -69,7 +69,9 @@ describe('the sentence below a reminder', () => {
 describe('the ground of a customer', () => {
   it('reads as a fact of the record', () => {
     expect(reminderGroundText(null, null, true)).toBe('Nur zu einem Wartungsvertrag')
-    expect(reminderGroundText('consent', day('2024-03-12'), true)).toBe('Einwilligung vom 12.03.2024')
+    expect(reminderGroundText('consent', day('2024-03-12'), true)).toBe(
+      'Einwilligung vom 12.03.2024',
+    )
     expect(reminderGroundText('existing_customer', day('2024-03-12'), true)).toBe(
       'Bestandskunde nach § 7 Abs. 3 UWG, seit 12.03.2024',
     )

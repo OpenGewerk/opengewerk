@@ -485,7 +485,9 @@ describe('the ground of a customer at its route', () => {
 
     expect(await confirmed()).toBe(false)
 
-    await send('patch', `/customers/${id}`, { ...ground, objectionNoticeConfirmed: true }).expect(200)
+    await send('patch', `/customers/${id}`, { ...ground, objectionNoticeConfirmed: true }).expect(
+      200,
+    )
     expect(await confirmed()).toBe(true)
 
     await send('patch', `/customers/${id}`, ground).expect(200)
