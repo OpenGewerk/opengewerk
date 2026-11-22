@@ -180,7 +180,7 @@ beforeAll(async () => {
   }
 
   // Who may be reminded, and how they can be reached.
-  // The last column: the notice on the objection confirmed (#1026). `ungeprueft`
+  // The last column: the notice on the objection confirmed (#1026). `hoffmann`
   // is a customer of the business stored as one before the office was asked,
   // as every one is after the migration.
   const people: [string, string | null, string | null, string | null, boolean | string][] = [
@@ -193,7 +193,7 @@ beforeAll(async () => {
     ['vertragstelefon', null, null, null, false],
     ['einwilligung', 'einwilligung@example.com', 'consent', '2025-05-02', false],
     ['vertragende', 'vertragende@example.com', null, null, false],
-    ['ungeprueft', 'ungeprueft@example.com', 'existing_customer', '2024-03-12', false],
+    ['hoffmann', 'hoffmann@example.com', 'existing_customer', '2024-03-12', false],
     // Confirmed for the address the customer had before (#1026).
     [
       'umgezogen',
@@ -500,7 +500,7 @@ describe('a reminder of a due inspection to the customer', () => {
   it('goes to a customer of the business only with the notice at the collection confirmed', async () => {
     await switchOn()
     // Not confirmed, and confirmed for an address the customer no longer has.
-    due.inspection = [inspectionOf('ungeprueft'), inspectionOf('umgezogen')]
+    due.inspection = [inspectionOf('hoffmann'), inspectionOf('umgezogen')]
 
     await runDeadlinesOf(engine(), north, now)
 
