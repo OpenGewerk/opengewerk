@@ -15,6 +15,7 @@ import {
   resetToMigrated,
 } from '../database/test-database.js'
 import { heldOpen, untilWaiting } from '../database/test-locks.js'
+import { todayInGermany } from '../today.js'
 import { ApiModule } from './api.module.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { finalInvoice, invoiceable, oneLine } from './test-invoice.js'
@@ -192,10 +193,14 @@ describe('an invoice missing mandatory details', () => {
     expect((issued.body as { status: string }).status).toBe('issued')
   })
 
-  it('says so when its date lies before any rule the packages hold', async () => {
-    // No VAT rate and no limit for a small amount exists for 2005, and the
-    // engine refuses rather than guesses. The person issuing can fix the date.
-    const document = await draft(await customer(invoiceable), { documentDate: '2005-06-01' }, false)
+  it('says so when the day of its work lies before any rule the packages hold', async () => {
+    // No VAT rate exists for work of 2005, and the engine refuses rather than
+    // guesses. Its date is the day of issue (#1039); the person issuing can
+    // fix the period.
+    const document = await draft(await customer(invoiceable), {
+      serviceFrom: '2005-06-01',
+      serviceUntil: '2005-06-01',
+    })
 
     const refused = await issue(document).expect(422)
 
@@ -226,6 +231,34 @@ describe('an invoice of a small amount', () => {
       .expect(201)
 
     await issue(document).expect(201)
+  })
+})
+
+describe('the date of an issued document (#1039)', () => {
+  it('is the day an invoice is issued on, whatever day its draft named', async () => {
+    // Drafted with the 18th of September 2026 and issued today, or ahead of a
+    // day that has not come.
+    for (const named of [finalInvoice.documentDate, '2099-12-31']) {
+      const document = await draft(await customer(invoiceable), { documentDate: named })
+      const issued = await issue(document).expect(201)
+      const today = todayInGermany()
+
+      expect((issued.body as { documentDate: string }).documentDate).toBe(today)
+      expect((await snapshotOf(document))?.documentDate).toBe(today)
+    }
+  })
+
+  it('is the one a quote was written with', async () => {
+    const document = await draft(await customer(invoiceable), {
+      kind: 'quote',
+      documentDate: '2026-09-21',
+      serviceFrom: null,
+      serviceUntil: null,
+    })
+    const issued = await issue(document).expect(201)
+
+    expect((issued.body as { documentDate: string }).documentDate).toBe('2026-09-21')
+    expect((await snapshotOf(document))?.documentDate).toBe('2026-09-21')
   })
 })
 

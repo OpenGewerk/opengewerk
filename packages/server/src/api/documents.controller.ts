@@ -1126,8 +1126,9 @@ type DocumentRow = typeof documents.$inferSelect
  * day before or ahead. So the date is set to today in Germany, in the
  * transaction and under the lock of the issuing, before anything is read
  * that goes by it: the payment term, the statement of cash accounting, and
- * whether the law requires the e-invoice. Any other document keeps its date;
- * the duty is the invoice's, and a quote or a report is dated as written.
+ * the rate of an invoice without a day of work. Any other document keeps its
+ * date; the duty is the invoice's, and a quote or a report is dated as
+ * written.
  */
 async function datedForIssue(tx: TenantTransaction, document: DocumentRow): Promise<DocumentRow> {
   const today = todayInGermany()

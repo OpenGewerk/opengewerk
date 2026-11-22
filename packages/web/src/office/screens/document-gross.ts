@@ -43,7 +43,8 @@ export function useGrossByDocument(): ReadonlyMap<string, number | null> {
         continue
       }
 
-      // A cancellation is taxed at the date of the invoice it takes back.
+      // A cancellation is taxed by the day of the work of the invoice it takes
+      // back (#1017).
       const original =
         kind === 'cancellation_invoice'
           ? (byId.get(maybeText(document, 'predecessorDocumentId') ?? '') ?? null)

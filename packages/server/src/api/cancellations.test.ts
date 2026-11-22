@@ -114,6 +114,11 @@ async function issue(documentId: string) {
   return answer.body as DocumentRow
 }
 
+/** A day as the documents print it. */
+function germanDay(day: string): string {
+  return day.split('-').reverse().join('.')
+}
+
 function cancel(documentId: string, identity = office()) {
   return http().post(`/documents/${documentId}/cancellation`).set('x-test-identity', identity)
 }
@@ -282,7 +287,12 @@ describe('cancelling an invoice', () => {
     expect(mirror).toMatchObject({
       version: documentContentVersion,
       kind: 'cancellation_invoice',
-      corrects: { kind: 'final_invoice', number: invoice.number, documentDate: '2026-09-18' },
+      // The day the invoice was issued on, which is its date (#1039).
+      corrects: {
+        kind: 'final_invoice',
+        number: invoice.number,
+        documentDate: invoice.documentDate,
+      },
       serviceFrom: '2026-09-01',
     })
     expect(mirror?.billed.grossCents).toBe(-(original?.billed.grossCents ?? 0))
@@ -421,9 +431,11 @@ describe('cancelling an invoice', () => {
 
     expect(html).toContain(`<h1>Stornorechnung ${storno.number ?? ''}</h1>`)
     expect(html).toContain(
-      `Hiermit stornieren wir die Rechnung ${invoice.number ?? ''} vom 18.09.2026 in voller Höhe.`,
+      `Hiermit stornieren wir die Rechnung ${invoice.number ?? ''} vom ${germanDay(invoice.documentDate)} in voller Höhe.`,
     )
-    expect(html).toContain(`<th>Zur Rechnung</th><td>${invoice.number ?? ''} vom 18.09.2026</td>`)
+    expect(html).toContain(
+      `<th>Zur Rechnung</th><td>${invoice.number ?? ''} vom ${germanDay(invoice.documentDate)}</td>`,
+    )
     // 1.240,00 € and 6,5 hours at 78,00 € come to 1.747,00 € net, 2.078,93 €
     // with 19 %, and the cancellation takes all of it back.
     expect(html).toMatch(/Gesamtbetrag<\/td><td class="figure">-2\.078,93\s€/)
@@ -443,7 +455,7 @@ describe('cancelling an invoice', () => {
     const html = jobs.at(-1)?.html ?? ''
 
     expect(html).toContain(
-      `zurückgenommener Abzug der Abschlagsrechnung ${first.number ?? ''} vom 18.09.2026`,
+      `zurückgenommener Abzug der Abschlagsrechnung ${first.number ?? ''} vom ${germanDay(first.documentDate)}`,
     )
     expect(html).not.toContain('abzüglich Abschlagsrechnung')
     // What a progress invoice calls the work so far, its cancellation calls
