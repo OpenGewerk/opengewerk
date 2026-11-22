@@ -177,24 +177,29 @@ beforeAll(async () => {
   }
 
   // Who may be reminded, and how they can be reached.
-  const people: [string, string | null, string | null, string | null][] = [
-    ['lehmann', 'klaus.lehmann@example.com', 'existing_customer', '2024-03-12'],
-    ['ohne', 'ohne@example.com', null, null],
-    ['becker', null, 'consent', '2025-05-02'],
-    ['baeckerei', null, 'existing_customer', '2024-03-12'],
-    ['abbestellt', 'abbestellt@example.com', 'objected', '2026-11-02'],
-    ['vertrag', 'vertrag@example.com', null, null],
-    ['vertragstelefon', null, null, null],
-    ['einwilligung', 'einwilligung@example.com', 'consent', '2025-05-02'],
-    ['vertragende', 'vertragende@example.com', null, null],
+  // The last column: the notice on the objection confirmed (#1026). `ungeprueft`
+  // is a customer of the business stored as one before the office was asked,
+  // as every one is after the migration.
+  const people: [string, string | null, string | null, string | null, boolean][] = [
+    ['lehmann', 'klaus.lehmann@example.com', 'existing_customer', '2024-03-12', true],
+    ['ohne', 'ohne@example.com', null, null, false],
+    ['becker', null, 'consent', '2025-05-02', false],
+    ['baeckerei', null, 'existing_customer', '2024-03-12', true],
+    ['abbestellt', 'abbestellt@example.com', 'objected', '2026-11-02', false],
+    ['vertrag', 'vertrag@example.com', null, null, false],
+    ['vertragstelefon', null, null, null, false],
+    ['einwilligung', 'einwilligung@example.com', 'consent', '2025-05-02', false],
+    ['vertragende', 'vertragende@example.com', null, null, false],
+    ['ungeprueft', 'ungeprueft@example.com', 'existing_customer', '2024-03-12', false],
   ]
 
-  for (const [who, email, ground, since] of people) {
+  for (const [who, email, ground, since, confirmed] of people) {
     customers[who] = newId<'customer'>()
     await admin.query(
-      `insert into customers (id, tenant_id, kind, name, email, reminder_ground, reminder_ground_on)
-       values ($1, $2, 'private', $3, $4, $5, $6)`,
-      [customers[who], north, `Kunde ${who}`, email, ground, since],
+      `insert into customers (id, tenant_id, kind, name, email, reminder_ground, reminder_ground_on,
+         objection_notice_confirmed)
+       values ($1, $2, 'private', $3, $4, $5, $6, $7)`,
+      [customers[who], north, `Kunde ${who}`, email, ground, since, confirmed],
     )
   }
 
@@ -320,6 +325,22 @@ describe('a reminder of a due inspection to the customer', () => {
     ])
   })
 
+  /**
+   * § 7 Abs. 3 Nr. 4 UWG wants the notice on the objection given when the
+   * address was collected. A customer of the business without the office's
+   * confirmation of it, as every one stored before the question, gets nothing
+   * (#1026); `lehmann` above has it and gets the mail.
+   */
+  it('goes to a customer of the business only with the notice at the collection confirmed', async () => {
+    await switchOn()
+    due.inspection = [inspectionOf('ungeprueft')]
+
+    await runDeadlinesOf(engine(), north, now)
+
+    expect(await mails()).toEqual([])
+    expect(await calls()).toEqual([])
+  })
+
   it('calls a customer of the business under § 7 Abs. 3 UWG never, since it covers mail alone', async () => {
     await switchOn()
     due.inspection = [inspectionOf('baeckerei')]
@@ -436,5 +457,49 @@ describe('the ground of a customer at its route', () => {
     )
 
     expect(rows[0]).toEqual({ reminder_ground: 'objected', on: '2026-11-02' })
+  })
+
+  /**
+   * The confirmation that the notice on the objection was given when the
+   * address was collected (#1026) belongs to a customer of § 7 Abs. 3 UWG
+   * alone: such a customer is stored without it and counts as none, another
+   * ground takes it away, and a write of the ground without it, as a form of
+   * the version before sends, leaves it.
+   */
+  it('keeps the confirmation of the notice with a customer of the business alone', async () => {
+    const made = await send('post', '/customers', {
+      kind: 'private',
+      name: 'Familie Gruber',
+      reminderGround: 'existing_customer',
+      reminderGroundOn: '2024-03-12',
+    }).expect(201)
+    const id = String((made.body as { id: string }).id)
+    const confirmed = async () =>
+      (
+        await admin.query<{ confirmed: boolean }>(
+          'select objection_notice_confirmed as confirmed from customers where id = $1',
+          [id],
+        )
+      ).rows[0]?.confirmed
+    const ground = { reminderGround: 'existing_customer', reminderGroundOn: '2024-03-12' }
+
+    expect(await confirmed()).toBe(false)
+
+    await send('patch', `/customers/${id}`, { ...ground, objectionNoticeConfirmed: true }).expect(200)
+    expect(await confirmed()).toBe(true)
+
+    await send('patch', `/customers/${id}`, ground).expect(200)
+    expect(await confirmed()).toBe(true)
+
+    await send('patch', `/customers/${id}`, {
+      reminderGround: 'consent',
+      reminderGroundOn: '2025-05-02',
+      objectionNoticeConfirmed: true,
+    }).expect(422)
+    await send('patch', `/customers/${id}`, {
+      reminderGround: 'consent',
+      reminderGroundOn: '2025-05-02',
+    }).expect(200)
+    expect(await confirmed()).toBe(false)
   })
 })

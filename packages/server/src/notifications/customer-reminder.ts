@@ -135,6 +135,7 @@ export async function remindCustomer(
       name: customers.name,
       email: customers.email,
       ground: customers.reminderGround,
+      noticeConfirmed: customers.objectionNoticeConfirmed,
     })
     .from(customers)
     .where(and(eq(customers.id, deadline.customerId as CustomerId), isNull(customers.deletedAt)))
@@ -145,7 +146,12 @@ export async function remindCustomer(
   }
 
   const contract = await contractOf(tx, kind, deadline)
-  const way = reminderWay(customer.ground, contract !== null, customer.email !== null)
+  const way = reminderWay(
+    customer.ground,
+    contract !== null,
+    customer.email !== null,
+    customer.noticeConfirmed,
+  )
 
   if (way === null) {
     return

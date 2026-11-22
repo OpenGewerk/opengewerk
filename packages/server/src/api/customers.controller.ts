@@ -38,6 +38,7 @@ const writableFields = [
   'taxExemptionValidUntil',
   'reminderGround',
   'reminderGroundOn',
+  'objectionNoticeConfirmed',
   'notes',
 ] as const
 
@@ -45,13 +46,30 @@ const writableFields = [
  * A ground for reminders comes with its day (#316), both at once as the form
  * sends them, or neither: the one without the other is refused here with a
  * sentence, before the check of the table refuses it without one.
+ *
+ * The confirmation of the notice on the objection goes with them (#1026),
+ * yes only for a customer of § 7 Abs. 3 UWG. Another ground takes one stored
+ * before away; the same ground without it in the write leaves it, so that a
+ * form of the version before does not take it away.
  */
-function requireReminderGround(values: Readonly<Record<string, unknown>>): void {
-  if (!('reminderGround' in values) && !('reminderGroundOn' in values)) {
+function requireReminderGround(values: Record<string, unknown>): void {
+  if (
+    !('reminderGround' in values) &&
+    !('reminderGroundOn' in values) &&
+    !('objectionNoticeConfirmed' in values)
+  ) {
     return
   }
 
-  const problem = reminderGroundProblem(values['reminderGround'], values['reminderGroundOn'])
+  if ('reminderGround' in values && values['reminderGround'] !== 'existing_customer') {
+    values['objectionNoticeConfirmed'] ??= false
+  }
+
+  const problem = reminderGroundProblem(
+    values['reminderGround'],
+    values['reminderGroundOn'],
+    values['objectionNoticeConfirmed'],
+  )
 
   if (problem !== null) {
     throw new UnprocessableEntityException(problem)

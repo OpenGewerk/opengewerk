@@ -280,6 +280,7 @@ describe('the reminders of a customer (#316)', () => {
       ...customer('c-1', 'Klaus Lehmann', 'private', 'Hamburg'),
       reminderGround: 'existing_customer',
       reminderGroundOn: '2024-03-12',
+      objectionNoticeConfirmed: true,
     })
     await mount('/kunden/c-1')
 
@@ -288,6 +289,77 @@ describe('the reminders of a customer (#316)', () => {
     expect(
       within(facts).getByText('Bestandskunde nach § 7 Abs. 3 UWG, seit 12.03.2024'),
     ).toBeDefined()
+  })
+
+  it('say of a customer of the business that nobody confirmed the notice (#1026)', async () => {
+    server.put('customers', {
+      ...customer('c-1', 'Klaus Lehmann', 'private', 'Hamburg'),
+      reminderGround: 'existing_customer',
+      reminderGroundOn: '2024-03-12',
+      objectionNoticeConfirmed: false,
+    })
+    await mount('/kunden/c-1')
+
+    const facts = await screen.findByRole('region', { name: 'Stammdaten' })
+
+    expect(
+      within(facts).getByText(
+        'Bestandskunde nach § 7 Abs. 3 UWG, seit 12.03.2024, Hinweis bei der Erhebung nicht bestätigt',
+      ),
+    ).toBeDefined()
+  })
+
+  /**
+   * The confirmation that the customer was told about the objection when the
+   * address was collected (#1026): asked for with a customer of the business
+   * and sent with it, and with another ground not at all.
+   */
+  it('send the confirmation of the notice with a customer of the business, and with no other ground', async () => {
+    await mount('/kunden/neu')
+    const user = userEvent.setup()
+    const notice = /Bei der Erhebung der Adresse auf das Widerspruchsrecht hingewiesen/
+
+    await user.type(await screen.findByLabelText('Name'), 'Familie Gruber')
+    await user.selectOptions(screen.getByLabelText('Grundlage'), 'Einwilligung')
+    expect(screen.queryByLabelText(notice)).toBeNull()
+    await user.selectOptions(
+      screen.getByLabelText('Grundlage'),
+      'Bestandskunde nach § 7 Abs. 3 UWG',
+    )
+    await user.click(screen.getByLabelText(notice))
+    await user.selectOptions(screen.getByLabelText('Grundlage'), 'Einwilligung')
+    await user.click(screen.getByRole('button', { name: 'Kunde anlegen' }))
+
+    await waitFor(() => {
+      expect(server.all('customers')).toHaveLength(1)
+    })
+    expect(server.all('customers')[0]).toMatchObject({
+      reminderGround: 'consent',
+      objectionNoticeConfirmed: false,
+    })
+  })
+
+  it('send a customer of the business with the notice confirmed', async () => {
+    await mount('/kunden/neu')
+    const user = userEvent.setup()
+
+    await user.type(await screen.findByLabelText('Name'), 'Familie Gruber')
+    await user.selectOptions(
+      screen.getByLabelText('Grundlage'),
+      'Bestandskunde nach § 7 Abs. 3 UWG',
+    )
+    await user.click(
+      screen.getByLabelText(/Bei der Erhebung der Adresse auf das Widerspruchsrecht hingewiesen/),
+    )
+    await user.click(screen.getByRole('button', { name: 'Kunde anlegen' }))
+
+    await waitFor(() => {
+      expect(server.all('customers')).toHaveLength(1)
+    })
+    expect(server.all('customers')[0]).toMatchObject({
+      reminderGround: 'existing_customer',
+      objectionNoticeConfirmed: true,
+    })
   })
 
   it('send a ground with its day, today until somebody says otherwise', async () => {

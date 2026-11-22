@@ -47,6 +47,13 @@ export const customers = pgTable(
     // contract (#316), and since when; null for only a contract's.
     reminderGround: reminderGround('reminder_ground'),
     reminderGroundOn: date('reminder_ground_on'),
+    // That the office confirmed the notice on the objection given when the
+    // address was collected, on the day above (#1026): only then does a
+    // customer of § 7 (3) UWG count as one. False for every customer stored
+    // as one before the question was asked. No check ties it to that ground:
+    // the version before sets another ground without knowing the column, and
+    // `reminderWay` counts it only with this one.
+    objectionNoticeConfirmed: boolean('objection_notice_confirmed').notNull().default(false),
 
     // How the customer found the business (#312), from its lead or chosen in
     // the office; null where nobody said.

@@ -115,6 +115,10 @@ function asCustomer(values: Record<string, string>) {
     // A ground has its day and none has none (#316), whatever the field held before.
     reminderGround: values['reminderGround'] || null,
     reminderGroundOn: values['reminderGround'] ? asTextOrNull(values['reminderGroundOn']) : null,
+    // Only a customer of § 7 Abs. 3 UWG has the confirmation (#1026).
+    objectionNoticeConfirmed:
+      values['reminderGround'] === 'existing_customer' &&
+      values['objectionNoticeConfirmed'] === 'true',
     // How the customer found the business (#312), none where nobody said.
     source: values['source'] || null,
     notes: asTextOrNull(values['notes']),
@@ -789,6 +793,7 @@ function CustomerFacts({ customer }: { readonly customer: RecordState }) {
               typeof customer['reminderGroundOn'] === 'string'
                 ? (customer['reminderGroundOn'] as IsoDate)
                 : null,
+              customer['objectionNoticeConfirmed'] === true,
             ),
           },
           // How the customer found the business (#312), with the lead it came from.
@@ -1140,6 +1145,7 @@ interface CustomerDraft {
   isConstructionServiceRecipient: string
   reminderGround: string
   reminderGroundOn: string
+  objectionNoticeConfirmed: string
   source: string
   notes: string
 }
@@ -1165,6 +1171,7 @@ function draftOf(customer: RecordState | null): CustomerDraft {
       customer?.['isConstructionServiceRecipient'] === true ? 'true' : 'false',
     reminderGround: held('reminderGround'),
     reminderGroundOn: held('reminderGroundOn'),
+    objectionNoticeConfirmed: customer?.['objectionNoticeConfirmed'] === true ? 'true' : 'false',
     source: held('source'),
     notes: held('notes'),
   }
@@ -1404,6 +1411,31 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
                       hint: 'Der Tag der Einwilligung, des Hinweises oder der Abbestellung.',
                     })
                   : null}
+                {/* Only once this is confirmed is a customer of § 7 Abs. 3 UWG one (#1026). */}
+                {draft.reminderGround === 'existing_customer' ? (
+                  <label className="flex items-start gap-[9px] text-[14px] leading-[1.4] text-ink">
+                    <input
+                      type="checkbox"
+                      checked={draft.objectionNoticeConfirmed === 'true'}
+                      onChange={(event) => {
+                        const confirmed = event.target.checked
+
+                        setDraft((current) => ({
+                          ...current,
+                          objectionNoticeConfirmed: confirmed ? 'true' : 'false',
+                        }))
+                      }}
+                      className="mt-0.5 size-4 shrink-0 accent-copper-solid"
+                    />
+                    <span>
+                      Bei der Erhebung der Adresse auf das Widerspruchsrecht hingewiesen
+                      <span className="block text-[13px] text-ink-muted">
+                        Am Tag unter „Seit“. Ohne diese Bestätigung geht als Bestandskunde keine
+                        Erinnerung hinaus (§ 7 Abs. 3 Nr. 4 UWG).
+                      </span>
+                    </span>
+                  </label>
+                ) : null}
               </div>
             </FormPanel>
           </div>

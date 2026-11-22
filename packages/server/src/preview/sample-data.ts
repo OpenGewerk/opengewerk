@@ -260,6 +260,8 @@ export async function plantSampleData(base: string, today: IsoDate): Promise<voi
       // Reminded of inspections and maintenances as a customer of the business (#316).
       reminderGround: 'existing_customer',
       reminderGroundOn: '2024-03-12',
+      // Told about the objection when the address was collected (#1026).
+      objectionNoticeConfirmed: true,
     }),
   )
 
