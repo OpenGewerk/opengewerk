@@ -2321,6 +2321,49 @@ describe('an access past its last day', () => {
     })
   }
 
+  it('asks the database when it took a device out, not the clock of the server', async () => {
+    const email = 'geraet-uhr@example.de'
+    const userId = await joined(email, [north.id])
+    const gone = await atWork(email)
+    const byTheOffice = await atWork(email)
+    const other = await atWork(email)
+
+    await begunDaysAgo(gone.id)
+    await begunDaysAgo(byTheOffice.id)
+
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = date_trunc('second', now()) - interval '1 hour'
+        where id = any($1) returning expires_at`,
+      [[gone.id, byTheOffice.id]],
+    )
+
+    // The clock of the server two hours behind the database: by it, the
+    // device would still have run when it was cut off.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() - 2 * 60 * 60 * 1000 })
+
+    try {
+      await http()
+        .delete(`/auth/devices/${gone.id}`)
+        .set('cookie', other.cookies)
+        .set('origin', origin)
+        .expect(200)
+      await revokeDeviceOf(
+        probeAccess,
+        instance.database,
+        { tenantId: north.id, userId },
+        userId,
+        byTheOffice.id,
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+
+    for (const sessionId of [gone.id, byTheOffice.id]) {
+      expect((await endOfWork(sessionId))?.getTime()).toBe(rows[0]?.expires_at.getTime())
+      expect(await reasonOfEnd(sessionId)).toBe('session.expire')
+    }
+  })
+
   it('ends at the end of the day a stretch whose session is already gone', async () => {
     const email = 'letzter-tag-verwaist@example.de'
     const userId = await joined(email, [north.id])

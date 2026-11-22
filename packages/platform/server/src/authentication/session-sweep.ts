@@ -194,8 +194,10 @@ export async function endStretchesOrLeaveThem(
  * when it would have run out (opengewerk#1030): one still to run at `at` ends
  * then, for the reason given and in the name of who took it out; one that had
  * run out by then ends when it did, as run out, as the sweep would have closed
- * it. Either ends with the access where that ended first. `at` is taken before
- * the sessions go, so that no stretch ends after its session ran out.
+ * it. Either ends with the access where that ended first. `at` is the moment
+ * the database took the sessions out (`clock_timestamp()` of the delete), the
+ * first of them where there are several, so that no stretch ends after its
+ * session went.
  */
 export async function endStretchesOfTakenOut(
   database: Database,
@@ -212,6 +214,17 @@ export async function endStretchesOfTakenOut(
     database,
     sessions.filter((session) => session.expiresAt <= at),
     { now: at },
+  )
+}
+
+/** The first moment the database took one of the sessions out, or now for none. */
+export function firstOf(removed: readonly { readonly at: Date | string }[]): Date {
+  return (
+    removed.reduce<Date | null>((first, row) => {
+      const at = new Date(row.at)
+
+      return first === null || at < first ? at : first
+    }, null) ?? new Date()
   )
 }
 
@@ -524,49 +537,102 @@ export interface LastDaysPass {
 }
 
 /**
- * `endPastLastDays` for one person in one tenant, before a way that closes
- * their stretches there at its own time and for its own reason (a block, the
- * removal of the data of an access): where the access has ended, the
- * stretches end with it or when their session ran out, and the sessions go,
- * as the pass would have done (opengewerk#1030). Nothing where it has not.
+ * The stretches of one person in one tenant, before a way that closes them
+ * there at its own time and for its own reason (a block, the removal of the
+ * data of an access): where the access has ended, they end as the pass would
+ * close them (opengewerk#1030), when their session ran out where that came
+ * first, else with the access; the caller takes the sessions. Nothing where
+ * the access has not ended.
+ *
+ * One step after the other, each in a transaction of its own, so that none
+ * holds a connection while it waits for another: a route calls this, and
+ * enough of them at once would take every connection of the pool. The
+ * stretches closed with the access are asked again in their statement
+ * whether it is over, as the pass asks.
  */
 export async function endPastLastDayOf(
   database: Database,
   tenantId: TenantId,
   userId: string,
 ): Promise<number> {
-  return endPastLastDaysIn(database, tenantId, sweepBatch, [userId])
+  const [membership] = await database.forTenant({ tenantId }, (tx) =>
+    tx
+      .select({
+        endedAt: sql<
+          Date | string
+        >`((${memberships.lastDay} + 1)::timestamp at time zone 'Europe/Berlin')`,
+      })
+      .from(memberships)
+      .where(and(eq(memberships.tenantId, tenantId), eq(memberships.userId, userId), pastItsEnd())),
+  )
+
+  if (membership === undefined) {
+    return 0
+  }
+
+  const over = new Date(membership.endedAt)
+  const sessions = await database.forInstance((tx) =>
+    tx
+      .select({ id: authSessions.id, expiresAt: authSessions.expiresAt })
+      .from(authSessions)
+      .where(and(eq(authSessions.userId, userId), eq(authSessions.activeTenantId, tenantId))),
+  )
+  // Those that ran out before the access ended, first, when they ran out.
+  const ranOut = await endStretchesOf(
+    database,
+    sessions
+      .filter((session) => session.expiresAt <= over)
+      .map((session) => ({ id: session.id, userId, tenantId, expiresAt: session.expiresAt })),
+  )
+  const withTheAccess = await database.forTenant({ tenantId, reason: 'membership.end' }, (tx) =>
+    tx
+      .update(tenantSessions)
+      .set({
+        endedAt: sql`greatest(${tenantSessions.startedAt}, (
+            select ((${memberships.lastDay} + 1)::timestamp at time zone 'Europe/Berlin')
+              from ${memberships}
+             where ${memberships.tenantId} = ${tenantSessions.tenantId}
+               and ${memberships.userId} = ${tenantSessions.userId}))`,
+      })
+      .where(
+        and(
+          eq(tenantSessions.tenantId, tenantId),
+          eq(tenantSessions.userId, userId),
+          isNull(tenantSessions.endedAt),
+          sql`exists (
+              select 1 from ${memberships}
+               where ${memberships.tenantId} = ${tenantSessions.tenantId}
+                 and ${memberships.userId} = ${tenantSessions.userId}
+                 and ${pastItsEnd()})`,
+        ),
+      )
+      .returning({ id: tenantSessions.id }),
+  )
+
+  return ranOut + withTheAccess.length
 }
 
-/**
- * `endPastLastDays` in one tenant, or for the people named. Says how many
- * stretches it closed.
- */
+/** `endPastLastDays` in one tenant. Says how many stretches it closed. */
 async function endPastLastDaysIn(
   database: Database,
   tenantId: TenantId,
   batch: number,
-  only?: readonly string[],
 ): Promise<number> {
   let closed = 0
-  let people: readonly string[] | undefined = only
 
-  if (people === undefined) {
-    const working = await database.forInstance((tx) =>
-      tx
-        .selectDistinct({ userId: authSessions.userId })
-        .from(authSessions)
-        .where(eq(authSessions.activeTenantId, tenantId)),
-    )
-    const open = await database.forTenant({ tenantId }, (tx) =>
-      tx
-        .selectDistinct({ userId: tenantSessions.userId })
-        .from(tenantSessions)
-        .where(and(eq(tenantSessions.tenantId, tenantId), isNull(tenantSessions.endedAt))),
-    )
-
-    people = [...new Set([...working, ...open].map((row) => row.userId))]
-  }
+  const working = await database.forInstance((tx) =>
+    tx
+      .selectDistinct({ userId: authSessions.userId })
+      .from(authSessions)
+      .where(eq(authSessions.activeTenantId, tenantId)),
+  )
+  const open = await database.forTenant({ tenantId }, (tx) =>
+    tx
+      .selectDistinct({ userId: tenantSessions.userId })
+      .from(tenantSessions)
+      .where(and(eq(tenantSessions.tenantId, tenantId), isNull(tenantSessions.endedAt))),
+  )
+  const people = [...new Set([...working, ...open].map((row) => row.userId))]
 
   for (let start = 0; start < people.length; start += batch) {
     const round = people.slice(start, start + batch)

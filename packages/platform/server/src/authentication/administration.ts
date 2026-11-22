@@ -34,7 +34,7 @@ import type { AddressMail } from './notices.js'
 import { holdRoles, leadsItsTenant, rolesOfTenant } from './roles.js'
 import { removeSecondFactor } from './second-factor.js'
 import { revokeCredentials } from './credentials.js'
-import { endPastLastDayOf, endStretchesOfTakenOut } from './session-sweep.js'
+import { endPastLastDayOf, endStretchesOfTakenOut, firstOf } from './session-sweep.js'
 
 /**
  * Who works in one tenant, and everything whoever leads it can do about it.
@@ -829,7 +829,6 @@ export async function revokeDeviceOf(
 ): Promise<void> {
   await database.forTenant(identity, (tx) => membershipOf(access, tx, identity.tenantId, userId))
 
-  const at = new Date()
   const removed = await database.forInstance(
     (tx) =>
       tx
@@ -841,7 +840,11 @@ export async function revokeDeviceOf(
             eq(authSessions.activeTenantId, identity.tenantId),
           ),
         )
-        .returning({ id: authSessions.id, expiresAt: authSessions.expiresAt }),
+        .returning({
+          id: authSessions.id,
+          expiresAt: authSessions.expiresAt,
+          at: sql<Date | string>`clock_timestamp()`,
+        }),
     identity.userId,
   )
 
@@ -860,7 +863,7 @@ export async function revokeDeviceOf(
       tenantId: identity.tenantId,
       expiresAt: row.expiresAt,
     })),
-    at,
+    firstOf(removed),
     { reason: 'session.revoke', actor: identity.userId },
   )
 }

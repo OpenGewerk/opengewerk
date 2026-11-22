@@ -418,7 +418,6 @@ export class AuthenticationController {
     @CurrentUser() user: SignedInUser,
     @Param('sessionId') sessionId: string,
   ): Promise<{ revoked: string }> {
-    const at = new Date()
     const [revoked] = await this.database.forInstance(
       (tx) =>
         tx
@@ -427,6 +426,7 @@ export class AuthenticationController {
           .returning({
             activeTenantId: authSessions.activeTenantId,
             expiresAt: authSessions.expiresAt,
+            at: sql<Date | string>`clock_timestamp()`,
           }),
       user.userId,
     )
@@ -449,7 +449,7 @@ export class AuthenticationController {
           expiresAt: revoked.expiresAt,
         },
       ],
-      at,
+      new Date(revoked.at),
       { reason: 'session.revoke', actor: user.userId },
     )
 
