@@ -154,8 +154,9 @@ export function smtpTransport(
     greetingTimeout: timeouts.greeting,
     socketTimeout: timeouts.socket,
     // A connection that ends is torn down at once. Ended the gentle way, the
-    // socket would still hand the server what is waiting in it, and after the
-    // deadline of a message that can be its last line.
+    // socket would still hand the server what waits in this process, and
+    // after the deadline of a message that can be all of it. What the system
+    // has taken already goes out either way.
     socketCloseTimeout: 0,
     disableFileAccess: true,
     disableUrlAccess: true,
@@ -165,8 +166,11 @@ export function smtpTransport(
     async send(mail) {
       // The deadline ends the conversation with the server, not only the wait
       // for it: nodemailer drops the connection of a send that is called off,
-      // and a server that would have taken the message after the deadline
-      // gets nothing more (opengewerk#1036).
+      // and what of the message has not left this process by then never
+      // reaches the server (opengewerk#1036). What has left it, the system
+      // still delivers: a message of a few hundred kilobytes has mostly left
+      // right after the server asked for it, and a server that takes it then
+      // has it, although the outbox counts it as not sent.
       const deadline = new AbortController()
       const timer = setTimeout(() => {
         deadline.abort()

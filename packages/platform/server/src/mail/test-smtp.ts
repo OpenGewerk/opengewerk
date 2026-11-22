@@ -18,6 +18,8 @@ export interface FakeSmtpOptions {
   readonly stallAfterData?: boolean
   /** Milliseconds it waits before it answers DATA, the way a server that is slow to take a message does. */
   readonly slowData?: number
+  /** Milliseconds it stops reading once it asked for the message, the way a server behind a slow line takes it. */
+  readonly readsLate?: number
 }
 
 export interface FakeSmtpServer {
@@ -137,6 +139,13 @@ export async function fakeSmtpServer(options: FakeSmtpOptions = {}): Promise<Fak
 
             inData = true
             say('354 End data with <CR><LF>.<CR><LF>')
+
+            if (options.readsLate !== undefined) {
+              socket.pause()
+              setTimeout(() => {
+                socket.resume()
+              }, options.readsLate)
+            }
           }
 
           if (options.slowData === undefined) {

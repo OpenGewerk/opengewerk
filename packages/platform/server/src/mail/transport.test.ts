@@ -147,6 +147,39 @@ describe('a message', () => {
     expect(slow.open()).toBe(0)
   })
 
+  /**
+   * What still waits in this process when the time is over is dropped, not
+   * handed to the server (`socketCloseTimeout: 0`). Ended the gentle way, a
+   * server that stopped reading for a while got the whole message after the
+   * deadline (opengewerk#1036, the review). The message is larger than what
+   * the system takes from a socket that nobody reads.
+   */
+  it('drops what waits to go out once the time a message has is over', async () => {
+    const late = await fakeSmtpServer({ readsLate: 1_500 })
+    server = late
+    const transport = smtpTransport(settings(late.port), { ...short, socket: 10_000, whole: 500 })
+    const large: OutgoingMail = {
+      ...letter,
+      attachments: [
+        {
+          filename: 'Plan.pdf',
+          content: new Uint8Array(32 * 1024 * 1024),
+          contentType: 'application/pdf',
+        },
+      ],
+    }
+
+    const failure = await failureOf(transport.send(large))
+
+    expect(failure.code).toBe('ETIMEDOUT')
+
+    await new Promise((resolve) => setTimeout(resolve, 3_000))
+    transport.close()
+
+    expect(late.received).toEqual([])
+    expect(late.open()).toBe(0)
+  })
+
   it('is refused for now when nothing listens on the port', async () => {
     const transport = smtpTransport(settings(await closedPort()), short)
 
