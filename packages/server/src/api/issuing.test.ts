@@ -3,9 +3,9 @@ import { Test } from '@nestjs/testing'
 import type { DocumentContent } from '@opengewerk/domain'
 import { Database, newId } from '@opengewerk/platform-server'
 import { eq } from 'drizzle-orm'
-import type { Pool } from 'pg'
+import { Client, type Pool } from 'pg'
 import request from 'supertest'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { documentLines } from '../database/schema/index.js'
 import {
@@ -15,6 +15,7 @@ import {
   resetToMigrated,
 } from '../database/test-database.js'
 import { heldOpen, untilWaiting } from '../database/test-locks.js'
+import { todayInGermany } from '../today.js'
 import { ApiModule } from './api.module.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { finalInvoice, invoiceable, oneLine } from './test-invoice.js'
@@ -192,10 +193,14 @@ describe('an invoice missing mandatory details', () => {
     expect((issued.body as { status: string }).status).toBe('issued')
   })
 
-  it('says so when its date lies before any rule the packages hold', async () => {
-    // No VAT rate and no limit for a small amount exists for 2005, and the
-    // engine refuses rather than guesses. The person issuing can fix the date.
-    const document = await draft(await customer(invoiceable), { documentDate: '2005-06-01' }, false)
+  it('says so when the day of its work lies before any rule the packages hold', async () => {
+    // No VAT rate exists for work of 2005, and the engine refuses rather than
+    // guesses. Its date is the day of issue (#1039); the person issuing can
+    // fix the period.
+    const document = await draft(await customer(invoiceable), {
+      serviceFrom: '2005-06-01',
+      serviceUntil: '2005-06-01',
+    })
 
     const refused = await issue(document).expect(422)
 
@@ -226,6 +231,81 @@ describe('an invoice of a small amount', () => {
       .expect(201)
 
     await issue(document).expect(201)
+  })
+})
+
+describe('the date of an issued document (#1039)', () => {
+  it('is the day an invoice is issued on, whatever day its draft named', async () => {
+    // Drafted with the 18th of September 2026 and issued today, or ahead of a
+    // day that has not come.
+    for (const named of [finalInvoice.documentDate, '2099-12-31']) {
+      const document = await draft(await customer(invoiceable), { documentDate: named })
+      const issued = await issue(document).expect(201)
+      const today = todayInGermany()
+
+      expect((issued.body as { documentDate: string }).documentDate).toBe(today)
+      expect((await snapshotOf(document))?.documentDate).toBe(today)
+    }
+  })
+
+  /**
+   * An invoice a customer signed in a version before 0.6.3, which let any
+   * draft be signed: fixed, and issuing it is all that is left. It keeps its
+   * date and is issued (#1039, the review).
+   */
+  it('keeps the date of an invoice a customer signed in an older version, and issues it', async () => {
+    const document = await draft(await customer(invoiceable), {
+      documentDate: finalInvoice.documentDate,
+    })
+
+    await admin.query(`update documents set status = 'signed' where id = $1`, [document])
+
+    const issued = await issue(document).expect(201)
+
+    expect((issued.body as { documentDate: string }).documentDate).toBe(finalInvoice.documentDate)
+  })
+
+  it('is the day of the moment of its issue, also when the issuing runs past midnight', async () => {
+    const document = await draft(await customer(invoiceable))
+    const query = Client.prototype.query
+    let issued: { documentDate: string; issuedAt: string } | undefined
+
+    // A second before midnight in Germany, and midnight passes once the date
+    // is set, before the number and the moment of the issue are written.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-12-01T23:59:59+01:00') })
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+
+      if (/^update "documents" set "document_date"/i.test(text)) {
+        vi.setSystemTime(new Date('2026-12-02T00:00:05+01:00'))
+      }
+
+      return (query as (...given: unknown[]) => unknown).apply(this, args)
+    } as typeof query
+
+    try {
+      issued = (await issue(document).expect(201)).body as typeof issued
+    } finally {
+      Client.prototype.query = query
+      vi.useRealTimers()
+    }
+
+    expect(issued?.documentDate).toBe('2026-12-01')
+    expect(todayInGermany(new Date(issued?.issuedAt ?? ''))).toBe('2026-12-01')
+  })
+
+  it('is the one a quote was written with', async () => {
+    const document = await draft(await customer(invoiceable), {
+      kind: 'quote',
+      documentDate: '2026-09-21',
+      serviceFrom: null,
+      serviceUntil: null,
+    })
+    const issued = await issue(document).expect(201)
+
+    expect((issued.body as { documentDate: string }).documentDate).toBe('2026-09-21')
+    expect((await snapshotOf(document))?.documentDate).toBe('2026-09-21')
   })
 })
 

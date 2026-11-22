@@ -14,9 +14,9 @@ import {
   type Renderer,
 } from '@opengewerk/platform-server'
 import { eq } from 'drizzle-orm'
-import type { Pool } from 'pg'
+import { Client, type Pool } from 'pg'
 import request from 'supertest'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { assignDocumentNumber } from '../database/number-ranges.js'
 import { documents } from '../database/schema/index.js'
@@ -28,6 +28,7 @@ import {
 } from '../database/test-database.js'
 import { heldOpen, untilWaiting } from '../database/test-locks.js'
 import { deductionsFor } from '../documents/deductions.js'
+import { todayInGermany } from '../today.js'
 import { recordPayment } from '../payments/payments.js'
 import { ApiModule } from './api.module.js'
 import { binary } from './test-binary.js'
@@ -112,6 +113,11 @@ async function issue(documentId: string) {
     .expect(201)
 
   return answer.body as DocumentRow
+}
+
+/** A day as the documents print it. */
+function germanDay(day: string): string {
+  return day.split('-').reverse().join('.')
 }
 
 function cancel(documentId: string, identity = office()) {
@@ -282,11 +288,49 @@ describe('cancelling an invoice', () => {
     expect(mirror).toMatchObject({
       version: documentContentVersion,
       kind: 'cancellation_invoice',
-      corrects: { kind: 'final_invoice', number: invoice.number, documentDate: '2026-09-18' },
+      // The day the invoice was issued on, which is its date (#1039).
+      corrects: {
+        kind: 'final_invoice',
+        number: invoice.number,
+        documentDate: invoice.documentDate,
+      },
       serviceFrom: '2026-09-01',
     })
     expect(mirror?.billed.grossCents).toBe(-(original?.billed.grossCents ?? 0))
     expect((original?.billed.taxCents ?? 0) + (mirror?.billed.taxCents ?? 0)).toBe(0)
+  })
+
+  /**
+   * One moment for the date, the number and the issue of a cancellation: made
+   * a second before midnight in Germany, with midnight passing while it is
+   * written, it is dated on the day of its issue (#1039, the review).
+   */
+  it('is dated the day of its issue, also when the cancelling runs past midnight', async () => {
+    const invoice = await issuedInvoice()
+    const query = Client.prototype.query
+    let storno: { documentDate: string; issuedAt: string } | undefined
+
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-12-01T23:59:59+01:00') })
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+
+      if (/^insert into "documents"/i.test(text)) {
+        vi.setSystemTime(new Date('2026-12-02T00:00:05+01:00'))
+      }
+
+      return (query as (...given: unknown[]) => unknown).apply(this, args)
+    } as typeof query
+
+    try {
+      storno = (await cancel(invoice.id).expect(201)).body as typeof storno
+    } finally {
+      Client.prototype.query = query
+      vi.useRealTimers()
+    }
+
+    expect(storno?.documentDate).toBe('2026-12-01')
+    expect(todayInGermany(new Date(storno?.issuedAt ?? ''))).toBe('2026-12-01')
   })
 
   it('mirrors a price per hundred with its price unit (#456)', async () => {
@@ -421,9 +465,11 @@ describe('cancelling an invoice', () => {
 
     expect(html).toContain(`<h1>Stornorechnung ${storno.number ?? ''}</h1>`)
     expect(html).toContain(
-      `Hiermit stornieren wir die Rechnung ${invoice.number ?? ''} vom 18.09.2026 in voller Höhe.`,
+      `Hiermit stornieren wir die Rechnung ${invoice.number ?? ''} vom ${germanDay(invoice.documentDate)} in voller Höhe.`,
     )
-    expect(html).toContain(`<th>Zur Rechnung</th><td>${invoice.number ?? ''} vom 18.09.2026</td>`)
+    expect(html).toContain(
+      `<th>Zur Rechnung</th><td>${invoice.number ?? ''} vom ${germanDay(invoice.documentDate)}</td>`,
+    )
     // 1.240,00 € and 6,5 hours at 78,00 € come to 1.747,00 € net, 2.078,93 €
     // with 19 %, and the cancellation takes all of it back.
     expect(html).toMatch(/Gesamtbetrag<\/td><td class="figure">-2\.078,93\s€/)
@@ -443,7 +489,7 @@ describe('cancelling an invoice', () => {
     const html = jobs.at(-1)?.html ?? ''
 
     expect(html).toContain(
-      `zurückgenommener Abzug der Abschlagsrechnung ${first.number ?? ''} vom 18.09.2026`,
+      `zurückgenommener Abzug der Abschlagsrechnung ${first.number ?? ''} vom ${germanDay(first.documentDate)}`,
     )
     expect(html).not.toContain('abzüglich Abschlagsrechnung')
     // What a progress invoice calls the work so far, its cancellation calls

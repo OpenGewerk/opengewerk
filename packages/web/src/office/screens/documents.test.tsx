@@ -8,6 +8,7 @@ import type {
   RoleKey,
 } from '@opengewerk/domain'
 import { lineNetCents, receivedShare } from '@opengewerk/domain'
+import { date, today } from '@opengewerk/platform-web/format'
 import { SyncProvider, openLocalStore } from '@opengewerk/platform-web/sync'
 import type { DirectWriter, PullResult, SyncTransport } from '@opengewerk/platform-web/sync'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -1084,6 +1085,45 @@ describe('issuing', () => {
       await screen.findByText('Die Anschrift des Betriebs fehlt (§ 14 Abs. 4 Nr. 1 UStG).'),
     ).toBeDefined()
     expect(screen.getByText('Der Leistungszeitraum fehlt (§ 14 Abs. 4 Nr. 6 UStG).')).toBeDefined()
+  })
+
+  it('says that an invoice drafted on another day is issued with the day of its issue (#1039)', async () => {
+    await mount('/belege/d-9', {
+      documents: [document({ id: 'd-9', kind: 'final_invoice', documentDate: '2026-09-21' })],
+      document_lines: [line('l-1', 1, { documentId: 'd-9' })],
+    })
+
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Festschreiben' }))
+
+    expect(
+      screen.getByText(
+        `Eine Rechnung trägt den Tag, an dem sie festgeschrieben wird (§ 14 Abs. 4 Satz 1 Nr. 3 UStG): Sie bekommt den ${date(today())} als Belegdatum, nicht den 21.09.2026 aus dem Entwurf.`,
+      ),
+    ).toBeDefined()
+  })
+
+  it('says nothing of the date for an invoice drafted today (#1039)', async () => {
+    await mount('/belege/d-9', {
+      documents: [document({ id: 'd-9', kind: 'final_invoice', documentDate: today() })],
+      document_lines: [line('l-1', 1, { documentId: 'd-9' })],
+    })
+
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Festschreiben' }))
+
+    expect(screen.getByRole('button', { name: 'Jetzt festschreiben' })).toBeDefined()
+    expect(screen.queryByText(/als Belegdatum/)).toBeNull()
+  })
+
+  it('keeps the date of a quote, and says nothing of it (#1039)', async () => {
+    await mount('/belege/d-1', {
+      documents: [document({ documentDate: '2026-09-21' })],
+      document_lines: [line('l-1', 1)],
+    })
+
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Festschreiben' }))
+
+    expect(screen.getByRole('button', { name: 'Jetzt festschreiben' })).toBeDefined()
+    expect(screen.queryByText(/als Belegdatum/)).toBeNull()
   })
 
   it('lists every instruction that lacks something, although they share their detail', async () => {

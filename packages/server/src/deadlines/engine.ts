@@ -53,6 +53,8 @@ export type StatusHandler = (
   tx: TenantTransaction,
   deadline: DeadlineRow,
   today: IsoDate,
+  /** The moment `today` is the day of, for an issue the handler writes. */
+  now: Date,
 ) => Promise<void>
 
 /**
@@ -223,7 +225,9 @@ function bound(
         // The day the handler runs on, not the one the pass of the business
         // began on: a pass that began before midnight would date a recurring
         // invoice it makes after midnight the day before (#1017).
-        await handler(tx, deadline, berlinClock(job.now ? job.now() : new Date()).day)
+        const now = job.now ? job.now() : new Date()
+
+        await handler(tx, deadline, berlinClock(now).day, now)
       },
       customer_reminder: async ({ tx, tenantId, kind, deadline, responsible, now }) => {
         await remindCustomer(tx, { tenantId, kind, deadline, responsible, now })

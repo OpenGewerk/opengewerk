@@ -1,5 +1,6 @@
 import type { DeductionContent, DocumentKind, MissingDetail } from '@opengewerk/domain'
 import { Button } from '@opengewerk/platform-web'
+import { date, today } from '@opengewerk/platform-web/format'
 import { NoteBox } from '@opengewerk/platform-web/office'
 import { RequestRefused, useSync } from '@opengewerk/platform-web/sync'
 import { useQueryClient } from '@tanstack/react-query'
@@ -42,9 +43,15 @@ export function IssuePanel({
   documentId,
   deductions,
   then,
+  redatedFrom,
   onDone,
 }: {
   readonly documentId: string
+  /**
+   * The date of an invoice's draft when it is not today: issued, it carries
+   * the day of its issue instead (#1039), and the panel says so first.
+   */
+  readonly redatedFrom?: string
   /** The progress invoices a final invoice takes off, and nothing for any other document. */
   readonly deductions: readonly DeductionContent[]
   /** What to make out of the document once it is issued, and open. */
@@ -208,6 +215,13 @@ export function IssuePanel({
         Festschreiben vergibt die nächste Nummer. Danach lässt sich der Beleg nicht mehr ändern;
         soll sich etwas ändern, entsteht dafür ein neuer Beleg.
       </StepText>
+      {redatedFrom === undefined ? null : (
+        <StepText muted>
+          {'Eine Rechnung trägt den Tag, an dem sie festgeschrieben wird (§ 14 Abs. 4 Satz 1 Nr. 3 ' +
+            `UStG): Sie bekommt den ${date(today())} als Belegdatum, nicht den ${date(redatedFrom)} ` +
+            'aus dem Entwurf.'}
+        </StepText>
+      )}
       {then ? (
         <StepText muted>
           {`Eine ${documentKindLabel[then]} entsteht aus einem festgeschriebenen Beleg. Nach dem ` +

@@ -22,8 +22,8 @@ import { invoiceable, readyToInvoice } from './test-invoice.js'
 
 /**
  * The recurring invoices of maintenance contracts paid per period (#295): one
- * per period and never two, dated on the day it is made and never before the
- * first day of its period, taxed by the rate of the period's end (#1017), the
+ * per period and never two, dated on the day it is made, also ahead of its
+ * period, taxed by the rate of the period's end (#1017), the
  * first of a contract a draft and the next issued by nobody where the contract
  * wants it, and those sent to the customer once.
  */
@@ -221,6 +221,48 @@ describe('the recurring invoices of a contract (#295)', () => {
     )
 
     expect((await invoicesOf(made)).map((invoice) => invoice.document_date)).toEqual([tomorrow])
+  })
+
+  /**
+   * Made ahead of its period, with a lead on its deadline, and issued by the
+   * office before the period begins: dated on the day it is made and on the
+   * day of its issue, not on the first day of the period, which has not come
+   * yet (§ 14 Abs. 4 Satz 1 Nr. 3 UStG, #1039).
+   */
+  it('are dated on the day of their issue when a lead makes one ahead of its period', async () => {
+    const startsOn = addDays(today, 3)
+    const made = await contract(startsOn)
+
+    // The first pass finds the deadline, the second runs it with its lead.
+    await run(1)
+
+    const { rowCount } = await admin.query(
+      `update deadlines set lead_days = 7 where kind = 'maintenance.invoice' and source_id = $1`,
+      [made],
+    )
+
+    expect(rowCount).toBe(1)
+    await run(1)
+
+    const [first] = await invoicesOf(made)
+
+    expect([first?.status, first?.document_date]).toEqual(['draft', today])
+
+    // Dated on the first day of the period, as before, the draft would be
+    // dated anew by the issuing; this holds the issuing to today on its own.
+    await admin.query(`update documents set document_date = $1 where id = $2`, [
+      startsOn,
+      first?.id,
+    ])
+
+    await request(app.getHttpServer())
+      .post(`/documents/${String(first?.id)}/issue`)
+      .set('x-test-identity', office())
+      .expect(201)
+
+    expect(
+      (await invoicesOf(made)).map((invoice) => [invoice.status, invoice.document_date]),
+    ).toEqual([['issued', today]])
   })
 
   it('stay drafts without the wish of the contract, and so does a period cut short by its end', async () => {
