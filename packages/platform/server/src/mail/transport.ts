@@ -153,49 +153,51 @@ export function smtpTransport(
     connectionTimeout: timeouts.connection,
     greetingTimeout: timeouts.greeting,
     socketTimeout: timeouts.socket,
+    // A connection that ends is torn down at once. Ended the gentle way, the
+    // socket would still hand the server what is waiting in it, and after the
+    // deadline of a message that can be its last line.
+    socketCloseTimeout: 0,
     disableFileAccess: true,
     disableUrlAccess: true,
   })
 
   return {
     async send(mail) {
-      const sending = transport.sendMail({
-        from: { name: mail.from.name, address: mail.from.address },
-        replyTo: mail.replyTo ?? undefined,
-        to: mail.to.name ? { name: mail.to.name, address: mail.to.address } : mail.to.address,
-        subject: mail.subject,
-        text: mail.text,
-        attachments: mail.attachments.map((attachment) => ({
-          filename: attachment.filename,
-          content: Buffer.from(attachment.content),
-          contentType: attachment.contentType,
-        })),
-      })
-      // Settled later or never once the deadline has answered; nobody waits
-      // for it then, and its end is no failure of the process.
-      sending.catch(() => undefined)
-
-      let deadline: NodeJS.Timeout | undefined
+      // The deadline ends the conversation with the server, not only the wait
+      // for it: nodemailer drops the connection of a send that is called off,
+      // and a server that would have taken the message after the deadline
+      // gets nothing more (opengewerk#1036).
+      const deadline = new AbortController()
+      const timer = setTimeout(() => {
+        deadline.abort()
+      }, timeouts.whole ?? defaultTimeouts.whole)
 
       try {
-        await Promise.race([
-          sending,
-          new Promise<never>((_, reject) => {
-            deadline = setTimeout(() => {
-              reject(
-                new MailDeliveryError(
-                  'Der Mailserver hat die Nachricht nicht in der Zeit angenommen, die eine Nachricht hat.',
-                  'ETIMEDOUT',
-                  null,
-                ),
-              )
-            }, timeouts.whole ?? defaultTimeouts.whole)
-          }),
-        ])
+        await transport.sendMail({
+          from: { name: mail.from.name, address: mail.from.address },
+          replyTo: mail.replyTo ?? undefined,
+          to: mail.to.name ? { name: mail.to.name, address: mail.to.address } : mail.to.address,
+          subject: mail.subject,
+          text: mail.text,
+          attachments: mail.attachments.map((attachment) => ({
+            filename: attachment.filename,
+            content: Buffer.from(attachment.content),
+            contentType: attachment.contentType,
+          })),
+          signal: deadline.signal,
+        })
       } catch (error) {
+        if (deadline.signal.aborted) {
+          throw new MailDeliveryError(
+            'Der Mailserver hat die Nachricht nicht in der Zeit angenommen, die eine Nachricht hat.',
+            'ETIMEDOUT',
+            null,
+          )
+        }
+
         throw asDeliveryError(error)
       } finally {
-        clearTimeout(deadline)
+        clearTimeout(timer)
       }
     },
     async verify() {

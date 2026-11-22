@@ -283,9 +283,8 @@ export const closingTransitionMail =
  * commit), fifteen seconds for the name of the server (`destinationOf`) and
  * two minutes for the message (`whole` in `smtpTransport`): 14 minutes 45
  * seconds at the most, so that the twenty leave room and are not to be cut.
- * The two minutes end the wait for the server, not yet the conversation with
- * it: a server that takes the message only after them can still have it
- * after midnight (opengewerk#1036).
+ * The two minutes end the conversation with the server as well, not only the
+ * wait for it (opengewerk#1036).
  */
 const transmittingAhead = 20 * 60 * 1000
 

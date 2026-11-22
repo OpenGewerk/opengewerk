@@ -124,6 +124,29 @@ describe('a message', () => {
     expect(performance.now() - started).toBeLessThan(3000)
   })
 
+  /**
+   * A server that answers every step in time, only DATA later than the time a
+   * message has. Waiting less was not enough: nodemailer went on in the
+   * background and the message arrived after the outbox had counted it as not
+   * sent, to go out a second time (opengewerk#1036).
+   */
+  it('reaches the server no more once the time a message has is over', async () => {
+    const slow = await fakeSmtpServer({ slowData: 600 })
+    server = slow
+    const transport = smtpTransport(settings(slow.port), { ...short, socket: 10_000, whole: 300 })
+
+    const failure = await failureOf(transport.send(letter))
+
+    expect(failure.code).toBe('ETIMEDOUT')
+    expect(failure.permanent).toBe(false)
+
+    await new Promise((resolve) => setTimeout(resolve, 1_200))
+    transport.close()
+
+    expect(slow.received).toEqual([])
+    expect(slow.open()).toBe(0)
+  })
+
   it('is refused for now when nothing listens on the port', async () => {
     const transport = smtpTransport(settings(await closedPort()), short)
 
