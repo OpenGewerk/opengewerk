@@ -57,7 +57,7 @@ import {
   signedDocumentMessage,
   taskDueMessage,
 } from './templates.js'
-import { customerRestricted } from '../privacy/customer-erasure.js'
+import { customerDeleted, customerRestricted } from '../privacy/customer-erasure.js'
 
 /**
  * Something that happened and may be worth a message.
@@ -558,7 +558,13 @@ export async function documentToCustomer(
       .where(and(eq(documents.id, notification.documentId), isNull(documents.deletedAt)))
 
     // A customer restricted on a request for deletion gets no mail (#845).
-    if (!document || (await customerRestricted(tx, document.customerId))) {
+    // Nor does a deleted one get an invoice that went out by itself (#1065);
+    // what the office sends by hand goes as it did.
+    if (
+      !document ||
+      (await customerRestricted(tx, document.customerId)) ||
+      (notification.requestedBy === null && (await customerDeleted(tx, document.customerId)))
+    ) {
       return []
     }
 
@@ -731,8 +737,14 @@ export async function signedDocument(
       .from(customers)
       .where(eq(customers.id, document.customerId))
 
-    // A customer restricted on a request for deletion gets no mail (#845).
-    if (!signature || !customer?.email || (await customerRestricted(tx, document.customerId))) {
+    // A customer restricted on a request for deletion gets no mail (#845),
+    // and a deleted one none written by itself (#1065).
+    if (
+      !signature ||
+      !customer?.email ||
+      (await customerRestricted(tx, document.customerId)) ||
+      (await customerDeleted(tx, document.customerId))
+    ) {
       return []
     }
 

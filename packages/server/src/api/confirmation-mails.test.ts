@@ -386,8 +386,8 @@ describe('a confirmation of an appointment (#315)', () => {
       'customer_reminder',
       `customer_reminder:e_check:${customerId}:${job}:2031-11-08`,
     )
-    // Without an appointment of its own: one made here would have the pass
-    // write its confirmation only after the deletion.
+    // Without an appointment of its own: for one made here the pass writes
+    // no confirmation after the deletion (#1065), and this is about what waits.
     const confirmed = await waiting('appointment_confirmation', `appointment:${job}:deleted`)
 
     await http().delete(`/customers/${customerId}`).set('x-test-identity', office()).expect(200)
@@ -406,6 +406,21 @@ describe('a confirmation of an appointment (#315)', () => {
         last_error: expect.stringContaining(deletedCustomerMail) as unknown,
       })),
     )
+  })
+
+  /**
+   * An appointment of a customer deleted before the pass looked at it
+   * (#1065): the business writes the confirmation by itself, and not to a
+   * customer who is gone.
+   */
+  it('is not written to a customer deleted before the pass looked at it', async () => {
+    const customerId = await aCustomer()
+    const made = await anAppointment(await aJob(customerId))
+
+    await http().delete(`/customers/${customerId}`).set('x-test-identity', office()).expect(200)
+
+    expect(await cycle()).toEqual([])
+    expect(await customersOfMails('appointment_id', made.id)).toEqual([])
   })
 
   /**
@@ -585,6 +600,16 @@ describe('a confirmation of a service call (#315)', () => {
     expect(sent).toHaveLength(1)
     expect(sent[0]?.text).not.toContain(instructionsSentence)
     expect(sent[0]?.attachments ?? []).toEqual([])
+  })
+
+  it('is not written to a customer deleted before the pass looked at it (#1065)', async () => {
+    const customerId = await aCustomer()
+    const job = await aJob(customerId, 'service')
+
+    await http().delete(`/customers/${customerId}`).set('x-test-identity', office()).expect(200)
+
+    expect(await cycle()).toEqual([])
+    expect(await customersOfMails('job_id', job)).toEqual([])
   })
 
   it('leaves the card of the instructions to them: a confirmation of an appointment is none', async () => {

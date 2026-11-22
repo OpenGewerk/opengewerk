@@ -19,7 +19,8 @@ const issuedWithinDays = 7
  *
  * An invoice whose customer has no address, or whose e-invoice the law
  * requires and which still lacks something, is not sent; the office sees it
- * among the documents and sends it once it can.
+ * among the documents and sends it once it can. Nor is one to a customer
+ * deleted since (#1065).
  */
 export async function contractInvoicesToSend(
   database: Database,
@@ -42,6 +43,7 @@ export async function contractInvoicesToSend(
           isNull(documents.deletedAt),
           eq(maintenanceContracts.issueByItself, true),
           isNotNull(customers.email),
+          isNull(customers.deletedAt),
           gte(documents.issuedAt, since),
           sql`not exists (
             select 1 from ${mailOutbox}

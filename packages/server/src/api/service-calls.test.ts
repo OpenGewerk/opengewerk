@@ -562,6 +562,23 @@ describe('the instructions by mail', () => {
     expect((await instructions(job, office())).mails).toEqual([])
   })
 
+  it('go nowhere for a customer deleted before the pass looked at it (#1065)', async () => {
+    const { customer, job } = await aCall()
+    const { fingerprint } = await instructions(job)
+
+    // What the job sent before goes out first, so that this pass is about
+    // the instructions.
+    await cycle(recording().transport)
+    await push(app, technician(), [aRequest(job, fingerprint).operation])
+    await http().delete(`/customers/${customer}`).set('x-test-identity', office()).expect(200)
+
+    const { sent, transport } = recording()
+
+    await cycle(transport)
+
+    expect(sent.filter((mail) => mail.subject.startsWith('Belehrungen'))).toEqual([])
+  })
+
   it('are not printed for a job given to another customer after the pass looked at it', async () => {
     const { job } = await aCall()
     const { fingerprint } = await instructions(job)

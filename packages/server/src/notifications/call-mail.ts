@@ -12,7 +12,7 @@ import { issuerOf } from '../documents/content.js'
 import { callOf } from '../service-calls/instructions.js'
 import { causeOf, nameOf, type Notification, signatureFor } from './notify.js'
 import { callInstructionsMessage } from './templates.js'
-import { customerRestricted } from '../privacy/customer-erasure.js'
+import { customerDeleted, customerRestricted } from '../privacy/customer-erasure.js'
 
 /**
  * How far back the job looks for requests signed at the door that have not
@@ -158,8 +158,14 @@ export async function signedEarlyStartMail(
 
     const call = request ? await callOf(tx, request.jobId) : null
 
-    // A customer restricted on a request for deletion gets no mail (#845).
-    if (!request || !call?.customerEmail || (await customerRestricted(tx, call.customerId))) {
+    // A customer restricted on a request for deletion gets no mail (#845),
+    // and a deleted one none written by itself (#1065).
+    if (
+      !request ||
+      !call?.customerEmail ||
+      (await customerRestricted(tx, call.customerId)) ||
+      (await customerDeleted(tx, call.customerId))
+    ) {
       return []
     }
 
