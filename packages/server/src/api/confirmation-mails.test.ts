@@ -363,7 +363,7 @@ describe('a confirmation of an appointment (#315)', () => {
   it('wait unsent once their customer is deleted, of every kind', async () => {
     const customerId = await aCustomer()
     const job = await aJob(customerId)
-    const made = await anAppointment(job)
+    // Written well before the customer is deleted.
     const waiting = async (
       kind: string,
       cause: string,
@@ -372,9 +372,9 @@ describe('a confirmation of an appointment (#315)', () => {
       const { rows } = await admin.query<{ id: string }>(
         `insert into mail_outbox
            (tenant_id, kind, cause, sender_name, recipient_address, recipient_name, subject, body,
-            job_id, appointment_id, customer_id)
+            job_id, appointment_id, customer_id, created_at)
          values ($1, $2, $3, 'Elektro Nord GmbH', 'arslan@example.de', 'Familie Arslan', 'Betreff',
-                 'Text', $4, $5, $6)
+                 'Text', $4, $5, $6, '2020-01-01T00:00:00Z')
          returning id`,
         [north.id, kind, cause, names.jobId ?? null, names.appointmentId ?? null, customerId],
       )
@@ -386,9 +386,9 @@ describe('a confirmation of an appointment (#315)', () => {
       'customer_reminder',
       `customer_reminder:e_check:${customerId}:${job}:2031-11-08`,
     )
-    const confirmed = await waiting('appointment_confirmation', `appointment:${made.id}:deleted`, {
-      appointmentId: made.id,
-    })
+    // Without an appointment of its own: one made here would have the pass
+    // write its confirmation only after the deletion.
+    const confirmed = await waiting('appointment_confirmation', `appointment:${job}:deleted`)
 
     await http().delete(`/customers/${customerId}`).set('x-test-identity', office()).expect(200)
 

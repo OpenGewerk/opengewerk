@@ -387,6 +387,27 @@ describe('an issued invoice', () => {
     expect(message?.lastError).toContain(deletedCustomerMail)
   })
 
+  /**
+   * Written after its customer was deleted, the office sends it on purpose,
+   * and it goes as it did before (#1055, the review): only a message that
+   * was waiting when the customer was deleted is given up.
+   */
+  it('goes to a customer deleted before it was written', async () => {
+    const customerId = await customer(person)
+    const id = await issuedInvoice(customerId)
+
+    await http().delete(`/customers/${customerId}`).set('x-test-identity', office()).expect(200)
+    await sending(id).expect(202)
+
+    const post = recording()
+
+    expect(await cycle(post.transport)).toMatchObject({ sent: 1 })
+
+    const [message] = await messagesOf(id)
+
+    expect(message?.status).toBe('sent')
+  })
+
   it('waits while the renderer is down, and goes once it is back', async () => {
     const id = await issuedInvoice(await customer(person))
 

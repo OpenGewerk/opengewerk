@@ -387,8 +387,9 @@ export async function refuseLapsedTransition(
  * has, which a confirmation for the new one does not cover. And no message
  * of any kind to a customer deleted since it was written (#1055): deleting
  * one asks nothing about its documents or jobs, so a document, a
- * confirmation or a reminder may still wait for it. Given up on with the
- * reason, like a message whose document has no file to give.
+ * confirmation or a reminder may still wait for it. A message written after
+ * the deletion goes as it did before. Given up on with the reason, like a
+ * message whose document has no file to give.
  */
 export async function refuseWithheldCustomerMail(
   database: Database,
@@ -415,12 +416,14 @@ export async function refuseWithheldCustomerMail(
         return restrictedCustomerMail
       }
 
-      const [stillThere] = await tx
-        .select({ id: customers.id })
+      // Deleted after the message was written (#1055). One written after
+      // the deletion, which the office sends on purpose, goes as before.
+      const [held] = await tx
+        .select({ deletedAt: customers.deletedAt })
         .from(customers)
-        .where(and(eq(customers.id, customerId as CustomerId), isNull(customers.deletedAt)))
+        .where(eq(customers.id, customerId as CustomerId))
 
-      if (!stillThere) {
+      if (held?.deletedAt != null && held.deletedAt > row.createdAt) {
         return deletedCustomerMail
       }
 
@@ -437,7 +440,7 @@ export async function refuseWithheldCustomerMail(
         .from(customers)
         .where(and(eq(customers.id, customerId as CustomerId), isNull(customers.deletedAt)))
 
-      // Read in the same transaction as the check above, so this is there.
+      // A customer deleted since: no reminder is ever written to one.
       if (!customer) {
         return deletedCustomerMail
       }
