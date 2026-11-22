@@ -1,12 +1,12 @@
 import { otherAccountSignedIn, workingAsHeader, workingInHeader } from '@opengewerk/platform-domain'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { Client, type Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import type { Database } from '../database/database.js'
 import { newId } from '../database/identifier.js'
-import { auditEntries, authRateLimits, authUsers, invitations } from '../schema.js'
+import { auditEntries, authRateLimits, authUsers, invitations, tenantSessions } from '../schema.js'
 import { removeAccountData, revokeDeviceOf, setBlocked } from './administration.js'
 import { authenticationPath } from './authentication.js'
 import { mintToken } from './invitation.js'
@@ -1831,9 +1831,9 @@ describe('the work of a session a new password ends', () => {
 
     await instance.chooseTenant(working, north.id)
 
-    // At work when the password takes it out, and run out five seconds
-    // later, by the time a slow commit is through.
-    const outAt = new Date(Date.now() + 5_000)
+    // At work when the password takes it out, and run out a moment later,
+    // by the time a slow commit is through.
+    const outAt = new Date(Date.now() + 1_500)
 
     await admin.query('update auth_sessions set expires_at = $2 where user_id = $1', [
       userId,
@@ -1847,11 +1847,20 @@ describe('the work of a session a new password ends', () => {
       const config = args[0] as string | { text?: string } | undefined
       const text = typeof config === 'string' ? config : (config?.text ?? '')
 
+      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
       if (/^commit/i.test(text)) {
         vi.setSystemTime(new Date(outAt.getTime() + 10_000))
+
+        // The clock of the database past the expiry too before the commit
+        // goes: a time read from it afterwards would count the session as run
+        // out. `Date` is faked, the clock of `performance` is not.
+        const waitFor = outAt.getTime() + 300 - (performance.timeOrigin + performance.now())
+
+        return new Promise((resolve) => setTimeout(resolve, Math.max(0, waitFor))).then(forward)
       }
 
-      return (query as (...given: unknown[]) => unknown).apply(this, args)
+      return forward()
     } as typeof query
 
     try {
@@ -1864,6 +1873,13 @@ describe('the work of a session a new password ends', () => {
     expect(await stretchesOf(userId)).toEqual([
       { open: false, reason: 'password.reset', user: userId },
     ])
+
+    const { rows } = await admin.query<{ before: boolean }>(
+      'select ended_at < $2 as before from tenant_sessions where user_id = $1',
+      [userId, outAt],
+    )
+
+    expect(rows).toEqual([{ before: true }])
   })
 
   it('ends as run out, and in no name, when a session that ran out comes back to set a password', async () => {
@@ -2172,6 +2188,16 @@ describe('work that cannot be closed when its session ends', () => {
       const working = await atWork(email)
       const query = Client.prototype.query
       let state: 'before' | 'away' | 'gone' | 'back' | 'done' = 'before'
+      let switching = false
+      const switchTo = async (tenantId: string) => {
+        switching = true
+
+        try {
+          await instance.chooseTenant(working.cookies, tenantId)
+        } finally {
+          switching = false
+        }
+      }
 
       // Into the south once the sweep has read which sessions have a stretch
       // open in the north, and back once it has asked where they work.
@@ -2182,11 +2208,17 @@ describe('work that cannot be closed when its session ends', () => {
           unknown[] | undefined
         const forward = () => (query as (...given: unknown[]) => Promise<unknown>).apply(this, args)
 
+        // Neither switch closes a stretch, as when its close fails: what ends
+        // the stretch left behind in the north is the sweep's own work.
+        if (switching && /^update "tenant_sessions"/i.test(text)) {
+          return Promise.reject(new Error('The close of a switch, refused in this test'))
+        }
+
         if (state === 'before' && when.reads.test(text) && (values ?? []).includes(north.id)) {
           state = 'away'
 
           return forward().then(async (result) => {
-            await instance.chooseTenant(working.cookies, south.id)
+            await switchTo(south.id)
             state = 'gone'
 
             return result
@@ -2197,7 +2229,7 @@ describe('work that cannot be closed when its session ends', () => {
           state = 'back'
 
           return forward().then(async (result) => {
-            await instance.chooseTenant(working.cookies, north.id)
+            await switchTo(north.id)
             state = 'done'
 
             return result
@@ -2807,6 +2839,59 @@ describe('an access past its last day', () => {
     expect(await endsIn(working.id, north.id)).toEqual(
       Array.from({ length: 5 }, () => ({ at: over, reason: 'membership.end' })),
     )
+  })
+
+  /**
+   * A piece whose stretch another close holds, and then closes first, closes
+   * none of it. The pass goes on with the rest instead of leaving them to the
+   * next one (#1047).
+   */
+  it('goes on past a piece that another close took first', async () => {
+    const { userId, working } = await fiveStretches('letzter-tag-stueck-genommen@example.de', [
+      north.id,
+    ])
+
+    await lastDayAgo(north.id, userId, 2)
+
+    // The stretch the first piece chooses, in the order the pieces go.
+    const { rows } = await admin.query<{ id: string }>(
+      `select id from tenant_sessions where session_id = $1 and tenant_id = $2
+        order by started_at, id limit 1`,
+      [working.id, north.id],
+    )
+    const first = (rows[0]?.id ?? '') as (typeof tenantSessions.$inferSelect)['id']
+    let written: () => void = () => undefined
+    let release: () => void = () => undefined
+    const isWritten = new Promise<void>((resolve) => {
+      written = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    // Another close of that stretch, written and not committed yet.
+    const other = instance.database.forTenant(
+      { tenantId: north.id, reason: 'session.expire' },
+      async (tx) => {
+        await tx
+          .update(tenantSessions)
+          .set({ endedAt: sql`clock_timestamp()` })
+          .where(eq(tenantSessions.id, first))
+        written()
+        await released
+      },
+    )
+
+    await isWritten
+
+    const pass = endPastLastDays(instance.database, 1)
+
+    setTimeout(release, 500)
+    await Promise.all([pass, other])
+
+    const ends = await endsIn(working.id, north.id)
+
+    expect(ends.filter((end) => end.at === null)).toEqual([])
+    expect(ends.filter((end) => end.reason === 'membership.end')).toHaveLength(4)
   })
 
   it('closes in pieces every stretch before a block of an access that ended', async () => {
