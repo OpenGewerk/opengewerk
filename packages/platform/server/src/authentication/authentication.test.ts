@@ -2676,6 +2676,14 @@ describe('an access past its last day', () => {
     return rows.map((row) => ({ at: row.ended_at?.getTime() ?? null, reason: row.reason }))
   }
 
+  it('refuses pieces of a size below 1 before it opens anything', async () => {
+    await expect(endPastLastDays(instance.database, 0)).rejects.toThrow(RangeError)
+    await expect(endOrphanedStretches(instance.database, 0)).rejects.toThrow(RangeError)
+    await expect(endPastLastDayOf(instance.database, north.id, 'niemand', 0)).rejects.toThrow(
+      RangeError,
+    )
+  })
+
   it('closes in pieces every stretch of an access that ended, however many a session opened', async () => {
     const { userId, working } = await fiveStretches('letzter-tag-stuecke@example.de', [north.id])
 

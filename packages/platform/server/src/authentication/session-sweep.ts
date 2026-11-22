@@ -509,6 +509,8 @@ export async function endPastLastDays(
   database: Database,
   batch: number = sweepBatch,
 ): Promise<LastDaysPass> {
+  pieceSize(batch)
+
   let closed = 0
   const held: TenantId[] = []
   let failure: unknown
@@ -558,6 +560,8 @@ export async function endPastLastDayOf(
   userId: string,
   batch: number = sweepBatch,
 ): Promise<number> {
+  pieceSize(batch)
+
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const closed = await endPastLastDayOnce(database, tenantId, userId, batch)
 
@@ -799,10 +803,12 @@ async function endPastLastDaysIn(
 
 /**
  * Runs a close of stretches again and again, at most `batch` of them each
- * time, until one closes fewer: the people or the session a close is for are
+ * time, until one closes none: the people or the session a close is for are
  * bounded, the stretches they have open are not, and a statement over all of
- * them at once could outlast the time a statement has (opengewerk#1030). Says
- * how many it closed in all.
+ * them at once could outlast the time a statement has (opengewerk#1030). Not
+ * until one closes fewer: a stretch another way closed meanwhile is chosen and
+ * then not closed here, and the rest would stay open. Says how many it closed
+ * in all.
  */
 async function inPieces(
   batch: number,
@@ -815,10 +821,19 @@ async function inPieces(
 
     closed += piece.length
 
-    if (piece.length < batch) {
+    if (piece.length === 0) {
       return closed
     }
   }
+}
+
+/** A size for the pieces, before anything is opened: one below 1 would never end. */
+function pieceSize(batch: number): number {
+  if (!Number.isInteger(batch) || batch < 1) {
+    throw new RangeError(`A batch is a whole number of at least 1, not ${String(batch)}`)
+  }
+
+  return batch
 }
 
 /**
@@ -834,6 +849,8 @@ export async function endOrphanedStretches(
   database: Database,
   batch: number = sweepBatch,
 ): Promise<number> {
+  pieceSize(batch)
+
   let closed = 0
 
   for (const tenantId of await everyTenant(database)) {
