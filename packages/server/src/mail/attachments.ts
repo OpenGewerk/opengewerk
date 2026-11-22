@@ -277,15 +277,17 @@ export const closingTransitionMail =
  * How far ahead of the moment it asks the outbox looks for the end of a
  * transition, so that a message that passes the question cannot reach the
  * mail server after midnight. After the last question the way is bounded:
- * the question's own transaction (half a minute for a connection, two
- * minutes for each of its three statements), fifteen seconds for the name of
- * the server (`destinationOf`) and two minutes for the message (`whole` in
- * `smtpTransport`), under nine minutes together, so that the ten leave room
- * and are not to be cut. The two minutes end the wait for the server, not yet the
- * conversation with it: a server that takes the message only after them can
- * still have it after midnight (opengewerk#1036).
+ * the question's own transaction, half a minute for a connection and two
+ * minutes for each of its six statements (its begin, the settings of the
+ * business, the frozen content, the claim of the transition twice, its
+ * commit), fifteen seconds for the name of the server (`destinationOf`) and
+ * two minutes for the message (`whole` in `smtpTransport`): 14 minutes 45
+ * seconds at the most, so that the twenty leave room and are not to be cut.
+ * The two minutes end the wait for the server, not yet the conversation with
+ * it: a server that takes the message only after them can still have it
+ * after midnight (opengewerk#1036).
  */
-const transmittingAhead = 10 * 60 * 1000
+const transmittingAhead = 20 * 60 * 1000
 
 /**
  * The day a message sent from this moment reaches the mail server by, at the
@@ -304,8 +306,9 @@ export function transmittedBy(now: Date): IsoDate {
  * again, for the day it reaches the mail server by (`transmittedBy`), before
  * the file is made and once more after, and gives the message up with the
  * reason rather than send it: that the transition ended, or, asked on the
- * day it ends (`askedOn`), that it ends before the message would arrive. A message whose invoice goes as an e-invoice,
- * or whose customer needs none, is not touched.
+ * day it ends (`askedOn`), that it ends before the message would arrive. A
+ * message whose invoice goes as an e-invoice, or whose customer needs none,
+ * is not touched.
  */
 export async function refuseLapsedTransition(
   database: Database,

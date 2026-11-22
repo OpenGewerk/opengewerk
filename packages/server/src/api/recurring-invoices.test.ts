@@ -1,6 +1,13 @@
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
-import { addDays, addMonths, berlinClock, type DocumentId, type TenantId } from '@opengewerk/domain'
+import {
+  addDays,
+  addMonths,
+  berlinClock,
+  berlinInstant,
+  type DocumentId,
+  type TenantId,
+} from '@opengewerk/domain'
 import { Database, newId } from '@opengewerk/platform-server'
 import type { Pool } from 'pg'
 import request from 'supertest'
@@ -197,6 +204,22 @@ describe('the recurring invoices of a contract (#295)', () => {
       .delete(`/maintenance-contracts/${made}`)
       .set('x-test-identity', office())
       .expect(409)
+  })
+
+  it('are dated the day they are made, also by a pass that began the day before (#1017)', async () => {
+    const startsOn = addMonths(today, -1)
+    const made = await contract(startsOn)
+    const tomorrow = addDays(today, 1)
+
+    // The pass of the business begins a second before midnight in Germany,
+    // and makes the invoice of the first period five seconds after it.
+    await runDeadlinesOf(
+      { database, now: () => new Date(berlinInstant(tomorrow, 0).getTime() + 5_000) },
+      north,
+      new Date(berlinInstant(today, 24 * 60).getTime() - 1_000),
+    )
+
+    expect((await invoicesOf(made)).map((invoice) => invoice.document_date)).toEqual([tomorrow])
   })
 
   it('stay drafts without the wish of the contract, and so does a period cut short by its end', async () => {

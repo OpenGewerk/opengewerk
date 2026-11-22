@@ -459,9 +459,10 @@ describe('an invoice to a business after the transition has ended', () => {
   })
 
   it('stays unsent when it would reach the mail server only after the transition ended (#1018)', async () => {
-    // Ten minutes before midnight on the last day: asked for, it may go as a
-    // PDF, but the outbox gives it up, since it could arrive after midnight.
-    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-12-31T23:52:00+01:00') })
+    // A quarter of an hour before midnight on the last day, within the twenty
+    // minutes the outbox looks ahead: asked for, it may go as a PDF, but the
+    // outbox gives it up, since it could arrive after midnight.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-12-31T23:45:00+01:00') })
 
     const asked = await issuedInvoice(await customer(lacking), north, december)
 

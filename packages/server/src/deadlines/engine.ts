@@ -213,14 +213,17 @@ function bound(
             : {}),
         })
       },
-      status: async ({ tx, kind, deadline, now }) => {
+      status: async ({ tx, kind, deadline }) => {
         const handler = handlers[kind.key]
 
         if (!handler) {
           throw new Error(`The deadline kind ${kind.key} changes a status and has no handler`)
         }
 
-        await handler(tx, deadline, berlinClock(now).day)
+        // The day the handler runs on, not the one the pass of the business
+        // began on: a pass that began before midnight would date a recurring
+        // invoice it makes after midnight the day before (#1017).
+        await handler(tx, deadline, berlinClock(job.now ? job.now() : new Date()).day)
       },
       customer_reminder: async ({ tx, tenantId, kind, deadline, responsible, now }) => {
         await remindCustomer(tx, { tenantId, kind, deadline, responsible, now })
