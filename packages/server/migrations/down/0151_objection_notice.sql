@@ -12,7 +12,8 @@ BEGIN
 	END IF;
 
 	ALTER TABLE customers FORCE ROW LEVEL SECURITY;
+	-- In the same block as the check: however the rollback runs its
+	-- statements, the column goes only when the check passed.
+	ALTER TABLE customers DROP COLUMN objection_notice_confirmed;
 END
 $$;
-
-ALTER TABLE "customers" DROP COLUMN "objection_notice_confirmed";

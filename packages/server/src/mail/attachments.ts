@@ -6,6 +6,8 @@ import {
   formatFor,
   type IsoDate,
   type JobId,
+  type CustomerId,
+  reminderStillHolds,
   RuleError,
   shippedRules,
 } from '@opengewerk/domain'
@@ -21,7 +23,7 @@ import type { DocumentFiles, MailedFile } from '../api/document-files.js'
 import { dutyOf } from '../api/e-invoice.controller.js'
 import { frozenContent } from '../documents/content.js'
 import { todayInGermany } from '../today.js'
-import { appointments, documents, jobs } from '../database/schema/index.js'
+import { appointments, customers, documents, jobs } from '../database/schema/index.js'
 import { customerRestricted } from '../privacy/customer-erasure.js'
 import { appointmentInvitation } from '../notifications/confirmation-mail.js'
 import {
@@ -247,6 +249,10 @@ export function withAppointmentInvitation(
 export const restrictedCustomerMail =
   'Der Kunde ist auf einen Antrag auf Löschung eingeschränkt. Die Nachricht geht deshalb nicht mehr hinaus.'
 
+/** Why a reminder whose ground no longer holds stays unsent (#1026). */
+export const lapsedReminderMail =
+  'Die Grundlage der Erinnerung gilt nicht mehr: Der Kunde hat abbestellt, oder seine Einwilligung oder die Bestätigung des Hinweises auf den Widerspruch fehlt jetzt. Die Nachricht geht deshalb nicht mehr hinaus.'
+
 /** Why a message about a job that belongs to another customer now stays unsent. */
 export const reassignedCustomerMail =
   'Der Auftrag gehört inzwischen zu einem anderen Kunden. Die Nachricht geht deshalb nicht mehr hinaus.'
@@ -357,8 +363,11 @@ export async function refuseLapsedTransition(
  * it was written (Art. 18 DSGVO): raising a message asks that already
  * (#845). And not when what it is about belongs to another customer now: a
  * job given to somebody else after the mail was written, whose details its
- * file would carry to the address of the first. Given up on with the reason,
- * like a message whose document has no file to give.
+ * file would carry to the address of the first. And not a reminder whose
+ * ground no longer holds (#1026): a customer who objected since, a consent
+ * taken back, a confirmation of the notice taken away, also one written
+ * before the update that asked for the confirmation. Given up on with the
+ * reason, like a message whose document has no file to give.
  */
 export async function refuseWithheldCustomerMail(
   database: Database,
@@ -377,8 +386,28 @@ export async function refuseWithheldCustomerMail(
 
       const customerId = row.customerId ?? current
 
-      return customerId !== null && (await customerRestricted(tx, customerId))
-        ? restrictedCustomerMail
+      if (customerId === null) {
+        return null
+      }
+
+      if (await customerRestricted(tx, customerId)) {
+        return restrictedCustomerMail
+      }
+
+      if (row.kind !== 'customer_reminder') {
+        return null
+      }
+
+      const [customer] = await tx
+        .select({
+          ground: customers.reminderGround,
+          confirmed: customers.objectionNoticeConfirmed,
+        })
+        .from(customers)
+        .where(eq(customers.id, customerId as CustomerId))
+
+      return customer && !reminderStillHolds(row.body, customer.ground, customer.confirmed)
+        ? lapsedReminderMail
         : null
     },
   )

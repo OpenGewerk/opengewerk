@@ -5,6 +5,7 @@ import {
   reminderGroundProblem,
   reminderGroundText,
   reminderSentence,
+  reminderStillHolds,
   reminderWay,
 } from './customer-reminder.js'
 
@@ -102,5 +103,23 @@ describe('the ground of a customer', () => {
     expect(reminderGroundText('existing_customer', day('2024-03-12'), false)).toBe(
       'Bestandskunde nach § 7 Abs. 3 UWG, seit 12.03.2024, Hinweis bei der Erhebung nicht bestätigt',
     )
+  })
+
+  /**
+   * A reminder written before holds as it leaves only while its ground does
+   * (#1026, CodeRabbit), the ground its text names.
+   */
+  it('holds as it leaves only while the ground its text names holds', () => {
+    const asCustomer = `Guten Tag.\n\n${reminderSentence('existing_customer', null)}`
+    const byConsent = `Guten Tag.\n\n${reminderSentence('consent', null)}`
+    const ofContract = `Guten Tag.\n\n${reminderSentence('existing_customer', 'WV-1')}`
+
+    expect(reminderStillHolds(asCustomer, 'existing_customer', true)).toBe(true)
+    expect(reminderStillHolds(asCustomer, 'existing_customer', false)).toBe(false)
+    expect(reminderStillHolds(asCustomer, 'consent', false)).toBe(false)
+    expect(reminderStillHolds(byConsent, 'consent', false)).toBe(true)
+    expect(reminderStillHolds(byConsent, null, false)).toBe(false)
+    expect(reminderStillHolds(ofContract, null, false)).toBe(true)
+    expect(reminderStillHolds(ofContract, 'objected', false)).toBe(false)
   })
 })

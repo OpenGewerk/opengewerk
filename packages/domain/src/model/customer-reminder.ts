@@ -124,6 +124,34 @@ export function reminderSentence(ground: ReminderGround | null, contract: string
 }
 
 /**
+ * Whether a reminder written before still may go, asked as it leaves (#1026,
+ * CodeRabbit): never to a customer who objected since, and one that rests on
+ * the consent or on section 7 (3) UWG only while that ground holds, the
+ * latter with the notice confirmed. The ground a reminder rests on is the one
+ * its text names (`reminderSentence`); one of a contract rests on the
+ * contract, which only an objection ends.
+ */
+export function reminderStillHolds(
+  text: string,
+  ground: ReminderGround | null,
+  objectionNoticeConfirmed: boolean,
+): boolean {
+  if (ground === 'objected') {
+    return false
+  }
+
+  if (text.includes(reminderSentence('consent', null))) {
+    return ground === 'consent'
+  }
+
+  if (text.includes(reminderSentence('existing_customer', null))) {
+    return ground === 'existing_customer' && objectionNoticeConfirmed
+  }
+
+  return true
+}
+
+/**
  * What is wrong with a ground and its day as a customer is to have them, or
  * null: a ground is one of the list or none, and a ground has the day it was
  * given, which none has not.

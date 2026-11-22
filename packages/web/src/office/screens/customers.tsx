@@ -1222,7 +1222,15 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
   }
 
   const set = (field: keyof CustomerDraft) => (value: string) => {
-    setDraft((current) => ({ ...current, [field]: value }))
+    setDraft((current) => ({
+      ...current,
+      [field]: value,
+      // The notice is confirmed for the address it was given with (#1026): a
+      // new one asks for it again.
+      ...(field === 'email' && value !== current.email
+        ? { objectionNoticeConfirmed: 'false' }
+        : {}),
+    }))
   }
   const back = () => {
     void navigate({ to: editing ? `/kunden/${customerId}` : '/' })
@@ -1430,8 +1438,9 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
                     <span>
                       Bei der Erhebung der Adresse auf das Widerspruchsrecht hingewiesen
                       <span className="block text-[13px] text-ink-muted">
-                        Am Tag unter „Seit“. Ohne diese Bestätigung geht als Bestandskunde keine
-                        Erinnerung hinaus (§ 7 Abs. 3 Nr. 4 UWG).
+                        Am Tag unter „Seit“, für die E-Mail-Adresse oben; eine neue Adresse braucht
+                        die Bestätigung neu. Ohne sie geht als Bestandskunde keine Erinnerung hinaus
+                        (§ 7 Abs. 3 Nr. 4 UWG).
                       </span>
                     </span>
                   </label>

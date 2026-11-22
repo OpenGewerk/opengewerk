@@ -16,7 +16,7 @@ import { userEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SyncClient } from '../../sync/client.js'
-import { CustomerList, CustomerScreen, NewCustomerScreen } from './customers.js'
+import { CustomerList, CustomerScreen, EditCustomerScreen, NewCustomerScreen } from './customers.js'
 import { aTenantChoice } from '../../session/test-tenants.js'
 
 /**
@@ -85,6 +85,11 @@ async function mount(path: string) {
         getParentRoute: () => root,
         path: '/kunden/$customerId',
         component: CustomerScreen,
+      }),
+      createRoute({
+        getParentRoute: () => root,
+        path: '/kunden/$customerId/bearbeiten',
+        component: EditCustomerScreen,
       }),
     ]),
     history: createMemoryHistory({ initialEntries: [path] }),
@@ -359,6 +364,81 @@ describe('the reminders of a customer (#316)', () => {
     expect(server.all('customers')[0]).toMatchObject({
       reminderGround: 'existing_customer',
       objectionNoticeConfirmed: true,
+    })
+  })
+
+  /**
+   * The notice is confirmed for the address it was given with (#1026,
+   * CodeRabbit): a new address empties the box, and the form sends what is
+   * ticked again.
+   */
+  it('empty the confirmation of the notice with a new address', async () => {
+    await mount('/kunden/neu')
+    const user = userEvent.setup()
+    const notice = () =>
+      screen.getByLabelText(
+        /Bei der Erhebung der Adresse auf das Widerspruchsrecht hingewiesen/,
+      ) as HTMLInputElement
+
+    await user.type(await screen.findByLabelText('Name'), 'Familie Albers')
+    await user.selectOptions(
+      screen.getByLabelText('Grundlage'),
+      'Bestandskunde nach § 7 Abs. 3 UWG',
+    )
+    await user.click(notice())
+    expect(notice().checked).toBe(true)
+
+    await user.type(screen.getByLabelText('E-Mail'), 'albers@example.com')
+    expect(notice().checked).toBe(false)
+
+    await user.click(notice())
+    await user.click(screen.getByRole('button', { name: 'Kunde anlegen' }))
+
+    await waitFor(() => {
+      expect(server.all('customers')).toHaveLength(1)
+    })
+    expect(server.all('customers')[0]).toMatchObject({
+      email: 'albers@example.com',
+      objectionNoticeConfirmed: true,
+    })
+  })
+
+  /**
+   * A customer of the business stored before the question: the office ticks
+   * the box and saves, and only that goes to the route, as every change of
+   * master data sends only what changed (#1026, the review).
+   */
+  it('send the confirmation alone for a customer of the business stored before', async () => {
+    server.put('customers', {
+      ...customer('c-1', 'Familie Gruber', 'private', 'Hamburg'),
+      email: 'gruber@example.com',
+      reminderGround: 'existing_customer',
+      reminderGroundOn: '2024-03-12',
+      objectionNoticeConfirmed: false,
+    })
+    const sent: Record<string, unknown>[] = []
+
+    server.patch = (entity, id, values) => {
+      sent.push({ ...values })
+      const current = server.all(entity).find((row) => row['id'] === id) ?? {}
+
+      server.put(entity, { ...current, ...values, version: Number(current['version'] ?? 1) + 1 })
+
+      return Promise.resolve()
+    }
+
+    await mount('/kunden/c-1/bearbeiten')
+    const user = userEvent.setup()
+
+    await user.click(
+      await screen.findByLabelText(
+        /Bei der Erhebung der Adresse auf das Widerspruchsrecht hingewiesen/,
+      ),
+    )
+    await user.click(screen.getByRole('button', { name: 'Speichern' }))
+
+    await waitFor(() => {
+      expect(sent).toEqual([{ objectionNoticeConfirmed: true }])
     })
   })
 

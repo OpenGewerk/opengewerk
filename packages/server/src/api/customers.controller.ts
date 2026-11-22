@@ -42,34 +42,54 @@ const writableFields = [
   'notes',
 ] as const
 
+/** What a customer holds of its ground for reminders before a write. */
+interface StoredGround {
+  readonly ground: string | null
+  readonly since: string | null
+  readonly confirmed: boolean
+}
+
+/** A customer that does not exist yet holds no ground. */
+const noGround: StoredGround = { ground: null, since: null, confirmed: false }
+
+/** Whether a write touches the ground for reminders, its day or the confirmation. */
+function touchesReminderGround(values: Record<string, unknown>): boolean {
+  return (
+    'reminderGround' in values ||
+    'reminderGroundOn' in values ||
+    'objectionNoticeConfirmed' in values
+  )
+}
+
 /**
- * A ground for reminders comes with its day (#316), both at once as the form
- * sends them, or neither: the one without the other is refused here with a
- * sentence, before the check of the table refuses it without one.
- *
- * The confirmation of the notice on the objection goes with them (#1026),
- * yes only for a customer of § 7 Abs. 3 UWG. Another ground takes one stored
- * before away; the same ground without it in the write leaves it, so that a
- * form of the version before does not take it away.
+ * A ground for reminders comes with its day (#316), and the confirmation of
+ * the notice on the objection only with a customer of § 7 Abs. 3 UWG
+ * (#1026). Checked against what the customer holds after the write, the
+ * stored values with the written ones over them: the office sends only the
+ * fields it changed (`writeDirectly`), so a write that only ticks the
+ * confirmation or only moves the day comes without the ground (#1026, the
+ * review). Another ground takes a confirmation stored before away; the same
+ * ground without it in the write leaves it, as a form of the version before
+ * sends it.
  */
-function requireReminderGround(values: Record<string, unknown>): void {
-  if (
-    !('reminderGround' in values) &&
-    !('reminderGroundOn' in values) &&
-    !('objectionNoticeConfirmed' in values)
-  ) {
+function requireReminderGround(
+  values: Record<string, unknown>,
+  stored: StoredGround = noGround,
+): void {
+  if (!touchesReminderGround(values)) {
     return
   }
 
-  if ('reminderGround' in values && values['reminderGround'] !== 'existing_customer') {
+  const ground = 'reminderGround' in values ? values['reminderGround'] : stored.ground
+  const since = 'reminderGroundOn' in values ? values['reminderGroundOn'] : stored.since
+
+  if ('reminderGround' in values && ground !== 'existing_customer') {
     values['objectionNoticeConfirmed'] ??= false
   }
 
-  const problem = reminderGroundProblem(
-    values['reminderGround'],
-    values['reminderGroundOn'],
-    values['objectionNoticeConfirmed'],
-  )
+  const confirmed =
+    'objectionNoticeConfirmed' in values ? values['objectionNoticeConfirmed'] : stored.confirmed
+  const problem = reminderGroundProblem(ground, since, confirmed)
 
   if (problem !== null) {
     throw new UnprocessableEntityException(problem)
@@ -121,15 +141,32 @@ export class CustomersController {
   ) {
     const values = pick(body, writableFields)
     requireSomething(values)
-    requireReminderGround(values)
 
-    const [updated] = await this.database.forTenant(identity, (tx) =>
-      tx
+    const [updated] = await this.database.forTenant(identity, async (tx) => {
+      // The stored ground, held until the write, so that the check and the
+      // write see the same one.
+      if (touchesReminderGround(values)) {
+        const [stored] = await tx
+          .select({
+            ground: customers.reminderGround,
+            since: customers.reminderGroundOn,
+            confirmed: customers.objectionNoticeConfirmed,
+          })
+          .from(customers)
+          .where(and(eq(customers.id, id as CustomerId), isNull(customers.deletedAt)))
+          .for('update')
+
+        if (stored) {
+          requireReminderGround(values, stored)
+        }
+      }
+
+      return tx
         .update(customers)
         .set(values as Partial<typeof customers.$inferInsert>)
         .where(and(eq(customers.id, id as CustomerId), isNull(customers.deletedAt)))
-        .returning(),
-    )
+        .returning()
+    })
 
     if (!updated) {
       // Either it does not exist or it belongs to somebody else. The answer is

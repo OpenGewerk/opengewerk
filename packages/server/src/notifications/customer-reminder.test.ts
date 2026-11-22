@@ -10,6 +10,7 @@ import {
   type TenantId,
 } from '@opengewerk/domain'
 import { Database, type ExpectedDeadline, newId } from '@opengewerk/platform-server'
+import { eq } from 'drizzle-orm'
 import type { Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -26,6 +27,8 @@ import {
 import { type DeadlineJob, runDeadlinesOf } from '../deadlines/engine.js'
 import { deadlineKinds } from '../deadlines/registry.js'
 import type { DeadlineValues } from '../deadlines/sources.js'
+import { mailOutbox } from '../database/schema/index.js'
+import { lapsedReminderMail, refuseWithheldCustomerMail } from '../mail/attachments.js'
 import { callNotes } from './customer-reminder.js'
 
 /**
@@ -265,6 +268,72 @@ afterAll(async () => {
   await admin.end()
 })
 
+/**
+ * A reminder that waits in the outbox goes only while its ground holds
+ * (#1026, CodeRabbit): the worker asks as it leaves, so that one written
+ * before the confirmation was taken away, or before the update that asked
+ * for it, stays unsent with the reason, and so does one to a customer who
+ * objected since. One of a contract goes on its contract.
+ */
+describe('a reminder that waits to go out', () => {
+  async function waiting(who: string) {
+    const [row] = await database.forTenant({ tenantId: north, reason: 'mail' }, (tx) =>
+      tx
+        .select()
+        .from(mailOutbox)
+        .where(eq(mailOutbox.customerId, (customers[who] ?? '') as CustomerId)),
+    )
+
+    if (!row) {
+      throw new Error(`no reminder to ${who}`)
+    }
+
+    return row
+  }
+
+  async function stored(who: string, ground: string | null, confirmed: boolean) {
+    // A ground has its day and none has none.
+    await admin.query(
+      `update customers
+          set reminder_ground = $2,
+              reminder_ground_on = case when $4::text is null then null
+                                        else coalesce(reminder_ground_on, date '2037-09-01') end,
+              objection_notice_confirmed = $3
+        where id = $1`,
+      [customers[who], ground, confirmed, ground],
+    )
+  }
+
+  it('stays unsent once its ground no longer holds', async () => {
+    await switchOn()
+    due.inspection = [inspectionOf('lehmann'), inspectionOf('vertrag')]
+
+    await runDeadlinesOf(engine(), north, now)
+
+    try {
+      await expect(refuseWithheldCustomerMail(database, await waiting('lehmann'))).resolves.toBe(
+        undefined,
+      )
+      await expect(refuseWithheldCustomerMail(database, await waiting('vertrag'))).resolves.toBe(
+        undefined,
+      )
+
+      await stored('lehmann', 'existing_customer', false)
+      await expect(refuseWithheldCustomerMail(database, await waiting('lehmann'))).rejects.toThrow(
+        lapsedReminderMail,
+      )
+
+      await stored('vertrag', 'objected', false)
+      await expect(refuseWithheldCustomerMail(database, await waiting('vertrag'))).rejects.toThrow(
+        lapsedReminderMail,
+      )
+    } finally {
+      await stored('lehmann', 'existing_customer', true)
+      await stored('vertrag', null, false)
+    }
+  })
+})
+
 describe('a reminder of a due inspection to the customer', () => {
   it('goes out once, by mail, to a customer of the business, naming the right to object', async () => {
     await switchOn()
@@ -441,7 +510,9 @@ describe('the ground of a customer at its route', () => {
     }).expect(201)
     const id = String((made.body as { id: string }).id)
 
-    await send('patch', `/customers/${id}`, { reminderGroundOn: '2025-06-01' }).expect(422)
+    // The day alone, as the office sends a change of it: checked against the
+    // ground the customer holds (#1026, the review).
+    await send('patch', `/customers/${id}`, { reminderGroundOn: '2025-06-01' }).expect(200)
     await send('patch', `/customers/${id}`, {
       reminderGround: 'newsletter',
       reminderGroundOn: '2025-06-01',
@@ -503,5 +574,67 @@ describe('the ground of a customer at its route', () => {
       reminderGroundOn: '2025-05-02',
     }).expect(200)
     expect(await confirmed()).toBe(false)
+  })
+
+  /**
+   * The office sends only what changed (`writeDirectly`): the confirmation
+   * alone, the day alone. Both are checked against the ground the customer
+   * holds (#1026, the review): the confirmation goes with a customer of the
+   * business, the day with any ground, and neither without one. A new
+   * address does not take the confirmation away here; the form empties the
+   * box and sends that, since a box ticked again would not come with the
+   * address.
+   */
+  it('takes the confirmation and the day alone, checked against the stored ground', async () => {
+    const created = async (body: Record<string, unknown>) =>
+      String(
+        (
+          (await send('post', '/customers', { kind: 'private', ...body }).expect(201)).body as {
+            id: string
+          }
+        ).id,
+      )
+    const stored = async (id: string) =>
+      (
+        await admin.query<{ confirmed: boolean; on: string | null }>(
+          `select objection_notice_confirmed as confirmed,
+                  to_char(reminder_ground_on, 'YYYY-MM-DD') as on
+             from customers where id = $1`,
+          [id],
+        )
+      ).rows[0]
+    const albers = await created({
+      name: 'Familie Albers',
+      email: 'albers@example.com',
+      reminderGround: 'existing_customer',
+      reminderGroundOn: '2024-03-12',
+    })
+
+    await send('patch', `/customers/${albers}`, { objectionNoticeConfirmed: true }).expect(200)
+    expect(await stored(albers)).toEqual({ confirmed: true, on: '2024-03-12' })
+
+    await send('patch', `/customers/${albers}`, { reminderGroundOn: '2024-04-02' }).expect(200)
+    expect(await stored(albers)).toEqual({ confirmed: true, on: '2024-04-02' })
+
+    await send('patch', `/customers/${albers}`, {
+      email: 'neu.albers@example.com',
+      objectionNoticeConfirmed: false,
+    }).expect(200)
+    expect(await stored(albers)).toEqual({ confirmed: false, on: '2024-04-02' })
+
+    const becker = await created({
+      name: 'Schreinerei Becker',
+      reminderGround: 'consent',
+      reminderGroundOn: '2025-05-02',
+    })
+
+    await send('patch', `/customers/${becker}`, { objectionNoticeConfirmed: true }).expect(422)
+    expect(await stored(becker)).toEqual({ confirmed: false, on: '2025-05-02' })
+
+    const ohne = await created({ name: 'Familie Ohne' })
+
+    await send('patch', `/customers/${ohne}`, { reminderGroundOn: '2025-05-02' }).expect(422)
+    await send('patch', `/customers/${ohne}`, { objectionNoticeConfirmed: true }).expect(422)
+    expect(await stored(ohne)).toEqual({ confirmed: false, on: null })
   })
 })
