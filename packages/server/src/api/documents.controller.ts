@@ -460,7 +460,10 @@ export class DocumentsController {
         }
       }
 
-      const dated = await datedForIssue(tx, existing)
+      // One moment for the date and the issuing, so that an invoice issued
+      // across midnight in Germany is not dated the day before its issue.
+      const issuedAt = new Date()
+      const dated = await datedForIssue(tx, existing, todayInGermany(issuedAt))
       const { content, missing } = await contentForIssuing(tx, dated)
 
       if (missing.length > 0) {
@@ -481,7 +484,7 @@ export class DocumentsController {
         })
       }
 
-      return issueWith(tx, identity, dated, content)
+      return issueWith(tx, identity, dated, content, issuedAt)
     })
   }
 
@@ -1130,9 +1133,11 @@ type DocumentRow = typeof documents.$inferSelect
  * date; the duty is the invoice's, and a quote or a report is dated as
  * written.
  */
-async function datedForIssue(tx: TenantTransaction, document: DocumentRow): Promise<DocumentRow> {
-  const today = todayInGermany()
-
+async function datedForIssue(
+  tx: TenantTransaction,
+  document: DocumentRow,
+  today: IsoDate,
+): Promise<DocumentRow> {
   if (!isInvoice(document.kind) || document.documentDate === today) {
     return document
   }
@@ -1162,8 +1167,8 @@ export async function issueWith(
   identity: Pick<RequestIdentity, 'tenantId'> & { readonly userId: string | null },
   existing: DocumentRow,
   content: DocumentContent,
+  issuedAt: Date = new Date(),
 ): Promise<DocumentRow> {
-  const issuedAt = new Date()
   const number = await assignDocumentNumber(tx, identity.tenantId, existing.kind, issuedAt)
 
   // `deletedAt` a second time, and not out of habit. The lock above keeps

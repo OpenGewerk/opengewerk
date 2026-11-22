@@ -3,9 +3,9 @@ import { Test } from '@nestjs/testing'
 import type { DocumentContent } from '@opengewerk/domain'
 import { Database, newId } from '@opengewerk/platform-server'
 import { eq } from 'drizzle-orm'
-import type { Pool } from 'pg'
+import { Client, type Pool } from 'pg'
 import request from 'supertest'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { documentLines } from '../database/schema/index.js'
 import {
@@ -246,6 +246,36 @@ describe('the date of an issued document (#1039)', () => {
       expect((issued.body as { documentDate: string }).documentDate).toBe(today)
       expect((await snapshotOf(document))?.documentDate).toBe(today)
     }
+  })
+
+  it('is the day of the moment of its issue, also when the issuing runs past midnight', async () => {
+    const document = await draft(await customer(invoiceable))
+    const query = Client.prototype.query
+    let issued: { documentDate: string; issuedAt: string } | undefined
+
+    // A second before midnight in Germany, and midnight passes once the date
+    // is set, before the number and the moment of the issue are written.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-12-01T23:59:59+01:00') })
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+
+      if (/^update "documents" set "document_date"/i.test(text)) {
+        vi.setSystemTime(new Date('2026-12-02T00:00:05+01:00'))
+      }
+
+      return (query as (...given: unknown[]) => unknown).apply(this, args)
+    } as typeof query
+
+    try {
+      issued = (await issue(document).expect(201)).body as typeof issued
+    } finally {
+      Client.prototype.query = query
+      vi.useRealTimers()
+    }
+
+    expect(issued?.documentDate).toBe('2026-12-01')
+    expect(todayInGermany(new Date(issued?.issuedAt ?? ''))).toBe('2026-12-01')
   })
 
   it('is the one a quote was written with', async () => {
