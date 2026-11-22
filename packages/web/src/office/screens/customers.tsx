@@ -1217,10 +1217,17 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
   // where the row on this device is from before the question (#1026): what
   // changed in the form is measured against it, not against a row another
   // device changed while it was open (the review).
-  const [openedFor] = useState(() =>
+  const [openedFor, setOpenedFor] = useState(() =>
     typeof customer?.['objectionNoticeAddress'] === 'string'
       ? customer['objectionNoticeAddress']
       : null,
+  )
+  // Every field as the form opened with it (#1026, CodeRabbit): a write sends
+  // only what this form changed, not a value of before that another device
+  // has changed since, an address above all. After a write it is what was
+  // written. The same for the other forms is #1057.
+  const [opened, setOpened] = useState<Readonly<Record<string, unknown>>>(() =>
+    asCustomer(draftOf(customer) as unknown as Record<string, string>),
   )
   // Whether somebody used the box in this form (#1026, the review): only then
   // does a change go with the write. An address typed anew or spelled
@@ -1261,7 +1268,16 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
     setWorking(true)
 
     try {
-      const values: Record<string, unknown> = asCustomer(draft as unknown as Record<string, string>)
+      const written = asCustomer(draft as unknown as Record<string, string>)
+      const values: Record<string, unknown> = { ...written }
+
+      if (editing) {
+        for (const field of Object.keys(values)) {
+          if (field !== 'objectionNoticeAddress' && values[field] === opened[field]) {
+            delete values[field]
+          }
+        }
+      }
 
       // A confirmation nobody changed in the form stays out of the write, so
       // that it cannot take back or give again one another device changed
@@ -1287,6 +1303,18 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
         setWrong(result.fields)
 
         return
+      }
+
+      // Written: a second try after the tags failed starts from here and
+      // sends again only what changes after it (CodeRabbit), the box too.
+      if (editing) {
+        setOpened(written)
+
+        if ('objectionNoticeAddress' in values) {
+          setOpenedFor(values['objectionNoticeAddress'] as string | null)
+        }
+
+        setNoticeTouched(false)
       }
 
       if (editing && chosen !== null && tagsChanged(held, chosen)) {

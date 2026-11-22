@@ -2053,6 +2053,14 @@ describe('the rollback of 0151', () => {
     expect(failures).toHaveLength(1)
     expect(failures[0]).toContain('Die Rücknahme von 0151 würde sie löschen')
     expect(await columnNames(admin, 'customers')).toContain('objection_notice_address')
+    // The confirmation itself is still there, not only its column (CodeRabbit).
+    expect(
+      (
+        await admin.query<{ address: string | null }>(
+          `select objection_notice_address as address from customers where name = 'Familie Albers'`,
+        )
+      ).rows,
+    ).toEqual([{ address: 'albers@example.com' }])
   })
 })
 

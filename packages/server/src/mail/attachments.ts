@@ -462,8 +462,9 @@ export async function refuseWithheldCustomerMail(
 /**
  * Whether the contract a waiting reminder names still covers the day it is
  * about, the last part of its cause (#1026, CodeRabbit): as the reminder
- * asked when it was written (`contractOf`), its last day of service on or
- * after that day. A contract given notice covers it until its end, as when
+ * asked when it was written (`contractOf`), begun on or before that day
+ * (#1056) and its last day of service on or after it. A contract given
+ * notice covers it until its end, as when
  * the reminder was written; one deleted since covers nothing. A reminder of
  * an installation needs the contract to cover the installation still, as
  * `contractOf` asks (the review): its deadline, which the cause names, says
@@ -528,7 +529,9 @@ async function stillCovers(
     endsOn: contract.endsOn as IsoDate | null,
   } as Parameters<typeof lastServiceDay>[0])
 
-  return last === null || last >= dueOn
+  // Running on the day, as `contractOf` asks: begun on or before it (#1056)
+  // and serving until it.
+  return contract.startsOn <= dueOn && (last === null || last >= dueOn)
 }
 
 /** The cause of a reminder to a customer: `customer_reminder:<kind>:<customer>:<…>`. */

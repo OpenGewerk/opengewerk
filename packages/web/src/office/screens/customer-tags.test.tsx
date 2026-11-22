@@ -451,4 +451,54 @@ describe('what a form and a device can know about tags', () => {
       'Die Angaben des Kunden sind gespeichert, seine Tags nicht. Einen der Tags gibt es nicht mehr. Die Seite neu laden und noch einmal wählen.',
     )
   })
+
+  /**
+   * A second try after the tags were refused starts from what the first one
+   * wrote (#1026, CodeRabbit): the confirmation written with the first try
+   * does not give again one that another device took back meanwhile.
+   */
+  it('sends with a second try only what changes after the first one was written', async () => {
+    business()
+    server.put('customers', {
+      ...customer('c-hv', 'Hausverwaltung Süd GmbH', 'property_management'),
+      email: 'info@hv-sued.example',
+      reminderGround: 'existing_customer',
+      reminderGroundOn: '2024-03-12',
+    })
+    tagAnswer = { status: 422, body: { message: 'Einen der Tags gibt es nicht mehr.' } }
+    const patch = vi.spyOn(writer, 'patch')
+
+    try {
+      await mount('/kunden/c-hv/bearbeiten')
+      const user = userEvent.setup()
+
+      await user.click(await screen.findByLabelText(/Widerspruchsrecht hingewiesen/))
+      await user.click(screen.getByRole('button', { name: 'Wallbox entfernen' }))
+      await user.click(screen.getByRole('button', { name: 'Speichern' }))
+      await screen.findByRole('alert')
+
+      expect(patch.mock.calls.map((call) => call[2])).toEqual([
+        { objectionNoticeAddress: 'info@hv-sued.example' },
+      ])
+
+      server.put('customers', {
+        ...(server.all('customers').find((row) => row['id'] === 'c-hv') ?? {}),
+        objectionNoticeAddress: null,
+        version: 9,
+      })
+      await syncClient.synchronise()
+
+      await user.click(screen.getByRole('button', { name: 'Speichern' }))
+
+      await waitFor(() => {
+        expect(calls.filter((call) => call.method === 'PUT')).toHaveLength(2)
+      })
+      expect(patch).toHaveBeenCalledTimes(1)
+      expect(
+        server.all('customers').find((row) => row['id'] === 'c-hv')?.['objectionNoticeAddress'],
+      ).toBeNull()
+    } finally {
+      patch.mockRestore()
+    }
+  })
 })

@@ -360,11 +360,15 @@ describe('a reminder that waits to go out', () => {
       )
 
       // Confirmed again, but for another address: the waiting reminder was
-      // written to the one the customer had (CodeRabbit).
+      // written to the one the customer had (CodeRabbit). The confirmation
+      // holds for the new address, so only the address refuses it.
       await stored('lehmann', 'existing_customer', true)
-      await admin.query(`update customers set email = 'neu.lehmann@example.com' where id = $1`, [
-        customers['lehmann'],
-      ])
+      await admin.query(
+        `update customers set email = 'neu.lehmann@example.com',
+            objection_notice_address = 'neu.lehmann@example.com'
+          where id = $1`,
+        [customers['lehmann']],
+      )
       await expect(refuseWithheldCustomerMail(database, await waiting('lehmann'))).rejects.toThrow(
         lapsedReminderMail,
       )
@@ -389,10 +393,22 @@ describe('a reminder that waits to go out', () => {
         lapsedReminderMail,
       )
 
+      // A contract that begins only after the day the reminder is about,
+      // which a new run would not count either (#1056).
+      await admin.query(
+        `update maintenance_contracts set cancelled_on = null, ends_on = null,
+            starts_on = '2037-11-01', first_visit_on = '2037-11-01'
+          where number = 'WV-2037-vertrag'`,
+      )
+      await expect(refuseWithheldCustomerMail(database, await waiting('vertrag'))).rejects.toThrow(
+        lapsedReminderMail,
+      )
+
       // The installation taken out of the contract since, which a new run
       // would not remind of either (the review).
       await admin.query(
         `update maintenance_contracts set cancelled_on = null, ends_on = null,
+            starts_on = '2037-01-01', first_visit_on = '2037-06-01',
             installation_ids = array[$1]::uuid[]
           where number = 'WV-2037-vertrag'`,
         [installations['lehmann']],
@@ -415,14 +431,16 @@ describe('a reminder that waits to go out', () => {
         undefined,
       )
     } finally {
-      await stored('lehmann', 'existing_customer', true)
-      await stored('vertrag', null, false)
+      // The address first: the confirmation is set for the address it finds.
       await admin.query(
         `update customers set email = 'klaus.lehmann@example.com', deleted_at = null where id = $1`,
         [customers['lehmann']],
       )
+      await stored('lehmann', 'existing_customer', true)
+      await stored('vertrag', null, false)
       await admin.query(
         `update maintenance_contracts set cancelled_on = null, ends_on = null,
+            starts_on = '2037-01-01', first_visit_on = '2037-06-01',
             installation_ids = $1::uuid[]
           where number = 'WV-2037-vertrag'`,
         [covered[0]?.installations ?? []],
@@ -540,6 +558,27 @@ describe('a reminder of a due inspection to the customer', () => {
     await runDeadlinesOf(engine(), north, now)
 
     expect(await mails()).toEqual([])
+  })
+
+  /** Nor to one that begins only after it (#1056), which does not cover it yet. */
+  it('belongs to no contract that begins after the inspection is due', async () => {
+    await switchOn()
+    due.inspection = [inspectionOf('vertrag')]
+    await admin.query(
+      `update maintenance_contracts set starts_on = '2037-11-01', first_visit_on = '2037-11-01'
+        where number = 'WV-2037-vertrag'`,
+    )
+
+    try {
+      await runDeadlinesOf(engine(), north, now)
+
+      expect(await mails()).toEqual([])
+    } finally {
+      await admin.query(
+        `update maintenance_contracts set starts_on = '2037-01-01', first_visit_on = '2037-06-01'
+          where number = 'WV-2037-vertrag'`,
+      )
+    }
   })
 
   it('stops for a customer who stopped them, a contract and all', async () => {

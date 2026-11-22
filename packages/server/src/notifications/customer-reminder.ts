@@ -96,7 +96,8 @@ async function contractOf(tx: TenantTransaction, kind: DeadlineKind, deadline: D
       endsOn: contract.endsOn as IsoDate | null,
     } as Parameters<typeof lastServiceDay>[0])
 
-    return last === null || last >= deadline.dueOn
+    // Running on the day: begun on or before it (#1056) and serving until it.
+    return contract.startsOn <= deadline.dueOn && (last === null || last >= deadline.dueOn)
   })
 
   return running?.number ?? null

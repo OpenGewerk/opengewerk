@@ -597,6 +597,15 @@ describe('the reminders of a customer (#316)', () => {
       'neu.berg@example.com',
       { phone: '040 789' },
     ],
+    [
+      // The address of before stays out of the write (CodeRabbit): it would
+      // put back the old one, and the route would take the confirmation away.
+      'change the address and confirm it, while this one changes the phone',
+      { email: 'berg@example.com', objectionNoticeAddress: 'berg@example.com' },
+      { email: 'neu.berg@example.com', objectionNoticeAddress: 'neu.berg@example.com' },
+      null,
+      { phone: '040 789' },
+    ],
   ])(
     'leave it as it is when another device does %s',
     async (_how, opened, meanwhile, typed, expected) => {
