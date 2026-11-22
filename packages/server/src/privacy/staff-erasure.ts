@@ -172,8 +172,9 @@ function yearsOf(upTo: number | null): SQL {
  * first entry, one look into `time_entries_corrected_once` for each
  * correction, and an entry that nothing corrects costs none. Once for the
  * business and not once a person, and kept as one row for each account and
- * year (`materialized`), so that each person of the list reads a handful of
- * rows: the list runs every minute and on every visit of the page; with the
+ * year (`materialized`), so that each person of the list reads that small
+ * table and not the records: the list runs every minute and on every visit of
+ * the page; with the
  * persons times the corrections of the business it grew with the square of
  * its size. Past a hundred links the function stops at the entry a hundred
  * links up and takes its year, and so does this, so that the list and the

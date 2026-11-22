@@ -835,6 +835,33 @@ describe('what of the staff is due (#846)', () => {
     ])
   })
 
+  it('refuses a sickness whose last day was corrected so that it is not due, and deletes nothing (#1033)', async () => {
+    const dennis = await kraft()
+
+    await pass()
+
+    const stopped = holdQuery((statement) => /select last_day::text from absences/i.test(statement))
+    const asked = erase('sickness', [dennis.oldSickness]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+    // Its last day corrected after the list was read to one a hundred days
+    // back, and before the deletion reads it again: no longer due.
+    await admin
+      .query('update absences set last_day = $2 where id = $1', [
+        dennis.oldSickness,
+        addDays(today, -100),
+      ])
+      .finally(stopped.release)
+
+    expect((await asked).status).toBe(409)
+    expect(
+      await count('select count(*) as n from absences where id = $1', [dennis.oldSickness]),
+    ).toBe(1)
+    expect(
+      await count('select count(*) as n from erasures where record_id = $1', [dennis.oldSickness]),
+    ).toBe(0)
+  })
+
   it('writes no line for a year that another deletion emptied meanwhile (#1033)', async () => {
     const dennis = await kraft(false)
     const key = staffYearKey(dennis.person, oldYear)
