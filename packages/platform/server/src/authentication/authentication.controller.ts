@@ -33,7 +33,7 @@ import {
 } from './address-confirmation.js'
 import type { CorrectedAccount } from './administration.js'
 import { beforeItsEnd } from './last-day.js'
-import { endStretchesOf, endStretchesOfTakenOut, endStretchesOrLeaveThem } from './session-sweep.js'
+import { endStretchesOfTakenOut, endStretchesOrLeaveThem } from './session-sweep.js'
 import type { AddressMail } from './notices.js'
 import { changeOwnAccount } from './own-account.js'
 import { rolesHeld } from './roles.js'
@@ -253,9 +253,12 @@ export class AuthenticationController {
     // which would otherwise stay open in its log until the end of time: the
     // sign out closes only what is open in the tenant chosen last.
     // Where the access there ended meanwhile, the work ended with it
-    // (opengewerk#1030).
+    // (opengewerk#1030). The choice is written already, as a session goes
+    // first everywhere else (opengewerk#1031): a close that fails leaves the
+    // stretch to the sweep, which closes one whose session works elsewhere
+    // (`endOrphanedStretches`), and the session works on where it chose.
     if (previous.tenantId !== null && previous.tenantId !== chosen) {
-      await endStretchesOf(
+      await endStretchesOrLeaveThem(
         this.database,
         [{ id: user.sessionId, userId: user.userId, tenantId: previous.tenantId }],
         { reason: 'session.switch', actor: user.userId },

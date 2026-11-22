@@ -795,39 +795,52 @@ export async function endOrphanedStretches(
     for (let start = 0; start < open.length; start += batch) {
       const ids = open.slice(start, start + batch).map((row) => row.sessionId)
       const alive = await database.forInstance((tx) =>
-        tx.select({ id: authSessions.id }).from(authSessions).where(inArray(authSessions.id, ids)),
-      )
-      const living = new Set(alive.map((row) => row.id))
-      const orphans = ids.filter((id) => !living.has(id))
-
-      if (orphans.length === 0) {
-        continue
-      }
-
-      const ended = await database.forTenant({ tenantId, reason: 'session.expire' }, (tx) =>
         tx
-          .update(tenantSessions)
-          .set({ endedAt: sql`clock_timestamp()` })
-          .where(
-            and(
-              eq(tenantSessions.tenantId, tenantId),
-              inArray(tenantSessions.sessionId, orphans),
-              isNull(tenantSessions.endedAt),
-              // Not the stretches of an access past its last day: those end
-              // at the end of that day and for that reason (`endPastLastDays`),
-              // also after a pass that failed to close them, and one whose
-              // last day passed since they were read. Asked as they close.
-              sql`not exists (
-                select 1 from ${memberships}
-                 where ${memberships.tenantId} = ${tenantSessions.tenantId}
-                   and ${memberships.userId} = ${tenantSessions.userId}
-                   and ${pastItsEnd()})`,
-            ),
-          )
-          .returning({ id: tenantSessions.id }),
+          .select({ id: authSessions.id, tenantId: authSessions.activeTenantId })
+          .from(authSessions)
+          .where(inArray(authSessions.id, ids)),
       )
+      const living = new Map(alive.map((row) => [row.id, row.tenantId]))
+      // Gone, or working in another tenant since a switch whose close of the
+      // stretch here failed (opengewerk#1030): the work here ended either way.
+      const groups = [
+        { reason: 'session.expire', sessions: ids.filter((id) => !living.has(id)) },
+        {
+          reason: 'session.switch',
+          sessions: ids.filter((id) => living.has(id) && living.get(id) !== tenantId),
+        },
+      ]
 
-      closed += ended.length
+      for (const { reason, sessions } of groups) {
+        if (sessions.length === 0) {
+          continue
+        }
+
+        const ended = await database.forTenant({ tenantId, reason }, (tx) =>
+          tx
+            .update(tenantSessions)
+            .set({ endedAt: sql`clock_timestamp()` })
+            .where(
+              and(
+                eq(tenantSessions.tenantId, tenantId),
+                inArray(tenantSessions.sessionId, sessions),
+                isNull(tenantSessions.endedAt),
+                // Not the stretches of an access past its last day: those end
+                // at the end of that day and for that reason (`endPastLastDays`),
+                // also after a pass that failed to close them, and one whose
+                // last day passed since they were read. Asked as they close.
+                sql`not exists (
+                  select 1 from ${memberships}
+                   where ${memberships.tenantId} = ${tenantSessions.tenantId}
+                     and ${memberships.userId} = ${tenantSessions.userId}
+                     and ${pastItsEnd()})`,
+              ),
+            )
+            .returning({ id: tenantSessions.id }),
+        )
+
+        closed += ended.length
+      }
     }
   }
 

@@ -63,10 +63,15 @@ export async function revokeCredentials(
     .update(authUsers)
     .set({ credentialGeneration: sql`${authUsers.credentialGeneration} + 1` })
     .where(eq(authUsers.id, userId))
-    .returning({ generation: authUsers.credentialGeneration })
+    .returning({
+      generation: authUsers.credentialGeneration,
+      at: sql<Date | string>`clock_timestamp()`,
+    })
   const generation = counted?.generation ?? 0
   const ofTheAccount = eq(authSessions.userId, userId)
-  const at = new Date()
+  // By the clock of the database, as the sessions go by it, once the count
+  // holds the account (opengewerk#1030).
+  const at = counted === undefined ? new Date() : new Date(counted.at)
 
   const ended = await tx
     .delete(authSessions)
