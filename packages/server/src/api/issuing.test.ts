@@ -248,6 +248,23 @@ describe('the date of an issued document (#1039)', () => {
     }
   })
 
+  /**
+   * An invoice a customer signed in a version before 0.6.3, which let any
+   * draft be signed: fixed, and issuing it is all that is left. It keeps its
+   * date and is issued (#1039, the review).
+   */
+  it('keeps the date of an invoice a customer signed in an older version, and issues it', async () => {
+    const document = await draft(await customer(invoiceable), {
+      documentDate: finalInvoice.documentDate,
+    })
+
+    await admin.query(`update documents set status = 'signed' where id = $1`, [document])
+
+    const issued = await issue(document).expect(201)
+
+    expect((issued.body as { documentDate: string }).documentDate).toBe(finalInvoice.documentDate)
+  })
+
   it('is the day of the moment of its issue, also when the issuing runs past midnight', async () => {
     const document = await draft(await customer(invoiceable))
     const query = Client.prototype.query

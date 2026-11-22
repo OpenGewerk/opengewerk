@@ -14,9 +14,9 @@ import {
   type Renderer,
 } from '@opengewerk/platform-server'
 import { eq } from 'drizzle-orm'
-import type { Pool } from 'pg'
+import { Client, type Pool } from 'pg'
 import request from 'supertest'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { assignDocumentNumber } from '../database/number-ranges.js'
 import { documents } from '../database/schema/index.js'
@@ -28,6 +28,7 @@ import {
 } from '../database/test-database.js'
 import { heldOpen, untilWaiting } from '../database/test-locks.js'
 import { deductionsFor } from '../documents/deductions.js'
+import { todayInGermany } from '../today.js'
 import { recordPayment } from '../payments/payments.js'
 import { ApiModule } from './api.module.js'
 import { binary } from './test-binary.js'
@@ -297,6 +298,39 @@ describe('cancelling an invoice', () => {
     })
     expect(mirror?.billed.grossCents).toBe(-(original?.billed.grossCents ?? 0))
     expect((original?.billed.taxCents ?? 0) + (mirror?.billed.taxCents ?? 0)).toBe(0)
+  })
+
+  /**
+   * One moment for the date, the number and the issue of a cancellation: made
+   * a second before midnight in Germany, with midnight passing while it is
+   * written, it is dated on the day of its issue (#1039, the review).
+   */
+  it('is dated the day of its issue, also when the cancelling runs past midnight', async () => {
+    const invoice = await issuedInvoice()
+    const query = Client.prototype.query
+    let storno: { documentDate: string; issuedAt: string } | undefined
+
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-12-01T23:59:59+01:00') })
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+
+      if (/^insert into "documents"/i.test(text)) {
+        vi.setSystemTime(new Date('2026-12-02T00:00:05+01:00'))
+      }
+
+      return (query as (...given: unknown[]) => unknown).apply(this, args)
+    } as typeof query
+
+    try {
+      storno = (await cancel(invoice.id).expect(201)).body as typeof storno
+    } finally {
+      Client.prototype.query = query
+      vi.useRealTimers()
+    }
+
+    expect(storno?.documentDate).toBe('2026-12-01')
+    expect(todayInGermany(new Date(storno?.issuedAt ?? ''))).toBe('2026-12-01')
   })
 
   it('mirrors a price per hundred with its price unit (#456)', async () => {

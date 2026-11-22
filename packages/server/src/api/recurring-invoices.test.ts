@@ -223,6 +223,40 @@ describe('the recurring invoices of a contract (#295)', () => {
     expect((await invoicesOf(made)).map((invoice) => invoice.document_date)).toEqual([tomorrow])
   })
 
+  /**
+   * Made ahead of its period, with a lead on its deadline, and issued by the
+   * office before the period begins: dated on its first day, as one issued by
+   * itself (Feature-Gliederung 3.5, #1039).
+   */
+  it('are dated on the first day of their period when the office issues one made ahead of it', async () => {
+    const startsOn = addDays(today, 3)
+    const made = await contract(startsOn)
+
+    // The first pass finds the deadline, the second runs it with its lead.
+    await run(1)
+
+    const { rowCount } = await admin.query(
+      `update deadlines set lead_days = 7 where kind = 'maintenance.invoice' and source_id = $1`,
+      [made],
+    )
+
+    expect(rowCount).toBe(1)
+    await run(1)
+
+    const [first] = await invoicesOf(made)
+
+    expect(first?.status).toBe('draft')
+
+    await request(app.getHttpServer())
+      .post(`/documents/${String(first?.id)}/issue`)
+      .set('x-test-identity', office())
+      .expect(201)
+
+    expect(
+      (await invoicesOf(made)).map((invoice) => [invoice.status, invoice.document_date]),
+    ).toEqual([['issued', startsOn]])
+  })
+
   it('stay drafts without the wish of the contract, and so does a period cut short by its end', async () => {
     const startsOn = addMonths(today, -1)
     const waiting = await contract(startsOn, { issueByItself: false })

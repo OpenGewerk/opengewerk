@@ -44,6 +44,7 @@ export function IssuePanel({
   deductions,
   then,
   redatedFrom,
+  redatedTo,
   onDone,
 }: {
   readonly documentId: string
@@ -52,6 +53,11 @@ export function IssuePanel({
    * the day of its issue instead (#1039), and the panel says so first.
    */
   readonly redatedFrom?: string
+  /**
+   * The day it is dated on instead: today, and for a recurring invoice whose
+   * period begins later the first day of that period (Feature-Gliederung 3.5).
+   */
+  readonly redatedTo?: string
   /** The progress invoices a final invoice takes off, and nothing for any other document. */
   readonly deductions: readonly DeductionContent[]
   /** What to make out of the document once it is issued, and open. */
@@ -218,7 +224,11 @@ export function IssuePanel({
       {redatedFrom === undefined ? null : (
         <StepText muted>
           {'Eine Rechnung trägt den Tag, an dem sie festgeschrieben wird (§ 14 Abs. 4 Satz 1 Nr. 3 ' +
-            `UStG): Sie bekommt den ${date(today())} als Belegdatum, nicht den ${date(redatedFrom)} ` +
+            `UStG)${
+              redatedTo !== undefined && redatedTo !== today()
+                ? ', eine Dauerrechnung nie einen vor dem Beginn ihres Zeitraums'
+                : ''
+            }: Sie bekommt den ${date(redatedTo ?? today())} als Belegdatum, nicht den ${date(redatedFrom)} ` +
             'aus dem Entwurf.'}
         </StepText>
       )}

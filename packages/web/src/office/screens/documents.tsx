@@ -152,6 +152,20 @@ export interface JobDocumentsState {
  * keeps them apart, and a form with a kind field is how somebody sends the
  * wrong one because the field was left on its default.
  */
+
+/**
+ * The day an invoice issued today is dated on, as the server dates it
+ * (`issueDayOf`, #1039): today, and a recurring invoice never before the
+ * first day of its period.
+ */
+function issueDay(document: RecordState): string {
+  const from = text(document, 'serviceFrom')
+
+  return text(document, 'kind') === 'recurring_invoice' && from !== '' && from > today()
+    ? from
+    : today()
+}
+
 export function useJobDocuments(job: RecordState): JobDocumentsState {
   const jobId = String(job['id'])
   const client = useSync()
@@ -933,8 +947,10 @@ function DocumentView({ document }: { readonly document: RecordState }) {
           documentId={documentId}
           deductions={closing ? figures.deductions : []}
           {...(issueThen ? { then: issueThen } : {})}
-          {...(isInvoice(kind) && text(document, 'documentDate') !== today()
-            ? { redatedFrom: text(document, 'documentDate') }
+          {...(isInvoice(kind) &&
+          text(document, 'status') === 'draft' &&
+          text(document, 'documentDate') !== issueDay(document)
+            ? { redatedFrom: text(document, 'documentDate'), redatedTo: issueDay(document) }
             : {})}
           onDone={(said) => {
             setIssuing(false)

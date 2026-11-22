@@ -915,7 +915,11 @@ export class DocumentsController {
         )
       }
 
-      const documentDate = todayInGermany()
+      // One moment for the date, the number and the issue, so that a
+      // cancellation made around midnight does not carry the day before its
+      // issue (#1039, the review).
+      const issuedAt = new Date()
+      const documentDate = todayInGermany(issuedAt)
       const content = cancellationOf(currentContent(snapshot.content), {
         number: null,
         documentDate,
@@ -984,7 +988,6 @@ export class DocumentsController {
         )
       }
 
-      const issuedAt = new Date()
       const number = await assignDocumentNumber(
         tx,
         identity.tenantId,
@@ -1138,17 +1141,41 @@ async function datedForIssue(
   document: DocumentRow,
   today: IsoDate,
 ): Promise<DocumentRow> {
-  if (!isInvoice(document.kind) || document.documentDate === today) {
+  // Only a draft: an invoice a customer signed in a version before 0.6.3 is
+  // fixed, and issuing it is all that is left (#1039, the review).
+  if (!isInvoice(document.kind) || document.status !== 'draft') {
+    return document
+  }
+
+  const day = issueDayOf(document, today)
+
+  if (document.documentDate === day) {
     return document
   }
 
   const [dated] = await tx
     .update(documents)
-    .set({ documentDate: today })
+    .set({ documentDate: day })
     .where(eq(documents.id, document.id))
     .returning()
 
   return dated ?? document
+}
+
+/**
+ * The day an invoice issued today is dated on: today, and a recurring invoice
+ * never before the first day of its period (Feature-Gliederung 3.5), as the
+ * one issued by itself (`contractInvoice`).
+ */
+export function issueDayOf(
+  document: Pick<DocumentRow, 'kind' | 'serviceFrom'>,
+  today: IsoDate,
+): IsoDate {
+  return document.kind === 'recurring_invoice' &&
+    document.serviceFrom !== null &&
+    document.serviceFrom > today
+    ? (document.serviceFrom as IsoDate)
+    : today
 }
 
 /** A report the customer signed and nobody issued yet, which a signature fixed without a number. */
