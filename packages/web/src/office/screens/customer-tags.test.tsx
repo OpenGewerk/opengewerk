@@ -501,4 +501,53 @@ describe('what a form and a device can know about tags', () => {
       patch.mockRestore()
     }
   })
+
+  /**
+   * A use of the box while the write is on its way counts for the next try
+   * (CodeRabbit): the end of that write does not take it back.
+   */
+  it('keeps a use of the box made while the write was on its way for the next try', async () => {
+    business()
+    server.put('customers', {
+      ...customer('c-hv', 'Hausverwaltung Süd GmbH', 'property_management'),
+      email: 'info@hv-sued.example',
+      reminderGround: 'existing_customer',
+      reminderGroundOn: '2024-03-12',
+      objectionNoticeAddress: 'info@hv-sued.example',
+    })
+    tagAnswer = { status: 422, body: { message: 'Einen der Tags gibt es nicht mehr.' } }
+    let answer: () => void = () => {}
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve
+    })
+    const original = writer.patch
+    const patch = vi.spyOn(writer, 'patch').mockImplementationOnce(async (entity, id, values) => {
+      await answered
+
+      return original(entity, id, values)
+    })
+
+    try {
+      await mount('/kunden/c-hv/bearbeiten')
+      const user = userEvent.setup()
+
+      await user.type(await screen.findByLabelText('Telefon'), '0621 1')
+      await user.click(screen.getByRole('button', { name: 'Wallbox entfernen' }))
+      await user.click(screen.getByRole('button', { name: 'Speichern' }))
+      await user.click(screen.getByLabelText(/Widerspruchsrecht hingewiesen/))
+      answer()
+      await screen.findByRole('alert')
+
+      expect(patch.mock.calls.map((call) => call[2])).toEqual([{ phone: '0621 1' }])
+
+      await user.click(screen.getByRole('button', { name: 'Speichern' }))
+
+      await waitFor(() => {
+        expect(patch).toHaveBeenCalledTimes(2)
+      })
+      expect(patch.mock.calls[1]?.[2]).toEqual({ objectionNoticeAddress: null })
+    } finally {
+      patch.mockRestore()
+    }
+  })
 })

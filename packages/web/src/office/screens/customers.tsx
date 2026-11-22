@@ -1229,10 +1229,13 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
   const [opened, setOpened] = useState<Readonly<Record<string, unknown>>>(() =>
     asCustomer(draftOf(customer) as unknown as Record<string, string>),
   )
-  // Whether somebody used the box in this form (#1026, the review): only then
-  // does a change go with the write. An address typed anew or spelled
-  // otherwise changes none.
-  const [noticeTouched, setNoticeTouched] = useState(false)
+  // How often somebody used the box in this form, and how often by the start
+  // of the last write that went through (#1026, the review, CodeRabbit): only
+  // a use after that changes what is confirmed, also one made while the write
+  // was on its way. An address typed anew or spelled otherwise changes none.
+  const [noticeUses, setNoticeUses] = useState(0)
+  const [noticeUsesWritten, setNoticeUsesWritten] = useState(0)
+  const noticeTouched = noticeUses > noticeUsesWritten
   // Null until somebody changes the tags: until then the form shows what the
   // record has, also once rows arrive after it opened, and sends nothing.
   const [chosen, setChosen] = useState<ChosenTags | null>(null)
@@ -1266,6 +1269,10 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
     setTrouble(null)
     setWrong([])
     setWorking(true)
+
+    // The uses of the box this write knows of; one made while it is on its
+    // way still counts for the next.
+    const usesAtStart = noticeUses
 
     try {
       const written = asCustomer(draft as unknown as Record<string, string>)
@@ -1314,7 +1321,7 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
           setOpenedFor(values['objectionNoticeAddress'] as string | null)
         }
 
-        setNoticeTouched(false)
+        setNoticeUsesWritten(usesAtStart)
       }
 
       if (editing && chosen !== null && tagsChanged(held, chosen)) {
@@ -1495,7 +1502,7 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
                       onChange={(event) => {
                         const confirmed = event.target.checked
 
-                        setNoticeTouched(true)
+                        setNoticeUses((uses) => uses + 1)
                         setDraft((current) => ({
                           ...current,
                           objectionNoticeAddress: confirmed ? current.email : '',
