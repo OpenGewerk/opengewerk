@@ -43,8 +43,16 @@ function germanDay(day: IsoDate): string {
   return `${day.slice(8, 10)}.${day.slice(5, 7)}.${day.slice(0, 4)}`
 }
 
-/** The ground of a customer as a fact of the record: "Einwilligung vom 12.03.2024". */
-export function reminderGroundText(ground: ReminderGround | null, since: IsoDate | null): string {
+/**
+ * The ground of a customer as a fact of the record: "Einwilligung vom
+ * 12.03.2024". A customer of section 7 (3) UWG whose notice on the objection
+ * nobody confirmed says so (#1026): stored as one, reminded as none.
+ */
+export function reminderGroundText(
+  ground: ReminderGround | null,
+  since: IsoDate | null,
+  objectionNoticeConfirmed: boolean,
+): string {
   if (ground === null) {
     return reminderGroundLabel.none
   }
@@ -59,7 +67,9 @@ export function reminderGroundText(ground: ReminderGround | null, since: IsoDate
     case 'consent':
       return `${label} vom ${germanDay(since)}`
     case 'existing_customer':
-      return `${label}, seit ${germanDay(since)}`
+      return objectionNoticeConfirmed
+        ? `${label}, seit ${germanDay(since)}`
+        : `${label}, seit ${germanDay(since)}, Hinweis bei der Erhebung nicht bestätigt`
     case 'objected':
       return `${label} am ${germanDay(since)}`
   }
@@ -68,13 +78,41 @@ export function reminderGroundText(ground: ReminderGround | null, since: IsoDate
 /**
  * How a customer is reminded of something due, or null when not at all: by
  * mail where there is an address, by a call where a call is allowed.
+ *
+ * A customer of section 7 (3) UWG only with the notice on the objection
+ * confirmed: number 4 wants it given when the address was collected, and
+ * without it the mail is advertising nobody agreed to (#1026).
  */
 export type ReminderWay = 'mail' | 'call'
+
+/**
+ * Whether the notice on the objection is confirmed for the address the
+ * customer has (#1026): the confirmation names the address it was given for,
+ * and a new address, written by any client on any device, needs it again.
+ * Compared without case and surrounding space, as an address is.
+ */
+export function objectionNoticeConfirmedFor(email: unknown, confirmedFor: unknown): boolean {
+  return sameEmailAddress(email, confirmedFor)
+}
+
+/**
+ * Whether two texts are the same e-mail address: compared without case and
+ * surrounding space, and never when one is empty. Whatever a request carries
+ * that is no text is no address (the review). The confirmation of the notice
+ * and the check before a reminder goes out compare the same way.
+ */
+export function sameEmailAddress(left: unknown, right: unknown): boolean {
+  const one = typeof left === 'string' ? left.trim().toLowerCase() : ''
+  const other = typeof right === 'string' ? right.trim().toLowerCase() : ''
+
+  return one !== '' && one === other
+}
 
 export function reminderWay(
   ground: ReminderGround | null,
   underContract: boolean,
   hasAddress: boolean,
+  objectionNoticeConfirmed: boolean,
 ): ReminderWay | null {
   if (ground === 'objected') {
     return null
@@ -85,7 +123,7 @@ export function reminderWay(
   }
 
   if (ground === 'existing_customer') {
-    return hasAddress ? 'mail' : null
+    return hasAddress && objectionNoticeConfirmed ? 'mail' : null
   }
 
   return null
@@ -109,15 +147,88 @@ export function reminderSentence(ground: ReminderGround | null, contract: string
 }
 
 /**
+ * Whether a reminder written before still may go, asked as it leaves (#1026,
+ * CodeRabbit): never to a customer who objected since, and one that rests on
+ * the consent or on section 7 (3) UWG only while that ground holds, the
+ * latter with the notice confirmed. The ground a reminder rests on is the one
+ * its text names (`reminderSentence`); one of a contract rests on the
+ * contract, which only an objection ends.
+ */
+export function reminderStillHolds(
+  text: string,
+  ground: ReminderGround | null,
+  objectionNoticeConfirmed: boolean,
+): boolean {
+  if (ground === 'objected') {
+    return false
+  }
+
+  if (text.includes(reminderSentence('consent', null))) {
+    return ground === 'consent'
+  }
+
+  if (text.includes(reminderSentence('existing_customer', null))) {
+    return ground === 'existing_customer' && objectionNoticeConfirmed
+  }
+
+  return true
+}
+
+/**
+ * The number of the contract a reminder rests on, as its text names it
+ * (`reminderSentence`), or null for one that rests on no contract (#1026,
+ * CodeRabbit).
+ */
+export function reminderContract(text: string): string | null {
+  const marker = '<contract>'
+  const [before = '', after = ''] = reminderSentence(null, marker).split(marker)
+  const start = text.indexOf(before)
+
+  if (start === -1) {
+    return null
+  }
+
+  const from = start + before.length
+  const end = text.indexOf(after, from)
+
+  return end === -1 ? null : text.slice(from, end)
+}
+
+/**
  * What is wrong with a ground and its day as a customer is to have them, or
  * null: a ground is one of the list or none, and a ground has the day it was
  * given, which none has not.
+ *
+ * The confirmation of the notice on the objection (#1026) is the address it
+ * was given for, none, or not part of the write, and an address only for a
+ * customer of section 7 (3) UWG. Such a customer without it may be stored, as
+ * every one from before the question is, and counts as none (`reminderWay`);
+ * the record says so.
  */
-export function reminderGroundProblem(ground: unknown, since: unknown): string | null {
+export function reminderGroundProblem(
+  ground: unknown,
+  since: unknown,
+  objectionNoticeAddress: unknown,
+): string | null {
+  if (
+    objectionNoticeAddress !== undefined &&
+    objectionNoticeAddress !== null &&
+    (typeof objectionNoticeAddress !== 'string' || objectionNoticeAddress.trim() === '')
+  ) {
+    return 'Die Bestätigung des Hinweises auf den Widerspruch nennt die E-Mail-Adresse, für die er gegeben wurde.'
+  }
+
+  const objectionNoticeConfirmed = typeof objectionNoticeAddress === 'string'
+
+  const elsewhere =
+    'Die Bestätigung des Hinweises auf den Widerspruch gehört nur zum Bestandskunden nach § 7 Abs. 3 UWG.'
+
   if (ground === null || ground === undefined) {
-    return since === null || since === undefined
-      ? null
-      : 'Ohne Grundlage für Erinnerungen gibt es keinen Tag dazu.'
+    if (since !== null && since !== undefined) {
+      return 'Ohne Grundlage für Erinnerungen gibt es keinen Tag dazu.'
+    }
+
+    return objectionNoticeConfirmed === true ? elsewhere : null
   }
 
   if (typeof ground !== 'string' || !(reminderGrounds as readonly string[]).includes(ground)) {
@@ -128,5 +239,5 @@ export function reminderGroundProblem(ground: unknown, since: unknown): string |
     return 'Zur Grundlage für Erinnerungen gehört der Tag, seit dem sie gilt.'
   }
 
-  return null
+  return ground !== 'existing_customer' && objectionNoticeConfirmed === true ? elsewhere : null
 }

@@ -6,7 +6,14 @@ import {
   formatFor,
   type IsoDate,
   type JobId,
+  type CustomerId,
+  type DeadlineId,
+  lastServiceDay,
+  objectionNoticeConfirmedFor,
+  reminderContract,
+  reminderStillHolds,
   RuleError,
+  sameEmailAddress,
   shippedRules,
 } from '@opengewerk/domain'
 import {
@@ -15,13 +22,21 @@ import {
   MailDeliveryError,
   type TenantTransaction,
 } from '@opengewerk/platform-server'
-import { eq } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 
 import type { DocumentFiles, MailedFile } from '../api/document-files.js'
 import { dutyOf } from '../api/e-invoice.controller.js'
 import { frozenContent } from '../documents/content.js'
+import { deadlineKinds } from '../deadlines/registry.js'
 import { todayInGermany } from '../today.js'
-import { appointments, documents, jobs } from '../database/schema/index.js'
+import {
+  appointments,
+  customers,
+  deadlines,
+  documents,
+  jobs,
+  maintenanceContracts,
+} from '../database/schema/index.js'
 import { customerRestricted } from '../privacy/customer-erasure.js'
 import { appointmentInvitation } from '../notifications/confirmation-mail.js'
 import {
@@ -247,6 +262,10 @@ export function withAppointmentInvitation(
 export const restrictedCustomerMail =
   'Der Kunde ist auf einen Antrag auf Löschung eingeschränkt. Die Nachricht geht deshalb nicht mehr hinaus.'
 
+/** Why a reminder whose ground no longer holds stays unsent (#1026). */
+export const lapsedReminderMail =
+  'Die Grundlage der Erinnerung gilt nicht mehr: Der Kunde ist gelöscht, hat abbestellt oder eine andere E-Mail-Adresse, oder seine Einwilligung, die Bestätigung des Hinweises auf den Widerspruch oder sein Vertrag fehlt jetzt. Die Nachricht geht deshalb nicht mehr hinaus.'
+
 /** Why a message about a job that belongs to another customer now stays unsent. */
 export const reassignedCustomerMail =
   'Der Auftrag gehört inzwischen zu einem anderen Kunden. Die Nachricht geht deshalb nicht mehr hinaus.'
@@ -357,8 +376,13 @@ export async function refuseLapsedTransition(
  * it was written (Art. 18 DSGVO): raising a message asks that already
  * (#845). And not when what it is about belongs to another customer now: a
  * job given to somebody else after the mail was written, whose details its
- * file would carry to the address of the first. Given up on with the reason,
- * like a message whose document has no file to give.
+ * file would carry to the address of the first. And not a reminder whose
+ * ground no longer holds (#1026): a customer who objected since, a consent
+ * taken back, a confirmation of the notice taken away, also one written
+ * before the update that asked for the confirmation; a contract that no
+ * longer covers the day it is about; or an address the customer no longer
+ * has, which a confirmation for the new one does not cover. Given up on
+ * with the reason, like a message whose document has no file to give.
  */
 export async function refuseWithheldCustomerMail(
   database: Database,
@@ -377,9 +401,51 @@ export async function refuseWithheldCustomerMail(
 
       const customerId = row.customerId ?? current
 
-      return customerId !== null && (await customerRestricted(tx, customerId))
-        ? restrictedCustomerMail
-        : null
+      if (customerId === null) {
+        return null
+      }
+
+      if (await customerRestricted(tx, customerId)) {
+        return restrictedCustomerMail
+      }
+
+      if (row.kind !== 'customer_reminder') {
+        return null
+      }
+
+      const [customer] = await tx
+        .select({
+          email: customers.email,
+          ground: customers.reminderGround,
+          confirmedFor: customers.objectionNoticeAddress,
+        })
+        .from(customers)
+        .where(and(eq(customers.id, customerId as CustomerId), isNull(customers.deletedAt)))
+
+      // A customer deleted since is reminded of nothing, as the run that
+      // writes reminders asks (#1026, the review).
+      if (!customer) {
+        return lapsedReminderMail
+      }
+
+      if (
+        // The same address, spelled otherwise or not, as the confirmation
+        // compares it (the review).
+        !sameEmailAddress(customer.email, row.recipientAddress) ||
+        !reminderStillHolds(
+          row.body,
+          customer.ground,
+          objectionNoticeConfirmedFor(customer.email, customer.confirmedFor),
+        )
+      ) {
+        return lapsedReminderMail
+      }
+
+      const contract = reminderContract(row.body)
+
+      return contract === null || (await stillCovers(tx, customerId, contract, row.cause))
+        ? null
+        : lapsedReminderMail
     },
   )
 
@@ -391,6 +457,81 @@ export async function refuseWithheldCustomerMail(
       { permanent: true },
     )
   }
+}
+
+/**
+ * Whether the contract a waiting reminder names still covers the day it is
+ * about, the last part of its cause (#1026, CodeRabbit): as the reminder
+ * asked when it was written (`contractOf`), begun on or before that day
+ * (#1056) and its last day of service on or after it. A contract given
+ * notice covers it until its end, as when
+ * the reminder was written; one deleted since covers nothing. A reminder of
+ * an installation needs the contract to cover the installation still, as
+ * `contractOf` asks (the review): its deadline, which the cause names, says
+ * which one. The maintenance of a contract rests on that contract itself,
+ * the source of its deadline, whatever installations it covers now. Shared
+ * reminders name a site instead, and those of appliances never rest on a
+ * contract.
+ */
+async function stillCovers(
+  tx: TenantTransaction,
+  customerId: string,
+  number: string,
+  cause: string,
+): Promise<boolean> {
+  const parts = cause.split(':')
+  const dueOn = parts[parts.length - 1] ?? ''
+  const [deadline] = await tx
+    .select({
+      kind: deadlines.kind,
+      sourceId: deadlines.sourceId,
+      installationId: deadlines.installationId,
+    })
+    .from(deadlines)
+    .where(eq(deadlines.id, (parts[3] ?? '') as DeadlineId))
+
+  if (!deadline) {
+    return false
+  }
+
+  const ofContract = deadlineKinds.kind(deadline.kind)?.source === 'maintenance_visit'
+  const [contract] = await tx
+    .select({
+      startsOn: maintenanceContracts.startsOn,
+      termMonths: maintenanceContracts.termMonths,
+      renewal: maintenanceContracts.renewal,
+      renewalMonths: maintenanceContracts.renewalMonths,
+      noticeMonths: maintenanceContracts.noticeMonths,
+      endsOn: maintenanceContracts.endsOn,
+    })
+    .from(maintenanceContracts)
+    .where(
+      and(
+        eq(maintenanceContracts.customerId, customerId as CustomerId),
+        eq(maintenanceContracts.number, number),
+        ...(ofContract
+          ? [sql`${maintenanceContracts.id} = ${deadline.sourceId}::uuid`]
+          : deadline.installationId === null
+            ? []
+            : [
+                sql`${deadline.installationId}::uuid = any(${maintenanceContracts.installationIds})`,
+              ]),
+      ),
+    )
+
+  if (!contract) {
+    return false
+  }
+
+  const last = lastServiceDay({
+    ...contract,
+    startsOn: contract.startsOn as IsoDate,
+    endsOn: contract.endsOn as IsoDate | null,
+  } as Parameters<typeof lastServiceDay>[0])
+
+  // Running on the day, as `contractOf` asks: begun on or before it (#1056)
+  // and serving until it.
+  return contract.startsOn <= dueOn && (last === null || last >= dueOn)
 }
 
 /** The cause of a reminder to a customer: `customer_reminder:<kind>:<customer>:<…>`. */

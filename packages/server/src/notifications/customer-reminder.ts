@@ -7,6 +7,7 @@ import {
   filledMailText,
   type IsoDate,
   lastServiceDay,
+  objectionNoticeConfirmedFor,
   letterheadSignature,
   type MailFacts,
   type MaintenanceContractId,
@@ -95,7 +96,8 @@ async function contractOf(tx: TenantTransaction, kind: DeadlineKind, deadline: D
       endsOn: contract.endsOn as IsoDate | null,
     } as Parameters<typeof lastServiceDay>[0])
 
-    return last === null || last >= deadline.dueOn
+    // Running on the day: begun on or before it (#1056) and serving until it.
+    return contract.startsOn <= deadline.dueOn && (last === null || last >= deadline.dueOn)
   })
 
   return running?.number ?? null
@@ -135,6 +137,7 @@ export async function remindCustomer(
       name: customers.name,
       email: customers.email,
       ground: customers.reminderGround,
+      noticeFor: customers.objectionNoticeAddress,
     })
     .from(customers)
     .where(and(eq(customers.id, deadline.customerId as CustomerId), isNull(customers.deletedAt)))
@@ -145,7 +148,12 @@ export async function remindCustomer(
   }
 
   const contract = await contractOf(tx, kind, deadline)
-  const way = reminderWay(customer.ground, contract !== null, customer.email !== null)
+  const way = reminderWay(
+    customer.ground,
+    contract !== null,
+    customer.email !== null,
+    objectionNoticeConfirmedFor(customer.email, customer.noticeFor),
+  )
 
   if (way === null) {
     return

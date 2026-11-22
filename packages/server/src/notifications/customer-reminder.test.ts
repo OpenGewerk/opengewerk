@@ -10,6 +10,7 @@ import {
   type TenantId,
 } from '@opengewerk/domain'
 import { Database, type ExpectedDeadline, newId } from '@opengewerk/platform-server'
+import { eq } from 'drizzle-orm'
 import type { Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -26,6 +27,8 @@ import {
 import { type DeadlineJob, runDeadlinesOf } from '../deadlines/engine.js'
 import { deadlineKinds } from '../deadlines/registry.js'
 import type { DeadlineValues } from '../deadlines/sources.js'
+import { mailOutbox } from '../database/schema/index.js'
+import { lapsedReminderMail, refuseWithheldCustomerMail } from '../mail/attachments.js'
 import { callNotes } from './customer-reminder.js'
 
 /**
@@ -177,24 +180,45 @@ beforeAll(async () => {
   }
 
   // Who may be reminded, and how they can be reached.
-  const people: [string, string | null, string | null, string | null][] = [
-    ['lehmann', 'klaus.lehmann@example.com', 'existing_customer', '2024-03-12'],
-    ['ohne', 'ohne@example.com', null, null],
-    ['becker', null, 'consent', '2025-05-02'],
-    ['baeckerei', null, 'existing_customer', '2024-03-12'],
-    ['abbestellt', 'abbestellt@example.com', 'objected', '2026-11-02'],
-    ['vertrag', 'vertrag@example.com', null, null],
-    ['vertragstelefon', null, null, null],
-    ['einwilligung', 'einwilligung@example.com', 'consent', '2025-05-02'],
-    ['vertragende', 'vertragende@example.com', null, null],
+  // The last column: the notice on the objection confirmed (#1026). `hoffmann`
+  // is a customer of the business stored as one before the office was asked,
+  // as every one is after the migration.
+  const people: [string, string | null, string | null, string | null, boolean | string][] = [
+    ['lehmann', 'klaus.lehmann@example.com', 'existing_customer', '2024-03-12', true],
+    ['ohne', 'ohne@example.com', null, null, false],
+    ['becker', null, 'consent', '2025-05-02', false],
+    ['baeckerei', null, 'existing_customer', '2024-03-12', true],
+    ['abbestellt', 'abbestellt@example.com', 'objected', '2026-11-02', false],
+    ['vertrag', 'vertrag@example.com', null, null, false],
+    ['vertragstelefon', null, null, null, false],
+    ['einwilligung', 'einwilligung@example.com', 'consent', '2025-05-02', false],
+    ['vertragende', 'vertragende@example.com', null, null, false],
+    ['hoffmann', 'hoffmann@example.com', 'existing_customer', '2024-03-12', false],
+    // Confirmed for the address the customer had before (#1026).
+    [
+      'umgezogen',
+      'umgezogen@example.com',
+      'existing_customer',
+      '2024-03-12',
+      'alt.umgezogen@example.com',
+    ],
   ]
 
-  for (const [who, email, ground, since] of people) {
+  for (const [who, email, ground, since, confirmed] of people) {
     customers[who] = newId<'customer'>()
     await admin.query(
-      `insert into customers (id, tenant_id, kind, name, email, reminder_ground, reminder_ground_on)
-       values ($1, $2, 'private', $3, $4, $5, $6)`,
-      [customers[who], north, `Kunde ${who}`, email, ground, since],
+      `insert into customers (id, tenant_id, kind, name, email, reminder_ground, reminder_ground_on,
+         objection_notice_address)
+       values ($1, $2, 'private', $3, $4, $5, $6, $7)`,
+      [
+        customers[who],
+        north,
+        `Kunde ${who}`,
+        email,
+        ground,
+        since,
+        typeof confirmed === 'string' ? confirmed : confirmed ? email : null,
+      ],
     )
   }
 
@@ -260,6 +284,171 @@ afterAll(async () => {
   await admin.end()
 })
 
+/**
+ * A reminder that waits in the outbox goes only while its ground holds
+ * (#1026, CodeRabbit): the worker asks as it leaves, so that one written
+ * before the confirmation was taken away, or before the update that asked
+ * for it, stays unsent with the reason, and so does one to a customer who
+ * objected since. One of a contract goes on its contract.
+ */
+describe('a reminder that waits to go out', () => {
+  async function waiting(who: string) {
+    const [row] = await database.forTenant({ tenantId: north, reason: 'mail' }, (tx) =>
+      tx
+        .select()
+        .from(mailOutbox)
+        .where(eq(mailOutbox.customerId, (customers[who] ?? '') as CustomerId)),
+    )
+
+    if (!row) {
+      throw new Error(`no reminder to ${who}`)
+    }
+
+    return row
+  }
+
+  async function stored(who: string, ground: string | null, confirmed: boolean) {
+    // A ground has its day and none has none.
+    await admin.query(
+      `update customers
+          set reminder_ground = $2,
+              reminder_ground_on = case when $4::text is null then null
+                                        else coalesce(reminder_ground_on, date '2037-09-01') end,
+              objection_notice_address = case when $3::boolean then email end
+        where id = $1`,
+      [customers[who], ground, confirmed, ground],
+    )
+  }
+
+  it('stays unsent once its ground no longer holds', async () => {
+    await switchOn()
+    due.inspection = [inspectionOf('lehmann'), inspectionOf('vertrag')]
+
+    await runDeadlinesOf(engine(), north, now)
+
+    const { rows: covered } = await admin.query<{ installations: string[] }>(
+      `select installation_ids::text[] as installations from maintenance_contracts
+        where number = 'WV-2037-vertrag'`,
+    )
+
+    try {
+      await expect(refuseWithheldCustomerMail(database, await waiting('lehmann'))).resolves.toBe(
+        undefined,
+      )
+      await expect(refuseWithheldCustomerMail(database, await waiting('vertrag'))).resolves.toBe(
+        undefined,
+      )
+
+      await stored('lehmann', 'existing_customer', false)
+      await expect(refuseWithheldCustomerMail(database, await waiting('lehmann'))).rejects.toThrow(
+        lapsedReminderMail,
+      )
+
+      await stored('vertrag', 'objected', false)
+      await expect(refuseWithheldCustomerMail(database, await waiting('vertrag'))).rejects.toThrow(
+        lapsedReminderMail,
+      )
+
+      // Confirmed again, and the address only spelled otherwise since: that
+      // is still the address the reminder was written to (the review).
+      await stored('lehmann', 'existing_customer', true)
+      await admin.query(`update customers set email = 'Klaus.Lehmann@example.com' where id = $1`, [
+        customers['lehmann'],
+      ])
+      await expect(refuseWithheldCustomerMail(database, await waiting('lehmann'))).resolves.toBe(
+        undefined,
+      )
+
+      // Confirmed again, but for another address: the waiting reminder was
+      // written to the one the customer had (CodeRabbit). The confirmation
+      // holds for the new address, so only the address refuses it.
+      await stored('lehmann', 'existing_customer', true)
+      await admin.query(
+        `update customers set email = 'neu.lehmann@example.com',
+            objection_notice_address = 'neu.lehmann@example.com'
+          where id = $1`,
+        [customers['lehmann']],
+      )
+      await expect(refuseWithheldCustomerMail(database, await waiting('lehmann'))).rejects.toThrow(
+        lapsedReminderMail,
+      )
+
+      // A customer deleted since the reminder was written, with the address
+      // it went to.
+      await admin.query(
+        `update customers set email = 'klaus.lehmann@example.com', deleted_at = now() where id = $1`,
+        [customers['lehmann']],
+      )
+      await expect(refuseWithheldCustomerMail(database, await waiting('lehmann'))).rejects.toThrow(
+        lapsedReminderMail,
+      )
+
+      // A contract given notice before the day the reminder is about.
+      await stored('vertrag', null, false)
+      await admin.query(
+        `update maintenance_contracts set cancelled_on = '2037-06-01', ends_on = '2037-09-30'
+          where number = 'WV-2037-vertrag'`,
+      )
+      await expect(refuseWithheldCustomerMail(database, await waiting('vertrag'))).rejects.toThrow(
+        lapsedReminderMail,
+      )
+
+      // A contract that begins only after the day the reminder is about,
+      // which a new run would not count either (#1056).
+      await admin.query(
+        `update maintenance_contracts set cancelled_on = null, ends_on = null,
+            starts_on = '2037-11-01', first_visit_on = '2037-11-01'
+          where number = 'WV-2037-vertrag'`,
+      )
+      await expect(refuseWithheldCustomerMail(database, await waiting('vertrag'))).rejects.toThrow(
+        lapsedReminderMail,
+      )
+
+      // The installation taken out of the contract since, which a new run
+      // would not remind of either (the review).
+      await admin.query(
+        `update maintenance_contracts set cancelled_on = null, ends_on = null,
+            starts_on = '2037-01-01', first_visit_on = '2037-06-01',
+            installation_ids = array[$1]::uuid[]
+          where number = 'WV-2037-vertrag'`,
+        [installations['lehmann']],
+      )
+      await expect(refuseWithheldCustomerMail(database, await waiting('vertrag'))).rejects.toThrow(
+        lapsedReminderMail,
+      )
+
+      // The maintenance of a contract rests on the contract itself, whatever
+      // installations it covers now, as `contractOf` asks (the review): the
+      // deadline of the reminder made one of the maintenance of WV-2037-vertrag.
+      const contractCause = (await waiting('vertrag')).cause
+      await admin.query(
+        `update deadlines set kind = 'maintenance.visit',
+            source_id = (select id from maintenance_contracts where number = 'WV-2037-vertrag')
+          where id = $1`,
+        [contractCause.split(':')[3]],
+      )
+      await expect(refuseWithheldCustomerMail(database, await waiting('vertrag'))).resolves.toBe(
+        undefined,
+      )
+    } finally {
+      // The address first: the confirmation is set for the address it finds.
+      await admin.query(
+        `update customers set email = 'klaus.lehmann@example.com', deleted_at = null where id = $1`,
+        [customers['lehmann']],
+      )
+      await stored('lehmann', 'existing_customer', true)
+      await stored('vertrag', null, false)
+      await admin.query(
+        `update maintenance_contracts set cancelled_on = null, ends_on = null,
+            starts_on = '2037-01-01', first_visit_on = '2037-06-01',
+            installation_ids = $1::uuid[]
+          where number = 'WV-2037-vertrag'`,
+        [covered[0]?.installations ?? []],
+      )
+    }
+  })
+})
+
 describe('a reminder of a due inspection to the customer', () => {
   it('goes out once, by mail, to a customer of the business, naming the right to object', async () => {
     await switchOn()
@@ -320,6 +509,23 @@ describe('a reminder of a due inspection to the customer', () => {
     ])
   })
 
+  /**
+   * § 7 Abs. 3 Nr. 4 UWG wants the notice on the objection given when the
+   * address was collected. A customer of the business without the office's
+   * confirmation of it, as every one stored before the question, gets nothing
+   * (#1026); `lehmann` above has it and gets the mail.
+   */
+  it('goes to a customer of the business only with the notice at the collection confirmed', async () => {
+    await switchOn()
+    // Not confirmed, and confirmed for an address the customer no longer has.
+    due.inspection = [inspectionOf('hoffmann'), inspectionOf('umgezogen')]
+
+    await runDeadlinesOf(engine(), north, now)
+
+    expect(await mails()).toEqual([])
+    expect(await calls()).toEqual([])
+  })
+
   it('calls a customer of the business under § 7 Abs. 3 UWG never, since it covers mail alone', async () => {
     await switchOn()
     due.inspection = [inspectionOf('baeckerei')]
@@ -352,6 +558,27 @@ describe('a reminder of a due inspection to the customer', () => {
     await runDeadlinesOf(engine(), north, now)
 
     expect(await mails()).toEqual([])
+  })
+
+  /** Nor to one that begins only after it (#1056), which does not cover it yet. */
+  it('belongs to no contract that begins after the inspection is due', async () => {
+    await switchOn()
+    due.inspection = [inspectionOf('vertrag')]
+    await admin.query(
+      `update maintenance_contracts set starts_on = '2037-11-01', first_visit_on = '2037-11-01'
+        where number = 'WV-2037-vertrag'`,
+    )
+
+    try {
+      await runDeadlinesOf(engine(), north, now)
+
+      expect(await mails()).toEqual([])
+    } finally {
+      await admin.query(
+        `update maintenance_contracts set starts_on = '2037-01-01', first_visit_on = '2037-06-01'
+          where number = 'WV-2037-vertrag'`,
+      )
+    }
   })
 
   it('stops for a customer who stopped them, a contract and all', async () => {
@@ -420,7 +647,9 @@ describe('the ground of a customer at its route', () => {
     }).expect(201)
     const id = String((made.body as { id: string }).id)
 
-    await send('patch', `/customers/${id}`, { reminderGroundOn: '2025-06-01' }).expect(422)
+    // The day alone, as the office sends a change of it: checked against the
+    // ground the customer holds (#1026, the review).
+    await send('patch', `/customers/${id}`, { reminderGroundOn: '2025-06-01' }).expect(200)
     await send('patch', `/customers/${id}`, {
       reminderGround: 'newsletter',
       reminderGroundOn: '2025-06-01',
@@ -436,5 +665,164 @@ describe('the ground of a customer at its route', () => {
     )
 
     expect(rows[0]).toEqual({ reminder_ground: 'objected', on: '2026-11-02' })
+  })
+
+  /**
+   * The confirmation that the notice on the objection was given when the
+   * address was collected (#1026) belongs to a customer of § 7 Abs. 3 UWG
+   * alone: such a customer is stored without it and counts as none, another
+   * ground takes it away, and a write of the ground without it, as a form of
+   * the version before sends, leaves it.
+   */
+  it('keeps the confirmation of the notice with a customer of the business alone', async () => {
+    const made = await send('post', '/customers', {
+      kind: 'private',
+      name: 'Familie Gruber',
+      email: 'gruber@example.com',
+      reminderGround: 'existing_customer',
+      reminderGroundOn: '2024-03-12',
+    }).expect(201)
+    const id = String((made.body as { id: string }).id)
+    const confirmed = async () =>
+      (
+        await admin.query<{ confirmed: boolean }>(
+          `select coalesce(objection_notice_address = email, false) as confirmed
+             from customers where id = $1`,
+          [id],
+        )
+      ).rows[0]?.confirmed
+    const ground = { reminderGround: 'existing_customer', reminderGroundOn: '2024-03-12' }
+
+    expect(await confirmed()).toBe(false)
+
+    await send('patch', `/customers/${id}`, {
+      ...ground,
+      objectionNoticeAddress: 'gruber@example.com',
+    }).expect(200)
+    expect(await confirmed()).toBe(true)
+
+    await send('patch', `/customers/${id}`, ground).expect(200)
+    expect(await confirmed()).toBe(true)
+
+    await send('patch', `/customers/${id}`, {
+      reminderGround: 'consent',
+      reminderGroundOn: '2025-05-02',
+      objectionNoticeAddress: 'gruber@example.com',
+    }).expect(422)
+    await send('patch', `/customers/${id}`, {
+      reminderGround: 'consent',
+      reminderGroundOn: '2025-05-02',
+    }).expect(200)
+    expect(await confirmed()).toBe(false)
+  })
+
+  /**
+   * The office sends only what changed (`writeDirectly`): the confirmation
+   * alone, the day alone. Both are checked against the ground the customer
+   * holds (#1026, the review): the confirmation goes with a customer of the
+   * business, the day with any ground, and neither without one. The
+   * confirmation names the address: a new one written alone, as a client
+   * that does not know the field writes it, takes it away, also for the way
+   * back to the old address, and one for another address than the
+   * customer's is refused.
+   */
+  it('takes the confirmation and the day alone, checked against the stored ground', async () => {
+    const created = async (body: Record<string, unknown>) =>
+      String(
+        (
+          (await send('post', '/customers', { kind: 'private', ...body }).expect(201)).body as {
+            id: string
+          }
+        ).id,
+      )
+    const stored = async (id: string) =>
+      (
+        await admin.query<{ confirmed: boolean; on: string | null }>(
+          `select coalesce(objection_notice_address = email, false) as confirmed,
+                  to_char(reminder_ground_on, 'YYYY-MM-DD') as on
+             from customers where id = $1`,
+          [id],
+        )
+      ).rows[0]
+    const albers = await created({
+      name: 'Familie Albers',
+      email: 'albers@example.com',
+      reminderGround: 'existing_customer',
+      reminderGroundOn: '2024-03-12',
+    })
+
+    await send('patch', `/customers/${albers}`, {
+      objectionNoticeAddress: 'albers@example.com',
+    }).expect(200)
+    expect(await stored(albers)).toEqual({ confirmed: true, on: '2024-03-12' })
+
+    await send('patch', `/customers/${albers}`, { reminderGroundOn: '2024-04-02' }).expect(200)
+    expect(await stored(albers)).toEqual({ confirmed: true, on: '2024-04-02' })
+
+    await send('patch', `/customers/${albers}`, { email: 'neu.albers@example.com' }).expect(200)
+    expect(await stored(albers)).toEqual({ confirmed: false, on: '2024-04-02' })
+
+    // The new address took the confirmation for the old one away, so going
+    // back to the old address does not make it hold again (CodeRabbit).
+    await send('patch', `/customers/${albers}`, { email: 'albers@example.com' }).expect(200)
+    expect(await stored(albers)).toEqual({ confirmed: false, on: '2024-04-02' })
+    await send('patch', `/customers/${albers}`, { email: 'neu.albers@example.com' }).expect(200)
+
+    await send('patch', `/customers/${albers}`, {
+      objectionNoticeAddress: 'albers@example.com',
+    }).expect(422)
+    await send('patch', `/customers/${albers}`, {
+      objectionNoticeAddress: 'neu.albers@example.com',
+    }).expect(200)
+    expect(await stored(albers)).toEqual({ confirmed: true, on: '2024-04-02' })
+
+    // An address that is no text is refused with the sentence, not with an
+    // error of the server (the review).
+    for (const email of [5, ['neu.albers@example.com']]) {
+      const refused = await send('patch', `/customers/${albers}`, {
+        email,
+        objectionNoticeAddress: 'neu.albers@example.com',
+      }).expect(422)
+
+      expect(JSON.stringify(refused.body)).toContain('für die E-Mail-Adresse des Kunden bestätigt')
+    }
+
+    // A confirmation that held for the stored address neither, as a device
+    // can create a customer with one, goes with the next address as well,
+    // also when that is the one it names (CodeRabbit).
+    const vogt = await created({
+      name: 'Familie Vogt',
+      email: 'b.vogt@example.com',
+      reminderGround: 'existing_customer',
+      reminderGroundOn: '2024-03-12',
+    })
+
+    await admin.query(
+      `update customers set objection_notice_address = 'a.vogt@example.com' where id = $1`,
+      [vogt],
+    )
+    await send('patch', `/customers/${vogt}`, { email: 'a.vogt@example.com' }).expect(200)
+    expect(await stored(vogt)).toEqual({ confirmed: false, on: '2024-03-12' })
+
+    const becker = await created({
+      name: 'Schreinerei Becker',
+      reminderGround: 'consent',
+      reminderGroundOn: '2025-05-02',
+    })
+
+    await send('patch', `/customers/${becker}`, {
+      email: 'becker@example.com',
+      objectionNoticeAddress: 'becker@example.com',
+    }).expect(422)
+    expect(await stored(becker)).toEqual({ confirmed: false, on: '2025-05-02' })
+
+    const ohne = await created({ name: 'Familie Ohne' })
+
+    await send('patch', `/customers/${ohne}`, { reminderGroundOn: '2025-05-02' }).expect(422)
+    await send('patch', `/customers/${ohne}`, {
+      email: 'ohne@example.com',
+      objectionNoticeAddress: 'ohne@example.com',
+    }).expect(422)
+    expect(await stored(ohne)).toEqual({ confirmed: false, on: null })
   })
 })

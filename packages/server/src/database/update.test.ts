@@ -1989,6 +1989,81 @@ describe('the migration run', () => {
   })
 })
 
+/**
+ * The statements of a file as psql sends them on its own: one at a time,
+ * split at a semicolon that ends a line outside a `$$` block, without the
+ * comments between them.
+ */
+function statementsOf(text: string): string[] {
+  const statements: string[] = []
+  let current = ''
+  let quoted = false
+
+  for (const line of text.split(/\r?\n/)) {
+    if (!quoted && line.trimStart().startsWith('--')) {
+      continue
+    }
+
+    current = `${current}${line}${String.fromCharCode(10)}`
+
+    if ((line.match(/\$\$/g) ?? []).length % 2 === 1) {
+      quoted = !quoted
+    }
+
+    if (!quoted && line.trimEnd().endsWith(';')) {
+      statements.push(current)
+      current = ''
+    }
+  }
+
+  return current.trim() === '' ? statements : [...statements, current]
+}
+
+/**
+ * The rollback of 0151 (#1026) stops while a business has confirmed the
+ * notice for a customer, also played in the way the docs say, as superuser
+ * with psql, which sends one statement after the other and goes on after one
+ * that failed (CodeRabbit).
+ */
+describe('the rollback of 0151', () => {
+  it('keeps the confirmations of the notice, also played statement by statement', async () => {
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+    await admin.query('insert into tenants (id, name) values ($1, $2)', [tenant.id, tenant.name])
+    await admin.query(
+      `insert into customers (tenant_id, kind, name, email, reminder_ground, reminder_ground_on,
+         objection_notice_address)
+       values ($1, 'private', 'Familie Albers', 'albers@example.com', 'existing_customer',
+         '2024-03-12', 'albers@example.com')`,
+      [tenant.id],
+    )
+
+    const failures: string[] = []
+    const rollback = readFileSync(
+      join(migrationsFolder, 'down', '0151_objection_notice.sql'),
+      'utf8',
+    )
+
+    for (const statement of statementsOf(rollback)) {
+      await admin.query(statement).catch((error: unknown) => {
+        failures.push(reasonOf(error))
+      })
+    }
+
+    expect(failures).toHaveLength(1)
+    expect(failures[0]).toContain('Die Rücknahme von 0151 würde sie löschen')
+    expect(await columnNames(admin, 'customers')).toContain('objection_notice_address')
+    // The confirmation itself is still there, not only its column (CodeRabbit).
+    expect(
+      (
+        await admin.query<{ address: string | null }>(
+          `select objection_notice_address as address from customers where name = 'Familie Albers'`,
+        )
+      ).rows,
+    ).toEqual([{ address: 'albers@example.com' }])
+  })
+})
+
 describe('the migrations in this repository', () => {
   const index = readMigrationIndex()
 

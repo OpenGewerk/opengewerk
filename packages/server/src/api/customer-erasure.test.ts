@@ -682,6 +682,12 @@ describe('deleting a customer (#845)', () => {
   it('empties it and everything of it, keeps the site, and leaves its name nowhere', async () => {
     const { family, customer, site, job, invoice, report, installation } = await vossberg()
 
+    // A customer of the business, the notice on the objection confirmed (#1026).
+    await admin.query(
+      `update customers set reminder_ground = 'existing_customer', reminder_ground_on = '2024-03-12',
+         objection_notice_address = 'vossberg@example.com' where id = $1`,
+      [customer],
+    )
     await record(customer).expect(201)
 
     const answer = await erase(customer).expect(201)
@@ -712,6 +718,14 @@ describe('deleting a customer (#845)', () => {
     )
 
     expect(marked.rows).toEqual([{ name: 'Gelöschter Kunde', deleted: true }])
+    expect(
+      (
+        await admin.query(
+          'select reminder_ground, objection_notice_address from customers where id = $1',
+          [customer],
+        )
+      ).rows,
+    ).toEqual([{ reminder_ground: null, objection_notice_address: null }])
     expect(
       (
         await admin.query(

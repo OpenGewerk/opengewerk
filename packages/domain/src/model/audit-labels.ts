@@ -139,6 +139,7 @@ export const auditTables: Readonly<Record<string, AuditTableWords>> = {
       buyer_reference: 'Käuferreferenz',
       reminder_ground: 'Grundlage für Erinnerungen',
       reminder_ground_on: 'Grundlage für Erinnerungen seit',
+      objection_notice_address: 'Hinweis auf den Widerspruch bestätigt für',
       source: 'Quelle',
     },
   },

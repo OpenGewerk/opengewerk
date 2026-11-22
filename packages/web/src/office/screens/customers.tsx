@@ -10,6 +10,7 @@ import {
   reminderGroundExplanation,
   reminderGroundLabel,
   reminderGrounds,
+  objectionNoticeConfirmedFor,
   reminderGroundText,
 } from '@opengewerk/domain'
 import {
@@ -115,6 +116,14 @@ function asCustomer(values: Record<string, string>) {
     // A ground has its day and none has none (#316), whatever the field held before.
     reminderGround: values['reminderGround'] || null,
     reminderGroundOn: values['reminderGround'] ? asTextOrNull(values['reminderGroundOn']) : null,
+    // Only a customer of § 7 Abs. 3 UWG has the confirmation (#1026), and only
+    // for the address the form holds: one for an address since replaced is
+    // none.
+    objectionNoticeAddress:
+      values['reminderGround'] === 'existing_customer' &&
+      objectionNoticeConfirmedFor(values['email'], values['objectionNoticeAddress'])
+        ? asTextOrNull(values['email'])
+        : null,
     // How the customer found the business (#312), none where nobody said.
     source: values['source'] || null,
     notes: asTextOrNull(values['notes']),
@@ -789,6 +798,12 @@ function CustomerFacts({ customer }: { readonly customer: RecordState }) {
               typeof customer['reminderGroundOn'] === 'string'
                 ? (customer['reminderGroundOn'] as IsoDate)
                 : null,
+              objectionNoticeConfirmedFor(
+                typeof customer['email'] === 'string' ? customer['email'] : null,
+                typeof customer['objectionNoticeAddress'] === 'string'
+                  ? customer['objectionNoticeAddress']
+                  : null,
+              ),
             ),
           },
           // How the customer found the business (#312), with the lead it came from.
@@ -1140,6 +1155,7 @@ interface CustomerDraft {
   isConstructionServiceRecipient: string
   reminderGround: string
   reminderGroundOn: string
+  objectionNoticeAddress: string
   source: string
   notes: string
 }
@@ -1165,6 +1181,7 @@ function draftOf(customer: RecordState | null): CustomerDraft {
       customer?.['isConstructionServiceRecipient'] === true ? 'true' : 'false',
     reminderGround: held('reminderGround'),
     reminderGroundOn: held('reminderGroundOn'),
+    objectionNoticeAddress: held('objectionNoticeAddress'),
     source: held('source'),
     notes: held('notes'),
   }
@@ -1195,7 +1212,35 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
   const customer = useRecord('customers', customerId)
   const tagged = useTagsBy('customer')
   const held = customerId ? (tagged.get(customerId)?.ids ?? []) : []
-  const [draft, setDraft] = useState<CustomerDraft>(() => draftOf(customer))
+  // The fields, and how often somebody used the box of the confirmation in
+  // this form: kept together, so that the end of a write can tell from the
+  // same state whether the box was used while it was on its way.
+  const [draft, setDraft] = useState<CustomerDraft & { readonly noticeUses: number }>(() => ({
+    ...draftOf(customer),
+    noticeUses: 0,
+  }))
+  // The address the notice was confirmed for when the form opened, none
+  // where the row on this device is from before the question (#1026): what
+  // changed in the form is measured against it, not against a row another
+  // device changed while it was open (the review).
+  const [openedFor, setOpenedFor] = useState(() =>
+    typeof customer?.['objectionNoticeAddress'] === 'string'
+      ? customer['objectionNoticeAddress']
+      : null,
+  )
+  // Every field as the form opened with it (#1026, CodeRabbit): a write sends
+  // only what this form changed, not a value of before that another device
+  // has changed since, an address above all. After a write it is what was
+  // written. The same for the other forms is #1057.
+  const [opened, setOpened] = useState<Readonly<Record<string, unknown>>>(() =>
+    asCustomer(draftOf(customer) as unknown as Record<string, string>),
+  )
+  // How often the box was used by the start of the last write that went
+  // through (#1026, the review, CodeRabbit): only a use after that changes
+  // what is confirmed, also one made while the write was on its way. An
+  // address typed anew or spelled otherwise changes none.
+  const [noticeUsesWritten, setNoticeUsesWritten] = useState(0)
+  const noticeTouched = draft.noticeUses > noticeUsesWritten
   // Null until somebody changes the tags: until then the form shows what the
   // record has, also once rows arrive after it opened, and sends nothing.
   const [chosen, setChosen] = useState<ChosenTags | null>(null)
@@ -1214,6 +1259,9 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
     )
   }
 
+  // The notice is confirmed for the address it was given for (#1026): the
+  // box is ticked while that is the address typed, so a new one leaves it
+  // empty and the old one, typed again, ticks it again.
   const set = (field: keyof CustomerDraft) => (value: string) => {
     setDraft((current) => ({ ...current, [field]: value }))
   }
@@ -1227,8 +1275,37 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
     setWrong([])
     setWorking(true)
 
+    // The uses of the box this write knows of; one made while it is on its
+    // way still counts for the next.
+    const usesAtStart = draft.noticeUses
+
     try {
-      const values = asCustomer(draft as unknown as Record<string, string>)
+      const written = asCustomer(draft as unknown as Record<string, string>)
+      const values: Record<string, unknown> = { ...written }
+
+      if (editing) {
+        for (const field of Object.keys(values)) {
+          if (field !== 'objectionNoticeAddress' && values[field] === opened[field]) {
+            delete values[field]
+          }
+        }
+      }
+
+      // A confirmation nobody changed in the form stays out of the write, so
+      // that it cannot take back or give again one another device changed
+      // meanwhile (#1026, the review): sent only where somebody used the box,
+      // and then only where it ends up other than the form opened with. A new
+      // address needs nothing sent, as a confirmation for the old one
+      // confirms nothing for it.
+      if (
+        editing &&
+        (!noticeTouched ||
+          objectionNoticeConfirmedFor(values['objectionNoticeAddress'], openedFor) ||
+          (values['objectionNoticeAddress'] === null && openedFor === null))
+      ) {
+        delete values['objectionNoticeAddress']
+      }
+
       const result: EditResult = editing
         ? await client.update('customers', customerId, values)
         : await client.create('customers', values)
@@ -1238,6 +1315,24 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
         setWrong(result.fields)
 
         return
+      }
+
+      // Written: a second try after the tags failed starts from here and
+      // sends again only what changes after it (CodeRabbit), the box too.
+      if (editing) {
+        setOpened(written)
+        // The confirmation the customer holds after this write, as far as the
+        // form can tell (the review): the route takes it away with another
+        // ground or a new address, and `asCustomer` works out the same. The
+        // box shows it, unless somebody used it while the write was on its way.
+        setOpenedFor(written.objectionNoticeAddress)
+        setDraft((current) =>
+          current.noticeUses === usesAtStart
+            ? { ...current, objectionNoticeAddress: written.objectionNoticeAddress ?? '' }
+            : current,
+        )
+
+        setNoticeUsesWritten(usesAtStart)
       }
 
       if (editing && chosen !== null && tagsChanged(held, chosen)) {
@@ -1404,6 +1499,38 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
                       hint: 'Der Tag der Einwilligung, des Hinweises oder der Abbestellung.',
                     })
                   : null}
+                {/* Only once this is confirmed is a customer of § 7 Abs. 3 UWG one (#1026). */}
+                {draft.reminderGround === 'existing_customer' ? (
+                  <label className="flex items-start gap-[9px] text-[14px] leading-[1.4] text-ink">
+                    <input
+                      type="checkbox"
+                      checked={objectionNoticeConfirmedFor(
+                        draft.email,
+                        draft.objectionNoticeAddress,
+                      )}
+                      // Confirmed for an address, so nothing to confirm without one.
+                      disabled={asTextOrNull(draft.email) === null}
+                      onChange={(event) => {
+                        const confirmed = event.target.checked
+
+                        setDraft((current) => ({
+                          ...current,
+                          objectionNoticeAddress: confirmed ? current.email : '',
+                          noticeUses: current.noticeUses + 1,
+                        }))
+                      }}
+                      className="mt-0.5 size-4 shrink-0 accent-copper-solid"
+                    />
+                    <span>
+                      Bei der Erhebung der Adresse auf das Widerspruchsrecht hingewiesen
+                      <span className="block text-[13px] text-ink-muted">
+                        Am Tag unter „Seit“, für die E-Mail-Adresse oben; eine neue Adresse braucht
+                        die Bestätigung neu. Ohne sie geht als Bestandskunde keine Erinnerung hinaus
+                        (§ 7 Abs. 3 Nr. 4 UWG).
+                      </span>
+                    </span>
+                  </label>
+                ) : null}
               </div>
             </FormPanel>
           </div>

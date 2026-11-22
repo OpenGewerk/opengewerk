@@ -1058,6 +1058,13 @@
       "when": 1794858463737,
       "tag": "0150_definer_triggers_closed",
       "breakpoints": true
+    },
+    {
+      "idx": 151,
+      "version": "7",
+      "when": 1795363830421,
+      "tag": "0151_objection_notice",
+      "breakpoints": true
     }
   ]
 }
