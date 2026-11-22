@@ -510,6 +510,33 @@ describe('the reminders of a customer (#316)', () => {
     })
   })
 
+  /**
+   * A new address takes the confirmation along also from a row of the
+   * version before (#1026, CodeRabbit): one given meanwhile for the old
+   * address must not stay with the new one.
+   */
+  it('send the empty confirmation with a new address from a row of the version before', async () => {
+    server.put('customers', {
+      ...customer('c-3', 'Familie Lehmann', 'private', 'Hamburg'),
+      email: 'lehmann@example.com',
+      reminderGround: 'existing_customer',
+      reminderGroundOn: '2024-03-12',
+    })
+    const sent = recording()
+
+    await mount('/kunden/c-3/bearbeiten')
+    const user = userEvent.setup()
+    const email = (await screen.findByLabelText('E-Mail')) as HTMLInputElement
+
+    await user.clear(email)
+    await user.type(email, 'neu.lehmann@example.com')
+    await user.click(screen.getByRole('button', { name: 'Speichern' }))
+
+    await waitFor(() => {
+      expect(sent).toEqual([{ email: 'neu.lehmann@example.com', objectionNoticeConfirmed: false }])
+    })
+  })
+
   it('send a ground with its day, today until somebody says otherwise', async () => {
     await mount('/kunden/neu')
     const user = userEvent.setup()

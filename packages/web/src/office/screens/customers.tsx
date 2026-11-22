@@ -1256,8 +1256,14 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
 
       // A confirmation nobody changed stays out of the write: a row on this
       // device from before the question has none, and sending its false
-      // would take away one somebody gave meanwhile (#1026, the review).
-      if (editing && values['objectionNoticeConfirmed'] === storedConfirmation) {
+      // would take away one somebody gave meanwhile (#1026, the review). With
+      // a new address it goes along in any case, so that one given meanwhile
+      // for the old address does not stay with the new one (CodeRabbit).
+      if (
+        editing &&
+        values['objectionNoticeConfirmed'] === storedConfirmation &&
+        values['email'] === asTextOrNull(String(customer?.['email'] ?? ''))
+      ) {
         delete values['objectionNoticeConfirmed']
       }
 

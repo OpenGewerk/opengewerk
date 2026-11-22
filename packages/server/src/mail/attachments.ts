@@ -452,7 +452,8 @@ export async function refuseWithheldCustomerMail(
  * Whether the contract a waiting reminder names still covers the day it is
  * about, the last part of its cause (#1026, CodeRabbit): as the reminder
  * asked when it was written (`contractOf`), its last day of service on or
- * after that day. A contract given notice or deleted since covers nothing.
+ * after that day. A contract given notice covers it until its end, as when
+ * the reminder was written; one deleted since covers nothing.
  */
 async function stillCovers(
   tx: TenantTransaction,
