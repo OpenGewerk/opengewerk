@@ -3431,20 +3431,25 @@ describe('an access past its last day', () => {
 
     await lastDayAgo(north.id, userId, 2)
 
-    // A choice of the south that commits only once the pass waits to delete
-    // the session it read as working in the north.
+    // The pass reads the session as working in the north, and then waits
+    // for the access there, which a transaction of the test holds. Meanwhile
+    // the session chooses the south and commits: what the pass deletes after
+    // is only what still works in the north (#1047, the review). Held at the
+    // read of the sessions instead, the pass would never see the session in
+    // the north, and the test would not ask the delete.
     const held = await admin.connect()
-    let committed = false
+    let released = false
     let pass: Promise<unknown> | undefined
 
     try {
       await held.query('begin')
-      await held.query('update auth_sessions set active_tenant_id = $1 where id = $2', [
-        south.id,
-        working.id,
-      ])
+      await held.query(
+        'select 1 from memberships where tenant_id = $1 and user_id = $2 for update',
+        [north.id, userId],
+      )
 
       const holder = await held.query<{ pid: number }>('select pg_backend_pid() as pid')
+
       pass = sweepExpiredSessions(instance.database)
       // Its refusal is the test's, also while the loop still polls.
       pass.catch(() => undefined)
@@ -3466,13 +3471,17 @@ describe('an access past its last day', () => {
         }
       }
 
+      await admin.query('update auth_sessions set active_tenant_id = $1 where id = $2', [
+        south.id,
+        working.id,
+      ])
       await held.query('commit')
-      committed = true
+      released = true
       await pass
 
       expect(blocked).toBe(true)
     } finally {
-      held.release(!committed)
+      held.release(!released)
       // Without the lock the pass goes on; it ends before the test does.
       await pass?.catch(() => undefined)
     }
