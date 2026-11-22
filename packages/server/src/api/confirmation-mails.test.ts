@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
-import { berlinClock, instructionsSentence, type TenantId } from '@opengewerk/domain'
+import { berlinClock, instructionsSentence, type JobId, type TenantId } from '@opengewerk/domain'
 import {
   Database,
   FileStore,
@@ -27,6 +27,7 @@ import {
   restrictedCustomerMail,
 } from '../mail/attachments.js'
 import { runMailCycle } from '../mail/worker.js'
+import { jobReceivedMail } from '../notifications/confirmation-mail.js'
 import { ApiModule } from './api.module.js'
 import { DocumentFiles } from './document-files.js'
 import { holdQuery } from './test-hold.js'
@@ -610,6 +611,42 @@ describe('a confirmation of a service call (#315)', () => {
 
     expect(await cycle()).toEqual([])
     expect(await customersOfMails('job_id', job)).toEqual([])
+  })
+
+  /**
+   * A deletion still running while the pass writes (#1065, the review): the
+   * pass reads the customer before the deletion is in, and the deletion is
+   * dated before the message. What nobody asked for still does not go to a
+   * customer who is deleted by the time it would.
+   */
+  it('does not go to a customer whose deletion ran while it was written', async () => {
+    const customerId = await aCustomer()
+    const job = await aJob(customerId, 'service')
+    const held = holdQuery((text) => text.startsWith('update "customers" set "deleted_at"'))
+    const deleting = Promise.resolve(
+      http().delete(`/customers/${customerId}`).set('x-test-identity', office()).expect(200),
+    )
+
+    await held.reached
+    // The route has its time; the pass begins after it, on another clock.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(
+      await jobReceivedMail(database, north.id, { kind: 'job_received', jobId: job as JobId }),
+    ).toHaveLength(1)
+
+    held.release()
+    await deleting
+
+    const { rows } = await admin.query<{ before: boolean }>(
+      `select c.deleted_at < o.created_at as before from mail_outbox o
+         join customers c on c.id = o.customer_id where o.job_id = $1`,
+      [job],
+    )
+
+    // It raced: the deletion is dated before the message.
+    expect(rows).toEqual([{ before: true }])
+    expect(await cycle()).toEqual([])
   })
 
   it('leaves the card of the instructions to them: a confirmation of an appointment is none', async () => {

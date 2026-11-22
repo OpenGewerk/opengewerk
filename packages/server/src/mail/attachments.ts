@@ -387,9 +387,10 @@ export async function refuseLapsedTransition(
  * has, which a confirmation for the new one does not cover. And no message
  * of any kind to a customer deleted since it was written (#1055): deleting
  * one asks nothing about its documents or jobs, so a document, a
- * confirmation or a reminder may still wait for it. A message written after
- * the deletion goes as it did before. Given up on with the reason, like a
- * message whose document has no file to give.
+ * confirmation or a reminder may still wait for it. A message the office
+ * asked for after the deletion goes as it did before; one nobody asked for
+ * never goes to a deleted customer (#1065). Given up on with the reason,
+ * like a message whose document has no file to give.
  */
 export async function refuseWithheldCustomerMail(
   database: Database,
@@ -416,14 +417,17 @@ export async function refuseWithheldCustomerMail(
         return restrictedCustomerMail
       }
 
-      // Deleted after the message was written (#1055). One written after
-      // the deletion, which the office sends on purpose, goes as before.
+      // Deleted after the message was written (#1055). One the office asked
+      // for after the deletion, on purpose, goes as before. One nobody asked
+      // for does not go at all (#1065): a deletion that was still running
+      // while the pass wrote it is dated before it, and the pass read the
+      // customer as not deleted.
       const [held] = await tx
         .select({ deletedAt: customers.deletedAt })
         .from(customers)
         .where(eq(customers.id, customerId as CustomerId))
 
-      if (held?.deletedAt != null && held.deletedAt > row.createdAt) {
+      if (held?.deletedAt != null && (row.requestedBy === null || held.deletedAt > row.createdAt)) {
         return deletedCustomerMail
       }
 

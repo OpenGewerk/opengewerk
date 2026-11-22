@@ -577,6 +577,15 @@ describe('the instructions by mail', () => {
     await cycle(transport)
 
     expect(sent.filter((mail) => mail.subject.startsWith('Belehrungen'))).toEqual([])
+    // Not written at all, rather than given up on when it would go.
+    expect(
+      (
+        await admin.query(
+          "select id from mail_outbox where job_id = $1 and kind = 'job_instructions'",
+          [job],
+        )
+      ).rows,
+    ).toEqual([])
   })
 
   it('are not printed for a job given to another customer after the pass looked at it', async () => {
