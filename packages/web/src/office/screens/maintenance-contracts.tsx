@@ -525,7 +525,7 @@ function ContractView({ contract }: { readonly contract: MaintenanceContractEntr
                 ]}
                 note={
                   <p className="text-[13px] leading-[1.4] text-ink-muted">
-                    {`Zu Beginn jedes Zeitraums entsteht eine Dauerrechnung über ihn, mit der Pauschale als einer Position. Die erste eines Vertrags wartet als Entwurf${contract.issueByItself ? '; danach schreibt OpenGewerk jede selbst fest und schickt sie per E-Mail.' : '.'}`}
+                    {`Zu Beginn jedes Zeitraums, oder früher, wenn die Frist „Rechnung eines Wartungsvertrags“ einen Vorlauf hat, entsteht eine Dauerrechnung über ihn, mit der Pauschale als einer Position. Die erste eines Vertrags wartet als Entwurf${contract.issueByItself ? '; danach schreibt OpenGewerk jede selbst fest und schickt sie per E-Mail.' : '.'}`}
                   </p>
                 }
               >
@@ -1361,7 +1361,7 @@ function ContractForm({
               <p className="text-[13px] leading-[1.4] text-ink-muted">
                 {draft.paymentRhythm === 'visit'
                   ? 'Abgerechnet wird je Wartung, nach der Ausführung.'
-                  : 'Zu Beginn jedes Zeitraums entsteht eine Dauerrechnung über ihn, mit dem Steuersatz, der an seinem Ende gilt.'}
+                  : 'Zu Beginn jedes Zeitraums, oder früher, wenn die Frist „Rechnung eines Wartungsvertrags“ einen Vorlauf hat, entsteht eine Dauerrechnung über ihn, mit dem Steuersatz, der an seinem Ende gilt.'}
               </p>
             </div>
           </Panel>

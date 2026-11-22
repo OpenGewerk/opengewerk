@@ -31,6 +31,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Am Wartungsvertrag sagen Ansicht und Formular, dass eine Dauerrechnung früher entsteht, wenn die Frist „Rechnung eines Wartungsvertrags“ einen Vorlauf hat (#1051), und unter Einstellungen, Fristen sagt es der Text dieser Frist neben dem Feld für den Vorlauf. Bisher stand dort nur „zu Beginn jedes Zeitraums“, obwohl ein Betrieb einen Vorlauf einstellen kann. Seit #1039 trägt eine Dauerrechnung den Tag, an dem sie entsteht, also auch den früheren; schreibt das Büro einen Entwurf erst später fest, trägt sie den Tag der Festschreibung.
 - Setzt das Büro den zweiten Faktor einer Person zurück, schließen ihre Arbeitsabschnitte im Namen der Person aus dem Büro und mit dem Grund des Rücksetzens (#1048). Bisher stand dort die Person selbst, obwohl die Änderung am Faktor richtig das Büro nannte.
 - Entfernt das Büro die Daten einer Person, deren Zugang auch in einem anderen Betrieb vorbei ist, enden ihre Arbeitsabschnitte dort sofort: mit dem Ende des Zugangs oder, wo eine Sitzung vorher ablief, zu dieser Zeit (#1050). Bisher blieben sie offen, bis der stündliche Lauf sie mit dem Ende des Zugangs schloss, auch wenn die Sitzung schon vorher abgelaufen war.
 - Die beiden Mailtests zur Frist einer Nachricht prüfen jetzt, dass der Server `DATA` bekommen und seine Lesepause begonnen hat (#1054). Lief die Frist auf einer langsamen Maschine schon vorher ab, blieben sie grün, ohne ihren Fall zu erreichen.
