@@ -145,15 +145,6 @@ export interface JobDocumentsState {
 }
 
 /**
- * The documents of a job, and the two ways to start one.
- *
- * Two buttons and not one with a choice behind it. A quote and a cost
- * estimate are different statements with different consequences, section 4.2
- * keeps them apart, and a form with a kind field is how somebody sends the
- * wrong one because the field was left on its default.
- */
-
-/**
  * The day an invoice issued today is dated on, as the server dates it
  * (`issueDayOf`, #1039): today, and a recurring invoice never before the
  * first day of its period.
@@ -166,6 +157,14 @@ function issueDay(document: RecordState): string {
     : today()
 }
 
+/**
+ * The documents of a job, and the two ways to start one.
+ *
+ * Two buttons and not one with a choice behind it. A quote and a cost
+ * estimate are different statements with different consequences, section 4.2
+ * keeps them apart, and a form with a kind field is how somebody sends the
+ * wrong one because the field was left on its default.
+ */
 export function useJobDocuments(job: RecordState): JobDocumentsState {
   const jobId = String(job['id'])
   const client = useSync()
