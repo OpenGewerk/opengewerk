@@ -216,6 +216,8 @@ export async function contentAndGapsOf(
       signerName: documentSignatures.signerName,
       signedAt: documentSignatures.signedAt,
       path: documentSignatures.path,
+      // The declaration for the zero rate given with it (#1046).
+      zeroRateDeclaration: documentSignatures.zeroRateDeclaration,
     })
     .from(documentSignatures)
     .where(eq(documentSignatures.documentId, document.id))
@@ -290,6 +292,7 @@ export async function contentAndGapsOf(
           path: signature.path,
         }
       : null,
+    zeroRateDeclaration: signature?.zeroRateDeclaration ?? null,
     cashAccounting:
       (await parameterAt(tx, 'cash_accounting.permitted', document.documentDate))?.value === 1,
     deductions: await deductionsFor(tx, document, { lock: lockPredecessors }),

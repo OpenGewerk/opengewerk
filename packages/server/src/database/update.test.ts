@@ -2064,6 +2064,58 @@ describe('the rollback of 0151', () => {
   })
 })
 
+/**
+ * The rollback of 0152 (#1046) stops while a customer has given the
+ * declaration for the zero rate with a signature: it is the proof the
+ * business keeps for a line at 0 percent. Also played statement by statement.
+ */
+describe('the rollback of 0152', () => {
+  it('keeps the declarations for the zero rate, also played statement by statement', async () => {
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+    await admin.query('insert into tenants (id, name) values ($1, $2)', [tenant.id, tenant.name])
+
+    const customer = await admin.query<{ id: string }>(
+      `insert into customers (tenant_id, kind, name) values ($1, 'private', 'Familie Berg') returning id`,
+      [tenant.id],
+    )
+    const document = await admin.query<{ id: string }>(
+      `insert into documents (tenant_id, customer_id, kind, document_date)
+       values ($1, $2, 'time_and_material_report', '2026-09-21') returning id`,
+      [tenant.id, customer.rows[0]?.id],
+    )
+
+    await admin.query(
+      `insert into document_signatures
+         (tenant_id, document_id, signer_name, signed_at, path, content_fingerprint, zero_rate_declaration)
+       values ($1, $2, 'Erika Berg', now(), 'M1,1L2,2', 'sha256:00', 'Erklärung zum Nullsteuersatz')`,
+      [tenant.id, document.rows[0]?.id],
+    )
+
+    const failures: string[] = []
+    const rollback = readFileSync(
+      join(migrationsFolder, 'down', '0152_signature_zero_rate.sql'),
+      'utf8',
+    )
+
+    for (const statement of statementsOf(rollback)) {
+      await admin.query(statement).catch((error: unknown) => {
+        failures.push(reasonOf(error))
+      })
+    }
+
+    expect(failures).toHaveLength(1)
+    expect(failures[0]).toContain('Die Rücknahme von 0152 würde sie löschen')
+    expect(
+      (
+        await admin.query<{ declaration: string | null }>(
+          'select zero_rate_declaration as declaration from document_signatures',
+        )
+      ).rows,
+    ).toEqual([{ declaration: 'Erklärung zum Nullsteuersatz' }])
+  })
+})
+
 describe('the migrations in this repository', () => {
   const index = readMigrationIndex()
 

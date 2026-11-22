@@ -176,6 +176,7 @@ export const auditTables: Readonly<Record<string, AuditTableWords>> = {
       device_info: 'Gerät beim Unterschreiben',
       path: 'Unterschrift',
       content_fingerprint: 'Fingerabdruck der Seite',
+      zero_rate_declaration: 'Erklärung zum Nullsteuersatz',
     },
   },
   document_snapshots: { label: 'Festgeschriebener Stand', fields: { content: 'Inhalt' } },

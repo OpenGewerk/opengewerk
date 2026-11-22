@@ -10,6 +10,7 @@ import {
   longestDeviceInfo,
   longestSignerName,
   policyFor,
+  reportZeroRateDeclaration,
   roles,
   signedContentFingerprint,
 } from '@opengewerk/domain'
@@ -118,6 +119,7 @@ interface WrittenReport {
   }[]
   readonly introText: string
   readonly documentDate: string
+  readonly jobId: string
 }
 
 /**
@@ -127,6 +129,7 @@ interface WrittenReport {
 async function writeReport(
   documentDate = '2026-09-21',
   kind = 'time_and_material_report',
+  job = jobId,
 ): Promise<WrittenReport> {
   const id = newId<'document'>()
   const introText = 'Zwei Leitungsschutzschalter im Keller getauscht.'
@@ -150,7 +153,7 @@ async function writeReport(
   const { receipts } = await push([
     creating('documents', id, {
       customerId,
-      jobId,
+      jobId: job,
       kind,
       documentDate,
       introText,
@@ -170,17 +173,21 @@ async function writeReport(
 
   expect(receipts.map((receipt) => receipt.outcome)).toEqual(['applied', 'applied', 'applied'])
 
-  return { id, lines, introText, documentDate }
+  return { id, lines, introText, documentDate, jobId: job }
 }
 
-/** What the device worked out while the customer was looking at it. */
-function fingerprintOf(report: WrittenReport): string {
+/**
+ * What the device worked out while the customer was looking at it, with the
+ * declaration for the zero rate the page showed (#1046), where it showed one.
+ */
+function fingerprintOf(report: WrittenReport, zeroRateDeclaration: string | null = null): string {
   return signedContentFingerprint({
     subject: null,
     documentDate: report.documentDate,
     customerId,
-    jobId,
+    jobId: report.jobId,
     introText: report.introText,
+    zeroRateDeclaration,
     lines: report.lines.map((line) => ({
       ...line,
       kind: 'item' as const,
@@ -327,6 +334,7 @@ describe('a report from a device', () => {
       id,
       introText: 'Zählerschrank geprüft, alles in Ordnung.',
       documentDate: '2026-09-21',
+      jobId,
       lines: [
         {
           id: newId<'document-line'>(),
@@ -708,5 +716,142 @@ describe('a signed report', () => {
       version: documentContentVersion,
       signature: { signerName: 'Erika Berg', path: scribble },
     })
+  })
+})
+
+/**
+ * The declaration for the zero rate on a report (#1046): a job on a PV system
+ * or a storage taken without a quote, the customer gives it with the
+ * signature on site, and the report prints it.
+ */
+describe('the declaration for the zero rate on a report', () => {
+  const jobOn: Record<string, string> = {}
+
+  beforeAll(async () => {
+    const site = newId<'site'>()
+
+    await admin.query(
+      `insert into sites (id, tenant_id, customer_id, designation) values ($1, $2, $3, 'Berg, Dach')`,
+      [site, north.id, customerId],
+    )
+
+    for (const kind of ['pv_system', 'battery', 'wallbox']) {
+      const installation = newId<'installation'>()
+      const job = newId<'job'>()
+
+      await admin.query(
+        `insert into installations (id, tenant_id, site_id, kind, designation) values ($1, $2, $3, $4, $5)`,
+        [installation, north.id, site, kind, `Anlage ${kind}`],
+      )
+      await admin.query(
+        `insert into jobs (id, tenant_id, customer_id, site_id, installation_id, kind, status, designation)
+         values ($1, $2, $3, $4, $5, 'service', 'active', 'Tausch')`,
+        [job, north.id, customerId, site, installation],
+      )
+      jobOn[kind] = job
+    }
+  })
+
+  async function declared(report: WrittenReport) {
+    const { rows } = await admin.query<{ declaration: string | null }>(
+      'select zero_rate_declaration as declaration from document_signatures where document_id = $1',
+      [report.id],
+    )
+
+    return rows
+  }
+
+  it.each(['pv_system', 'battery'])(
+    'is given with the signature under a report of a job on a %s, and printed',
+    async (kind) => {
+      const report = await writeReport('2026-09-21', 'time_and_material_report', jobOn[kind])
+      const { receipts } = await push([
+        signing(report, {
+          zeroRateDeclaration: reportZeroRateDeclaration,
+          contentFingerprint: fingerprintOf(report, reportZeroRateDeclaration),
+        }),
+      ])
+
+      expect(receipts[0]?.outcome).toBe('applied')
+      expect(await declared(report)).toEqual([{ declaration: reportZeroRateDeclaration }])
+
+      await http()
+        .get(`/documents/${report.id}/pdf`)
+        .set('x-test-identity', office())
+        .buffer(true)
+        .parse(binary)
+        .expect(200)
+
+      expect(jobs.at(-1)?.html ?? '').toContain('Mit seiner Unterschrift erklärt der Kunde')
+    },
+  )
+
+  /**
+   * A device of the version before shows none and sends none: its signature
+   * lands, without one, and the report prints none.
+   */
+  it('lands without it from a device that showed none', async () => {
+    const report = await writeReport('2026-09-21', 'time_and_material_report', jobOn['pv_system'])
+    const { receipts } = await push([signing(report)])
+
+    expect(receipts[0]?.outcome).toBe('applied')
+    expect(await declared(report)).toEqual([{ declaration: null }])
+
+    await http()
+      .get(`/documents/${report.id}/pdf`)
+      .set('x-test-identity', office())
+      .buffer(true)
+      .parse(binary)
+      .expect(200)
+
+    expect(jobs.at(-1)?.html ?? '').not.toContain('Mit seiner Unterschrift erklärt der Kunde')
+  })
+
+  /**
+   * One the report does not carry, for a job on a wallbox, and one in other
+   * words is a page the server does not hold, whether the mark takes it in
+   * or not: the signature would otherwise keep words nobody was shown.
+   */
+  it('is refused where the report carries none, and in other words', async () => {
+    const otherWords = `${reportZeroRateDeclaration} Gilt auch für alles andere.`
+    const reports = [
+      await writeReport('2026-09-21', 'time_and_material_report', jobOn['wallbox']),
+      await writeReport('2026-09-21', 'time_and_material_report', jobOn['wallbox']),
+      await writeReport('2026-09-21', 'time_and_material_report', jobOn['pv_system']),
+      await writeReport('2026-09-21', 'time_and_material_report', jobOn['pv_system']),
+    ] as const
+    const [onWallbox, markedWithout, inOtherWords, markedRight] = reports
+    const { receipts } = await push(
+      [
+        signing(onWallbox, {
+          zeroRateDeclaration: reportZeroRateDeclaration,
+          contentFingerprint: fingerprintOf(onWallbox, reportZeroRateDeclaration),
+        }),
+        signing(markedWithout, {
+          zeroRateDeclaration: reportZeroRateDeclaration,
+          contentFingerprint: fingerprintOf(markedWithout),
+        }),
+        signing(inOtherWords, {
+          zeroRateDeclaration: otherWords,
+          contentFingerprint: fingerprintOf(inOtherWords, otherWords),
+        }),
+        signing(markedRight, {
+          zeroRateDeclaration: otherWords,
+          contentFingerprint: fingerprintOf(markedRight, reportZeroRateDeclaration),
+        }),
+      ],
+      technician(),
+    )
+
+    expect(receipts.map((receipt) => [receipt.outcome, receipt.reason])).toEqual([
+      ['conflict', 'changed_elsewhere'],
+      ['conflict', 'changed_elsewhere'],
+      ['conflict', 'changed_elsewhere'],
+      ['conflict', 'changed_elsewhere'],
+    ])
+
+    for (const report of reports) {
+      expect(await declared(report)).toEqual([])
+    }
   })
 })

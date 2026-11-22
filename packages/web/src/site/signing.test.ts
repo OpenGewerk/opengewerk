@@ -80,6 +80,7 @@ describe('what the customer signs', () => {
       introText: null,
       fields: null,
       fieldsVersion: null,
+      zeroRateDeclaration: null,
       lines: [],
     })
     expect(signedContentFingerprint(blank)).toBe(

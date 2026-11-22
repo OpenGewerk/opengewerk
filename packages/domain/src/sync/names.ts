@@ -153,6 +153,7 @@ export const syncFieldNames: Readonly<Record<string, string>> = {
   deviceInfo: 'Gerät',
   path: 'Unterschrift',
   contentFingerprint: 'Unterschriebener Stand',
+  zeroRateDeclaration: 'Erklärung zum Nullsteuersatz',
   wording: 'Wortlaut der Belehrungen',
   location: 'Ort',
   distributionBoardId: 'Verteiler',

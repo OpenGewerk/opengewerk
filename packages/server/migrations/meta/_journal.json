@@ -1065,6 +1065,13 @@
       "when": 1795363830421,
       "tag": "0151_objection_notice",
       "breakpoints": true
+    },
+    {
+      "idx": 152,
+      "version": "7",
+      "when": 1795378591025,
+      "tag": "0152_signature_zero_rate",
+      "breakpoints": true
     }
   ]
 }

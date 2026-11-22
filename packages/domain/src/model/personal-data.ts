@@ -173,7 +173,8 @@ export const personalDataCatalogue: Readonly<Record<string, PersonalData>> = {
   document_lines: { about: ['customer'], columns: ['document_id', 'description'] },
   document_signatures: {
     about: ['customer'],
-    columns: ['document_id', 'signer_name', 'path', 'device_info'],
+    // The declaration for the zero rate is one the customer gave (#1046).
+    columns: ['document_id', 'signer_name', 'path', 'device_info', 'zero_rate_declaration'],
   },
   document_snapshots: { about: ['customer'], columns: ['document_id', 'content'] },
   document_sources: none,

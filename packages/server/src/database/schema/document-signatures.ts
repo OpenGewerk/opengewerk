@@ -35,6 +35,9 @@ export const documentSignatures = pgTable(
     deviceInfo: text('device_info'),
     path: text('path').notNull(),
     contentFingerprint: text('content_fingerprint').notNull(),
+    // The declaration for the zero rate given with the signature (#1046),
+    // checked by the server against the one the report carries.
+    zeroRateDeclaration: text('zero_rate_declaration'),
     ...timestamps,
     ...syncColumns,
   },

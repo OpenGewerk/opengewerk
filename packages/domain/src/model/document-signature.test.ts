@@ -89,6 +89,22 @@ describe('the fingerprint of what was signed', () => {
     )
   })
 
+  /**
+   * The declaration for the zero rate (#1046) is part of the page where it
+   * was shown; a page without one keeps the mark of the form before, so that
+   * a device of the version before still signs one the server can work out.
+   */
+  it('takes the declaration for the zero rate in where the page showed one', () => {
+    const before = signedContentFingerprint(report())
+    const declared = signedContentFingerprint(report({ zeroRateDeclaration: 'Erklärung A' }))
+
+    expect(signedContentFingerprint(report({ zeroRateDeclaration: null }))).toBe(before)
+    expect(declared).not.toBe(before)
+    expect(declared).not.toBe(
+      signedContentFingerprint(report({ zeroRateDeclaration: 'Erklärung B' })),
+    )
+  })
+
   it('does not change with the gaps between positions', () => {
     const [hours, material] = report().lines
 

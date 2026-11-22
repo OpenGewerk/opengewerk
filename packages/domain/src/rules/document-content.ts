@@ -106,6 +106,12 @@ export interface ContentSources {
    * it is none, as for every kind but a delivery note.
    */
   readonly delivers?: DeliveredContent | null
+  /**
+   * The declaration for the zero rate the customer gave with the signature
+   * under a report (#1046), as the signature keeps it. Left out, there is
+   * none, as for every report signed without one and every other kind.
+   */
+  readonly zeroRateDeclaration?: string | null
 }
 
 /**
@@ -128,7 +134,10 @@ export interface ContentSources {
  * The declaration for the zero rate where the customer agrees to lines at it,
  * on a quote and an order confirmation (#1025). `zeroRated` says whether the
  * totals have a group at 0 percent, which only a document taxed as usual has:
- * under section 19 or a reverse charge no rate is applied at all.
+ * under section 19 or a reverse charge no rate is applied at all. On a report
+ * the one the customer signed (#1046), which the signature keeps: whether a
+ * report carries it is decided before it is signed, see
+ * `reportZeroRateDeclarationOf`.
  */
 export function printedNotes(document: {
   readonly kind: Document['kind']
@@ -136,6 +145,7 @@ export function printedNotes(document: {
   readonly recipientIsBusiness: boolean
   readonly statesCashAccounting: boolean
   readonly zeroRated: boolean
+  readonly signedDeclaration?: string | null
 }): readonly string[] {
   const notes: string[] = []
   const taxNote = taxNotes[document.taxTreatment]
@@ -150,6 +160,10 @@ export function printedNotes(document: {
 
   if (declaration && document.zeroRated) {
     notes.push(declaration)
+  }
+
+  if (document.signedDeclaration) {
+    notes.push(document.signedDeclaration)
   }
 
   if (document.statesCashAccounting) {
@@ -239,6 +253,7 @@ export function documentContent(rules: RuleSet, sources: ContentSources): Docume
       recipientIsBusiness: sources.recipient.isBusiness,
       statesCashAccounting,
       zeroRated: totals.byRate.some((entry) => entry.rate === 'zero'),
+      signedDeclaration: sources.zeroRateDeclaration ?? null,
     }),
     signature: sources.signature,
     deductions: sources.deductions,

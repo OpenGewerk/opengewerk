@@ -1,13 +1,15 @@
 import {
   type ConflictReason,
   type DocumentId,
+  type JobId,
   isSignable,
+  reportZeroRateDeclarationOf,
   signedContentFingerprint,
 } from '@opengewerk/domain'
 import type { TenantTransaction } from '@opengewerk/platform-server'
 import { and, eq, isNull } from 'drizzle-orm'
 
-import { documentLines, documents } from '../database/schema/index.js'
+import { documentLines, documents, installations, jobs } from '../database/schema/index.js'
 
 /** Why a signature may not land, in the shape a sync conflict records. */
 export interface SignatureRefusal {
@@ -53,6 +55,7 @@ export async function signatureRefusal(
       introText: documents.introText,
       fieldValues: documents.fieldValues,
       fieldsVersion: documents.fieldsVersion,
+      taxTreatment: documents.taxTreatment,
       deletedAt: documents.deletedAt,
     })
     .from(documents)
@@ -92,6 +95,21 @@ export async function signatureRefusal(
     .from(documentLines)
     .where(and(eq(documentLines.documentId, documentId), isNull(documentLines.deletedAt)))
 
+  // The declaration for the zero rate the report carries (#1046), worked out
+  // from the kind of the installation its job is about. A device sends the
+  // one it showed; the version before sends none and showed none, and its
+  // signature lands without one. A declaration the report does not carry,
+  // or another text, is a page the server does not hold.
+  const declaration = reportZeroRateDeclarationOf(
+    document,
+    await installationKindOf(tx, document.jobId),
+  )
+  const sent = values['zeroRateDeclaration'] ?? null
+
+  if (sent !== null && sent !== declaration) {
+    return { reason: 'changed_elsewhere', fields: ['zeroRateDeclaration'] }
+  }
+
   // The fields of the business (#78) are part of the page the customer read,
   // with the version of their definition, which says what a value meant.
   const held = signedContentFingerprint({
@@ -103,9 +121,29 @@ export async function signatureRefusal(
     lines,
     fields: document.fieldValues,
     fieldsVersion: document.fieldsVersion,
+    // Past the check above, what was sent is either none or this one.
+    zeroRateDeclaration: sent === null ? null : declaration,
   })
 
   return values['contentFingerprint'] === held
     ? null
     : { reason: 'changed_elsewhere', fields: ['contentFingerprint'] }
+}
+
+/** The kind of the installation a job is about, none for a job without one. */
+async function installationKindOf(
+  tx: TenantTransaction,
+  jobId: string | null,
+): Promise<string | null> {
+  if (jobId === null) {
+    return null
+  }
+
+  const [row] = await tx
+    .select({ kind: installations.kind })
+    .from(jobs)
+    .innerJoin(installations, eq(installations.id, jobs.installationId))
+    .where(eq(jobs.id, jobId as JobId))
+
+  return row?.kind ?? null
 }

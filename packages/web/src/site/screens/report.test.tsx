@@ -1,7 +1,11 @@
 import 'fake-indexeddb/auto'
 
 import type { Operation, OperationReceipt, RecordState } from '@opengewerk/domain'
-import { signaturePathIsValid, signedContentFingerprint } from '@opengewerk/domain'
+import {
+  reportZeroRateDeclaration,
+  signaturePathIsValid,
+  signedContentFingerprint,
+} from '@opengewerk/domain'
 import { ScanningContext } from '@opengewerk/platform-web/site'
 import type { CodeReader, Scanning } from '@opengewerk/platform-web/site'
 import { SyncProvider, openLocalStore } from '@opengewerk/platform-web/sync'
@@ -212,6 +216,7 @@ async function mount(path: string, rows: Readonly<Record<string, Row[]>> = {}) {
     entities: [
       'customers',
       'jobs',
+      'installations',
       'documents',
       'document_lines',
       'document_signatures',
@@ -564,6 +569,116 @@ describe('a report on site', () => {
       await screen.findByRole('button', { name: 'Mantelleitung NYM-J 5 × 6 mm² übernehmen' }),
     ).toBeTruthy()
     expect(asked.filter((url) => url.includes('/articles'))).toEqual([])
+  })
+
+  /**
+   * A report of a job on a PV system carries the declaration for the zero
+   * rate (#1046): the page shows it above the signature, the mark takes it
+   * in, and the signature sends it, as the server works it out.
+   */
+  it('shows the declaration for the zero rate of a job on a PV system, and signs and sends it', async () => {
+    const user = userEvent.setup()
+    const { client } = await mount('/auftraege/j-1/berichte/d-1', {
+      jobs: [{ ...job, installationId: 'i-1' }],
+      installations: [
+        {
+          id: 'i-1',
+          siteId: null,
+          kind: 'pv_system',
+          designation: 'PV-Anlage Dach',
+          version: 1,
+          deletedAt: null,
+        },
+      ],
+      documents: [
+        {
+          id: 'd-1',
+          customerId: 'c-1',
+          jobId: 'j-1',
+          kind: 'time_and_material_report',
+          status: 'draft',
+          number: null,
+          documentDate: '2026-09-21',
+          introText: 'Wechselrichter getauscht.',
+          taxTreatment: 'standard',
+          version: 1,
+          deletedAt: null,
+        },
+      ],
+    })
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Vom Kunden unterschreiben lassen' }),
+    )
+
+    expect(await screen.findByText(reportZeroRateDeclaration)).toBeTruthy()
+
+    await user.type(screen.getByLabelText('Name'), 'Erika Berg')
+    signOn(screen.getByRole('img', { name: 'Unterschriftsfeld' }))
+    await user.click(screen.getByRole('button', { name: 'Unterschreiben' }))
+    await screen.findByRole('img', { name: 'Unterschrift von Erika Berg' })
+    await client.synchronise()
+
+    const operation = server.operations().find((entry) => entry.entity === 'document_signatures')
+    const signature = Object.fromEntries(
+      (operation?.patches ?? []).map((patch) => [patch.field, patch.to]),
+    )
+
+    expect(signature['zeroRateDeclaration']).toBe(reportZeroRateDeclaration)
+    expect(signature['contentFingerprint']).toBe(
+      signedContentFingerprint({
+        subject: null,
+        documentDate: '2026-09-21',
+        customerId: 'c-1',
+        jobId: 'j-1',
+        introText: 'Wechselrichter getauscht.',
+        lines: [],
+        zeroRateDeclaration: reportZeroRateDeclaration,
+      }),
+    )
+    // The signed page says it too.
+    expect(screen.getByText(reportZeroRateDeclaration)).toBeTruthy()
+  })
+
+  /** Without a PV system or a storage at its job, the page shows none and sends none. */
+  it('shows no declaration for the zero rate of a job on anything else', async () => {
+    const user = userEvent.setup()
+
+    await mount('/auftraege/j-1/berichte/d-1', {
+      jobs: [{ ...job, installationId: 'i-1' }],
+      installations: [
+        {
+          id: 'i-1',
+          siteId: null,
+          kind: 'wallbox',
+          designation: 'Wallbox Garage',
+          version: 1,
+          deletedAt: null,
+        },
+      ],
+      documents: [
+        {
+          id: 'd-1',
+          customerId: 'c-1',
+          jobId: 'j-1',
+          kind: 'time_and_material_report',
+          status: 'draft',
+          number: null,
+          documentDate: '2026-09-21',
+          introText: 'Wallbox geprüft.',
+          taxTreatment: 'standard',
+          version: 1,
+          deletedAt: null,
+        },
+      ],
+    })
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Vom Kunden unterschreiben lassen' }),
+    )
+    await screen.findByLabelText('Name')
+
+    expect(screen.queryByText(reportZeroRateDeclaration)).toBeNull()
   })
 
   it('asks for a name and a signature before anything is signed', async () => {
