@@ -1221,14 +1221,23 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
     )
   }
 
+  // What the customer holds of the confirmation, none where the row on this
+  // device is from before the question (#1026).
+  const storedConfirmation = customer?.['objectionNoticeConfirmed'] === true
   const set = (field: keyof CustomerDraft) => (value: string) => {
     setDraft((current) => ({
       ...current,
       [field]: value,
       // The notice is confirmed for the address it was given with (#1026): a
-      // new one asks for it again.
-      ...(field === 'email' && value !== current.email
-        ? { objectionNoticeConfirmed: 'false' }
+      // new one asks for it again, and the stored one, typed again, has what
+      // it had (the review).
+      ...(field === 'email'
+        ? {
+            objectionNoticeConfirmed:
+              asTextOrNull(value) === asTextOrNull(String(customer?.['email'] ?? ''))
+                ? String(storedConfirmation)
+                : 'false',
+          }
         : {}),
     }))
   }
@@ -1243,7 +1252,15 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
     setWorking(true)
 
     try {
-      const values = asCustomer(draft as unknown as Record<string, string>)
+      const values: Record<string, unknown> = asCustomer(draft as unknown as Record<string, string>)
+
+      // A confirmation nobody changed stays out of the write: a row on this
+      // device from before the question has none, and sending its false
+      // would take away one somebody gave meanwhile (#1026, the review).
+      if (editing && values['objectionNoticeConfirmed'] === storedConfirmation) {
+        delete values['objectionNoticeConfirmed']
+      }
+
       const result: EditResult = editing
         ? await client.update('customers', customerId, values)
         : await client.create('customers', values)

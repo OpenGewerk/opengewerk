@@ -19,7 +19,7 @@ import {
   MailDeliveryError,
   type TenantTransaction,
 } from '@opengewerk/platform-server'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 
 import type { DocumentFiles, MailedFile } from '../api/document-files.js'
 import { dutyOf } from '../api/e-invoice.controller.js'
@@ -259,7 +259,7 @@ export const restrictedCustomerMail =
 
 /** Why a reminder whose ground no longer holds stays unsent (#1026). */
 export const lapsedReminderMail =
-  'Die Grundlage der Erinnerung gilt nicht mehr: Der Kunde hat abbestellt, eine andere E-Mail-Adresse, oder seine Einwilligung, die Bestätigung des Hinweises auf den Widerspruch oder sein Vertrag fehlt jetzt. Die Nachricht geht deshalb nicht mehr hinaus.'
+  'Die Grundlage der Erinnerung gilt nicht mehr: Der Kunde ist gelöscht, hat abbestellt oder eine andere E-Mail-Adresse, oder seine Einwilligung, die Bestätigung des Hinweises auf den Widerspruch oder sein Vertrag fehlt jetzt. Die Nachricht geht deshalb nicht mehr hinaus.'
 
 /** Why a message about a job that belongs to another customer now stays unsent. */
 export const reassignedCustomerMail =
@@ -415,10 +415,12 @@ export async function refuseWithheldCustomerMail(
           confirmed: customers.objectionNoticeConfirmed,
         })
         .from(customers)
-        .where(eq(customers.id, customerId as CustomerId))
+        .where(and(eq(customers.id, customerId as CustomerId), isNull(customers.deletedAt)))
 
+      // A customer deleted since is reminded of nothing, as the run that
+      // writes reminders asks (#1026, the review).
       if (!customer) {
-        return null
+        return lapsedReminderMail
       }
 
       if (

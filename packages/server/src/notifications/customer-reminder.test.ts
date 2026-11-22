@@ -338,6 +338,16 @@ describe('a reminder that waits to go out', () => {
         lapsedReminderMail,
       )
 
+      // A customer deleted since the reminder was written, with the address
+      // it went to.
+      await admin.query(
+        `update customers set email = 'klaus.lehmann@example.com', deleted_at = now() where id = $1`,
+        [customers['lehmann']],
+      )
+      await expect(refuseWithheldCustomerMail(database, await waiting('lehmann'))).rejects.toThrow(
+        lapsedReminderMail,
+      )
+
       // A contract given notice before the day the reminder is about.
       await stored('vertrag', null, false)
       await admin.query(
@@ -350,9 +360,10 @@ describe('a reminder that waits to go out', () => {
     } finally {
       await stored('lehmann', 'existing_customer', true)
       await stored('vertrag', null, false)
-      await admin.query(`update customers set email = 'klaus.lehmann@example.com' where id = $1`, [
-        customers['lehmann'],
-      ])
+      await admin.query(
+        `update customers set email = 'klaus.lehmann@example.com', deleted_at = null where id = $1`,
+        [customers['lehmann']],
+      )
       await admin.query(
         `update maintenance_contracts set cancelled_on = null, ends_on = null
           where number = 'WV-2037-vertrag'`,

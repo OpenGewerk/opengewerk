@@ -442,6 +442,74 @@ describe('the reminders of a customer (#316)', () => {
     })
   })
 
+  /** A writer that takes a change of master data and keeps what it was sent. */
+  function recording(): Record<string, unknown>[] {
+    const sent: Record<string, unknown>[] = []
+
+    server.patch = (entity, id, values) => {
+      sent.push({ ...values })
+      const current = server.all(entity).find((row) => row['id'] === id) ?? {}
+
+      server.put(entity, { ...current, ...values, version: Number(current['version'] ?? 1) + 1 })
+
+      return Promise.resolve()
+    }
+
+    return sent
+  }
+
+  /**
+   * A confirmation nobody changed stays out of the write (#1026, the
+   * review): not when the stored address is typed again ...
+   */
+  it('send no confirmation with the stored address typed again', async () => {
+    server.put('customers', {
+      ...customer('c-1', 'Familie Gruber', 'private', 'Hamburg'),
+      email: 'gruber@example.com',
+      reminderGround: 'existing_customer',
+      reminderGroundOn: '2024-03-12',
+      objectionNoticeConfirmed: true,
+    })
+    const sent = recording()
+
+    await mount('/kunden/c-1/bearbeiten')
+    const user = userEvent.setup()
+    const email = (await screen.findByLabelText('E-Mail')) as HTMLInputElement
+
+    await user.clear(email)
+    await user.type(email, 'gruber@example.com')
+    await user.type(screen.getByLabelText('Telefon'), '040 123')
+    await user.click(screen.getByRole('button', { name: 'Speichern' }))
+
+    await waitFor(() => {
+      expect(sent).toEqual([{ phone: '040 123' }])
+    })
+  })
+
+  /**
+   * ... and not from a row this device holds from before the question, whose
+   * false would take away a confirmation given meanwhile.
+   */
+  it('send no confirmation from a row of the version before', async () => {
+    server.put('customers', {
+      ...customer('c-2', 'Familie Albers', 'private', 'Hamburg'),
+      email: 'albers@example.com',
+      reminderGround: 'existing_customer',
+      reminderGroundOn: '2024-03-12',
+    })
+    const sent = recording()
+
+    await mount('/kunden/c-2/bearbeiten')
+    const user = userEvent.setup()
+
+    await user.type(await screen.findByLabelText('Telefon'), '040 456')
+    await user.click(screen.getByRole('button', { name: 'Speichern' }))
+
+    await waitFor(() => {
+      expect(sent).toEqual([{ phone: '040 456' }])
+    })
+  })
+
   it('send a ground with its day, today until somebody says otherwise', async () => {
     await mount('/kunden/neu')
     const user = userEvent.setup()
