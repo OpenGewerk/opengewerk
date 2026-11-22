@@ -2077,6 +2077,53 @@ describe('work that cannot be closed when its session ends', () => {
     expect(await sessionsOf(email)).toContain(working.id)
   })
 
+  it('closes the stretch a failed switch left open when the session came back before the sweep, and not the new one', async () => {
+    const email = 'wechsel-zurueck@example.de'
+
+    await joinedNorth(email)
+    await addStaffMember(instance.authentication, instance.database, {
+      email,
+      name: 'Sven Schließen',
+      password,
+      tenantId: south.id,
+      roles: ['member'],
+    })
+
+    const working = await atWork(email)
+
+    await whileClosingFails(
+      (identity) => identity.reason === 'session.switch',
+      () => instance.chooseTenant(working.cookies, south.id),
+    )
+    // Back in the north before the sweep: a new stretch there, the old one open still.
+    await instance.chooseTenant(working.cookies, north.id)
+
+    const inNorth = async () => {
+      const { rows } = await admin.query<{ open: boolean; reason: string | null }>(
+        `select t.ended_at is null as open, a.reason from tenant_sessions t
+           left join audit_entries a
+             on a.table_name = 'tenant_sessions' and a.record_id = t.id and a.field = 'ended_at'
+          where t.session_id = $1 and t.tenant_id = $2
+          order by t.started_at, t.id`,
+        [working.id, north.id],
+      )
+
+      return rows
+    }
+
+    expect(await inNorth()).toEqual([
+      { open: true, reason: null },
+      { open: true, reason: null },
+    ])
+
+    await sweepExpiredSessions(instance.database)
+
+    expect(await inNorth()).toEqual([
+      { open: false, reason: 'session.switch' },
+      { open: true, reason: null },
+    ])
+  })
+
   it('cuts a device off also when its work cannot be closed (#1031)', async () => {
     const email = 'geraet-schliessen@example.de'
 

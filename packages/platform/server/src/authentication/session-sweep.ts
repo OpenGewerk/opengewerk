@@ -801,18 +801,51 @@ export async function endOrphanedStretches(
           .where(inArray(authSessions.id, ids)),
       )
       const living = new Map(alive.map((row) => [row.id, row.tenantId]))
-      // Gone, or working in another tenant since a switch whose close of the
-      // stretch here failed (opengewerk#1030): the work here ended either way.
+      // The stretches themselves, read after the sessions: what closes is
+      // what was read here, by its key, never one a session opened since.
+      const stretches = await database.forTenant({ tenantId }, (tx) =>
+        tx
+          .select({
+            id: tenantSessions.id,
+            sessionId: tenantSessions.sessionId,
+            startedAt: tenantSessions.startedAt,
+          })
+          .from(tenantSessions)
+          .where(
+            and(
+              eq(tenantSessions.tenantId, tenantId),
+              inArray(tenantSessions.sessionId, ids),
+              isNull(tenantSessions.endedAt),
+            ),
+          )
+          .orderBy(
+            asc(tenantSessions.sessionId),
+            asc(tenantSessions.startedAt),
+            asc(tenantSessions.id),
+          ),
+      )
+      const latest = new Map(stretches.map((stretch) => [stretch.sessionId, stretch.id]))
+      // Gone, working in another tenant since a switch whose close of the
+      // stretch here failed (opengewerk#1030), or back here since and at work
+      // in a newer one: the work of this stretch ended either way.
       const groups = [
-        { reason: 'session.expire', sessions: ids.filter((id) => !living.has(id)) },
+        {
+          reason: 'session.expire',
+          stretches: stretches.filter((stretch) => !living.has(stretch.sessionId)),
+        },
         {
           reason: 'session.switch',
-          sessions: ids.filter((id) => living.has(id) && living.get(id) !== tenantId),
+          stretches: stretches.filter(
+            (stretch) =>
+              living.has(stretch.sessionId) &&
+              (living.get(stretch.sessionId) !== tenantId ||
+                latest.get(stretch.sessionId) !== stretch.id),
+          ),
         },
       ]
 
-      for (const { reason, sessions } of groups) {
-        if (sessions.length === 0) {
+      for (const { reason, stretches: closing } of groups) {
+        if (closing.length === 0) {
           continue
         }
 
@@ -823,7 +856,10 @@ export async function endOrphanedStretches(
             .where(
               and(
                 eq(tenantSessions.tenantId, tenantId),
-                inArray(tenantSessions.sessionId, sessions),
+                inArray(
+                  tenantSessions.id,
+                  closing.map((stretch) => stretch.id),
+                ),
                 isNull(tenantSessions.endedAt),
                 // Not the stretches of an access past its last day: those end
                 // at the end of that day and for that reason (`endPastLastDays`),
