@@ -417,16 +417,47 @@ export const cashAccountingNote = 'Versteuerung nach vereinnahmten Entgelten.'
  * "a qualifying building" tells a customer nothing. The same reasoning as for
  * `taxNotes` keeps the wording here and not in a package.
  */
-const zeroRateDeclared =
-  'dass er Betreiber der Photovoltaikanlage ist, zu der die Positionen mit 0 % gehören, und dass ' +
+const zeroRatePlant =
+  'und dass ' +
   'sie sich entweder auf oder in der Nähe einer Wohnung oder eines öffentlichen oder anderen ' +
   'Gebäudes befindet, das für dem Gemeinwohl dienende Tätigkeiten genutzt wird, oder ihre ' +
   'installierte Bruttoleistung laut Marktstammdatenregister nicht mehr als 30 kW (peak) beträgt ' +
   'oder betragen wird (§ 12 Abs. 3 UStG).'
 
+const zeroRateDeclared = `dass er Betreiber der Photovoltaikanlage ist, zu der die Positionen mit 0 % gehören, ${zeroRatePlant}`
+
 export const zeroRateDeclarations: Readonly<Partial<Record<DocumentKind, string>>> = {
   quote: `Mit der Annahme dieses Angebots erklärt der Kunde, ${zeroRateDeclared}`,
   order_confirmation: `Mit seinem Auftrag erklärt der Kunde, ${zeroRateDeclared}`,
+}
+
+/**
+ * The declaration on a report (#1046), for a job taken without a quote or an
+ * order confirmation, such as an inverter or a storage replaced on a call:
+ * the customer gives it with the signature on site. The report shows no rates,
+ * which the office sets with the invoice, so it speaks of the lines that end
+ * up at the zero rate.
+ */
+export const reportZeroRateDeclaration = `Mit seiner Unterschrift erklärt der Kunde, dass er Betreiber der Photovoltaikanlage ist, zu der die Positionen dieses Berichts gehören, die zum Nullsteuersatz abgerechnet werden, ${zeroRatePlant}`
+
+/**
+ * Whether a report carries the declaration (#1046): one of a job on a PV
+ * system or a storage. The kind of the installation stands for the plant, as
+ * nobody on site picks a rate. The tax treatment does not count: a report
+ * written on a device has none until the server proposes one on its arrival,
+ * and a device and the server have to agree on the page the customer signs
+ * (the review). Under section 19 or a reverse charge no line ends up at the
+ * zero rate, and the sentence speaks of those lines alone. Every other kind
+ * takes it with the contract, see `zeroRateDeclarations`.
+ */
+export function reportZeroRateDeclarationOf(
+  kind: DocumentKind,
+  installationKind: string | null,
+): string | null {
+  return kind === 'time_and_material_report' &&
+    (installationKind === 'pv_system' || installationKind === 'battery')
+    ? reportZeroRateDeclaration
+    : null
 }
 
 export interface Document extends Synced {

@@ -51,6 +51,12 @@ export interface DocumentSignature extends Synced {
   readonly path: string
   /** What the signature is about, see `signedContentFingerprint`. */
   readonly contentFingerprint: string
+  /**
+   * The declaration for the zero rate the customer gave with the signature
+   * (#1046), as the page showed it; null where the page showed none, also
+   * where a device of the version before signed a report that would carry one.
+   */
+  readonly zeroRateDeclaration: string | null
 }
 
 /** What a customer sees on the device before signing, and so what a signature is about. */
@@ -79,6 +85,13 @@ export interface SignedContent {
    * the same values is another page.
    */
   readonly fieldsVersion?: number | null
+  /**
+   * The declaration for the zero rate the page showed above the signature
+   * (#1046), where the report carries one. Absent or null, the mark is the
+   * one of the form before, so that a device of the version before, which
+   * showed none, still signs a page the server can work out.
+   */
+  readonly zeroRateDeclaration?: string | null
   readonly lines: readonly {
     readonly id: string
     readonly position: number
@@ -109,13 +122,16 @@ export interface SignedContent {
  * who may write a draft could find a different text with the same mark and
  * have the signature land under it, so it is SHA-256 (`textFingerprint`). The
  * first entry names the form of the content, so that the next form is a new
- * mark and never the same one by chance.
+ * mark and never the same one by chance. The declaration for the zero rate
+ * (#1046) comes last and only where the page showed one: without it the mark
+ * is the one of the form before.
  */
 export function signedContentFingerprint(content: SignedContent): string {
   const lines = [...content.lines]
     .sort((left, right) => left.position - right.position || left.id.localeCompare(right.id))
     .map((line) => [line.kind, line.designation, line.description, line.quantityMilli, line.unit])
   const fields = content.fields === '{}' ? null : (content.fields ?? null)
+  const declaration = content.zeroRateDeclaration ?? null
 
   return textFingerprint(
     JSON.stringify([
@@ -128,6 +144,7 @@ export function signedContentFingerprint(content: SignedContent): string {
       lines,
       fields,
       content.fieldsVersion ?? null,
+      ...(declaration === null ? [] : [declaration]),
     ]),
   )
 }

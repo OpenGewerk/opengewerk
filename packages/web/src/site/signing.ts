@@ -13,8 +13,15 @@ import { lineKindOf, lineUnitOf } from '../app/labels.js'
  * would make every signature on such a line a conflict. `kind` is the one of
  * these fields with a default in the table, and `lineKindOf` falls back to
  * that same `item`.
+ *
+ * The declaration for the zero rate (#1046) is the one the page shows above
+ * the signature, none where it shows none.
  */
-export function signedContentOf(report: RecordState, lines: readonly RecordState[]): SignedContent {
+export function signedContentOf(
+  report: RecordState,
+  lines: readonly RecordState[],
+  zeroRateDeclaration: string | null = null,
+): SignedContent {
   const introText = report['introText']
   const fields = report['fieldValues']
   const fieldsVersion = report['fieldsVersion']
@@ -36,6 +43,7 @@ export function signedContentOf(report: RecordState, lines: readonly RecordState
     // the version of their definition, which says what a value meant.
     fields: typeof fields === 'string' ? fields : null,
     fieldsVersion: typeof fieldsVersion === 'number' ? fieldsVersion : null,
+    zeroRateDeclaration,
     lines: lines.map((line) => {
       const designation = line['designation']
       const description = line['description']

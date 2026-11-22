@@ -374,6 +374,11 @@ export function SignatureCard({
                 value: `${moment(maybeText(signature, 'signedAt'))} Uhr`,
               },
               { label: 'Gerät', value: maybeText(signature, 'deviceInfo') },
+              // Whether the customer gave the declaration for the zero rate
+              // with it (#1046), which the office needs for the invoice.
+              ...(maybeText(signature, 'zeroRateDeclaration')
+                ? [{ label: 'Nullsteuersatz', value: 'Erklärung abgegeben' }]
+                : []),
             ]}
           />
         </div>

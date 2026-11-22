@@ -7,6 +7,7 @@ import {
 import {
   lineUnits,
   longestDeviceInfo,
+  reportZeroRateDeclarationOf,
   signedContentFingerprint,
   signerNameProblem,
   whyFixed,
@@ -1205,7 +1206,16 @@ function SigningStep({
   const [trouble, setTrouble] = useState<string | null>(null)
   const [working, setWorking] = useState(false)
   const formId = useId()
-  const fingerprint = signedContentFingerprint(signedContentOf(report, lines))
+  // The declaration for the zero rate (#1046): a report of a job on a PV
+  // system or a storage carries it, and the customer gives it with the
+  // signature. The server works it out the same way.
+  const job = useRecord('jobs', maybeText(report, 'jobId') ?? undefined)
+  const installation = useRecord('installations', maybeText(job, 'installationId') ?? undefined)
+  const declaration = reportZeroRateDeclarationOf(
+    documentKindOf(report),
+    maybeText(installation, 'kind'),
+  )
+  const fingerprint = signedContentFingerprint(signedContentOf(report, lines, declaration))
   const delivery = documentKindOf(report) === 'delivery_note'
 
   async function sign(event: FormEvent) {
@@ -1242,6 +1252,7 @@ function SigningStep({
         deviceInfo: globalThis.navigator.userAgent.slice(0, longestDeviceInfo),
         path,
         contentFingerprint: fingerprint,
+        zeroRateDeclaration: declaration,
       })
 
       if (made.outcome === 'refused') {
@@ -1267,6 +1278,8 @@ function SigningStep({
       ) : (
         <ReadOnlyReport report={report} lines={lines} />
       )}
+
+      {declaration === null ? null : <ZeroRateDeclaration declaration={declaration} />}
 
       <form
         id={formId}
@@ -1302,6 +1315,24 @@ function SigningStep({
         </Button>
       </SiteActionBar>
     </>
+  )
+}
+
+/**
+ * The declaration for the zero rate above the signature (#1046), in the words
+ * the customer signs, and why it is there.
+ */
+function ZeroRateDeclaration({ declaration }: { readonly declaration: string }) {
+  return (
+    <Panel title="Erklärung zum Nullsteuersatz">
+      <div className="flex flex-col gap-2.5">
+        <p className="text-[16px] leading-[1.45]">{declaration}</p>
+        <p className="text-[15px] leading-[1.4] text-ink-muted">
+          Steht hier, weil der Auftrag die Photovoltaikanlage betrifft. Welche Positionen zu 0 %
+          abgerechnet werden, legt das Büro mit der Rechnung fest.
+        </p>
+      </div>
+    </Panel>
   )
 }
 
@@ -1368,6 +1399,11 @@ function SignedReport({
       ) : (
         <ReadOnlyReport report={report} lines={lines} />
       )}
+
+      {/* The declaration the customer gave with the signature (#1046). */}
+      {signature && maybeText(signature, 'zeroRateDeclaration') ? (
+        <ZeroRateDeclaration declaration={text(signature, 'zeroRateDeclaration')} />
+      ) : null}
 
       {signature ? (
         <Panel title={delivery ? 'Empfang' : 'Unterschrift'}>
