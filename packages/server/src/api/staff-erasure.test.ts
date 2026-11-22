@@ -321,15 +321,22 @@ async function reachedBefore(
  * Waits until a statement waits for a lock, of the kind `event` names or any,
  * and where `statement` is given, one whose text has it.
  */
-async function untilWaiting(event?: string, statement?: string): Promise<void> {
+async function untilWaiting(holder: number, event?: string, statement?: string): Promise<void> {
   for (let tries = 0; tries < 200; tries += 1) {
+    // Only a statement that waits for `holder`: another session waiting for
+    // the same kind of lock lets nothing go too early.
     const waiting =
       event === undefined
-        ? await count("select count(*) as n from pg_stat_activity where wait_event_type = 'Lock'")
+        ? await count(
+            `select count(*) as n from pg_stat_activity
+              where wait_event_type = 'Lock' and $1 = any(pg_blocking_pids(pid))`,
+            [holder],
+          )
         : await count(
             `select count(*) as n from pg_stat_activity
-              where wait_event_type = 'Lock' and wait_event = $1 and query like $2`,
-            [event, `%${statement ?? ''}%`],
+              where wait_event_type = 'Lock' and wait_event = $1 and query like $2
+                and $3 = any(pg_blocking_pids(pid))`,
+            [event, `%${statement ?? ''}%`, holder],
           )
 
     if (waiting > 0) {
@@ -881,7 +888,9 @@ describe('what of the staff is due (#846)', () => {
     // the list as well and waits for the first.
     const again = erase('staff_year', [key]).then((answer) => answer)
 
-    await untilWaiting('advisory', 'pg_advisory_xact_lock').finally(stopped.release)
+    await untilWaiting(stopped.holder(), 'advisory', 'pg_advisory_xact_lock').finally(
+      stopped.release,
+    )
 
     expect((await asked).status).toBe(201)
     expect((await again).status).toBe(409)
@@ -909,7 +918,9 @@ describe('what of the staff is due (#846)', () => {
       return answer
     })
 
-    await untilWaiting('advisory', 'pg_advisory_xact_lock').finally(stopped.release)
+    await untilWaiting(stopped.holder(), 'advisory', 'pg_advisory_xact_lock').finally(
+      stopped.release,
+    )
 
     expect(through).toBe(false)
     expect((await asked).status).toBe(201)
@@ -938,7 +949,7 @@ describe('what of the staff is due (#846)', () => {
           () => 'went through',
           (error: unknown) => error,
         ),
-        untilWaiting('advisory').then(() => 'waited for the person'),
+        untilWaiting(stopped.holder(), 'advisory').then(() => 'waited for the person'),
       ])
     } finally {
       stopped.release()
@@ -1013,7 +1024,7 @@ describe('what of the staff is due (#846)', () => {
         const changed = client.query(statement, [...values])
 
         changed.catch(() => undefined)
-        await untilWaiting().finally(stopped.release)
+        await untilWaiting(stopped.holder()).finally(stopped.release)
 
         // The pass gives up and rolls back, and the change goes through. Its
         // commit comes before the end of the pass: the pass goes on to the

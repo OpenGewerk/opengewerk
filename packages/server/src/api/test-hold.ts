@@ -7,6 +7,12 @@ export interface HeldQuery {
   readonly reached: Promise<void>
   /** Sends it on to the database. */
   readonly release: () => void
+  /**
+   * The process of the database whose statement is held, once it is: what a
+   * test asks `pg_blocking_pids` about, so that a statement waiting counts
+   * only when it waits for this one and not for some other session.
+   */
+  readonly holder: () => number
 }
 
 /**
@@ -34,6 +40,7 @@ export function holdQuery(
     release = resolve
   })
   let seen = 0
+  let holder: number | null = null
 
   Client.prototype.query = function (this: Client, ...args: unknown[]) {
     const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
@@ -46,6 +53,8 @@ export function holdQuery(
       seen += 1
 
       if (seen === nth) {
+        // Set by pg once connected, and not in its types.
+        holder = (this as unknown as { processID?: number | null }).processID ?? null
         reached()
 
         return released.then(forward)
@@ -60,7 +69,17 @@ export function holdQuery(
     release()
   })
 
-  return { reached: atTheQuery, release }
+  return {
+    reached: atTheQuery,
+    release,
+    holder: () => {
+      if (holder === null) {
+        throw new Error('No statement is held yet, or its client has no process')
+      }
+
+      return holder
+    },
+  }
 }
 
 /**
