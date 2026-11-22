@@ -27,11 +27,10 @@ export async function endOtherSessions(
   keep: string,
   reason: string,
 ): Promise<void> {
-  const revoked = await database.forInstance(async (tx) => {
-    const at = new Date()
-
-    return { ...(await revokeCredentials(tx, userId, theSession(keep))), at }
-  }, userId)
+  const revoked = await database.forInstance(
+    (tx) => revokeCredentials(tx, userId, theSession(keep)),
+    userId,
+  )
 
   await endStretchesOfRevoked(database, userId, revoked, reason)
 }

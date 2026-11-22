@@ -42,7 +42,9 @@ type InstanceTransaction = Parameters<Parameters<Database['forInstance']>[0]>[0]
  * Counts the credentials of an account up and ends its sessions, apart from
  * those `keep` names, which take the new count. Also ends a sign in waiting
  * for its second code: it began with the credentials that are gone. Returns
- * the new count and the sessions that ended.
+ * the new count, the sessions that ended and the moment they went, taken
+ * once the count holds the account: whether one was at work or had run out
+ * is asked of that moment, not of one before a wait or after the commit.
  */
 export async function revokeCredentials(
   tx: InstanceTransaction,
@@ -55,6 +57,7 @@ export async function revokeCredentials(
     readonly tenantId: string | null
     readonly expiresAt: Date
   }[]
+  readonly at: Date
 }> {
   const [counted] = await tx
     .update(authUsers)
@@ -63,6 +66,7 @@ export async function revokeCredentials(
     .returning({ generation: authUsers.credentialGeneration })
   const generation = counted?.generation ?? 0
   const ofTheAccount = eq(authSessions.userId, userId)
+  const at = new Date()
 
   const ended = await tx
     .delete(authSessions)
@@ -82,7 +86,7 @@ export async function revokeCredentials(
 
   await tx.delete(authVerifications).where(eq(authVerifications.value, userId))
 
-  return { generation, ended }
+  return { generation, ended, at }
 }
 
 /**
@@ -131,11 +135,7 @@ export async function writePassword(
       return null
     }
 
-    // The moment the sessions go: whether one was at work or had run out is
-    // asked of it, not of the moment its stretch closes after the commit.
-    const at = new Date()
-
-    return { ...(await revokeCredentials(tx, userId)), at }
+    return revokeCredentials(tx, userId)
   }, userId)
 
   if (revoked === null) {
@@ -163,10 +163,7 @@ export async function writePassword(
 export async function endStretchesOfRevoked(
   database: Database,
   userId: string,
-  revoked: {
-    readonly ended: Awaited<ReturnType<typeof revokeCredentials>>['ended']
-    readonly at: Date
-  },
+  revoked: Pick<Awaited<ReturnType<typeof revokeCredentials>>, 'ended' | 'at'>,
   reason: string,
 ): Promise<void> {
   const ended = revoked.ended.map((session) => ({ ...session, userId }))
