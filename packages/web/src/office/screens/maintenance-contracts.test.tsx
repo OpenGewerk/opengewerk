@@ -395,6 +395,12 @@ describe('the maintenance contracts of the office (#294)', () => {
       screen.getByText('monatlich, zu Beginn des Monats; ab der zweiten Rechnung ohne Zutun'),
     ).toBeTruthy()
     expect(screen.getByText('39,00 € netto je Monat, Pauschale')).toBeTruthy()
+    // Earlier where its deadline has a lead (#1051).
+    expect(
+      screen.getByText(
+        /oder früher, wenn die Frist „Rechnung eines Wartungsvertrags“ einen Vorlauf hat/,
+      ),
+    ).toBeTruthy()
   })
 
   it('takes a rhythm and the wish to issue by itself, only with a flat price', async () => {
@@ -404,6 +410,7 @@ describe('the maintenance contracts of the office (#294)', () => {
     await user.selectOptions(await screen.findByLabelText('Abrechnung'), 'monthly')
 
     expect(screen.queryByRole('radio', { name: /Nach Aufwand/ })).toBeNull()
+    expect(screen.getByText(/einen Vorlauf hat, entsteht eine Dauerrechnung über ihn/)).toBeTruthy()
 
     await user.click(
       screen.getByRole('checkbox', { name: /Ab der zweiten Rechnung ohne Zutun festschreiben/ }),
