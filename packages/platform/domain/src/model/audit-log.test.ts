@@ -335,6 +335,10 @@ describe('the way a change took', () => {
       'Von selbst, Sitzung ohne zweiten Faktor beendet',
     )
     expect(language.way('password.change', applicationRoleName).text).toBe('Passwort geändert')
+    // The sweep closes the work of an access past its last day (opengewerk#1030).
+    expect(language.way('membership.end', applicationRoleName).text).toBe(
+      'Von selbst, letzter Tag des Zugangs vorbei',
+    )
     expect(language.way('sync.write', applicationRoleName).text).toBe('Abgleich')
     expect(language.way('session.switch', applicationRoleName).text).toBe(
       'Wechsel in einen anderen Mandanten',

@@ -12,7 +12,7 @@ import {
   authUsers,
   authVerifications,
 } from '../schema.js'
-import { endStretchesOrLeaveThem } from './session-sweep.js'
+import { endStretchesOfTakenOut, endStretchesOrLeaveThem } from './session-sweep.js'
 
 /**
  * The count of an account's credentials, against a session written after
@@ -42,7 +42,9 @@ type InstanceTransaction = Parameters<Parameters<Database['forInstance']>[0]>[0]
  * Counts the credentials of an account up and ends its sessions, apart from
  * those `keep` names, which take the new count. Also ends a sign in waiting
  * for its second code: it began with the credentials that are gone. Returns
- * the new count and the sessions that ended.
+ * the new count, the sessions that ended and the moment they went, taken
+ * once the count holds the account: whether one was at work or had run out
+ * is asked of that moment, not of one before a wait or after the commit.
  */
 export async function revokeCredentials(
   tx: InstanceTransaction,
@@ -55,14 +57,21 @@ export async function revokeCredentials(
     readonly tenantId: string | null
     readonly expiresAt: Date
   }[]
+  readonly at: Date
 }> {
   const [counted] = await tx
     .update(authUsers)
     .set({ credentialGeneration: sql`${authUsers.credentialGeneration} + 1` })
     .where(eq(authUsers.id, userId))
-    .returning({ generation: authUsers.credentialGeneration })
+    .returning({
+      generation: authUsers.credentialGeneration,
+      at: sql<Date | string>`clock_timestamp()`,
+    })
   const generation = counted?.generation ?? 0
   const ofTheAccount = eq(authSessions.userId, userId)
+  // By the clock of the database, as the sessions go by it, once the count
+  // holds the account (opengewerk#1030).
+  const at = counted === undefined ? new Date() : new Date(counted.at)
 
   const ended = await tx
     .delete(authSessions)
@@ -82,7 +91,7 @@ export async function revokeCredentials(
 
   await tx.delete(authVerifications).where(eq(authVerifications.value, userId))
 
-  return { generation, ended }
+  return { generation, ended, at }
 }
 
 /**
@@ -97,6 +106,12 @@ export async function revokeCredentials(
  * change only while the account still has `asking`, the count of the
  * session that asks for it. A link from a mail asks without one, `undefined`:
  * whoever holds the link sets the password, whatever came before.
+ *
+ * The sessions the count takes out close their stretches of work after it,
+ * under the reason of the new password and in the person's name
+ * (opengewerk#1029), as the hook does for those better-auth takes out itself:
+ * a change that keeps the other devices signed in leaves them to this, the
+ * one that asks included. A session that had run out already ends as run out.
  */
 export async function writePassword(
   database: Database,
@@ -104,7 +119,7 @@ export async function writePassword(
   hash: string,
   asking: unknown,
 ): Promise<number | null> {
-  return database.forInstance(async (tx) => {
+  const revoked = await database.forInstance(async (tx) => {
     const [account] = await tx
       .select({ generation: authUsers.credentialGeneration })
       .from(authUsers)
@@ -125,8 +140,43 @@ export async function writePassword(
       return null
     }
 
-    return (await revokeCredentials(tx, userId)).generation
+    return revokeCredentials(tx, userId)
   }, userId)
+
+  if (revoked === null) {
+    return null
+  }
+
+  await endStretchesOfRevoked(
+    database,
+    userId,
+    revoked,
+    asking === undefined ? 'password.reset' : 'password.change',
+  )
+
+  return revoked.generation
+}
+
+/**
+ * Closes the stretches of work of the sessions a count of the credentials
+ * took out, measured at the moment they went (`at`): those at work under the
+ * reason of what took them out and in the person's name, those that had run
+ * out already as run out. An access past its end ends its stretch with
+ * itself (`endStretchesOf`), and a close that fails is left to the pass
+ * (`endStretchesOrLeaveThem`).
+ */
+export async function endStretchesOfRevoked(
+  database: Database,
+  userId: string,
+  revoked: Pick<Awaited<ReturnType<typeof revokeCredentials>>, 'ended' | 'at'>,
+  reason: string,
+): Promise<void> {
+  await endStretchesOfTakenOut(
+    database,
+    revoked.ended.map((session) => ({ ...session, userId })),
+    revoked.at,
+    { reason, actor: userId },
+  )
 }
 
 /** The session that is named, as what `keep` takes. */

@@ -33,6 +33,7 @@ import {
 } from './address-confirmation.js'
 import type { CorrectedAccount } from './administration.js'
 import { beforeItsEnd } from './last-day.js'
+import { endStretchesOfTakenOut, endStretchesOrLeaveThem } from './session-sweep.js'
 import type { AddressMail } from './notices.js'
 import { changeOwnAccount } from './own-account.js'
 import { rolesHeld } from './roles.js'
@@ -212,6 +213,9 @@ export class AuthenticationController {
     )
 
     const previous = await this.database.forInstance(async (tx) => {
+      // Locked until the choice is written: another request of the same
+      // session waits and reads the tenant this one leaves it in, not the one
+      // both found (#1047, CodeRabbit).
       const [before] = await tx
         .select({
           activeTenantId: authSessions.activeTenantId,
@@ -219,6 +223,7 @@ export class AuthenticationController {
         })
         .from(authSessions)
         .where(eq(authSessions.id, user.sessionId))
+        .for('update')
 
       // The row decides at the moment it is written, as when a session is
       // renewed (opengewerk#1029): a session that ran out while the request
@@ -234,13 +239,15 @@ export class AuthenticationController {
             gt(authSessions.expiresAt, sql`clock_timestamp()`),
           ),
         )
-        .returning({ id: authSessions.id })
+        // As text, to the microsecond: the bound of the closes below.
+        .returning({ id: authSessions.id, at: sql<string>`clock_timestamp()::text` })
 
       return written === undefined
         ? null
         : {
             tenantId: before?.activeTenantId ?? null,
             signInMethod: before?.signInMethod ?? 'password',
+            switchedAt: written.at,
           }
     }, user.userId)
 
@@ -251,12 +258,34 @@ export class AuthenticationController {
     // A switch from one tenant to another (#242) ends the work in the first,
     // which would otherwise stay open in its log until the end of time: the
     // sign out closes only what is open in the tenant chosen last.
+    // Where the access there ended meanwhile, the work ended with it
+    // (opengewerk#1030). The choice is written already, as a session goes
+    // first everywhere else (opengewerk#1031): a close that fails leaves the
+    // stretch to the sweep, which closes one whose session works elsewhere
+    // (`endOrphanedStretches`), and the session works on where it chose.
+    // Here too only what began before this switch: another request of the
+    // same session may have gone back meanwhile and opened its stretch there
+    // (#1047, the review).
     if (previous.tenantId !== null && previous.tenantId !== chosen) {
-      await this.closeTenantSessions(
-        previous.tenantId,
-        user.userId,
-        user.sessionId,
-        'session.switch',
+      await endStretchesOrLeaveThem(
+        this.database,
+        [{ id: user.sessionId, userId: user.userId, tenantId: previous.tenantId }],
+        { reason: 'session.switch', actor: user.userId, startedBefore: previous.switchedAt },
+      )
+    }
+
+    // Back in a tenant it left while the close of its stretch there failed:
+    // that stretch ended when the session left, and closes now, before the
+    // new one opens (opengewerk#1030). The same tenant chosen again, to
+    // register the device, leaves the open stretch as it is.
+    // Only what began before this switch: another request of the same
+    // session may have chosen this tenant meanwhile and opened its stretch,
+    // which stays open (#1047).
+    if (previous.tenantId !== chosen) {
+      await endStretchesOrLeaveThem(
+        this.database,
+        [{ id: user.sessionId, userId: user.userId, tenantId: chosen }],
+        { reason: 'session.switch', actor: user.userId, startedBefore: previous.switchedAt },
       )
     }
 
@@ -402,6 +431,13 @@ export class AuthenticationController {
    * tenant is closed. The second part is why this is not simply a delete:
    * a tenant session left open would tell a tenant somebody is still working
    * in it, and would do so forever, because the row it pointed at is gone.
+   *
+   * The row goes first and the stretch closes after, as everywhere a session
+   * ends (opengewerk#1031): a delete that fails leaves the session working
+   * with its stretch still open, and a close that fails leaves an orphan the
+   * sweep closes within the hour, while the route answers that the device is
+   * out, as it is. Closed first, a failed delete would leave a session at work
+   * that the tenant's log no longer shows.
    */
   @Delete('devices/:sessionId')
   @RequiresSession()
@@ -409,94 +445,87 @@ export class AuthenticationController {
     @CurrentUser() user: SignedInUser,
     @Param('sessionId') sessionId: string,
   ): Promise<{ revoked: string }> {
-    const owned = await this.database.forInstance(async (tx) => {
-      const [row] = await tx
-        .select({ activeTenantId: authSessions.activeTenantId })
-        .from(authSessions)
-        .where(and(eq(authSessions.id, sessionId), eq(authSessions.userId, user.userId)))
-        .limit(1)
+    const [revoked] = await this.database.forInstance(
+      (tx) =>
+        tx
+          .delete(authSessions)
+          .where(and(eq(authSessions.id, sessionId), eq(authSessions.userId, user.userId)))
+          .returning({
+            activeTenantId: authSessions.activeTenantId,
+            expiresAt: authSessions.expiresAt,
+            at: sql<Date | string>`clock_timestamp()`,
+          }),
+      user.userId,
+    )
 
-      return row
-    }, user.userId)
-
-    if (!owned) {
+    if (!revoked) {
       // Somebody else's session, or none. One answer for both, so that this
       // cannot be used to find out which session identifiers exist.
       throw new ForbiddenException('Diese Sitzung gehört nicht zu diesem Konto.')
     }
 
-    if (owned.activeTenantId) {
-      await this.closeTenantSessions(owned.activeTenantId, user.userId, sessionId, 'session.revoke')
-    }
-
-    await this.database.forInstance(
-      (tx) => tx.delete(authSessions).where(eq(authSessions.id, sessionId)),
-      user.userId,
+    // The list shows a device that ran out and the sweep has not taken yet:
+    // cut off now, its work ended when it ran out (opengewerk#1030).
+    await endStretchesOfTakenOut(
+      this.database,
+      [
+        {
+          id: sessionId,
+          userId: user.userId,
+          tenantId: revoked.activeTenantId,
+          expiresAt: revoked.expiresAt,
+        },
+      ],
+      new Date(revoked.at),
+      { reason: 'session.revoke', actor: user.userId },
     )
 
     return { revoked: sessionId }
   }
 
   /**
-   * Signs out, and closes the stretch of work in the tenant first.
+   * Signs out, and closes the stretch of work in the tenant.
    *
    * better-auth has a sign out of its own and it is not enough on its own: it
    * knows nothing about tenant sessions, so it would take the session away and
    * leave the tenant's log saying somebody is still at work. This route does
-   * both and is the one a client calls.
+   * both and is the one a client calls. The row goes first and the stretch
+   * closes after, for the reason `revokeDevice` gives.
    */
   @Post('sign-out')
   @RequiresSession()
   async signOut(@CurrentUser() user: SignedInUser): Promise<{ signedOut: true }> {
-    const current = await this.database.forInstance(async (tx) => {
-      const [row] = await tx
-        .select({ activeTenantId: authSessions.activeTenantId })
-        .from(authSessions)
-        .where(eq(authSessions.id, user.sessionId))
-        .limit(1)
-
-      return row
-    }, user.userId)
-
-    if (current?.activeTenantId) {
-      await this.closeTenantSessions(
-        current.activeTenantId,
-        user.userId,
-        user.sessionId,
-        'session.end',
-      )
-    }
-
-    await this.database.forInstance(
-      (tx) => tx.delete(authSessions).where(eq(authSessions.id, user.sessionId)),
+    const [ended] = await this.database.forInstance(
+      (tx) =>
+        tx
+          .delete(authSessions)
+          .where(eq(authSessions.id, user.sessionId))
+          .returning({
+            activeTenantId: authSessions.activeTenantId,
+            expiresAt: authSessions.expiresAt,
+            at: sql<Date | string>`clock_timestamp()`,
+          }),
       user.userId,
     )
 
-    return { signedOut: true }
-  }
+    // Alive when the request was let in, run out perhaps by the time its row
+    // went: then the work ended when it ran out (#1047).
+    if (ended) {
+      await endStretchesOfTakenOut(
+        this.database,
+        [
+          {
+            id: user.sessionId,
+            userId: user.userId,
+            tenantId: ended.activeTenantId,
+            expiresAt: ended.expiresAt,
+          },
+        ],
+        new Date(ended.at),
+        { reason: 'session.end', actor: user.userId },
+      )
+    }
 
-  /**
-   * Closes whatever this session had open in that tenant. An update and not
-   * a delete, because the row is the tenant's record that somebody worked in
-   * it, and the change itself is what the audit log picks up.
-   */
-  private async closeTenantSessions(
-    tenantId: TenantId,
-    userId: string,
-    sessionId: string,
-    reason: string,
-  ): Promise<void> {
-    await this.database.forTenant({ tenantId, userId, reason }, (tx) =>
-      tx
-        .update(tenantSessions)
-        .set({ endedAt: new Date() })
-        .where(
-          and(
-            eq(tenantSessions.sessionId, sessionId),
-            eq(tenantSessions.userId, userId),
-            isNull(tenantSessions.endedAt),
-          ),
-        ),
-    )
+    return { signedOut: true }
   }
 }

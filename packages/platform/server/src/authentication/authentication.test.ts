@@ -1,15 +1,17 @@
 import { otherAccountSignedIn, workingAsHeader, workingInHeader } from '@opengewerk/platform-domain'
-import { and, eq } from 'drizzle-orm'
-import type { Pool } from 'pg'
+import { and, eq, sql } from 'drizzle-orm'
+import { Client, type Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import type { Database } from '../database/database.js'
 import { newId } from '../database/identifier.js'
-import { auditEntries, authRateLimits, authUsers, invitations } from '../schema.js'
+import { auditEntries, authRateLimits, authUsers, invitations, tenantSessions } from '../schema.js'
+import { removeAccountData, revokeDeviceOf, setBlocked } from './administration.js'
 import { authenticationPath } from './authentication.js'
 import { mintToken } from './invitation.js'
 import {
+  probeAccess,
   type ProbeFoundation,
   probeFoundation,
   probeIdentities,
@@ -18,8 +20,18 @@ import {
   probeOrigin as origin,
   reached,
 } from './probe-application.js'
+import { writePassword } from './credentials.js'
+import { endOtherSessions } from './other-sessions.js'
 import { renewSession } from './session-lifetime.js'
-import { carryStretch, endStretchesOf, sweepExpiredSessions } from './session-sweep.js'
+import {
+  carryStretch,
+  endOrphanedStretches,
+  endPastLastDayOf,
+  endPastLastDays,
+  endStretchesOf,
+  type LastDaysPass,
+  sweepExpiredSessions,
+} from './session-sweep.js'
 import { addStaffMember, replacePassword } from './staff.js'
 
 /**
@@ -829,6 +841,62 @@ describe('signing out', () => {
 
     await http().get('/probe/members').set('cookie', cookies).expect(401)
   })
+
+  /** Makes the delete of one session fail, for as long as `run` runs. */
+  async function refusingToDelete(sessionId: string, run: () => Promise<unknown>): Promise<void> {
+    await admin.query(
+      `create function refuse_session_delete() returns trigger language plpgsql
+         as $$ begin raise exception 'delete refused'; end $$`,
+    )
+    // The id quoted by PostgreSQL itself, since a trigger takes no parameters.
+    const { rows } = await admin.query<{ statement: string }>(
+      `select format('create trigger refuse_session_delete before delete on auth_sessions
+                        for each row when (old.id = %L) execute function refuse_session_delete()', $1::text)
+              as statement`,
+      [sessionId],
+    )
+
+    await admin.query(rows[0]?.statement ?? '')
+
+    try {
+      await run()
+    } finally {
+      await admin.query('drop trigger refuse_session_delete on auth_sessions')
+      await admin.query('drop function refuse_session_delete()')
+    }
+  }
+
+  it('keeps the work open when the session could not be taken out (#1031)', async () => {
+    const working = await atWork(member.email)
+
+    await refusingToDelete(working.id, () =>
+      http()
+        .post('/auth/sign-out')
+        .set('cookie', working.cookies)
+        .set('origin', origin)
+        .expect(500),
+    )
+
+    // The session still works, and so the tenant's log still shows its work.
+    expect(await sessionsOf(member.email)).toContain(working.id)
+    expect(await endOfWork(working.id)).toBeNull()
+  })
+
+  it('keeps the work of a device open when it could not be cut off (#1031)', async () => {
+    const device = await atWork(member.email)
+    const keeping = await signIn(member.email)
+
+    await refusingToDelete(device.id, () =>
+      http()
+        .delete(`/auth/devices/${device.id}`)
+        .set('cookie', keeping)
+        .set('origin', origin)
+        .expect(500),
+    )
+
+    expect(await sessionsOf(member.email)).toContain(device.id)
+    expect(await endOfWork(device.id)).toBeNull()
+  })
 })
 
 describe('the audit log', () => {
@@ -1511,10 +1579,23 @@ describe('a session that ran out', () => {
       [ran.id],
     )
 
-    // The close of the round fails once, after its rows went.
-    const failing = vi
-      .spyOn(instance.database, 'forTenant')
-      .mockRejectedValueOnce(new Error('closing failed'))
+    // The close of the round fails once, after its rows went: the first
+    // close under the reason of the expiry, which the rounds write before the
+    // orphans do.
+    const forTenant = instance.database.forTenant.bind(instance.database)
+    let failed = false
+    const failing = vi.spyOn(instance.database, 'forTenant').mockImplementation(((
+      identity: Parameters<Database['forTenant']>[0],
+      work: Parameters<Database['forTenant']>[1],
+    ) => {
+      if (identity.reason === 'session.expire' && !failed) {
+        failed = true
+
+        return Promise.reject(new Error('closing failed'))
+      }
+
+      return forTenant(identity, work)
+    }) as unknown as Database['forTenant'])
 
     try {
       await expect(sweepExpiredSessions(instance.database)).rejects.toThrow('closing failed')
@@ -1579,6 +1660,43 @@ describe('a session that ran out', () => {
     )
 
     expect(rows).toEqual([{ atItsStart: true }])
+  })
+
+  /**
+   * The bound of a switch to the microsecond (#1047, CodeRabbit): a stretch
+   * begun within the same millisecond before it is closed, one begun after
+   * it stays open.
+   */
+  it('closes before a switch to the microsecond', async () => {
+    const working = await atWork(member.email)
+    const session = [
+      { id: working.id, userId: userIds.get(member.email) ?? '', tenantId: north.id },
+    ]
+    const switchedAt = '2026-01-02 03:04:05.1238+00'
+    const open = async () => {
+      const { rows } = await admin.query<{ open: boolean }>(
+        'select ended_at is null as open from tenant_sessions where session_id = $1',
+        [working.id],
+      )
+
+      return rows
+    }
+
+    await admin.query(
+      `update tenant_sessions set started_at = '2026-01-02 03:04:05.1239+00' where session_id = $1`,
+      [working.id],
+    )
+    await endStretchesOf(instance.database, session, { startedBefore: switchedAt })
+
+    expect(await open()).toEqual([{ open: true }])
+
+    await admin.query(
+      `update tenant_sessions set started_at = '2026-01-02 03:04:05.1232+00' where session_id = $1`,
+      [working.id],
+    )
+    await endStretchesOf(instance.database, session, { startedBefore: switchedAt })
+
+    expect(await open()).toEqual([{ open: false }])
   })
 
   it('takes a backlog in rounds of a bounded size, all of it in one pass', async () => {
@@ -1698,6 +1816,190 @@ describe('the work of a session a new password ends', () => {
     ])
   })
 
+  it('ends under the new password the sessions the count of the credentials takes out, and one that ran out as run out', async () => {
+    const email = 'neues-passwort-selbst@example.de'
+    const userId = await newcomer(email)
+    const ran = await signIn(email)
+
+    await instance.chooseTenant(ran, north.id)
+    // One that ran out before, its row still there: it ends as run out.
+    await admin.query(
+      `update tenant_sessions set started_at = now() - interval '1 day' where user_id = $1`,
+      [userId],
+    )
+    await admin.query(
+      `update auth_sessions set expires_at = now() - interval '1 hour' where user_id = $1`,
+      [userId],
+    )
+
+    const working = await signIn(email)
+
+    await instance.chooseTenant(working, north.id)
+
+    // What better-auth has not taken out when the password is written, a
+    // session signed in between, goes with the count of the credentials.
+    expect(await writePassword(instance.database, userId, 'neuer-hash', undefined)).not.toBeNull()
+
+    // Each stretch with the reason of its own session: the one that ran out
+    // began a day ago, the one at work just now.
+    const { rows } = await admin.query<{
+      ranOut: boolean
+      reason: string | null
+      user: string | null
+    }>(
+      `select t.started_at < now() - interval '12 hours' as "ranOut", a.reason, a.user_id as "user"
+         from tenant_sessions t
+         left join audit_entries a
+           on a.table_name = 'tenant_sessions' and a.record_id = t.id and a.field = 'ended_at'
+        where t.user_id = $1 and t.ended_at is not null
+        order by 1`,
+      [userId],
+    )
+
+    expect(rows).toEqual([
+      { ranOut: false, reason: 'password.reset', user: userId },
+      { ranOut: true, reason: 'session.expire', user: null },
+    ])
+  })
+
+  it('counts a session as at work by the moment the password took it out, not by a later one (#1034)', async () => {
+    const email = 'passwort-langsam@example.de'
+    const userId = await newcomer(email)
+    const working = await signIn(email)
+
+    await instance.chooseTenant(working, north.id)
+
+    // At work when the password takes it out, and run out a moment later,
+    // by the time a slow commit is through: the expiry is set by the clock of
+    // the database right before the delete, however slow everything before.
+    let outAt = new Date(Number.NaN)
+    let deleting = false
+    const query = Client.prototype.query
+    const databaseIsPast = async (moment: Date) =>
+      (await admin.query<{ past: boolean }>('select clock_timestamp() > $1 as past', [moment]))
+        .rows[0]?.past === true
+
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date() })
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+
+      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+      if (!deleting && /^delete from "auth_sessions"/i.test(text)) {
+        deleting = true
+
+        return admin
+          .query<{ out: Date }>(
+            `update auth_sessions set expires_at = clock_timestamp() + interval '400 milliseconds'
+              where user_id = $1 returning expires_at as out`,
+            [userId],
+          )
+          .then(({ rows }) => {
+            outAt = rows[0]?.out ?? outAt
+          })
+          .then(forward)
+      }
+
+      if (deleting && /^commit/i.test(text)) {
+        vi.setSystemTime(new Date(outAt.getTime() + 10_000))
+
+        // The clock of the database past the expiry too before the commit
+        // goes: a time read from it afterwards would count the session as
+        // run out.
+        const waitPast = async (): Promise<void> => {
+          while (!(await databaseIsPast(outAt))) {
+            await new Promise((resolve) => setTimeout(resolve, 50))
+          }
+        }
+
+        return waitPast().then(forward)
+      }
+
+      return forward()
+    } as typeof query
+
+    try {
+      expect(await writePassword(instance.database, userId, 'neuer-hash', undefined)).not.toBeNull()
+    } finally {
+      Client.prototype.query = query
+      vi.useRealTimers()
+    }
+
+    expect(await stretchesOf(userId)).toEqual([
+      { open: false, reason: 'password.reset', user: userId },
+    ])
+
+    const { rows } = await admin.query<{ before: boolean }>(
+      'select ended_at < $2 as before from tenant_sessions where user_id = $1',
+      [userId, outAt],
+    )
+
+    expect(rows).toEqual([{ before: true }])
+  })
+
+  /**
+   * Let in while alive and run out by the time its row goes: the work ended
+   * when the session ran out, by the clock of the database (#1047).
+   */
+  it('ends at its expiry when a session runs out between its sign out and the delete', async () => {
+    const email = 'abmelden-abgelaufen@example.de'
+    const userId = await newcomer(email)
+    const working = await signIn(email)
+
+    await instance.chooseTenant(working, north.id)
+    // Begun well before, so that the end is the expiry and not the start.
+    await admin.query(
+      "update tenant_sessions set started_at = now() - interval '1 day' where user_id = $1",
+      [userId],
+    )
+
+    const query = Client.prototype.query
+    let outAt = new Date(Number.NaN)
+    let done = false
+
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+      if (!done && /^delete from "auth_sessions"/i.test(text)) {
+        done = true
+
+        return admin
+          .query<{ out: Date }>(
+            `update auth_sessions set expires_at = clock_timestamp() - interval '1 second'
+              where user_id = $1 returning expires_at as out`,
+            [userId],
+          )
+          .then(({ rows }) => {
+            outAt = rows[0]?.out ?? outAt
+          })
+          .then(forward)
+      }
+
+      return forward()
+    } as typeof query
+
+    try {
+      await http().post('/auth/sign-out').set('cookie', working).set('origin', origin).expect(201)
+    } finally {
+      Client.prototype.query = query
+    }
+
+    expect(done).toBe(true)
+    expect(await stretchesOf(userId)).toEqual([
+      { open: false, reason: 'session.expire', user: null },
+    ])
+
+    const { rows } = await admin.query<{ atExpiry: boolean }>(
+      'select ended_at = $2 as "atExpiry" from tenant_sessions where user_id = $1',
+      [userId, outAt],
+    )
+
+    expect(rows).toEqual([{ atExpiry: true }])
+  })
+
   it('ends as run out, and in no name, when a session that ran out comes back to set a password', async () => {
     const email = 'abgelaufen-passwort@example.de'
     const userId = await newcomer(email)
@@ -1724,6 +2026,37 @@ describe('the work of a session a new password ends', () => {
     expect(await stretchesOf(userId)).toEqual([
       { open: false, reason: 'session.expire', user: null },
     ])
+  })
+
+  it('ends as run out a session that had run out when the command line sets a new password (#1030)', async () => {
+    const email = 'kommandozeile-abgelaufen@example.de'
+    const userId = await newcomer(email)
+    const working = await signIn(email)
+
+    await instance.chooseTenant(working, north.id)
+    await admin.query(
+      `update tenant_sessions set started_at = now() - interval '2 hours' where user_id = $1`,
+      [userId],
+    )
+
+    const ran = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() - interval '1 hour' where user_id = $1
+       returning expires_at`,
+      [userId],
+    )
+
+    await replacePassword(instance.authentication, instance.database, { email, password: another })
+
+    expect(await stretchesOf(userId)).toEqual([
+      { open: false, reason: 'session.expire', user: null },
+    ])
+
+    const { rows } = await admin.query<{ ended_at: Date }>(
+      'select ended_at from tenant_sessions where user_id = $1',
+      [userId],
+    )
+
+    expect(rows[0]?.ended_at).toEqual(ran.rows[0]?.expires_at)
   })
 
   it('ends at once and under the reset when the command line sets a new password', async () => {
@@ -1812,7 +2145,474 @@ describe('work that cannot be closed when its session ends', () => {
 
     await sweepExpiredSessions(instance.database)
 
-    expect(await endOfWork(working.id)).not.toBeNull()
+    expect(await endOfWork(working.id)).toBeInstanceOf(Date)
+  })
+
+  it('signs out also when its work cannot be closed, and the sweep closes it after (#1031)', async () => {
+    const email = 'abmelden-schliessen@example.de'
+
+    await joinedNorth(email)
+
+    const working = await atWork(email)
+    const logged = await whileClosingFails(
+      (identity) => identity.reason === 'session.end',
+      () =>
+        http()
+          .post('/auth/sign-out')
+          .set('cookie', working.cookies)
+          .set('origin', origin)
+          .expect(201),
+    )
+
+    expect(logged).not.toHaveLength(0)
+    expect(await sessionsOf(email)).not.toContain(working.id)
+    expect(await endOfWork(working.id)).toBeNull()
+
+    await sweepExpiredSessions(instance.database)
+
+    expect(await endOfWork(working.id)).toBeInstanceOf(Date)
+  })
+
+  it('switches to another tenant also when the work in the first cannot be closed, and the sweep closes it after', async () => {
+    const email = 'wechsel-schliessen@example.de'
+
+    await joinedNorth(email)
+    await addStaffMember(instance.authentication, instance.database, {
+      email,
+      name: 'Sven Schließen',
+      password,
+      tenantId: south.id,
+      roles: ['member'],
+    })
+
+    const working = await atWork(email)
+    const logged = await whileClosingFails(
+      (identity) => identity.reason === 'session.switch',
+      () => instance.chooseTenant(working.cookies, south.id),
+    )
+    const inNorth = async () => {
+      const { rows } = await admin.query<{ ended_at: Date | null; reason: string | null }>(
+        `select t.ended_at, a.reason from tenant_sessions t
+           left join audit_entries a
+             on a.table_name = 'tenant_sessions' and a.record_id = t.id and a.field = 'ended_at'
+          where t.session_id = $1 and t.tenant_id = $2`,
+        [working.id, north.id],
+      )
+
+      return rows[0]
+    }
+
+    expect(logged).not.toHaveLength(0)
+    expect(await inNorth()).toEqual({ ended_at: null, reason: null })
+
+    await sweepExpiredSessions(instance.database)
+
+    expect((await inNorth())?.reason).toBe('session.switch')
+    expect((await inNorth())?.ended_at).toBeInstanceOf(Date)
+    // The session works on in the tenant it chose.
+    expect(await sessionsOf(email)).toContain(working.id)
+  })
+
+  it('closes the stretch a failed switch left open when the session comes back, and not the new one', async () => {
+    const email = 'wechsel-zurueck@example.de'
+
+    await joinedNorth(email)
+    await addStaffMember(instance.authentication, instance.database, {
+      email,
+      name: 'Sven Schließen',
+      password,
+      tenantId: south.id,
+      roles: ['member'],
+    })
+
+    const working = await atWork(email)
+
+    await whileClosingFails(
+      (identity) => identity.reason === 'session.switch',
+      () => instance.chooseTenant(working.cookies, south.id),
+    )
+    // Back in the north before the sweep: a new stretch there, the old one open still.
+    await instance.chooseTenant(working.cookies, north.id)
+
+    const inNorth = async () => {
+      const { rows } = await admin.query<{ open: boolean; reason: string | null }>(
+        `select t.ended_at is null as open, a.reason from tenant_sessions t
+           left join audit_entries a
+             on a.table_name = 'tenant_sessions' and a.record_id = t.id and a.field = 'ended_at'
+          where t.session_id = $1 and t.tenant_id = $2
+          order by t.started_at, t.id`,
+        [working.id, north.id],
+      )
+
+      return rows
+    }
+
+    expect(await inNorth()).toEqual([
+      { open: false, reason: 'session.switch' },
+      { open: true, reason: null },
+    ])
+
+    await sweepExpiredSessions(instance.database)
+
+    expect(await inNorth()).toEqual([
+      { open: false, reason: 'session.switch' },
+      { open: true, reason: null },
+    ])
+  })
+
+  /**
+   * A switch closes in the tenant it chose only what began before it. A
+   * second request of the same session that chose that tenant meanwhile, to
+   * register the device, keeps its stretch open (#1047).
+   */
+  it('leaves open the stretch another request of the session opened in the chosen tenant meanwhile', async () => {
+    const email = 'wechsel-gleichzeitig@example.de'
+
+    await joinedNorth(email)
+    await addStaffMember(instance.authentication, instance.database, {
+      email,
+      name: 'Sven Gleichzeitig',
+      password,
+      tenantId: south.id,
+      roles: ['member'],
+    })
+
+    const working = await atWork(email)
+    const query = Client.prototype.query
+    let state: 'before' | 'second' | 'done' = 'before'
+
+    // The switch to the south has written the session; before it cleans up in
+    // the south, the same session chooses the south again for its device.
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const values = (typeof config === 'string' ? args[1] : (config?.values ?? args[1])) as
+        unknown[] | undefined
+      const forward = () => (query as (...given: unknown[]) => Promise<unknown>).apply(this, args)
+
+      if (
+        state === 'before' &&
+        /^update "tenant_sessions"/i.test(text) &&
+        (values ?? []).includes(south.id)
+      ) {
+        state = 'second'
+
+        return instance
+          .chooseTenant(working.cookies, south.id, newId<'device'>())
+          .then(() => {
+            state = 'done'
+          })
+          .then(forward)
+      }
+
+      return forward()
+    } as typeof query
+
+    try {
+      await instance.chooseTenant(working.cookies, south.id)
+    } finally {
+      Client.prototype.query = query
+    }
+
+    expect(state).toBe('done')
+
+    const { rows } = await admin.query<{ open: boolean }>(
+      'select ended_at is null as open from tenant_sessions where session_id = $1 and tenant_id = $2',
+      [working.id, south.id],
+    )
+
+    expect(rows).toEqual([{ open: true }, { open: true }])
+  })
+
+  /**
+   * Two choices of the same tenant by one session at once (#1047,
+   * CodeRabbit): the second waits for the first to write its choice and
+   * finds the tenant chosen, so neither closes the stretch the other opened.
+   */
+  it('lets a second choice of the same tenant wait for the first and close nothing it opened', async () => {
+    const email = 'wechsel-doppelt@example.de'
+
+    await joinedNorth(email)
+    await addStaffMember(instance.authentication, instance.database, {
+      email,
+      name: 'Doris Doppelt',
+      password,
+      tenantId: south.id,
+      roles: ['member'],
+    })
+
+    const working = await atWork(email)
+    const query = Client.prototype.query
+    let state: 'before' | 'held' | 'done' = 'before'
+    let second: Promise<void> | undefined
+
+    // The first choice has read the session; the second starts before the
+    // first writes, and the first goes on once the second waits or is done.
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const forward = () => (query as (...given: unknown[]) => Promise<unknown>).apply(this, args)
+
+      if (
+        state === 'before' &&
+        /^select "active_tenant_id", "sign_in_method" from "auth_sessions"/i.test(text)
+      ) {
+        state = 'held'
+
+        const pid = (this as Client & { processID: number }).processID
+
+        return forward().then(async (result) => {
+          let settled = false
+
+          second = instance.chooseTenant(working.cookies, south.id).finally(() => {
+            settled = true
+          })
+          second.catch(() => undefined)
+
+          for (let tries = 0; tries < 200 && !settled; tries += 1) {
+            const { rows } = await admin.query<{ n: number }>(
+              'select count(*)::int as n from pg_stat_activity where $1 = any(pg_blocking_pids(pid))',
+              [pid],
+            )
+
+            if ((rows[0]?.n ?? 0) > 0) {
+              break
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, 50))
+          }
+
+          state = 'done'
+
+          return result
+        })
+      }
+
+      return forward()
+    } as typeof query
+
+    try {
+      await instance.chooseTenant(working.cookies, south.id)
+      await second
+    } finally {
+      Client.prototype.query = query
+    }
+
+    expect(state).toBe('done')
+
+    const { rows } = await admin.query<{ open: boolean }>(
+      `select ended_at is null as open from tenant_sessions where session_id = $1 and tenant_id = $2
+        order by started_at, id`,
+      [working.id, south.id],
+    )
+
+    expect(rows).toEqual([{ open: true }, { open: true }])
+  })
+
+  /**
+   * The close in the tenant a switch leaves, too, takes only what began
+   * before the switch. A second request of the same session that went back
+   * meanwhile keeps the stretch it opened there (#1047, the review).
+   */
+  it('leaves open the stretch another request of the session opened in the tenant it left meanwhile', async () => {
+    const email = 'wechsel-zurueck-gleichzeitig@example.de'
+
+    await joinedNorth(email)
+    await addStaffMember(instance.authentication, instance.database, {
+      email,
+      name: 'Sven Zurück',
+      password,
+      tenantId: south.id,
+      roles: ['member'],
+    })
+
+    const working = await atWork(email)
+    const query = Client.prototype.query
+    let state: 'before' | 'back' | 'done' = 'before'
+
+    // The switch to the south has written the session; before it closes its
+    // stretch in the north, the same session goes back to the north.
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const values = (typeof config === 'string' ? args[1] : (config?.values ?? args[1])) as
+        unknown[] | undefined
+      const forward = () => (query as (...given: unknown[]) => Promise<unknown>).apply(this, args)
+
+      if (
+        state === 'before' &&
+        /^update "tenant_sessions"/i.test(text) &&
+        (values ?? []).includes(north.id)
+      ) {
+        state = 'back'
+
+        return instance
+          .chooseTenant(working.cookies, north.id)
+          .then(() => {
+            state = 'done'
+          })
+          .then(forward)
+      }
+
+      return forward()
+    } as typeof query
+
+    try {
+      await instance.chooseTenant(working.cookies, south.id)
+    } finally {
+      Client.prototype.query = query
+    }
+
+    expect(state).toBe('done')
+
+    const { rows } = await admin.query<{ open: boolean }>(
+      `select ended_at is null as open from tenant_sessions where session_id = $1 and tenant_id = $2
+        order by started_at, id`,
+      [working.id, north.id],
+    )
+
+    expect(rows).toEqual([{ open: false }, { open: true }])
+  })
+
+  it('leaves both stretches open when a session chooses its tenant again for its device', async () => {
+    const email = 'geraet-registrieren@example.de'
+
+    await joinedNorth(email)
+
+    const working = await atWork(email)
+
+    // The site registers the device: the same tenant once more, with a device.
+    await instance.chooseTenant(working.cookies, north.id, newId<'device'>())
+    await sweepExpiredSessions(instance.database)
+
+    const { rows } = await admin.query<{ open: boolean }>(
+      'select ended_at is null as open from tenant_sessions where session_id = $1 and tenant_id = $2',
+      [working.id, north.id],
+    )
+
+    expect(rows).toEqual([{ open: true }, { open: true }])
+  })
+
+  for (const when of [
+    {
+      after: 'which sessions have a stretch open',
+      reads: /select distinct "session_id" from "tenant_sessions"/i,
+      email: 'wechsel-im-lauf@example.de',
+    },
+    {
+      after: 'the stretches themselves',
+      reads: /select "id", "session_id" from "tenant_sessions"/i,
+      email: 'wechsel-im-lauf-2@example.de',
+    },
+  ]) {
+    it(`leaves the stretch of a session that left and came back while the sweep read it, away after ${when.after}`, async () => {
+      const email = when.email
+
+      await joinedNorth(email)
+      await addStaffMember(instance.authentication, instance.database, {
+        email,
+        name: 'Sven Schließen',
+        password,
+        tenantId: south.id,
+        roles: ['member'],
+      })
+
+      const working = await atWork(email)
+      const query = Client.prototype.query
+      let state: 'before' | 'away' | 'gone' | 'back' | 'done' = 'before'
+      let switching = false
+      const switchTo = async (tenantId: string) => {
+        switching = true
+
+        try {
+          await instance.chooseTenant(working.cookies, tenantId)
+        } finally {
+          switching = false
+        }
+      }
+
+      // Into the south once the sweep has read which sessions have a stretch
+      // open in the north, and back once it has asked where they work.
+      Client.prototype.query = function (this: Client, ...args: unknown[]) {
+        const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
+        const text = typeof config === 'string' ? config : (config?.text ?? '')
+        const values = (typeof config === 'string' ? args[1] : (config?.values ?? args[1])) as
+          unknown[] | undefined
+        const forward = () => (query as (...given: unknown[]) => Promise<unknown>).apply(this, args)
+
+        // Neither switch closes a stretch, as when its close fails: what ends
+        // the stretch left behind in the north is the sweep's own work.
+        if (switching && /^update "tenant_sessions"/i.test(text)) {
+          return Promise.reject(new Error('The close of a switch, refused in this test'))
+        }
+
+        if (state === 'before' && when.reads.test(text) && (values ?? []).includes(north.id)) {
+          state = 'away'
+
+          return forward().then(async (result) => {
+            await switchTo(south.id)
+            state = 'gone'
+
+            return result
+          })
+        }
+
+        if (state === 'gone' && /"active_tenant_id" from "auth_sessions"/i.test(text)) {
+          state = 'back'
+
+          return forward().then(async (result) => {
+            await switchTo(north.id)
+            state = 'done'
+
+            return result
+          })
+        }
+
+        return forward()
+      } as typeof query
+
+      try {
+        await endOrphanedStretches(instance.database)
+      } finally {
+        Client.prototype.query = query
+      }
+
+      const { rows } = await admin.query<{ open: boolean; reason: string | null }>(
+        `select t.ended_at is null as open, a.reason from tenant_sessions t
+         left join audit_entries a
+           on a.table_name = 'tenant_sessions' and a.record_id = t.id and a.field = 'ended_at'
+        where t.session_id = $1 and t.tenant_id = $2
+        order by t.started_at, t.id`,
+        [working.id, north.id],
+      )
+
+      expect(state).toBe('done')
+      expect(rows).toEqual([
+        { open: false, reason: 'session.switch' },
+        { open: true, reason: null },
+      ])
+    })
+  }
+
+  it('cuts a device off also when its work cannot be closed (#1031)', async () => {
+    const email = 'geraet-schliessen@example.de'
+
+    await joinedNorth(email)
+
+    const device = await atWork(email)
+    const keeping = await signIn(email)
+    const logged = await whileClosingFails(
+      (identity) => identity.reason === 'session.revoke',
+      () =>
+        http()
+          .delete(`/auth/devices/${device.id}`)
+          .set('cookie', keeping)
+          .set('origin', origin)
+          .expect(200),
+    )
+
+    expect(logged).not.toHaveLength(0)
+    expect(await sessionsOf(email)).not.toContain(device.id)
   })
 
   it('does not make the command line report a password it set as not set', async () => {
@@ -1837,5 +2637,1205 @@ describe('work that cannot be closed when its session ends', () => {
 
     expect(replaced).toBe(true)
     expect(await sessionsOf(email)).not.toContain(working.id)
+  })
+})
+
+describe('an access past its last day', () => {
+  /** A person of their own in these tenants, so that no other test sees the last day. */
+  async function joined(email: string, tenants: readonly (typeof north.id)[]): Promise<string> {
+    let userId = ''
+
+    for (const tenantId of tenants) {
+      ;({ userId } = await addStaffMember(instance.authentication, instance.database, {
+        email,
+        name: 'Lotte Letzter-Tag',
+        password,
+        tenantId,
+        roles: ['member'],
+      }))
+    }
+
+    return userId
+  }
+
+  /** Gives the access a last day this many days before today in Germany. */
+  async function lastDayAgo(tenantId: string, userId: string, days: number): Promise<void> {
+    await admin.query(
+      `update memberships set last_day = (now() at time zone 'Europe/Berlin')::date - $3::int
+        where tenant_id = $1 and user_id = $2`,
+      [tenantId, userId, days],
+    )
+  }
+
+  /** Midnight after the last day, in Germany: when the access ended. */
+  async function endOfLastDay(tenantId: string, userId: string): Promise<number> {
+    const { rows } = await admin.query<{ ended: Date }>(
+      `select ((last_day + 1)::timestamp at time zone 'Europe/Berlin') as ended
+         from memberships where tenant_id = $1 and user_id = $2`,
+      [tenantId, userId],
+    )
+
+    return rows[0]?.ended.getTime() ?? Number.NaN
+  }
+
+  async function reasonOfEnd(sessionId: string): Promise<string | null | undefined> {
+    const { rows } = await admin.query<{ reason: string | null }>(
+      `select a.reason from tenant_sessions t
+         join audit_entries a
+           on a.table_name = 'tenant_sessions' and a.record_id = t.id and a.field = 'ended_at'
+        where t.session_id = $1`,
+      [sessionId],
+    )
+
+    return rows[0]?.reason
+  }
+
+  /** Lets the stretch of a session begin days ago, well before the last day ended. */
+  async function begunDaysAgo(sessionId: string): Promise<void> {
+    await admin.query(
+      `update tenant_sessions set started_at = now() - interval '5 days' where session_id = $1`,
+      [sessionId],
+    )
+  }
+
+  it('loses its sessions in that tenant, and its work ends with the day; elsewhere nothing changes', async () => {
+    const email = 'letzter-tag@example.de'
+    const userId = await joined(email, [north.id, south.id])
+    const inNorth = await atWork(email)
+    const inSouth = await atWork(email, south.id)
+    const todayEmail = 'heute-letzter-tag@example.de'
+    const todayId = await joined(todayEmail, [north.id])
+    const lastToday = await atWork(todayEmail)
+
+    await begunDaysAgo(inNorth.id)
+    await lastDayAgo(north.id, userId, 2)
+    await lastDayAgo(north.id, todayId, 0)
+
+    await sweepExpiredSessions(instance.database)
+
+    const left = await sessionsOf(email)
+
+    expect(left).not.toContain(inNorth.id)
+    expect((await endOfWork(inNorth.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(inNorth.id)).toBe('membership.end')
+    // The same person in another tenant, and somebody whose last day is today.
+    expect(left).toContain(inSouth.id)
+    expect(await endOfWork(inSouth.id)).toBeNull()
+    expect(await sessionsOf(todayEmail)).toContain(lastToday.id)
+    expect(await endOfWork(lastToday.id)).toBeNull()
+  })
+
+  it('ends the work with the access when somebody signs out after the last day, before the pass', async () => {
+    const email = 'letzter-tag-abmelden@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+
+    await begunDaysAgo(working.id)
+    await lastDayAgo(north.id, userId, 2)
+    // Signing out works, though every request into the tenant is refused.
+    await http()
+      .post('/auth/sign-out')
+      .set('cookie', working.cookies)
+      .set('origin', origin)
+      .expect(201)
+
+    expect((await endOfWork(working.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(working.id)).toBe('membership.end')
+  })
+
+  it('ends the work with the access when better-auth takes out a session that ran out after it', async () => {
+    const email = 'letzter-tag-cookie@example.de'
+    const userId = await joined(email, [north.id])
+    const ran = await atWork(email)
+
+    await begunDaysAgo(ran.id)
+    await lastDayAgo(north.id, userId, 2)
+    // Ran out a minute ago, a day after the access ended, and its cookie comes back.
+    await admin.query(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where id = $1`,
+      [ran.id],
+    )
+    await http().get('/auth/tenants').set('cookie', ran.cookies).expect(401)
+
+    expect((await endOfWork(ran.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(ran.id)).toBe('membership.end')
+  })
+
+  it('ends the work with the access when a factor given up takes the other sessions out after the last day', async () => {
+    const email = 'letzter-tag-faktor@example.de'
+    const userId = await joined(email, [north.id])
+    const kept = await atWork(email)
+    const other = await atWork(email)
+
+    await begunDaysAgo(other.id)
+    await lastDayAgo(north.id, userId, 2)
+    await endOtherSessions(instance.database, userId, kept.id, 'passkey.remove')
+
+    expect((await endOfWork(other.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(other.id)).toBe('membership.end')
+  })
+
+  it('ends the work with the access when the session switches to another tenant after the last day', async () => {
+    const email = 'letzter-tag-wechsel@example.de'
+    const userId = await joined(email, [north.id, south.id])
+    const working = await atWork(email)
+
+    await begunDaysAgo(working.id)
+    await lastDayAgo(north.id, userId, 2)
+    await instance.chooseTenant(working.cookies, south.id)
+
+    const { rows } = await admin.query<{ ended_at: Date | null }>(
+      'select ended_at from tenant_sessions where session_id = $1 and tenant_id = $2',
+      [working.id, north.id],
+    )
+
+    expect(rows[0]?.ended_at?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(working.id)).toBe('membership.end')
+  })
+
+  for (const way of [
+    {
+      what: 'the office cuts the device off',
+      email: 'letzter-tag-buero-geraet@example.de',
+      run: (userId: string, sessionId: string) =>
+        revokeDeviceOf(
+          probeAccess,
+          instance.database,
+          { tenantId: north.id, userId },
+          userId,
+          sessionId,
+        ),
+    },
+    {
+      what: 'the office blocks the access',
+      email: 'letzter-tag-sperre@example.de',
+      run: (userId: string) =>
+        setBlocked(probeAccess, instance.database, { tenantId: north.id, userId }, userId, true),
+    },
+    {
+      what: 'the data of the access are removed',
+      email: 'letzter-tag-daten@example.de',
+      run: async (userId: string) => {
+        await removeAccountData(
+          probeAccess,
+          instance.database,
+          { tenantId: north.id, userId },
+          userId,
+        )
+      },
+    },
+  ]) {
+    it(`ends the work with the access when ${way.what} after the last day, before the pass`, async () => {
+      const userId = await joined(way.email, [north.id])
+      const working = await atWork(way.email)
+
+      await begunDaysAgo(working.id)
+      await lastDayAgo(north.id, userId, 2)
+      await way.run(userId, working.id)
+
+      expect((await endOfWork(working.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+      expect(await reasonOfEnd(working.id)).toBe('membership.end')
+    })
+  }
+
+  it('ends a session that ran out before a last day moved on meanwhile when it ran out, when the office blocks the access', async () => {
+    const email = 'letzter-tag-verschoben-sperre@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+
+    await begunDaysAgo(working.id)
+    await lastDayAgo(north.id, userId, 3)
+
+    // Runs out an hour after the access ended, by the last day read first.
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions s
+          set expires_at = ((m.last_day + 1)::timestamp at time zone 'Europe/Berlin') + interval '1 hour'
+         from memberships m
+        where s.id = $1 and m.user_id = s.user_id and m.tenant_id = $2
+       returning s.expires_at`,
+      [working.id, north.id],
+    )
+
+    // The office moves the last day on by one, still past, as the block is
+    // about to close with the end it read: the session ran out before the
+    // access ended after all.
+    const query = Client.prototype.query
+    let moved = false
+
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+      if (!moved && /from "memberships"/i.test(text) && /for share/i.test(text)) {
+        moved = true
+
+        return lastDayAgo(north.id, userId, 2).then(forward)
+      }
+
+      return forward()
+    } as typeof query
+
+    try {
+      await setBlocked(probeAccess, instance.database, { tenantId: north.id, userId }, userId, true)
+    } finally {
+      Client.prototype.query = query
+    }
+
+    expect(moved).toBe(true)
+    expect((await endOfWork(working.id))?.getTime()).toBe(rows[0]?.expires_at.getTime())
+    expect(await reasonOfEnd(working.id)).toBe('session.expire')
+  })
+
+  for (const device of [
+    { past: true, email: 'letzter-tag-geraet-abgelaufen@example.de' },
+    { past: false, email: 'geraet-abgelaufen@example.de' },
+  ]) {
+    it(`ends when it ran out a device cut off after it ran out, before the pass${device.past ? ', the access ended after' : ''}`, async () => {
+      const userId = await joined(device.email, [north.id])
+      const gone = await atWork(device.email)
+      const other = await atWork(device.email)
+
+      await begunDaysAgo(gone.id)
+
+      if (device.past) {
+        await lastDayAgo(north.id, userId, 2)
+      }
+
+      // The list of devices shows one that ran out and the sweep has not
+      // taken yet: an hour before the access ended, or an hour ago.
+      const { rows } = await admin.query<{ expires_at: Date }>(
+        device.past
+          ? `update auth_sessions s
+                set expires_at = ((m.last_day + 1)::timestamp at time zone 'Europe/Berlin') - interval '1 hour'
+               from memberships m
+              where s.id = $1 and m.user_id = s.user_id and m.tenant_id = $2
+             returning s.expires_at`
+          : `update auth_sessions set expires_at = now() - interval '1 hour' where id = $1
+             returning expires_at`,
+        device.past ? [gone.id, north.id] : [gone.id],
+      )
+
+      await http()
+        .delete(`/auth/devices/${gone.id}`)
+        .set('cookie', other.cookies)
+        .set('origin', origin)
+        .expect(200)
+
+      expect((await endOfWork(gone.id))?.getTime()).toBe(rows[0]?.expires_at.getTime())
+      expect(await reasonOfEnd(gone.id)).toBe('session.expire')
+    })
+  }
+
+  it('asks the database when it took a device out, not the clock of the server', async () => {
+    const email = 'geraet-uhr@example.de'
+    const userId = await joined(email, [north.id])
+    const gone = await atWork(email)
+    const byTheOffice = await atWork(email)
+    const other = await atWork(email)
+
+    await begunDaysAgo(gone.id)
+    await begunDaysAgo(byTheOffice.id)
+
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = date_trunc('second', now()) - interval '1 hour'
+        where id = any($1) returning expires_at`,
+      [[gone.id, byTheOffice.id]],
+    )
+
+    // The clock of the server two hours behind the database: by it, the
+    // device would still have run when it was cut off.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() - 2 * 60 * 60 * 1000 })
+
+    try {
+      await http()
+        .delete(`/auth/devices/${gone.id}`)
+        .set('cookie', other.cookies)
+        .set('origin', origin)
+        .expect(200)
+      await revokeDeviceOf(
+        probeAccess,
+        instance.database,
+        { tenantId: north.id, userId },
+        userId,
+        byTheOffice.id,
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+
+    for (const sessionId of [gone.id, byTheOffice.id]) {
+      expect((await endOfWork(sessionId))?.getTime()).toBe(rows[0]?.expires_at.getTime())
+      expect(await reasonOfEnd(sessionId)).toBe('session.expire')
+    }
+  })
+
+  for (const way of [
+    {
+      what: 'a new password',
+      email: 'passwort-uhr@example.de',
+      run: async (userId: string) => {
+        await writePassword(instance.database, userId, 'neuer-hash', undefined)
+      },
+    },
+    {
+      what: 'a factor given up',
+      email: 'faktor-uhr@example.de',
+      run: async (userId: string, kept: string) => {
+        await endOtherSessions(instance.database, userId, kept, 'passkey.remove')
+      },
+    },
+  ]) {
+    it(`asks the database whether a session had run out when ${way.what} takes it out, not the clock of the server`, async () => {
+      const userId = await joined(way.email, [north.id])
+      const ran = await atWork(way.email)
+      const kept = await atWork(way.email)
+
+      await begunDaysAgo(ran.id)
+
+      const { rows } = await admin.query<{ expires_at: Date }>(
+        `update auth_sessions set expires_at = date_trunc('second', now()) - interval '1 hour'
+          where id = $1 returning expires_at`,
+        [ran.id],
+      )
+
+      // The clock of the server two hours behind the database: by it, the
+      // session would still have run.
+      vi.useFakeTimers({ toFake: ['Date'], now: Date.now() - 2 * 60 * 60 * 1000 })
+
+      try {
+        await way.run(userId, kept.id)
+      } finally {
+        vi.useRealTimers()
+      }
+
+      expect((await endOfWork(ran.id))?.getTime()).toBe(rows[0]?.expires_at.getTime())
+      expect(await reasonOfEnd(ran.id)).toBe('session.expire')
+    })
+  }
+
+  /** A session at work in the north with five stretches open there, as choosing it again opens them. */
+  async function fiveStretches(email: string, tenants: readonly (typeof north.id)[]) {
+    const userId = await joined(email, tenants)
+    const working = await atWork(email)
+
+    for (let again = 0; again < 4; again += 1) {
+      await instance.chooseTenant(working.cookies, north.id)
+    }
+
+    await begunDaysAgo(working.id)
+
+    return { userId, working }
+  }
+
+  async function endsIn(sessionId: string, tenantId: string) {
+    const { rows } = await admin.query<{ ended_at: Date | null; reason: string | null }>(
+      `select t.ended_at, a.reason from tenant_sessions t
+         left join audit_entries a
+           on a.table_name = 'tenant_sessions' and a.record_id = t.id and a.field = 'ended_at'
+        where t.session_id = $1 and t.tenant_id = $2`,
+      [sessionId, tenantId],
+    )
+
+    return rows.map((row) => ({ at: row.ended_at?.getTime() ?? null, reason: row.reason }))
+  }
+
+  it('leaves to the next pass an access whose last day moved on to another past day while the round read it', async () => {
+    const email = 'letzter-tag-runde-verschoben@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+
+    await begunDaysAgo(working.id)
+    await lastDayAgo(north.id, userId, 3)
+
+    // Runs out an hour after the access ended, by the last day read first.
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions s
+          set expires_at = ((m.last_day + 1)::timestamp at time zone 'Europe/Berlin') + interval '1 hour'
+         from memberships m
+        where s.id = $1 and m.user_id = s.user_id and m.tenant_id = $2
+       returning s.expires_at`,
+      [working.id, north.id],
+    )
+
+    // The office moves the last day on by one, still past, as the round is
+    // about to hold the memberships it read.
+    const query = Client.prototype.query
+    let moved = false
+
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+      if (!moved && /from "memberships"/i.test(text) && /for share/i.test(text)) {
+        moved = true
+
+        return lastDayAgo(north.id, userId, 2).then(forward)
+      }
+
+      return forward()
+    } as typeof query
+
+    try {
+      await endPastLastDays(instance.database)
+    } finally {
+      Client.prototype.query = query
+    }
+
+    expect(moved).toBe(true)
+    expect(await endOfWork(working.id)).toBeNull()
+
+    // The next pass reads the new end: the session ran out before it.
+    await endPastLastDays(instance.database)
+
+    expect((await endOfWork(working.id))?.getTime()).toBe(rows[0]?.expires_at.getTime())
+    expect(await reasonOfEnd(working.id)).toBe('session.expire')
+  })
+
+  it('takes no second connection while a transaction of the last days is open', async () => {
+    const email = 'letzter-tag-verbindung@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+    const ranOut = await atWork(email)
+
+    await begunDaysAgo(working.id)
+    await begunDaysAgo(ranOut.id)
+    await lastDayAgo(north.id, userId, 2)
+    // One that ran out before the access ended, closed on a way of its own.
+    await admin.query(
+      `update auth_sessions s
+          set expires_at = ((m.last_day + 1)::timestamp at time zone 'Europe/Berlin') - interval '1 hour'
+         from memberships m
+        where s.id = $1 and m.user_id = s.user_id and m.tenant_id = $2`,
+      [ranOut.id, north.id],
+    )
+
+    const forTenant = instance.database.forTenant.bind(instance.database)
+    const forInstance = instance.database.forInstance.bind(instance.database)
+    let open = 0
+    let nested = 0
+    const tenants = vi.spyOn(instance.database, 'forTenant').mockImplementation(((
+      identity: Parameters<Database['forTenant']>[0],
+      work: Parameters<Database['forTenant']>[1],
+    ) => {
+      nested += open > 0 ? 1 : 0
+
+      return forTenant(identity, async (tx) => {
+        open += 1
+
+        try {
+          return await work(tx)
+        } finally {
+          open -= 1
+        }
+      })
+    }) as unknown as Database['forTenant'])
+    const instances = vi.spyOn(instance.database, 'forInstance').mockImplementation(((
+      ...args: Parameters<Database['forInstance']>
+    ) => {
+      nested += open > 0 ? 1 : 0
+
+      return forInstance(...args)
+    }) as unknown as Database['forInstance'])
+
+    try {
+      await endPastLastDays(instance.database)
+    } finally {
+      tenants.mockRestore()
+      instances.mockRestore()
+    }
+
+    expect(nested).toBe(0)
+    expect(await sessionsOf(email)).not.toContain(working.id)
+    expect((await endOfWork(working.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(ranOut.id)).toBe('session.expire')
+  })
+
+  it('refuses pieces of a size below 1 before it opens anything', async () => {
+    await expect(endPastLastDays(instance.database, 0)).rejects.toThrow(RangeError)
+    await expect(endOrphanedStretches(instance.database, 0)).rejects.toThrow(RangeError)
+    await expect(endPastLastDayOf(instance.database, north.id, 'niemand', 0)).rejects.toThrow(
+      RangeError,
+    )
+  })
+
+  it('closes in pieces every stretch of an access that ended, however many a session opened', async () => {
+    const { userId, working } = await fiveStretches('letzter-tag-stuecke@example.de', [north.id])
+
+    await lastDayAgo(north.id, userId, 2)
+    await endPastLastDays(instance.database, 2)
+
+    const over = await endOfLastDay(north.id, userId)
+
+    expect(await endsIn(working.id, north.id)).toEqual(
+      Array.from({ length: 5 }, () => ({ at: over, reason: 'membership.end' })),
+    )
+  })
+
+  /**
+   * A piece whose stretch another close holds, and then closes first, closes
+   * none of it. The pass goes on with the rest instead of leaving them to the
+   * next one (#1047).
+   */
+  it('goes on past a piece that another close took first', async () => {
+    const { userId, working } = await fiveStretches('letzter-tag-stueck-genommen@example.de', [
+      north.id,
+    ])
+
+    await lastDayAgo(north.id, userId, 2)
+
+    // The stretch the first piece chooses, in the order the pieces go.
+    const { rows } = await admin.query<{ id: string }>(
+      `select id from tenant_sessions where session_id = $1 and tenant_id = $2
+        order by started_at, id limit 1`,
+      [working.id, north.id],
+    )
+    const first = (rows[0]?.id ?? '') as (typeof tenantSessions.$inferSelect)['id']
+    let written: (holder: number) => void = () => undefined
+    let release: () => void = () => undefined
+    const isWritten = new Promise<number>((resolve) => {
+      written = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    // Another close of that stretch, written and not committed yet.
+    const other = instance.database.forTenant(
+      { tenantId: north.id, reason: 'session.expire' },
+      async (tx) => {
+        await tx
+          .update(tenantSessions)
+          .set({ endedAt: sql`clock_timestamp()` })
+          .where(eq(tenantSessions.id, first))
+
+        const { rows: own } = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`)
+
+        written(Number(own[0]?.pid))
+        await released
+      },
+    )
+
+    // A failure of the other close ends the wait for its signal too, and
+    // shows; one of the pass shows below, once both are through.
+    other.catch(() => undefined)
+
+    const holder = await Promise.race([isWritten, other.then(() => Number.NaN)])
+    const pass = endPastLastDays(instance.database, 1)
+    let passed = false
+
+    // A pass that ends, with a failure or with a failure in its result, ends
+    // the wait too; both show below.
+    pass.then(
+      () => {
+        passed = true
+      },
+      () => {
+        passed = true
+      },
+    )
+
+    let waited = false
+
+    // The other close goes once the pass waits for it, at the stretch its
+    // first piece chose, and not before.
+    let settled: PromiseSettledResult<unknown>[] | undefined
+
+    // Let go in any case, so that a failure here leaves no open transaction
+    // behind for the pass and the tests after it.
+    try {
+      for (let tries = 0; tries < 200 && !waited && !passed; tries += 1) {
+        const { rows: waiting } = await admin.query<{ n: number }>(
+          'select count(*)::int as n from pg_stat_activity where $1 = any(pg_blocking_pids(pid))',
+          [holder],
+        )
+
+        waited = (waiting[0]?.n ?? 0) > 0
+
+        if (!waited) {
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+      }
+    } finally {
+      release()
+      // Both to their end, whatever fails, and a failure still shows below.
+      settled = await Promise.allSettled([pass, other])
+    }
+
+    for (const result of settled ?? []) {
+      if (result.status === 'rejected') {
+        throw result.reason
+      }
+    }
+
+    const [ran] = settled ?? []
+
+    if (ran?.status === 'fulfilled' && (ran.value as LastDaysPass).failure !== undefined) {
+      throw (ran.value as LastDaysPass).failure
+    }
+
+    expect(waited).toBe(true)
+
+    const ends = await endsIn(working.id, north.id)
+
+    expect(ends.filter((end) => end.at === null)).toEqual([])
+    expect(ends.filter((end) => end.reason === 'membership.end')).toHaveLength(4)
+  })
+
+  it('closes in pieces every stretch before a block of an access that ended', async () => {
+    const { userId, working } = await fiveStretches('letzter-tag-stuecke-sperre@example.de', [
+      north.id,
+    ])
+
+    await lastDayAgo(north.id, userId, 2)
+    await endPastLastDayOf(instance.database, north.id, userId, 2)
+
+    const over = await endOfLastDay(north.id, userId)
+
+    expect(await endsIn(working.id, north.id)).toEqual(
+      Array.from({ length: 5 }, () => ({ at: over, reason: 'membership.end' })),
+    )
+  })
+
+  it('closes in pieces the stretches a session left behind in a tenant it works in no more', async () => {
+    const { working } = await fiveStretches('waisen-stuecke@example.de', [north.id, south.id])
+
+    // At work in the south now, the stretches in the north left open, as a
+    // failed close leaves them.
+    await admin.query('update auth_sessions set active_tenant_id = $2 where id = $1', [
+      working.id,
+      south.id,
+    ])
+    await endOrphanedStretches(instance.database, 2)
+
+    const ends = await endsIn(working.id, north.id)
+
+    expect(ends.map((end) => end.reason)).toEqual(Array.from({ length: 5 }, () => 'session.switch'))
+    expect(ends.every((end) => end.at !== null)).toBe(true)
+  })
+
+  it('ends at the end of the day a stretch whose session is already gone', async () => {
+    const email = 'letzter-tag-verwaist@example.de'
+    const userId = await joined(email, [north.id])
+    const gone = await atWork(email)
+
+    await begunDaysAgo(gone.id)
+    await lastDayAgo(north.id, userId, 3)
+    await admin.query('delete from auth_sessions where id = $1', [gone.id])
+
+    await sweepExpiredSessions(instance.database)
+
+    // At the end of the day and for that reason, not as an orphan at the time of the pass.
+    expect((await endOfWork(gone.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(gone.id)).toBe('membership.end')
+  })
+
+  it('is not renewed while its access in the tenant is past its last day', async () => {
+    const email = 'letzter-tag-verlaengern@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() + interval '1 hour' where id = $1
+       returning expires_at`,
+      [working.id],
+    )
+    // Renewed eleven hours ago, so that it is due.
+    const read = {
+      id: working.id,
+      expiresAt: rows[0]?.expires_at ?? new Date(),
+      longLived: false,
+      activeTenantId: north.id,
+    }
+
+    await lastDayAgo(north.id, userId, 1)
+
+    expect(await renewSession(instance.database, read, userId)).toBe(false)
+
+    const after = await admin.query<{ expires_at: Date }>(
+      'select expires_at from auth_sessions where id = $1',
+      [working.id],
+    )
+
+    expect(after.rows[0]?.expires_at.getTime()).toBe(rows[0]?.expires_at.getTime())
+
+    // With the access in force again, the same session is renewed.
+    await admin.query(
+      'update memberships set last_day = null where tenant_id = $1 and user_id = $2',
+      [north.id, userId],
+    )
+
+    expect(await renewSession(instance.database, read, userId)).toBe(true)
+  })
+
+  /**
+   * A check of the access that fails renews nothing and fails nothing: the
+   * session lives until its present expiry, and the request goes on (#1047).
+   */
+  it('is not renewed, and fails nothing, when the check of its access fails', async () => {
+    const email = 'verlaengern-pruefung-scheitert@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() + interval '1 hour' where id = $1
+       returning expires_at`,
+      [working.id],
+    )
+    const read = {
+      id: working.id,
+      expiresAt: rows[0]?.expires_at ?? new Date(),
+      longLived: false,
+      activeTenantId: north.id,
+    }
+    const query = Client.prototype.query
+    let refused = false
+
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+      if (!refused && /from "memberships"/i.test(text)) {
+        refused = true
+
+        return Promise.reject(new Error('The check of the access, refused in this test'))
+      }
+
+      return forward()
+    } as typeof query
+
+    try {
+      expect(await renewSession(instance.database, read, userId)).toBe(false)
+    } finally {
+      Client.prototype.query = query
+    }
+
+    expect(refused).toBe(true)
+
+    const after = await admin.query<{ expires_at: Date }>(
+      'select expires_at from auth_sessions where id = $1',
+      [working.id],
+    )
+
+    expect(after.rows[0]?.expires_at.getTime()).toBe(rows[0]?.expires_at.getTime())
+  })
+
+  /**
+   * A block and the removal of the data go through also when the work cannot
+   * be closed with the end of the access first: their own close ends it then,
+   * and the person is out (#1047).
+   */
+  for (const way of [
+    {
+      what: 'blocks',
+      email: 'sperre-schliessen-scheitert@example.de',
+      run: (userId: string) =>
+        setBlocked(probeAccess, instance.database, { tenantId: north.id, userId }, userId, true),
+    },
+    {
+      what: 'removes the data of the access',
+      email: 'daten-schliessen-scheitert@example.de',
+      run: async (userId: string) => {
+        await removeAccountData(
+          probeAccess,
+          instance.database,
+          { tenantId: north.id, userId },
+          userId,
+        )
+      },
+    },
+  ]) {
+    it(`${way.what} also when the close of the work with the end of the access fails`, async () => {
+      const userId = await joined(way.email, [north.id])
+      const working = await atWork(way.email)
+
+      await lastDayAgo(north.id, userId, 2)
+
+      const query = Client.prototype.query
+      let refused = false
+
+      Client.prototype.query = function (this: Client, ...args: unknown[]) {
+        const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
+        const values = (typeof config === 'string' ? args[1] : (config?.values ?? args[1])) as
+          unknown[] | undefined
+        const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+        if (!refused && (values ?? []).includes('membership.end')) {
+          refused = true
+
+          return Promise.reject(new Error('The close of the work, refused in this test'))
+        }
+
+        return forward()
+      } as typeof query
+
+      try {
+        await way.run(userId)
+      } finally {
+        Client.prototype.query = query
+      }
+
+      expect(refused).toBe(true)
+      expect((await endsIn(working.id, north.id)).map((end) => end.at !== null)).toEqual([true])
+    })
+  }
+
+  /**
+   * The sessions of an access that ended go in the same pass as those that
+   * ran out, and the pass counts them too (#1047).
+   */
+  it('counts the sessions of an access that ended among those it took out', async () => {
+    // What other tests left goes first, so that the count is this one's.
+    await sweepExpiredSessions(instance.database)
+
+    const email = 'letzter-tag-gezaehlt@example.de'
+    const userId = await joined(email, [north.id])
+
+    await atWork(email)
+    await lastDayAgo(north.id, userId, 2)
+
+    expect(await sweepExpiredSessions(instance.database)).toBe(1)
+  })
+
+  it('ends with the access a session that was still alive then, though it ran out after', async () => {
+    const email = 'letzter-tag-spaeter-abgelaufen@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+
+    await begunDaysAgo(working.id)
+    await lastDayAgo(north.id, userId, 2)
+    // Ran out an hour ago, a day after the access ended.
+    await admin.query(
+      `update auth_sessions set expires_at = now() - interval '1 hour' where id = $1`,
+      [working.id],
+    )
+
+    await sweepExpiredSessions(instance.database)
+
+    expect((await endOfWork(working.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(working.id)).toBe('membership.end')
+  })
+
+  it('ends when it ran out a session that ran out before the access ended', async () => {
+    const email = 'letzter-tag-frueher-abgelaufen@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+
+    await begunDaysAgo(working.id)
+    await lastDayAgo(north.id, userId, 2)
+
+    // Ran out three days ago, before the last day ended.
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() - interval '3 days' where id = $1
+       returning expires_at`,
+      [working.id],
+    )
+
+    await sweepExpiredSessions(instance.database)
+
+    expect(await sessionsOf(email)).not.toContain(working.id)
+    expect((await endOfWork(working.id))?.getTime()).toBe(rows[0]?.expires_at.getTime())
+    expect(await reasonOfEnd(working.id)).toBe('session.expire')
+  })
+
+  it('closes at the end of the day, a pass later, a stretch it could not close, and no orphan takes it', async () => {
+    const email = 'letzter-tag-scheitert@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+
+    await begunDaysAgo(working.id)
+    await lastDayAgo(north.id, userId, 2)
+
+    // The close of the round fails once, and its sessions stay with it: they
+    // go only after it commits.
+    const forTenant = instance.database.forTenant.bind(instance.database)
+    let failed = false
+    const failing = vi.spyOn(instance.database, 'forTenant').mockImplementation(((
+      identity: Parameters<Database['forTenant']>[0],
+      work: Parameters<Database['forTenant']>[1],
+    ) => {
+      if (identity.reason === 'membership.end' && identity.tenantId === north.id && !failed) {
+        return forTenant(identity, async (tx) => {
+          await work(tx)
+          failed = true
+
+          throw new Error('closing failed')
+        })
+      }
+
+      return forTenant(identity, work)
+    }) as unknown as Database['forTenant'])
+
+    try {
+      await expect(sweepExpiredSessions(instance.database)).rejects.toThrow('closing failed')
+    } finally {
+      failing.mockRestore()
+    }
+
+    expect(await sessionsOf(email)).toContain(working.id)
+    expect(await endOfWork(working.id)).toBeNull()
+
+    // Before the next pass the session goes another way, its stretch left
+    // open: the pass closes it with the access, not as an orphan.
+    await admin.query('delete from auth_sessions where id = $1', [working.id])
+    await sweepExpiredSessions(instance.database)
+
+    expect((await endOfWork(working.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(working.id)).toBe('membership.end')
+  })
+
+  it('lets the expiry of that tenant wait a pass when its last days failed, and of no other', async () => {
+    const email = 'letzter-tag-lauf-scheitert@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+
+    await begunDaysAgo(working.id)
+    await lastDayAgo(north.id, userId, 2)
+    // Ran out an hour ago, a day after the access ended.
+    await admin.query(
+      `update auth_sessions set expires_at = now() - interval '1 hour' where id = $1`,
+      [working.id],
+    )
+
+    // Somebody in the south whose session ran out as well, with an access in force.
+    const southEmail = 'sueden-abgelaufen@example.de'
+
+    await joined(southEmail, [south.id])
+
+    const elsewhere = await atWork(southEmail, south.id)
+    const { rows: ranOut } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() - interval '1 hour' where id = $1
+       returning expires_at`,
+      [elsewhere.id],
+    )
+
+    // The step for the last days fails in the north, before it closes anything.
+    const forTenant = instance.database.forTenant.bind(instance.database)
+    let failed = false
+    const failing = vi.spyOn(instance.database, 'forTenant').mockImplementation(((
+      identity: Parameters<Database['forTenant']>[0],
+      work: Parameters<Database['forTenant']>[1],
+    ) => {
+      if (identity.reason === 'membership.end' && identity.tenantId === north.id && !failed) {
+        failed = true
+
+        return Promise.reject(new Error('last days failed'))
+      }
+
+      return forTenant(identity, work)
+    }) as unknown as Database['forTenant'])
+
+    try {
+      await expect(sweepExpiredSessions(instance.database)).rejects.toThrow('last days failed')
+    } finally {
+      failing.mockRestore()
+    }
+
+    // The expiry did not take it as run out an hour ago; in the south it went on.
+    expect(await sessionsOf(email)).toContain(working.id)
+    expect(await endOfWork(working.id)).toBeNull()
+    expect(await sessionsOf(southEmail)).not.toContain(elsewhere.id)
+    expect((await endOfWork(elsewhere.id))?.getTime()).toBe(ranOut[0]?.expires_at.getTime())
+
+    await sweepExpiredSessions(instance.database)
+
+    expect((await endOfWork(working.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(working.id)).toBe('membership.end')
+  })
+
+  it('keeps the sessions of an access whose last day is moved on while the pass runs', async () => {
+    const email = 'letzter-tag-verlaengert@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+
+    await lastDayAgo(north.id, userId, 2)
+
+    // An office that gives the access a new last day, and commits only once
+    // the pass has read the membership as past its end.
+    const held = await admin.connect()
+    let committed = false
+    let pass: Promise<unknown> | undefined
+
+    try {
+      await held.query('begin')
+      await held.query(
+        'update memberships set last_day = null where tenant_id = $1 and user_id = $2',
+        [north.id, userId],
+      )
+
+      const holder = await held.query<{ pid: number }>('select pg_backend_pid() as pid')
+      pass = sweepExpiredSessions(instance.database)
+      // Its refusal is the test's, also while the loop still polls.
+      pass.catch(() => undefined)
+
+      let blocked = false
+
+      for (let tries = 0; tries < 200 && !blocked; tries += 1) {
+        const { rows } = await admin.query<{ blocked: boolean }>(
+          `select exists (
+             select 1 from pg_stat_activity a where $1 = any(pg_blocking_pids(a.pid))
+           ) as blocked`,
+          [holder.rows[0]?.pid],
+        )
+
+        blocked = rows[0]?.blocked === true
+
+        if (!blocked) {
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+      }
+
+      await held.query('commit')
+      committed = true
+      await pass
+
+      expect(blocked).toBe(true)
+    } finally {
+      held.release(!committed)
+      // Without the lock the pass goes on; it ends before the test does.
+      await pass?.catch(() => undefined)
+    }
+
+    expect(await sessionsOf(email)).toContain(working.id)
+    expect(await endOfWork(working.id)).toBeNull()
+  })
+
+  it('keeps a session that changed to another tenant while the pass took the ones working here', async () => {
+    const email = 'letzter-tag-wechsel@example.de'
+    const userId = await joined(email, [north.id, south.id])
+    const working = await atWork(email)
+
+    await lastDayAgo(north.id, userId, 2)
+
+    // The pass reads the session as working in the north, and then waits
+    // for the access there, which a transaction of the test holds. Meanwhile
+    // the session chooses the south and commits: what the pass deletes after
+    // is only what still works in the north (#1047, the review). Held at the
+    // read of the sessions instead, the pass would never see the session in
+    // the north, and the test would not ask the delete.
+    const held = await admin.connect()
+    let released = false
+    let pass: Promise<unknown> | undefined
+
+    try {
+      await held.query('begin')
+      await held.query(
+        'select 1 from memberships where tenant_id = $1 and user_id = $2 for update',
+        [north.id, userId],
+      )
+
+      const holder = await held.query<{ pid: number }>('select pg_backend_pid() as pid')
+
+      pass = sweepExpiredSessions(instance.database)
+      // Its refusal is the test's, also while the loop still polls.
+      pass.catch(() => undefined)
+
+      let blocked = false
+
+      for (let tries = 0; tries < 200 && !blocked; tries += 1) {
+        const { rows } = await admin.query<{ blocked: boolean }>(
+          `select exists (
+             select 1 from pg_stat_activity a where $1 = any(pg_blocking_pids(a.pid))
+           ) as blocked`,
+          [holder.rows[0]?.pid],
+        )
+
+        blocked = rows[0]?.blocked === true
+
+        if (!blocked) {
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+      }
+
+      await admin.query('update auth_sessions set active_tenant_id = $1 where id = $2', [
+        south.id,
+        working.id,
+      ])
+      await held.query('commit')
+      released = true
+      await pass
+
+      expect(blocked).toBe(true)
+    } finally {
+      held.release(!released)
+      // Without the lock the pass goes on; it ends before the test does.
+      await pass?.catch(() => undefined)
+    }
+
+    expect(await sessionsOf(email)).toContain(working.id)
+  })
+
+  it('takes the sessions of an ended access in pieces, however many there are, and the tenant on (#1030)', async () => {
+    const email = 'letzter-tag-viele@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+
+    // Seventy thousand sessions working in the north, more than one statement
+    // takes values: what sign ins over days could leave before the last day.
+    await admin.query(
+      `with source as (select * from auth_sessions where id = $1)
+       insert into auth_sessions
+       select (jsonb_populate_record(null::auth_sessions, to_jsonb(source)
+                || jsonb_build_object('id', 'viele-' || n, 'token', 'viele-token-' || n))).*
+         from source, generate_series(1, 70000) n`,
+      [working.id],
+    )
+
+    // Somebody else in the north whose session ran out two hours ago: the pass
+    // takes it as well, and does not stop at the many.
+    const nearby = 'letzter-tag-nebenan@example.de'
+
+    await joined(nearby, [north.id])
+
+    const other = await atWork(nearby)
+
+    await admin.query(
+      `update auth_sessions set expires_at = now() - interval '2 hours' where id = $1`,
+      [other.id],
+    )
+    await lastDayAgo(north.id, userId, 2)
+    await sweepExpiredSessions(instance.database)
+
+    expect(await sessionsOf(email)).toEqual([])
+    expect(await sessionsOf(nearby)).toEqual([])
+    expect(await endOfWork(other.id)).not.toBeNull()
+  }, 120_000)
+
+  it('leaves to the last days a stretch whose access ended between reading the orphans and closing them', async () => {
+    const email = 'letzter-tag-waise-mitternacht@example.de'
+    const userId = await joined(email, [north.id])
+    const gone = await atWork(email)
+
+    await begunDaysAgo(gone.id)
+    await admin.query('delete from auth_sessions where id = $1', [gone.id])
+
+    // The orphans read it while the access is in force; the last day has
+    // passed by the time they close it.
+    const forTenant = instance.database.forTenant.bind(instance.database)
+    let moved = false
+    const passing = vi.spyOn(instance.database, 'forTenant').mockImplementation((async (
+      identity: Parameters<Database['forTenant']>[0],
+      work: Parameters<Database['forTenant']>[1],
+    ) => {
+      if (identity.reason === 'session.expire' && identity.tenantId === north.id && !moved) {
+        moved = true
+        await lastDayAgo(north.id, userId, 2)
+      }
+
+      return forTenant(identity, work)
+    }) as unknown as Database['forTenant'])
+
+    try {
+      await endOrphanedStretches(instance.database)
+    } finally {
+      passing.mockRestore()
+    }
+
+    expect(moved).toBe(true)
+    expect(await endOfWork(gone.id)).toBeNull()
+
+    await sweepExpiredSessions(instance.database)
+
+    expect((await endOfWork(gone.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(gone.id)).toBe('membership.end')
   })
 })

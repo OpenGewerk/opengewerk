@@ -1,7 +1,9 @@
+import type { TenantId } from '@opengewerk/platform-domain'
 import { and, eq, gt, sql } from 'drizzle-orm'
 
 import type { Database } from '../database/database.js'
-import { authSessions } from '../schema.js'
+import { authSessions, memberships } from '../schema.js'
+import { pastItsEnd } from './last-day.js'
 
 /**
  * How long a session lives.
@@ -40,6 +42,22 @@ export interface RenewableSession {
   readonly id: string
   readonly expiresAt: Date | string
   readonly longLived?: boolean | null
+  /** The tenant the session works in, where it has chosen one. */
+  readonly activeTenantId?: string | null
+}
+
+/** Whether the access of this person in this tenant has passed its last day. */
+async function pastLastDayIn(database: Database, tenant: string, userId: string): Promise<boolean> {
+  const tenantId = tenant as TenantId
+  const [ended] = await database.forTenant({ tenantId, userId }, (tx) =>
+    tx
+      .select({ userId: memberships.userId })
+      .from(memberships)
+      .where(and(eq(memberships.tenantId, tenantId), eq(memberships.userId, userId), pastItsEnd()))
+      .limit(1),
+  )
+
+  return ended !== undefined
 }
 
 /**
@@ -68,6 +86,19 @@ export async function renewSession(
 
   if (expiresAt <= now.getTime() || now.getTime() - renewedAt < renewalAfter[kind] * 1000) {
     return false
+  }
+
+  // A session working in a tenant where the access has passed its last day is
+  // refused there on every request, and renewing it would keep alive what
+  // the sweep is about to take (opengewerk#1030).
+  // A check that fails renews nothing and fails nothing (#1047): the session
+  // lives until its present expiry, and the request goes on.
+  if (session.activeTenantId) {
+    const past = await pastLastDayIn(database, session.activeTenantId, userId).catch(() => true)
+
+    if (past) {
+      return false
+    }
   }
 
   // The row decides, at the moment it is written, not the copy the request

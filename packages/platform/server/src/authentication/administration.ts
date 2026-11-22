@@ -34,6 +34,7 @@ import type { AddressMail } from './notices.js'
 import { holdRoles, leadsItsTenant, rolesOfTenant } from './roles.js'
 import { removeSecondFactor } from './second-factor.js'
 import { revokeCredentials } from './credentials.js'
+import { endPastLastDayOrLeaveIt, endStretchesOfTakenOut, firstOf } from './session-sweep.js'
 
 /**
  * Who works in one tenant, and everything whoever leads it can do about it.
@@ -484,6 +485,12 @@ export async function setBlocked(
   userId: string,
   blocked: boolean,
 ): Promise<void> {
+  // A block closes the stretches now; where the access ended before, the
+  // work ended with it (opengewerk#1030).
+  if (blocked) {
+    await endPastLastDayOrLeaveIt(database, identity.tenantId, userId)
+  }
+
   await database.forTenant(identity, async (tx) => {
     const leading = leadingKeys(await rolesOfTenant(tx, identity.tenantId))
     const current = await membershipOf(access, tx, identity.tenantId, userId)
@@ -822,36 +829,42 @@ export async function revokeDeviceOf(
 ): Promise<void> {
   await database.forTenant(identity, (tx) => membershipOf(access, tx, identity.tenantId, userId))
 
-  const removed = await database.forInstance(async (tx) => {
-    const rows = await tx
-      .delete(authSessions)
-      .where(
-        and(
-          eq(authSessions.id, sessionId),
-          eq(authSessions.userId, userId),
-          eq(authSessions.activeTenantId, identity.tenantId),
-        ),
-      )
-      .returning({ id: authSessions.id })
+  const removed = await database.forInstance(
+    (tx) =>
+      tx
+        .delete(authSessions)
+        .where(
+          and(
+            eq(authSessions.id, sessionId),
+            eq(authSessions.userId, userId),
+            eq(authSessions.activeTenantId, identity.tenantId),
+          ),
+        )
+        .returning({
+          id: authSessions.id,
+          expiresAt: authSessions.expiresAt,
+          at: sql<Date | string>`clock_timestamp()`,
+        }),
+    identity.userId,
+  )
 
-    return rows.length
-  }, identity.userId)
-
-  if (removed === 0) {
+  if (removed.length === 0) {
     throw new NotFoundException(access.sentences.noSuchSessionHere)
   }
 
-  await database.forTenant(identity, (tx) =>
-    tx
-      .update(tenantSessions)
-      .set({ endedAt: new Date() })
-      .where(
-        and(
-          eq(tenantSessions.tenantId, identity.tenantId),
-          eq(tenantSessions.sessionId, sessionId),
-          isNull(tenantSessions.endedAt),
-        ),
-      ),
+  // As the person cutting off their own device (opengewerk#1030): a device
+  // that ran out ended its work then, an access that ended before ended it
+  // with the access.
+  await endStretchesOfTakenOut(
+    database,
+    removed.map((row) => ({
+      id: row.id,
+      userId,
+      tenantId: identity.tenantId,
+      expiresAt: row.expiresAt,
+    })),
+    firstOf(removed),
+    { reason: 'session.revoke', actor: identity.userId },
   )
 }
 
@@ -901,6 +914,11 @@ export async function removeAccountData(
   actor: Actor,
   userId: string,
 ): Promise<RemovedAccountData> {
+  // What the pass did not close yet ends with the access, not now
+  // (opengewerk#1030); nothing where the access has not ended, which the
+  // check below refuses.
+  await endPastLastDayOrLeaveIt(database, actor.tenantId, userId)
+
   await database.forTenant(actor, async (tx) => {
     const membership = await membershipOf(access, tx, actor.tenantId, userId)
 
