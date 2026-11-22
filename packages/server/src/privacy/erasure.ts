@@ -42,8 +42,10 @@ import {
   dueStaffYears,
   type StaffTouched,
   takePerson,
+  holdPerson,
   holdSickness,
   takeSickness,
+  StaffYearChanged,
   takeStaffYear,
   type HeldStaffYear,
   holdStaffYear,
@@ -429,6 +431,13 @@ async function staffRecords(
           name: person.personName,
           label: personErasureLabel(person.leftOn),
           personId: person.personId,
+          hold: async (inner) => {
+            const again = await holdPerson(inner, person, today)
+
+            return again === null
+              ? null
+              : { dueOn: again.dueOn, label: personErasureLabel(again.leftOn) }
+          },
           take: (inner) => takePerson(inner, person),
         })
       }
@@ -548,14 +557,15 @@ async function eraseStaff(
     }
 
     const touched = await record.take(tx).catch((error: unknown) => {
-      // A record that something written meanwhile still points at:
-      // `on delete restrict` answers 23001, `no action` 23503.
+      // A record that something written meanwhile still points at
+      // (`on delete restrict` answers 23001, `no action` 23503), or one that
+      // came into the year while it went.
       const code = databaseCode(error)
 
-      if (code === '23001' || code === '23503') {
+      if (error instanceof StaffYearChanged || code === '23001' || code === '23503') {
         throw new ErasureInterrupted(
-          `${erasureKindWords[kind].one}: ein ausgewählter Eintrag wurde während des Löschens ` +
-            'berichtigt. Gelöscht ist nichts; ob er noch fällig ist, sagt die Liste neu.',
+          `${erasureKindWords[kind].one}: ein ausgewählter Eintrag hat sich während des Löschens ` +
+            'geändert. Gelöscht ist nichts; ob er noch fällig ist, sagt die Liste neu.',
         )
       }
 

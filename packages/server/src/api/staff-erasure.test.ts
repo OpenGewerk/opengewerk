@@ -515,9 +515,10 @@ describe('what of the staff is due (#846)', () => {
     ).toBe(1)
   })
 
-  it('deletes what it read of a year and leaves a record that came in meanwhile (#1033)', async () => {
+  it('refuses a year that a record came into while it was deleted, and deletes nothing (#1033)', async () => {
     const dennis = await kraft(false)
     const late = newId<'absence'>()
+    const key = staffYearKey(dennis.person, oldYear)
 
     await pass()
 
@@ -538,11 +539,71 @@ describe('what of the staff is due (#846)', () => {
       )
       .finally(stopped.release)
 
-    expect((await asked).status).toBe(201)
+    // Left behind, it could never go: the year has one line of the protocol.
+    // So nothing goes, and the next pass reads the year with it.
+    const answer = await asked
+
+    expect(answer.status).toBe(409)
+    expect(refusal(answer)).toContain('während des Löschens geändert')
     expect(await count('select count(*) as n from absences where id = $1', [late])).toBe(1)
     expect(await count('select count(*) as n from absences where id = $1', [dennis.vacation])).toBe(
-      0,
+      1,
     )
+    expect(await count('select count(*) as n from erasures where record_id = $1', [key])).toBe(0)
+  })
+
+  it('keeps the file of somebody whose access opened again while the deletion read it (#1033)', async () => {
+    const dennis = await kraft()
+
+    await pass()
+
+    expect(((await dueFor(owner)) ?? []).map((entry) => entry.recordId)).toContain(dennis.person)
+
+    const stopped = holdQuery((statement) => /from memberships where user_id/i.test(statement))
+    const asked = erase('person', [dennis.person]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+    // The access opened again after the list was read, and before the
+    // deletion reads it again.
+    await admin
+      .query(`update memberships set last_day = null where tenant_id = $1 and user_id = 'kurt'`, [
+        north,
+      ])
+      .finally(stopped.release)
+
+    expect((await asked).status).toBe(409)
+    expect(
+      await count(`select count(*) as n from working_times where person_id = $1`, [dennis.person]),
+    ).toBe(1)
+  })
+
+  it('holds the file and its access until the deletion is through (#1033)', async () => {
+    const dennis = await kraft()
+
+    await pass()
+
+    const stopped = holdQuery((statement) => protocolLine.test(statement))
+    const asked = erase('person', [dennis.person]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+
+    try {
+      // Opening the access again and a return both wait for the deletion, and
+      // give up here after a moment.
+      for (const statement of [
+        `update memberships set last_day = null where tenant_id = '${north}' and user_id = 'kurt'`,
+        `update people set left_on = null where id = '${dennis.person}'`,
+      ]) {
+        await ownTransaction(async (client) => {
+          await client.query("set local lock_timeout = '300ms'")
+          await expect(client.query(statement)).rejects.toThrow(/lock timeout/)
+        })
+      }
+    } finally {
+      stopped.release()
+    }
+
+    expect((await asked).status).toBe(201)
   })
 
   it('holds the rows of a year it deletes against a correction until it is through (#1033)', async () => {
@@ -653,7 +714,7 @@ describe('what of the staff is due (#846)', () => {
     const answer = await asked
 
     expect(answer.status).toBe(409)
-    expect(refusal(answer)).toContain('während des Löschens berichtigt')
+    expect(refusal(answer)).toContain('während des Löschens geändert')
     // All of the year stays, the correction with it, and no line says
     // otherwise.
     expect(await rows()).toBe(before + 1)

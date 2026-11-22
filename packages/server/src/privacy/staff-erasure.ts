@@ -473,6 +473,35 @@ export async function holdStaffYear(
   }
 }
 
+/** A record came into a year while it was deleted, and the deletion is broken off. */
+export class StaffYearChanged extends Error {}
+
+/**
+ * Reads the file of somebody who left again in the transaction of its
+ * deletion, before its line of the protocol, and holds it there
+ * (opengewerk#1033): the access here and the person itself, so that an
+ * access opened again, a last day moved on or a return waits for the
+ * deletion and then finds nothing, or comes first and keeps the file. Due
+ * still, and nothing holds it, or null.
+ */
+export async function holdPerson(
+  tx: TenantTransaction,
+  person: DuePerson,
+  today: IsoDate,
+): Promise<DuePerson | null> {
+  if (person.userId !== null) {
+    await tx.execute(
+      sql`select 1 from memberships where user_id = ${person.userId} order by id for share`,
+    )
+  }
+
+  await tx.execute(sql`select 1 from people where id = ${person.personId} for update`)
+
+  const [again] = await duePeople(tx, today, [person.personId])
+
+  return again !== undefined && again.holds.length === 0 ? again : null
+}
+
 /**
  * Deletes one year of one person, what `holdStaffYear` read of it: the
  * records of time from the end of each chain of corrections, the times on
@@ -531,6 +560,30 @@ export async function takeStaffYear(
       sql`delete from leave_entitlements where id = any(${uuids(held.entitlements)}) returning id`,
     ),
   )
+
+  // Nothing of the year left that came in after it was read: the year has one
+  // line of the protocol (`erasures_once`), and a record left behind could
+  // never go under it. It came between the reading and that line, the one
+  // moment it can, since the line holds the chain of the business; the
+  // deletion is broken off, and the next pass reads the year with it.
+  const { rows: left } = await tx.execute<{ n: number }>(sql`
+    select ${
+      year.userId === null
+        ? sql`0`
+        : sql`(select count(*) from time_entries
+                where user_id = ${year.userId} and time_entry_year(id) = ${year.year})
+            + (select count(*) from on_call_shifts
+                where user_id = ${year.userId}
+                  and extract(year from (starts_at at time zone 'Europe/Berlin'))::int = ${year.year})`
+    }
+         + (select count(*) from absences
+             where person_id = ${year.personId} and extract(year from first_day)::int = ${year.year})
+         + (select count(*) from leave_entitlements
+             where person_id = ${year.personId} and year = ${year.year}) as n`)
+
+  if (Number(left[0]?.n ?? 0) > 0) {
+    throw new StaffYearChanged()
+  }
 
   if ((await fileGone(tx, year.personId)) && !(await keepsAYear(tx, year.personId))) {
     touched.push(...(await takeName(tx, year.personId, year.userId)))
