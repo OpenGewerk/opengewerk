@@ -404,6 +404,12 @@ describe('the contacts at a customer in the office', () => {
     expect(server.patched[0]?.values).toEqual({ role: 'Kaufmännische Leitung' })
     expect(server.sent).toEqual([])
 
+    // The write is through once its form has closed (#1059): the patch above
+    // arrives before the answer does, and a busy machine takes its time.
+    await waitFor(() => {
+      expect(section.queryByLabelText(/Funktion/)).toBeNull()
+    })
+
     // Removing is in the form behind the pencil, with a question first, as
     // the canvas draws the card with a pencil and nothing else (#219).
     await userEvent.click(await section.findByRole('button', { name: 'Albers bearbeiten' }))
@@ -427,6 +433,43 @@ describe('the contacts at a customer in the office', () => {
     await waitFor(() => {
       expect(section.queryByText('Albers')).toBeNull()
     })
+  })
+
+  /**
+   * A write that is through closes its own form and no other (#1059): the
+   * form behind another pencil, opened while the write was on its way, stays.
+   */
+  it('keep the form of another contact open that was opened while one was saving', async () => {
+    signedInAs('office')
+    const { client } = await mount('/kunden/c-1')
+    const section = await contactsSection()
+    let answer: () => void = () => {}
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve
+    })
+    const patch = server.patch.bind(server)
+
+    server.patch = async (entity, id, values) => {
+      await answered
+
+      return patch(entity, id, values)
+    }
+
+    const update = vi.spyOn(client, 'update')
+
+    await userEvent.click(await section.findByRole('button', { name: 'Petra Zander bearbeiten' }))
+    await userEvent.type(await section.findByLabelText(/Funktion/), ', Technik')
+    await userEvent.click(section.getByRole('button', { name: 'Speichern' }))
+    await userEvent.click(section.getByRole('button', { name: 'Albers bearbeiten' }))
+
+    answer()
+    await act(async () => {
+      await update.mock.results[0]?.value
+    })
+
+    expect(server.patched).toHaveLength(1)
+    expect(section.getByRole('button', { name: 'Entfernen' })).toBeDefined()
+    expect((section.getByLabelText(/Nachname/) as HTMLInputElement).value).toBe('Albers')
   })
 
   it('say in the words of this application that a correction needs a connection', async () => {
