@@ -31,6 +31,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Öffnet jemand im Büro einen zweiten Ansprechpartner, während der erste noch gespeichert wird, bleibt dessen Formular offen (#1059). Bisher schloss das Ende des Speicherns das Formular, das gerade offen war, auch wenn es inzwischen ein anderes war; auf einer langsamen Maschine wurde daran auch ein Test rot, der nicht auf das Ende des Speicherns wartete.
 - Setzt das Büro den zweiten Faktor einer Person zurück, schließen ihre Arbeitsabschnitte im Namen der Person aus dem Büro und mit dem Grund des Rücksetzens (#1048). Bisher stand dort die Person selbst, obwohl die Änderung am Faktor richtig das Büro nannte.
 - Entfernt das Büro die Daten einer Person, deren Zugang auch in einem anderen Betrieb vorbei ist, enden ihre Arbeitsabschnitte dort sofort: mit dem Ende des Zugangs oder, wo eine Sitzung vorher ablief, zu dieser Zeit (#1050). Bisher blieben sie offen, bis der stündliche Lauf sie mit dem Ende des Zugangs schloss, auch wenn die Sitzung schon vorher abgelaufen war.
 - Die beiden Mailtests zur Frist einer Nachricht prüfen jetzt, dass der Server `DATA` bekommen und seine Lesepause begonnen hat (#1054). Lief die Frist auf einer langsamen Maschine schon vorher ab, blieben sie grün, ohne ihren Fall zu erreichen.

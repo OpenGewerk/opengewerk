@@ -114,9 +114,18 @@ export function ContactsPanel({
     if (result.outcome === 'refused') {
       setTrouble(refusalFor(result))
     } else {
-      setEditing(null)
+      closeForm(contactId)
       setTrouble(null)
     }
+  }
+
+  /**
+   * Closes the form of this contact once its write is through, and only that
+   * one: a form opened behind another pencil while the write was on its way
+   * stays open.
+   */
+  function closeForm(contactId: string) {
+    setEditing((current) => (current === contactId ? null : current))
   }
 
   /** The form behind the pencil, the same in both drawings. */
@@ -148,7 +157,7 @@ export function ContactsPanel({
           const saved = await client.update(contactEntity, contactId, asContact(values))
 
           if (saved.outcome === 'queued') {
-            setEditing(null)
+            closeForm(contactId)
           }
 
           return saved
