@@ -1558,6 +1558,7 @@ describe('removing what an access that has ended no longer needs', () => {
   const pia = { email: 'pia@nord.example.de', name: 'Pia Zweimal' }
   const udo = { email: 'udo@nord.example.de', name: 'Udo Instanz' }
   const vera = { email: 'vera@nord.example.de', name: 'Vera Lauf' }
+  const tom = { email: 'tom@nord.example.de', name: 'Tom Nebenan' }
 
   beforeAll(async () => {
     for (const [person, tenantIds] of [
@@ -1565,6 +1566,7 @@ describe('removing what an access that has ended no longer needs', () => {
       [pia, [north.id, south.id]],
       [udo, [north.id]],
       [vera, [north.id]],
+      [tom, [north.id, south.id]],
     ] as const) {
       for (const tenantId of tenantIds) {
         const { userId } = await addStaffMember(instance.authentication, instance.database, {
@@ -1803,5 +1805,33 @@ describe('removing what an access that has ended no longer needs', () => {
       ).toBe(false)
       expect((await account(udo))?.name).toBe(udo.name)
     })
+  })
+
+  /**
+   * A session in a tenant next door, which removing the data takes out with
+   * the account, ends its stretch there as every other way does
+   * (opengewerk#1050), and not later with the pass.
+   */
+  it('ends the stretch of a session in a tenant next door it takes out', async () => {
+    await workIn(tom.email, north.id)
+
+    const { rows: sessions } = await admin.query<{ id: string }>(
+      'select id from auth_sessions where user_id = $1 and active_tenant_id = $2',
+      [idOf(tom), north.id],
+    )
+
+    await lastDay(tom, north.id, -1)
+    await lastDay(tom, south.id, -1)
+
+    expect(
+      await removeAccountData(probeAccess, instance.database, as(south.id), idOf(tom)),
+    ).toEqual({ account: true })
+
+    const { rows } = await admin.query<{ open: boolean }>(
+      'select ended_at is null as open from tenant_sessions where session_id = $1 and tenant_id = $2',
+      [sessions[0]?.id ?? '', north.id],
+    )
+
+    expect(rows).toEqual([{ open: false }])
   })
 })
