@@ -25,13 +25,15 @@ export interface EndedSession {
  * ran out, or now where it went before that. One transaction per tenant, so
  * that each change lands in that tenant's log, under the reason the caller
  * names, or else whether the sessions ran out or were ended, and in the name
- * of the person whose action ended them, where one did.
+ * of the person whose action ended them, where one did. Says how many it
+ * closed; one closed before is not counted again.
  */
 export async function endStretchesOf(
   database: Database,
   sessions: readonly EndedSession[],
   how: { readonly now?: Date; readonly reason?: string; readonly actor?: string } = {},
-): Promise<void> {
+): Promise<number> {
+  let closed = 0
   const now = how.now ?? new Date()
   const { reason, actor } = how
   const byTenant = new Map<TenantId, EndedSession[]>()
@@ -62,7 +64,7 @@ export async function endStretchesOf(
 
           // Never before the stretch began: one a session opened a moment
           // after the time this close was worked out ends where it began.
-          await tx
+          const done = await tx
             .update(tenantSessions)
             .set({
               endedAt: sql`greatest(${tenantSessions.startedAt}, ${end.toISOString()}::timestamptz)`,
@@ -75,10 +77,15 @@ export async function endStretchesOf(
                 isNull(tenantSessions.endedAt),
               ),
             )
+            .returning({ id: tenantSessions.id })
+
+          closed += done.length
         }
       },
     )
   }
+
+  return closed
 }
 
 /**
@@ -478,7 +485,7 @@ async function endPastLastDaysIn(
 
       // Those end when they ran out, under the reason of the expiry, in a
       // transaction of their own, since the reason is the transaction's.
-      await endStretchesOf(
+      const ranOutClosed = await endStretchesOf(
         database,
         ranOut.map((session) => ({
           id: session.id,
@@ -489,7 +496,9 @@ async function endPastLastDaysIn(
       )
 
       // The others with the access, never before the stretch began. The
-      // membership is asked again here, under the lock the round holds.
+      // membership is asked again here, under the lock the round holds. The
+      // stretches of the sessions that ran out are closed and committed by
+      // now, so `endedAt` keeps them out, without a list of them.
       const stretches = await tx
         .update(tenantSessions)
         .set({
@@ -504,12 +513,6 @@ async function endPastLastDaysIn(
             eq(tenantSessions.tenantId, tenantId),
             inArray(tenantSessions.userId, users),
             isNull(tenantSessions.endedAt),
-            ranOut.length === 0
-              ? undefined
-              : notInArray(
-                  tenantSessions.sessionId,
-                  ranOut.map((session) => session.id),
-                ),
             sql`exists (
               select 1 from ${memberships}
                where ${memberships.tenantId} = ${tenantSessions.tenantId}
@@ -521,22 +524,26 @@ async function endPastLastDaysIn(
 
       // Then the sessions it read go, as a block takes them, while the
       // round still holds the memberships; one that changed to another
-      // tenant meanwhile works there and stays.
+      // tenant meanwhile works there and stays. In pieces of the size of a
+      // round: the people of a round are bounded, their sessions are not,
+      // and a statement takes at most 65,535 values.
       if (sessions.length > 0) {
-        await database.forInstance((instance) =>
-          instance.delete(authSessions).where(
-            and(
-              inArray(
-                authSessions.id,
-                sessions.map((session) => session.id),
+        await database.forInstance(async (instance) => {
+          for (let at = 0; at < sessions.length; at += batch) {
+            await instance.delete(authSessions).where(
+              and(
+                inArray(
+                  authSessions.id,
+                  sessions.slice(at, at + batch).map((session) => session.id),
+                ),
+                eq(authSessions.activeTenantId, tenantId),
               ),
-              eq(authSessions.activeTenantId, tenantId),
-            ),
-          ),
-        )
+            )
+          }
+        })
       }
 
-      return stretches.length + ranOut.length
+      return stretches.length + ranOutClosed
     })
   }
 

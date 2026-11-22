@@ -2442,6 +2442,42 @@ describe('an access past its last day', () => {
     expect(await sessionsOf(email)).toContain(working.id)
   })
 
+  it('takes the sessions of an ended access in pieces, however many there are, and the tenant on (#1030)', async () => {
+    const email = 'letzter-tag-viele@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+
+    // Seventy thousand sessions working in the north, more than one statement
+    // takes values: what sign ins over days could leave before the last day.
+    await admin.query(
+      `with source as (select * from auth_sessions where id = $1)
+       insert into auth_sessions
+       select (jsonb_populate_record(null::auth_sessions, to_jsonb(source)
+                || jsonb_build_object('id', 'viele-' || n, 'token', 'viele-token-' || n))).*
+         from source, generate_series(1, 70000) n`,
+      [working.id],
+    )
+
+    // Somebody else in the north whose session ran out two hours ago: the pass
+    // takes it as well, and does not stop at the many.
+    const nearby = 'letzter-tag-nebenan@example.de'
+
+    await joined(nearby, [north.id])
+
+    const other = await atWork(nearby)
+
+    await admin.query(
+      `update auth_sessions set expires_at = now() - interval '2 hours' where id = $1`,
+      [other.id],
+    )
+    await lastDayAgo(north.id, userId, 2)
+    await sweepExpiredSessions(instance.database)
+
+    expect(await sessionsOf(email)).toEqual([])
+    expect(await sessionsOf(nearby)).toEqual([])
+    expect(await endOfWork(other.id)).not.toBeNull()
+  }, 120_000)
+
   it('leaves to the last days a stretch whose access ended between reading the orphans and closing them', async () => {
     const email = 'letzter-tag-waise-mitternacht@example.de'
     const userId = await joined(email, [north.id])
