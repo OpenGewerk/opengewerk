@@ -72,8 +72,8 @@ export function erasureWhen(kind: ErasureKind, settings: DeletionSettings): stri
       // not a day OpenGewerk keeps: the engine does not know when the pension
       // insurance last audited, and a kind set to go by itself does not ask.
       return settings.automatic.includes('staff_year')
-        ? 'die Arbeitszeiten, die Rufbereitschaft, der Urlaub und der Urlaubsanspruch eines Jahres acht Jahre nach dessen Ende. Ob die Rentenversicherung das Jahr bis dahin geprüft hat (§ 28f Abs. 1 SGB IV), weiß der Lauf nicht; er löscht es trotzdem'
-        : 'die Arbeitszeiten, die Rufbereitschaft, der Urlaub und der Urlaubsanspruch eines Jahres acht Jahre nach dessen Ende. Ein Jahr, das die Rentenversicherung noch nicht geprüft hat, bleibt bis zum Ende des Jahres nach ihrer Prüfung (§ 28f Abs. 1 SGB IV); das prüft der Betrieb, bevor er das Löschen bestätigt'
+        ? 'die Arbeitszeiten, die Rufbereitschaft, der Urlaub und der Urlaubsanspruch eines Jahres acht Jahre nach dessen Ende, bei einem später erfassten oder berichtigten Eintrag oder einem, der ins nächste Jahr reicht, acht Jahre nach dem Ende dieses späteren Jahres. Ob die Rentenversicherung das Jahr bis dahin geprüft hat (§ 28f Abs. 1 SGB IV), weiß der Lauf nicht; er löscht es trotzdem'
+        : 'die Arbeitszeiten, die Rufbereitschaft, der Urlaub und der Urlaubsanspruch eines Jahres acht Jahre nach dessen Ende, bei einem später erfassten oder berichtigten Eintrag oder einem, der ins nächste Jahr reicht, acht Jahre nach dem Ende dieses späteren Jahres. Ein Jahr, das die Rentenversicherung noch nicht geprüft hat, bleibt bis zum Ende des Jahres nach ihrer Prüfung (§ 28f Abs. 1 SGB IV); das prüft der Betrieb, bevor er das Löschen bestätigt'
     case 'person':
       return 'die Akte einer ausgetretenen Person drei Jahre nach dem Ende ihres Austrittsjahres, sobald ihr Zugang geendet hat'
     case 'site':

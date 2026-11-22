@@ -164,7 +164,7 @@
       "key": "privacy.staff_year_erasure",
       "trade": null,
       "title": "Arbeitszeiten und Urlaub eines Jahres löschen",
-      "about": "Die Arbeitszeiten, die Rufbereitschaft, der Urlaub und der Urlaubsanspruch eines Jahres einer Person sind acht Jahre nach dem Ende des Jahres zum Löschen fällig, wenn sie als Lohnunterlage nicht mehr aufzubewahren sind (Löschkonzept). Sie stehen dann unter Einstellungen, Datenschutz, wo das Löschen bestätigt wird; steht die Art dort auf automatisch, löscht der Lauf sie von selbst. Die Frist sieht nur, wer die Akten lesen darf.",
+      "about": "Die Arbeitszeiten, die Rufbereitschaft, der Urlaub und der Urlaubsanspruch eines Jahres einer Person sind acht Jahre nach dem Ende des Jahres, bei einem später erfassten oder berichtigten Eintrag oder einem, der ins nächste Jahr reicht, acht Jahre nach dem Ende dieses späteren Jahres, zum Löschen fällig, wenn sie als Lohnunterlage nicht mehr aufzubewahren sind (Löschkonzept). Sie stehen dann unter Einstellungen, Datenschutz, wo das Löschen bestätigt wird; steht die Art dort auf automatisch, löscht der Lauf sie von selbst. Die Frist sieht nur, wer die Akten lesen darf.",
       "source": "staff_year",
       "intervalDays": null,
       "leadDays": 0,

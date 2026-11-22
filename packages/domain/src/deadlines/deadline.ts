@@ -132,7 +132,8 @@ export type DeadlineAction = (typeof deadlineActions)[number]
  * - `sickness`: a sickness a year after its last day (#846,
  *   `sicknessErasureDueOn`); deleting it lets it drop.
  * - `staff_year`: the time and leave of one year of one person, eight years
- *   after the end of the year (#846, `staffYearErasureDueOn`).
+ *   after the end of the year, or of the later year its last record was
+ *   entered or corrected in (#846, #1033, `staffYearErasureDueOn`).
  * - `person`: the file of somebody who left, three years after the end of the
  *   year they left (#846, `personErasureDueOn`). Coming back lets it drop.
  * - `site`: the site of a deleted customer, thirty years after its youngest
@@ -488,7 +489,7 @@ export const sourceWords: Readonly<
     person: 'Der Inhaber',
     interval: {
       label: 'Fällig nach',
-      hint: 'Fällig acht Jahre nach dem Ende des Jahres, wenn die Lohnunterlagen gehen dürfen.',
+      hint: 'Fällig acht Jahre nach dem Ende des Jahres, bei einem später erfassten oder berichtigten Eintrag oder einem, der ins nächste Jahr reicht, acht Jahre nach dem Ende dieses späteren Jahres, wenn die Lohnunterlagen gehen dürfen.',
     },
     anchor: 'dem Ende des Jahres',
   },

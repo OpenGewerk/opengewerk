@@ -13,6 +13,7 @@ import { runDeadlinesOf } from '../deadlines/engine.js'
 import { todayInGermany } from '../today.js'
 import {
   admitPreviewUser,
+  dateSampleYears,
   defaultPreviewDatabaseUrl,
   previewDatabaseUrl,
   previewIdentity,
@@ -132,6 +133,7 @@ describe('the sample data', () => {
     base = `http://127.0.0.1:${String(port)}`
 
     await plantSampleData(base, today)
+    await dateSampleYears(admin, tenant.id)
   })
 
   afterAll(async () => {
@@ -354,6 +356,19 @@ describe('the sample data', () => {
         source_label: 'Zählerschrank Keller am Objekt Einfamilienhaus Berg',
       },
     ])
+  })
+
+  it('proposes the file and the year of Dennis Kraft for deletion, as the boards "Datenschutz" draw them (#1033)', async () => {
+    await runDeadlinesOf({ database }, tenant.id, new Date())
+
+    const privacy = await read<{ due: { kind: string; name: string }[] | null }>('/privacy')
+
+    expect(
+      (privacy.due ?? [])
+        .filter((entry) => entry.name === 'Dennis Kraft')
+        .map((entry) => entry.kind)
+        .sort(),
+    ).toEqual(['person', 'staff_year'])
   })
 
   it('makes the preview person the operator of the instance, for its area (#188)', async () => {

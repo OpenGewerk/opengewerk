@@ -201,7 +201,7 @@ function DueTable({
   const [problem, setProblem] = useState<string | null>(null)
   const chosen = due.filter((entry) => !unselected.has(entry.recordId))
   const note =
-    'Ein Lead, der nie Kunde wurde, kommt nach dem letzten Kontakt hierher, vorgegeben nach zwölf Monaten; ein Kunde, wenn mit ihm nichts mehr läuft, vorgegeben drei Jahre nach dem letzten Kontakt, oder auf seine Löschanfrage. Die Dauer steht unter Fristen bei „Lead löschen“ und „Kunde löschen“. Eine Krankheit kommt zwölf Monate nach ihrem letzten Tag, Arbeitszeiten und Urlaub eines Jahres acht Jahre nach dessen Ende und die Akte einer Person drei Jahre nach dem Ende ihres Austrittsjahres, sobald ihr Zugang geendet hat. Das Objekt eines gelöschten Kunden kommt dreißig Jahre nach dem letzten unterschriebenen Protokoll oder Auftrag dort, je nachdem, was später kam.'
+    'Ein Lead, der nie Kunde wurde, kommt nach dem letzten Kontakt hierher, vorgegeben nach zwölf Monaten; ein Kunde, wenn mit ihm nichts mehr läuft, vorgegeben drei Jahre nach dem letzten Kontakt, oder auf seine Löschanfrage. Die Dauer steht unter Fristen bei „Lead löschen“ und „Kunde löschen“. Eine Krankheit kommt zwölf Monate nach ihrem letzten Tag, Arbeitszeiten, Rufbereitschaft und Urlaub eines Jahres acht Jahre nach dessen Ende, bei einem später erfassten oder berichtigten Eintrag oder einem, der ins nächste Jahr reicht, acht Jahre nach dem Ende dieses späteren Jahres, und die Akte einer Person drei Jahre nach dem Ende ihres Austrittsjahres, sobald ihr Zugang geendet hat. Das Objekt eines gelöschten Kunden kommt dreißig Jahre nach dem letzten unterschriebenen Protokoll oder Auftrag dort, je nachdem, was später kam.'
   const counts = Object.fromEntries(
     erasureKinds.map((kind) => [kind, chosen.filter((entry) => entry.kind === kind).length]),
   ) as Readonly<Record<ErasureKind, number>>
@@ -224,6 +224,10 @@ function DueTable({
     setBusy(true)
     setProblem(null)
 
+    // The kinds that went before one was refused: each goes all or nothing,
+    // and the ones before it are gone by then.
+    const gone: ErasureKind[] = []
+
     try {
       // One kind after the other, each all or nothing.
       for (const kind of erasureKinds) {
@@ -231,6 +235,7 @@ function DueTable({
 
         if (ids.length > 0) {
           await erase(kind, ids)
+          gone.push(kind)
         }
       }
 
@@ -240,7 +245,26 @@ function DueTable({
       await queries.invalidateQueries({ queryKey: ['prospects'] })
     } catch (error) {
       setAsking(false)
-      setProblem(saidWhy(error, 'Das Löschen ging nicht durch. Nichts wurde gelöscht.'))
+
+      // A refusal says itself why. Without an answer nothing is known of the
+      // kind that failed: the server may have written it and lost the line
+      // back, so the words neither say it went nor that it did not.
+      const said = saidWhy(
+        error,
+        gone.length === 0
+          ? 'Ob das Löschen durchging, ließ sich nicht bestätigen. Die Liste zeigt, was noch da ist.'
+          : 'Ob der Rest gelöscht ist, ließ sich nicht bestätigen. Die Liste zeigt, was noch da ist.',
+      )
+
+      setProblem(
+        gone.length === 0
+          ? said
+          : `${said} Davor gelöscht: ${gone.map((kind) => erasureKindWords[kind].title).join('; ')}.`,
+      )
+      // The list read again, whatever went: the kinds before are gone, and
+      // the server may say that whether one is still due is for the list.
+      await queries.invalidateQueries({ queryKey: privacyKey })
+      await queries.invalidateQueries({ queryKey: ['prospects'] })
     } finally {
       setBusy(false)
     }
@@ -250,6 +274,12 @@ function DueTable({
     return (
       <Panel title="Zum Löschen fällig" roomy>
         <div className="flex flex-col gap-2">
+          {/* A refusal stays in view also once the list read again is empty. */}
+          {problem ? (
+            <span role="alert" className="block text-conflict">
+              {problem}
+            </span>
+          ) : null}
           <SettingsText>Nichts ist zum Löschen fällig.</SettingsText>
           <SettingsText muted small>
             {note}

@@ -2,17 +2,27 @@ import { createHash } from 'node:crypto'
 
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
-import { addDays, berlinClock, type IsoDate, type TenantId } from '@opengewerk/domain'
+import {
+  addDays,
+  berlinClock,
+  type IsoDate,
+  shippedRules,
+  sicknessErasureDueOn,
+  sicknessErasureLabel,
+  type TenantId,
+} from '@opengewerk/domain'
 import { Database, newId, removedAddress } from '@opengewerk/platform-server'
 import { sql } from 'drizzle-orm'
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { runDeadlinesOf } from '../deadlines/engine.js'
-import { staffYearKey } from '../privacy/staff-erasure.js'
+import { ErasureBusy } from '../privacy/erasure.js'
+import { dueStaffYears, holdStaffYear, staffYearKey } from '../privacy/staff-erasure.js'
 import { ApiModule } from './api.module.js'
+import { type HeldQuery, holdQuery, waitingFor } from './test-hold.js'
 import { testIdentities as identities } from './test-identity.js'
 
 /**
@@ -41,7 +51,9 @@ const technician = person('kurt', ['technician'])
 const today = berlinClock(new Date()).day
 const thisYear = Number(today.slice(0, 4))
 /** A year whose time and leave are due: eight years after its end have passed (#1019). */
-const oldYear = thisYear - 9
+// Its last record, a correction, was entered on New Year's Day after it, so
+// the year counts from the end of the next (#1033), and is due.
+const oldYear = thisYear - 10
 /** The year after it, which is not due yet. */
 const nextYear = oldYear + 1
 /** The day the person left, three years and more before the start of this year. */
@@ -114,6 +126,9 @@ async function kraft(withLaterYears = true): Promise<Fixture> {
   const freshLast = addDays(today, -100)
   const o = String(oldYear)
   const n = String(nextYear)
+  // The year after was entered in January after its end, as the last days of
+  // a year often are, and so it is not due yet although its own end is.
+  const enteredAfter = `${String(nextYear + 1)}-01-15 09:00+01`
 
   await admin.query(
     `update auth_users set name = 'Dennis ${family}', email = 'dennis@${family.toLowerCase()}.example' where id = 'kurt';
@@ -131,34 +146,41 @@ async function kraft(withLaterYears = true): Promise<Fixture> {
        values ('${north}', '${id}', 'electrician', '2030-01-01', 'Prüfung bei ${family}', '${earlierCertificate}', 'vorher-${family}.pdf');
      update qualifications set certificate_sha256 = '${certificate}', certificate_name = 'pruefung-${family}.pdf'
       where person_id = '${id}';
-     insert into absences (id, tenant_id, person_id, kind, state, first_day, last_day, note)
-       values ('${vacation}', '${north}', '${id}', 'vacation', 'approved', '${o}-08-01', '${o}-08-14', 'Urlaub der ${family}s'),
-              ('${oldSickness}', '${north}', '${id}', 'sickness', 'approved', '${o}-05-06', '${o}-05-10', null);
-     insert into leave_entitlements (tenant_id, person_id, year, entitled_half_days, carried_half_days)
-       values ('${north}', '${id}', ${o}, 60, 4);
-     insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, start_latitude_micro, start_longitude_micro)
-       values ('${north}', 'kurt', 'work', '${o}-03-04 07:00+01', '${o}-03-04 15:30+01', 'Baustelle ${family}', 53550000, 9990000);
-     insert into time_entries (id, tenant_id, user_id, kind, started_at, ended_at, note)
-       values ('${lastEntry}', '${north}', 'kurt', 'work', '${o}-12-31 22:00+01', '${o}-12-31 23:30+01', 'Silvester bei ${family}');
-     insert into time_entries (id, tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
-       values ('${correction}', '${north}', 'kurt', 'work', '${n}-01-01 00:10+01', '${n}-01-01 01:00+01', 'Silvester bei ${family}, berichtigt', '${lastEntry}');
-     insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note)
-       values ('${north}', 'kurt', '${o}-05-01 16:00+02', '${o}-05-08 07:00+02', 'Bereitschaft ${family}');
+     insert into absences (id, tenant_id, person_id, kind, state, first_day, last_day, note, created_at)
+       values ('${vacation}', '${north}', '${id}', 'vacation', 'approved', '${o}-08-01', '${o}-08-14', 'Urlaub der ${family}s', '${o}-06-02 09:00+02'),
+              ('${oldSickness}', '${north}', '${id}', 'sickness', 'approved', '${o}-05-06', '${o}-05-10', null, '${o}-05-06 08:00+02');
+     insert into leave_entitlements (tenant_id, person_id, year, entitled_half_days, carried_half_days, created_at)
+       values ('${north}', '${id}', ${o}, 60, 4, '${o}-01-02 09:00+01');
+     insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, start_latitude_micro, start_longitude_micro, created_at)
+       values ('${north}', 'kurt', 'work', '${o}-03-04 07:00+01', '${o}-03-04 15:30+01', 'Baustelle ${family}', 53550000, 9990000, '${o}-03-04 15:30+01');
+     insert into time_entries (id, tenant_id, user_id, kind, started_at, ended_at, note, created_at)
+       values ('${lastEntry}', '${north}', 'kurt', 'work', '${o}-12-31 22:00+01', '${o}-12-31 23:30+01', 'Silvester bei ${family}', '${o}-12-31 23:30+01');
+     insert into time_entries (id, tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id, created_at)
+       values ('${correction}', '${north}', 'kurt', 'work', '${n}-01-01 00:10+01', '${n}-01-01 01:00+01', 'Silvester bei ${family}, berichtigt', '${lastEntry}', '${n}-01-01 01:00+01');
+     insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note, created_at)
+       values ('${north}', 'kurt', '${o}-05-01 16:00+02', '${o}-05-08 07:00+02', 'Bereitschaft ${family}', '${o}-05-08 07:00+02');
      insert into location_consents (tenant_id, user_id, given) values ('${north}', 'kurt', true);
      ${
        withLaterYears
-         ? `insert into absences (id, tenant_id, person_id, kind, state, first_day, last_day, note)
-              values (gen_random_uuid(), '${north}', '${id}', 'vacation', 'approved', '${n}-07-01', '${n}-07-10', 'Urlaub der ${family}s'),
-                     ('${dueSickness}', '${north}', '${id}', 'sickness', 'approved', '${addDays(dueLast, -4)}', '${dueLast}', null),
-                     ('${freshSickness}', '${north}', '${id}', 'sickness', 'approved', '${addDays(freshLast, -4)}', '${freshLast}', null);
-            insert into leave_entitlements (tenant_id, person_id, year, entitled_half_days, carried_half_days)
-              values ('${north}', '${id}', ${n}, 60, 0);
-            insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
-              values ('${north}', 'kurt', 'work', '${n}-02-02 07:00+01', '${n}-02-02 15:00+01', 'Baustelle ${family}');
-            insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note)
-              values ('${north}', 'kurt', '${n}-05-01 16:00+02', '${n}-05-08 07:00+02', 'Bereitschaft ${family}');`
+         ? `insert into absences (id, tenant_id, person_id, kind, state, first_day, last_day, note, created_at)
+              values (gen_random_uuid(), '${north}', '${id}', 'vacation', 'approved', '${n}-07-01', '${n}-07-10', 'Urlaub der ${family}s', '${enteredAfter}'),
+                     ('${dueSickness}', '${north}', '${id}', 'sickness', 'approved', '${addDays(dueLast, -4)}', '${dueLast}', null, default),
+                     ('${freshSickness}', '${north}', '${id}', 'sickness', 'approved', '${addDays(freshLast, -4)}', '${freshLast}', null, default);
+            insert into leave_entitlements (tenant_id, person_id, year, entitled_half_days, carried_half_days, created_at)
+              values ('${north}', '${id}', ${n}, 60, 0, '${enteredAfter}');
+            insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, created_at)
+              values ('${north}', 'kurt', 'work', '${n}-02-02 07:00+01', '${n}-02-02 15:00+01', 'Baustelle ${family}', '${enteredAfter}');
+            insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note, created_at)
+              values ('${north}', 'kurt', '${n}-05-01 16:00+02', '${n}-05-08 07:00+02', 'Bereitschaft ${family}', '${enteredAfter}');`
          : ''
      }
+     -- Last written when they were entered: the trigger stamps the moment of
+     -- the insert, and what counts (#1033) is when they came to be.
+     set local session_replication_role = replica;
+     update absences set updated_at = created_at where person_id = '${id}';
+     update leave_entitlements set updated_at = created_at where person_id = '${id}';
+     update time_entries set updated_at = created_at where tenant_id = '${north}' and user_id = 'kurt';
+     update on_call_shifts set updated_at = created_at where tenant_id = '${north}' and user_id = 'kurt';
      commit;`,
   )
 
@@ -225,6 +247,117 @@ async function dueFor(who: string): Promise<Due[] | null> {
 
 async function pass() {
   await runDeadlinesOf({ database }, north, new Date())
+}
+
+/** A pass at night: the deadlines follow their sources, and nothing is done about them yet. */
+async function nightPass() {
+  await runDeadlinesOf({ database }, north, new Date(`${today}T01:00:00Z`))
+}
+
+/** A pass at noon, after the morning: what a deadline does is done. */
+function noonPass() {
+  return runDeadlinesOf({ database }, north, new Date(`${today}T10:00:00Z`))
+}
+
+/** Switches a kind of erasure to go by itself, in the name of whoever leads. */
+async function byItself(kind: string) {
+  await admin.query(
+    `begin; set local app.user_id = 'lena';
+     insert into erasure_automations (tenant_id, kind, created_by) values ('${north}', '${kind}', 'lena');
+     commit;`,
+  )
+}
+
+/** What a pass failed with, one reason per reminder. */
+function reasonsOf(error: unknown): unknown[] {
+  return error instanceof AggregateError ? error.errors : [error]
+}
+
+/** The line of the protocol a deletion writes first, as drizzle sends it. */
+const protocolLine = /^insert into "erasures"/i
+
+/**
+ * A transaction of the test's own, ended and given back whatever happened:
+ * rolled back, which after a commit changes nothing, and the connection
+ * thrown away when even that fails.
+ */
+async function ownTransaction<Result>(work: (client: PoolClient) => Promise<Result>) {
+  const client = await admin.connect()
+  let broken = false
+
+  try {
+    await client.query('begin')
+
+    return await work(client)
+  } finally {
+    await client.query('rollback').catch(() => {
+      broken = true
+    })
+    client.release(broken)
+  }
+}
+
+/**
+ * Settles once the statement is held, and fails with the answer of the
+ * request when that ended first, so that a test does not wait for its time
+ * to run out over an answer it never sees.
+ */
+async function reachedBefore(
+  stopped: HeldQuery,
+  asked: Promise<{ readonly status: number; readonly body: unknown }>,
+): Promise<void> {
+  const ended = asked.then((answer) => {
+    throw new Error(
+      `The request ended with ${String(answer.status)} before the held statement: ${JSON.stringify(answer.body)}`,
+    )
+  })
+
+  ended.catch(() => undefined)
+
+  await Promise.race([stopped.reached, ended])
+}
+
+/**
+ * Waits until a statement waits for a lock, of the kind `event` names or any,
+ * and where `statement` is given, one whose text has it.
+ */
+async function untilWaiting(
+  holder: number,
+  event?: string,
+  statement?: string,
+  stop?: () => boolean,
+): Promise<void> {
+  for (let tries = 0; tries < 200; tries += 1) {
+    // Raced against work that may end first: then nobody waits for the
+    // answer, and the watch ends with it rather than ask on into the next test.
+    if (stop?.()) {
+      return
+    }
+
+    // Only a statement that waits for `holder`: another session waiting for
+    // the same kind of lock lets nothing go too early.
+    const waiting =
+      event === undefined
+        ? await count(
+            `select count(*) as n from pg_stat_activity
+              where wait_event_type = 'Lock' and $1 = any(pg_blocking_pids(pid))`,
+            [holder],
+          )
+        : await count(
+            `select count(*) as n from pg_stat_activity
+              where wait_event_type = 'Lock' and wait_event = $1 and query like $2
+                and $3 = any(pg_blocking_pids(pid))`,
+            [event, `%${statement ?? ''}%`, holder],
+          )
+
+    if (waiting > 0) {
+      return
+    }
+
+    await new Promise((done) => setTimeout(done, 50))
+  }
+
+  throw new Error('Nothing came to wait for a lock')
 }
 
 beforeAll(async () => {
@@ -317,6 +450,771 @@ describe('what of the staff is due (#846)', () => {
         oldYear,
       ]),
     ).toBe(1)
+  })
+
+  it('keeps a year eight years after a correction to it was entered, also once it was found due (#1033)', async () => {
+    const dennis = await kraft(false)
+
+    await pass()
+
+    // The correction of the last entry of the year, entered only this year,
+    // after the pass had found the year due: deleting it is refused at once.
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       update time_entries set created_at = now(), updated_at = now() where id = '${dennis.correction}'; commit;`,
+    )
+    await erase('staff_year', [staffYearKey(dennis.person, oldYear)]).expect(409)
+    await pass()
+
+    const due = (await dueFor(owner)) ?? []
+
+    expect(due.filter((entry) => entry.kind === 'staff_year')).toEqual([])
+    // Nor is a deadline open for it: a year has one only once it is due.
+    expect(
+      await count("select count(*) as n from deadlines where source_id = $1 and status = 'open'", [
+        staffYearKey(dennis.person, oldYear),
+      ]),
+    ).toBe(0)
+  })
+
+  it('keeps a year eight years after its days of leave were corrected in their row (#1033)', async () => {
+    const dennis = await kraft(false)
+    const key = staffYearKey(dennis.person, oldYear)
+
+    await pass()
+
+    expect(((await dueFor(owner)) ?? []).map((entry) => entry.recordId)).toContain(key)
+
+    // The office corrects the leave of the old year this year. The row of the
+    // entitlement changes in place and keeps the day it was entered.
+    await http()
+      .put(`/absences/people/${dennis.person}/entitlements/${String(oldYear)}`)
+      .set('x-test-identity', owner)
+      .send({ entitledHalfDays: 58, carriedHalfDays: 4 })
+      .expect(200)
+    await erase('staff_year', [key]).expect(409)
+    // And the next pass no longer proposes it.
+    await pass()
+
+    expect(((await dueFor(owner)) ?? []).map((entry) => entry.recordId)).not.toContain(key)
+  })
+
+  it('reads a year again before deleting it, and a correction since the list makes it not due (#1033)', async () => {
+    const dennis = await kraft(false)
+    const lena = { tenantId: north, userId: 'lena' }
+
+    await pass()
+
+    // What the deletion found due when it read the list.
+    const [year] = await database.forTenant(lena, (tx) =>
+      dueStaffYears(tx, today, [staffYearKey(dennis.person, oldYear)]),
+    )
+
+    if (year === undefined) {
+      throw new Error('The old year of the fixture is due')
+    }
+
+    const before = await database.forTenant(lena, (tx) => holdStaffYear(tx, year, today))
+
+    // Counted from the end of the year after, when the correction after New
+    // Year was entered, and eight years on.
+    expect(before?.dueOn).toBe(`${String(oldYear + 10)}-01-01`)
+    expect(before?.entitlements).toHaveLength(1)
+
+    // Corrected after that reading: held again, it is not due.
+    await http()
+      .put(`/absences/people/${dennis.person}/entitlements/${String(oldYear)}`)
+      .set('x-test-identity', owner)
+      .send({ entitledHalfDays: 58, carriedHalfDays: 4 })
+      .expect(200)
+
+    expect(await database.forTenant(lena, (tx) => holdStaffYear(tx, year, today))).toBeNull()
+  })
+
+  it('refuses a year that a correction made not due while the deletion waited for it (#1033)', async () => {
+    const dennis = await kraft(false)
+
+    await pass()
+
+    await ownTransaction(async (client) => {
+      // A correction of the days of leave of the old year, written and not
+      // committed yet: the deletion reads the list without it, finds the year
+      // due and waits at the row.
+      await client.query(
+        'update leave_entitlements set carried_half_days = 5 where person_id = $1 and year = $2',
+        [dennis.person, oldYear],
+      )
+
+      const asked = erase('staff_year', [staffYearKey(dennis.person, oldYear)]).then(
+        (answer) => answer,
+      )
+
+      await waitingFor(admin, client, asked)
+      await client.query('commit')
+
+      expect((await asked).status).toBe(409)
+    })
+
+    expect(
+      await count('select count(*) as n from leave_entitlements where person_id = $1', [
+        dennis.person,
+      ]),
+    ).toBe(1)
+  })
+
+  it('refuses a year that a record came into while it was deleted, and deletes nothing (#1033)', async () => {
+    const dennis = await kraft(false)
+    const late = newId<'absence'>()
+    const key = staffYearKey(dennis.person, oldYear)
+
+    await pass()
+
+    const stopped = holdQuery((statement) => protocolLine.test(statement))
+    const asked = erase('staff_year', [staffYearKey(dennis.person, oldYear)]).then(
+      (answer) => answer,
+    )
+
+    await reachedBefore(stopped, asked)
+    // An absence of the old year that comes in after the deletion read the
+    // year and before its line of the protocol, the one moment one can: the
+    // line holds the chain of the business until the deletion is through.
+    await admin
+      .query(
+        `insert into absences (id, tenant_id, person_id, kind, state, first_day, last_day, note)
+           values ($1, $2, $3, 'vacation', 'approved', $4, $5, 'nachgetragen')`,
+        [late, north, dennis.person, `${String(oldYear)}-10-05`, `${String(oldYear)}-10-06`],
+      )
+      .finally(stopped.release)
+
+    // Left behind, it could never go: the year has one line of the protocol.
+    // So nothing goes, and the next pass reads the year with it.
+    const answer = await asked
+
+    expect(answer.status).toBe(409)
+    expect(refusal(answer)).toContain('während des Löschens geändert')
+    expect(await count('select count(*) as n from absences where id = $1', [late])).toBe(1)
+    expect(await count('select count(*) as n from absences where id = $1', [dennis.vacation])).toBe(
+      1,
+    )
+    expect(await count('select count(*) as n from erasures where record_id = $1', [key])).toBe(0)
+  })
+
+  it('keeps the file of somebody whose access opened again while the deletion read it (#1033)', async () => {
+    const dennis = await kraft()
+
+    await pass()
+
+    expect(((await dueFor(owner)) ?? []).map((entry) => entry.recordId)).toContain(dennis.person)
+
+    const stopped = holdQuery((statement) => /from memberships where user_id/i.test(statement))
+    const asked = erase('person', [dennis.person]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+    // The access opened again after the list was read, and before the
+    // deletion reads it again.
+    await admin
+      .query(`update memberships set last_day = null where tenant_id = $1 and user_id = 'kurt'`, [
+        north,
+      ])
+      .finally(stopped.release)
+
+    expect((await asked).status).toBe(409)
+    expect(
+      await count(`select count(*) as n from working_times where person_id = $1`, [dennis.person]),
+    ).toBe(1)
+  })
+
+  /**
+   * The account read with the list is the one whose devices, feeds and name
+   * go with the file. Taken off the person between the list and the hold, it
+   * is not deleted: the file changed (#1045).
+   */
+  it('keeps the file of somebody whose account changed while the deletion read it (#1033)', async () => {
+    const dennis = await kraft()
+
+    await pass()
+
+    const stopped = holdQuery((statement) => /from memberships where user_id/i.test(statement))
+    const asked = erase('person', [dennis.person]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+    await admin
+      .query('update people set user_id = null where id = $1', [dennis.person])
+      .finally(stopped.release)
+
+    expect((await asked).status).toBe(409)
+    expect(
+      await count(`select count(*) as n from working_times where person_id = $1`, [dennis.person]),
+    ).toBe(1)
+  })
+
+  it('holds the file, what of it a write can change and its access until the deletion is through (#1033)', async () => {
+    const dennis = await kraft()
+    const feed = createHash('sha256').update(`${dennis.family} Kalender`).digest('hex')
+
+    await admin.query(
+      `begin; set local app.user_id = 'kurt';
+       insert into push_subscriptions (tenant_id, user_id, entry, label, endpoint, p256dh, auth)
+         values ('${north}', 'kurt', 'site', 'Telefon', 'https://push.example/${dennis.family}', 'sealed-key', 'auth');
+       insert into calendar_feeds (tenant_id, user_id, token_hash) values ('${north}', 'kurt', '${feed}');
+       commit;`,
+    )
+    await pass()
+
+    const stopped = holdQuery((statement) => protocolLine.test(statement))
+    const asked = erase('person', [dennis.person]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+
+    try {
+      // Opening the access again, a return, and a change of the working time,
+      // a qualification, a device or a calendar feed all wait for the
+      // deletion, and give up here after a moment: each would take its row
+      // and then wait for the chain the deletion takes next.
+      for (const statement of [
+        `update memberships set last_day = null where tenant_id = '${north}' and user_id = 'kurt'`,
+        `update people set left_on = null where id = '${dennis.person}'`,
+        `update working_times set monday_minutes = 470 where person_id = '${dennis.person}'`,
+        `update qualifications set note = 'berichtigt' where person_id = '${dennis.person}'`,
+        `update push_subscriptions set label = 'Neues Telefon' where user_id = 'kurt'`,
+        `update calendar_feeds set ended_at = now() where user_id = 'kurt'`,
+      ]) {
+        await ownTransaction(async (client) => {
+          await client.query("set local lock_timeout = '300ms'")
+          await expect(client.query(statement)).rejects.toThrow(/lock timeout/)
+        })
+      }
+
+      // A new row that points at the file does not wait for it: it checks
+      // the key once it took the counter, which the deletion waits for next.
+      await ownTransaction(async (client) => {
+        await client.query("set local lock_timeout = '300ms'")
+        await client.query("select set_config('app.user_id', 'lena', true)")
+        await client.query(
+          `insert into leave_entitlements (tenant_id, person_id, year, entitled_half_days, carried_half_days)
+           values ($1, $2, $3, 60, 0)`,
+          [north, dennis.person, thisYear],
+        )
+      })
+    } finally {
+      stopped.release()
+    }
+
+    expect((await asked).status).toBe(201)
+  })
+
+  it('holds the file whose name goes with its last year before the first line of the protocol (#1033)', async () => {
+    const dennis = await kraft(false)
+
+    await pass()
+    await erase('person', [dennis.person]).expect(201)
+
+    const stopped = holdQuery((statement) => protocolLine.test(statement))
+    const asked = erase('staff_year', [staffYearKey(dennis.person, oldYear)]).then(
+      (answer) => answer,
+    )
+
+    await reachedBefore(stopped, asked)
+
+    try {
+      await ownTransaction(async (client) => {
+        await client.query("set local lock_timeout = '300ms'")
+        await expect(
+          client.query('update people set name = name where id = $1', [dennis.person]),
+        ).rejects.toThrow(/lock timeout/)
+      })
+    } finally {
+      stopped.release()
+    }
+
+    expect((await asked).status).toBe(201)
+    expect(
+      await count(`select count(*) as n from people where id = $1 and name like 'Dennis%'`, [
+        dennis.person,
+      ]),
+    ).toBe(0)
+  })
+
+  it('holds the rows of a year it deletes against a correction until it is through (#1033)', async () => {
+    const dennis = await kraft(false)
+
+    await pass()
+
+    const stopped = holdQuery((statement) => protocolLine.test(statement))
+    const asked = erase('staff_year', [staffYearKey(dennis.person, oldYear)]).then(
+      (answer) => answer,
+    )
+
+    await reachedBefore(stopped, asked)
+
+    try {
+      // A correction of each kind that is corrected in its row waits for the
+      // deletion, and gives up here after a moment.
+      for (const statement of [
+        `update leave_entitlements set carried_half_days = 5 where person_id = '${dennis.person}' and year = ${String(oldYear)}`,
+        `update absences set note = 'berichtigt' where id = '${dennis.vacation}'`,
+        `update on_call_shifts set note = 'berichtigt' where user_id = 'kurt' and extract(year from starts_at)::int = ${String(oldYear)}`,
+      ]) {
+        await ownTransaction(async (client) => {
+          await client.query("set local lock_timeout = '300ms'")
+          await expect(client.query(statement)).rejects.toThrow(/lock timeout/)
+        })
+      }
+    } finally {
+      stopped.release()
+    }
+
+    expect((await asked).status).toBe(201)
+  })
+
+  it('holds every sickness it deletes before the first line of the protocol (#1033)', async () => {
+    const dennis = await kraft()
+
+    await pass()
+
+    const stopped = holdQuery((statement) => protocolLine.test(statement))
+    const asked = erase('sickness', [dennis.oldSickness, dennis.dueSickness]).then(
+      (answer) => answer,
+    )
+
+    await reachedBefore(stopped, asked)
+
+    try {
+      // Both are read again and held before the first line takes the chain of
+      // the business: a deletion of the staff takes its rows first, as every
+      // write of them does, and never waits for a row while it holds the
+      // chain.
+      for (const id of [dennis.oldSickness, dennis.dueSickness]) {
+        await ownTransaction(async (client) => {
+          await client.query("set local lock_timeout = '300ms'")
+          await expect(
+            // A sickness carries no note; a change that changes nothing
+            // takes the row all the same.
+            client.query('update absences set last_day = last_day where id = $1', [id]),
+          ).rejects.toThrow(/lock timeout/)
+        })
+      }
+    } finally {
+      stopped.release()
+    }
+
+    expect((await asked).status).toBe(201)
+  })
+
+  it('answers a correction of time that came in while it deleted as a conflict, and deletes nothing (#1033)', async () => {
+    const dennis = await kraft(false)
+    const n = String(nextYear)
+    const key = staffYearKey(dennis.person, oldYear)
+    const rows = () =>
+      count(
+        `select (select count(*) from time_entries where user_id = 'kurt')
+              + (select count(*) from on_call_shifts where user_id = 'kurt')
+              + (select count(*) from absences where person_id = $1)
+              + (select count(*) from leave_entitlements where person_id = $1) as n`,
+        [dennis.person],
+      )
+
+    await pass()
+
+    expect(((await dueFor(owner)) ?? []).map((entry) => entry.recordId)).toContain(key)
+
+    const before = await rows()
+    const stopped = holdQuery((statement) => protocolLine.test(statement))
+    const asked = erase('staff_year', [key]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+    // A correction of the correction after New Year, entered now: not among
+    // what the deletion read, and the one it corrects cannot go without it.
+    await ownTransaction(async (client) => {
+      // As the person whose time it is: the trigger takes the author from the
+      // transaction.
+      await client.query(
+        "select set_config('app.tenant_id', $1, true), set_config('app.user_id', 'kurt', true)",
+        [north],
+      )
+      await client.query(
+        `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+           values ($1, 'kurt', 'work', $2, $3, 'noch einmal berichtigt', $4)`,
+        [north, `${n}-01-01 00:20+01`, `${n}-01-01 01:00+01`, dennis.correction],
+      )
+      await client.query('commit')
+    }).finally(stopped.release)
+
+    const answer = await asked
+
+    expect(answer.status).toBe(409)
+    expect(refusal(answer)).toContain('während des Löschens geändert')
+    // All of the year stays, the correction with it, and no line says
+    // otherwise.
+    expect(await rows()).toBe(before + 1)
+    expect(await count('select count(*) as n from erasures where record_id = $1', [key])).toBe(0)
+  })
+
+  it('writes the day of a sickness as read again into its line of the protocol (#1033)', async () => {
+    const dennis = await kraft()
+    const corrected = `${String(oldYear)}-05-11` as IsoDate
+
+    await pass()
+
+    const stopped = holdQuery((statement) => /select last_day::text from absences/i.test(statement))
+    const asked = erase('sickness', [dennis.oldSickness]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+    // Its last day corrected after the list was read, and before the
+    // deletion reads it again.
+    await admin
+      .query('update absences set last_day = $2 where id = $1', [dennis.oldSickness, corrected])
+      .finally(stopped.release)
+
+    expect((await asked).status).toBe(201)
+
+    const { rows } = await admin.query<{ label: string; due_on: string }>(
+      'select label, due_on::text from erasures where record_id = $1',
+      [dennis.oldSickness],
+    )
+
+    expect(rows).toEqual([
+      {
+        label: sicknessErasureLabel(corrected),
+        due_on: sicknessErasureDueOn(corrected, today, shippedRules),
+      },
+    ])
+  })
+
+  it('refuses a sickness whose last day was corrected so that it is not due, and deletes nothing (#1033)', async () => {
+    const dennis = await kraft()
+
+    await pass()
+
+    const stopped = holdQuery((statement) => /select last_day::text from absences/i.test(statement))
+    const asked = erase('sickness', [dennis.oldSickness]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+    // Its last day corrected after the list was read to one a hundred days
+    // back, and before the deletion reads it again: no longer due.
+    await admin
+      .query('update absences set last_day = $2 where id = $1', [
+        dennis.oldSickness,
+        addDays(today, -100),
+      ])
+      .finally(stopped.release)
+
+    expect((await asked).status).toBe(409)
+    expect(
+      await count('select count(*) as n from absences where id = $1', [dennis.oldSickness]),
+    ).toBe(1)
+    expect(
+      await count('select count(*) as n from erasures where record_id = $1', [dennis.oldSickness]),
+    ).toBe(0)
+  })
+
+  it('writes no line for a year that another deletion emptied meanwhile (#1033)', async () => {
+    const dennis = await kraft(false)
+    const key = staffYearKey(dennis.person, oldYear)
+
+    await pass()
+
+    const stopped = holdQuery((statement) => protocolLine.test(statement))
+    const asked = erase('staff_year', [key]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+
+    // The same year asked for a second time, as a second click does: it read
+    // the list as well and waits for the first.
+    const again = erase('staff_year', [key]).then((answer) => answer)
+
+    await untilWaiting(stopped.holder(), 'advisory', 'pg_advisory_xact_lock').finally(
+      stopped.release,
+    )
+
+    expect((await asked).status).toBe(201)
+    expect((await again).status).toBe(409)
+    expect(await count('select count(*) as n from erasures where record_id = $1', [key])).toBe(1)
+  })
+
+  it('lets a second deletion of the same person wait until the first is through (#1033)', async () => {
+    const dennis = await kraft()
+
+    await pass()
+
+    const stopped = holdQuery((statement) => protocolLine.test(statement))
+    const asked = erase('staff_year', [staffYearKey(dennis.person, oldYear)]).then(
+      (answer) => answer,
+    )
+
+    await reachedBefore(stopped, asked)
+
+    // A sickness of a later year, rows the year does not hold: it waits all
+    // the same, at the lock of the person, and not somewhere in between.
+    let through = false
+    const sickness = erase('sickness', [dennis.dueSickness]).then((answer) => {
+      through = true
+
+      return answer
+    })
+
+    await untilWaiting(stopped.holder(), 'advisory', 'pg_advisory_xact_lock').finally(
+      stopped.release,
+    )
+
+    expect(through).toBe(false)
+    expect((await asked).status).toBe(201)
+    expect((await sickness).status).toBe(201)
+  })
+
+  it('lets a deletion by itself give way to one by hand of the same person, and tries again in the next pass (#1033)', async () => {
+    const dennis = await kraft()
+
+    await byItself('sickness')
+    await nightPass()
+
+    const stopped = holdQuery((statement) => protocolLine.test(statement))
+    const asked = erase('person', [dennis.person]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+
+    // The pass claims the deadline of each sickness and with it the chain of
+    // the business, which the deletion by hand needs for its line next. It
+    // does not wait for the lock of the person but gives up.
+    let failed: unknown
+
+    try {
+      let ended = false
+
+      failed = await Promise.race([
+        noonPass()
+          .then(
+            () => 'went through',
+            (error: unknown) => error,
+          )
+          .finally(() => {
+            ended = true
+          }),
+        untilWaiting(stopped.holder(), 'advisory', undefined, () => ended).then(
+          () => 'waited for the person',
+        ),
+      ])
+    } finally {
+      stopped.release()
+    }
+
+    expect(reasonsOf(failed).length).toBe(2)
+    expect(reasonsOf(failed).every((reason) => reason instanceof ErasureBusy)).toBe(true)
+    expect((await asked).status).toBe(201)
+    expect(
+      await count(`select count(*) as n from absences where id = any($1)`, [
+        [dennis.dueSickness, dennis.oldSickness],
+      ]),
+    ).toBe(2)
+
+    // Nothing of the claim stayed: the next pass deletes them.
+    await noonPass()
+
+    expect(
+      await count(`select count(*) as n from absences where id = any($1)`, [
+        [dennis.dueSickness, dennis.oldSickness],
+      ]),
+    ).toBe(0)
+  })
+
+  for (const change of [
+    {
+      kind: 'staff_year',
+      what: 'an absence of the year',
+      statement: (dennis: Fixture) =>
+        [`update absences set note = 'berichtigt' where id = $1`, [dennis.vacation]] as const,
+    },
+    {
+      kind: 'person',
+      what: 'the access',
+      statement: () =>
+        [
+          `update memberships set last_day = last_day where tenant_id = $1 and user_id = 'kurt'`,
+          [north],
+        ] as const,
+    },
+  ]) {
+    it(`lets a deletion by itself give way to a change by hand of ${change.what}, which goes through (#1033)`, async () => {
+      const dennis = await kraft(false)
+
+      await byItself(change.kind)
+      await nightPass()
+
+      // Held after the pass claimed the deadline, before it takes the person.
+      const stopped = holdQuery((statement) => /pg_try_advisory_xact_lock/i.test(statement))
+      const run = noonPass().then(
+        () => 'went through',
+        (error: unknown) => error,
+      )
+
+      await Promise.race([
+        stopped.reached,
+        run.then((ended) => {
+          throw new Error(`The pass ended before the lock of the person: ${String(ended)}`)
+        }),
+      ])
+
+      const client = await admin.connect()
+      let broken = false
+
+      try {
+        await client.query('begin')
+        await client.query("select set_config('app.user_id', 'lena', true)")
+
+        // The office changes a row the deletion holds: it takes the row and
+        // waits for the chain, which the pass holds with its claim.
+        const [statement, values] = change.statement(dennis)
+        const changed = client.query(statement, [...values])
+
+        changed.catch(() => undefined)
+        await untilWaiting(stopped.holder()).finally(stopped.release)
+
+        // The pass gives up and rolls back, and the change goes through. Its
+        // commit comes before the end of the pass: the pass goes on to the
+        // next deadline, whose claim waits for the chain the change holds.
+        await expect(changed).resolves.toMatchObject({ rowCount: 1 })
+        await client.query('commit')
+      } finally {
+        await client.query('rollback').catch(() => {
+          broken = true
+        })
+        client.release(broken)
+      }
+
+      const failed = await run
+
+      expect(reasonsOf(failed).every((reason) => reason instanceof ErasureBusy)).toBe(true)
+    })
+  }
+
+  for (const record of [
+    {
+      kind: 'an absence',
+      insert: (n: string, person: string) =>
+        `insert into absences (id, tenant_id, person_id, kind, state, first_day, last_day, note, created_at, updated_at)
+           values ('${newId<'absence'>()}', '${north}', '${person}', 'vacation', 'approved',
+                   '${n}-12-28', '${n}-12-31', 'Urlaub über Neujahr', '${n}-12-01 09:00+01', '${n}-12-01 09:00+01')`,
+      prolong: (n: string, person: string) =>
+        `update absences set last_day = '${String(Number(n) + 1)}-01-03' where person_id = '${person}' and note = 'Urlaub über Neujahr'`,
+    },
+    {
+      kind: 'a record of time',
+      insert: (n: string) =>
+        `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, created_at, updated_at)
+           values ('${north}', 'kurt', 'work', '${n}-12-31 21:00+01', '${n}-12-31 23:30+01', 'Silvester',
+                   '${n}-12-31 23:30+01', '${n}-12-31 23:30+01')`,
+      prolong: (n: string) =>
+        `update time_entries set ended_at = '${String(Number(n) + 1)}-01-01 01:00+01' where user_id = 'kurt' and note = 'Silvester'`,
+    },
+    {
+      kind: 'a time on call',
+      insert: (n: string) =>
+        `insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note, created_at, updated_at)
+           values ('${north}', 'kurt', '${n}-12-28 16:00+01', '${n}-12-31 07:00+01', 'Bereitschaft',
+                   '${n}-12-01 09:00+01', '${n}-12-01 09:00+01')`,
+      prolong: (n: string) =>
+        `update on_call_shifts set ends_at = '${String(Number(n) + 1)}-01-04 07:00+01' where user_id = 'kurt' and note = 'Bereitschaft'`,
+    },
+  ]) {
+    it(`holds a year with ${record.kind} into the next until the end of that year (#1033)`, async () => {
+      const dennis = await kraft(false)
+      const n = String(nextYear)
+      const key = staffYearKey(dennis.person, nextYear)
+      const year = {
+        key,
+        personId: dennis.person,
+        personName: 'Dennis',
+        userId: 'kurt',
+        year: nextYear,
+        countsFrom: nextYear,
+        dueOn: today,
+      }
+      const listed = async () => {
+        await pass()
+
+        return ((await dueFor(owner)) ?? []).map((entry) => entry.recordId)
+      }
+      const held = () =>
+        database.forTenant({ tenantId: north, userId: 'lena' }, (tx) =>
+          holdStaffYear(tx, year, today),
+        )
+      // Written past the triggers, so that the moment of writing stays as
+      // given and only the end of the record moves.
+      const quietly = (statement: string) =>
+        admin.query(`begin; set local session_replication_role = replica; ${statement}; commit;`)
+
+      // Ending on 31 December, its year is due by its own end.
+      await quietly(record.insert(n, dennis.person))
+
+      expect(await listed()).toContain(key)
+      expect(await held()).not.toBeNull()
+
+      // Ending after New Year, the days of January belong to the pay of the
+      // year after, and the year is kept until that one's end.
+      await quietly(record.prolong(n, dennis.person))
+
+      expect(await listed()).not.toContain(key)
+      expect(await held()).toBeNull()
+    })
+  }
+
+  it('puts a record of time into the year of the entry its chain began with, as the deletion does, past a hundred corrections too (#1033)', async () => {
+    const dennis = await kraft(false)
+    const before = String(oldYear - 1)
+    const o = String(oldYear)
+
+    // An entry on New Year's Eve the year before, a correction that moves it
+    // past New Year, and a hundred corrections of that one, the last written
+    // only now. The last stands a hundred and one links from the first: as
+    // `time_entry_year` has it, it belongs to the year of the first
+    // correction, and so does the moment it was written.
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       insert into time_entries (id, tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id, created_at, updated_at)
+       select md5('${dennis.family}' || i)::uuid, '${north}', 'kurt', 'work',
+              case when i = 0 then '${before}-12-31 22:00+01' else '${o}-01-01 00:10+01' end::timestamptz,
+              case when i = 0 then '${before}-12-31 23:30+01' else '${o}-01-01 01:00+01' end::timestamptz,
+              'Kette', case when i = 0 then null else md5('${dennis.family}' || (i - 1))::uuid end,
+              case when i = 101 then now() else '${o}-01-01 01:00+01' end::timestamptz,
+              case when i = 101 then now() else '${o}-01-01 01:00+01' end::timestamptz
+         from generate_series(0, 101) as i;
+       commit;`,
+    )
+
+    expect(
+      await count(
+        `select count(*) as n from time_entries
+          where id = md5($1 || 101)::uuid and time_entry_year(id) = $2`,
+        [dennis.family, oldYear],
+      ),
+    ).toBe(1)
+
+    await pass()
+
+    const listed = ((await dueFor(owner)) ?? []).map((entry) => entry.recordId)
+
+    // The year of the last link is the one it was written in, and not due.
+    // The year before is held by it: its hundredth link goes only after the
+    // one that corrects it, which goes with the later year.
+    expect(listed).not.toContain(staffYearKey(dennis.person, oldYear))
+    expect(listed).not.toContain(staffYearKey(dennis.person, oldYear - 1))
+
+    // Read again for a list from before, the year before is held as well.
+    const year = {
+      key: staffYearKey(dennis.person, oldYear - 1),
+      personId: dennis.person,
+      personName: 'Dennis',
+      userId: 'kurt',
+      year: oldYear - 1,
+      countsFrom: oldYear,
+      dueOn: today,
+    }
+
+    expect(
+      await database.forTenant({ tenantId: north, userId: 'lena' }, (tx) =>
+        holdStaffYear(tx, year, today),
+      ),
+    ).toBeNull()
   })
 
   it('shows a sickness to whoever keeps absences and a file only to whoever reads the files, in the list of deadlines as well', async () => {

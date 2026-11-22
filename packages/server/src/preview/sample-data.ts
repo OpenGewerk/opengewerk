@@ -1593,7 +1593,9 @@ async function plantPeople(base: string, today: IsoDate): Promise<void> {
  * "Datenschutz" draw it: a sickness of Max Becker that ended more than a year
  * ago, and Dennis Kraft, who left three years and more before this year and
  * has no access, with the days of leave of a year more than eight years past its end. His
- * file and that year come due; nothing goes before somebody confirms.
+ * file and that year come due, the year once the preview dates its days of
+ * leave back to that year (`dateSampleYears`, opengewerk#1033); nothing goes
+ * before somebody confirms.
  */
 async function plantStaffDue(
   base: string,
