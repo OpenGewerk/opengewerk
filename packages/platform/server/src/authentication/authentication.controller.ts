@@ -488,15 +488,31 @@ export class AuthenticationController {
         tx
           .delete(authSessions)
           .where(eq(authSessions.id, user.sessionId))
-          .returning({ activeTenantId: authSessions.activeTenantId }),
+          .returning({
+            activeTenantId: authSessions.activeTenantId,
+            expiresAt: authSessions.expiresAt,
+            at: sql<Date | string>`clock_timestamp()`,
+          }),
       user.userId,
     )
 
-    await endStretchesOrLeaveThem(
-      this.database,
-      ended ? [{ id: user.sessionId, userId: user.userId, tenantId: ended.activeTenantId }] : [],
-      { reason: 'session.end', actor: user.userId },
-    )
+    // Alive when the request was let in, run out perhaps by the time its row
+    // went: then the work ended when it ran out (#1047).
+    if (ended) {
+      await endStretchesOfTakenOut(
+        this.database,
+        [
+          {
+            id: user.sessionId,
+            userId: user.userId,
+            tenantId: ended.activeTenantId,
+            expiresAt: ended.expiresAt,
+          },
+        ],
+        new Date(ended.at),
+        { reason: 'session.end', actor: user.userId },
+      )
+    }
 
     return { signedOut: true }
   }

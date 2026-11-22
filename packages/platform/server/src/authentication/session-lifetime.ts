@@ -91,8 +91,14 @@ export async function renewSession(
   // A session working in a tenant where the access has passed its last day is
   // refused there on every request, and renewing it would keep alive what
   // the sweep is about to take (opengewerk#1030).
-  if (session.activeTenantId && (await pastLastDayIn(database, session.activeTenantId, userId))) {
-    return false
+  // A check that fails renews nothing and fails nothing (#1047): the session
+  // lives until its present expiry, and the request goes on.
+  if (session.activeTenantId) {
+    const past = await pastLastDayIn(database, session.activeTenantId, userId).catch(() => true)
+
+    if (past) {
+      return false
+    }
   }
 
   // The row decides, at the moment it is written, not the copy the request

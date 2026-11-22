@@ -1832,15 +1832,14 @@ describe('the work of a session a new password ends', () => {
     await instance.chooseTenant(working, north.id)
 
     // At work when the password takes it out, and run out a moment later,
-    // by the time a slow commit is through.
-    const outAt = new Date(Date.now() + 1_500)
-
-    await admin.query('update auth_sessions set expires_at = $2 where user_id = $1', [
-      userId,
-      outAt,
-    ])
-
+    // by the time a slow commit is through: the expiry is set by the clock of
+    // the database right before the delete, however slow everything before.
+    let outAt = new Date(Number.NaN)
+    let deleting = false
     const query = Client.prototype.query
+    const databaseIsPast = async (moment: Date) =>
+      (await admin.query<{ past: boolean }>('select clock_timestamp() > $1 as past', [moment]))
+        .rows[0]?.past === true
 
     vi.useFakeTimers({ toFake: ['Date'], now: new Date() })
     Client.prototype.query = function (this: Client, ...args: unknown[]) {
@@ -1849,15 +1848,34 @@ describe('the work of a session a new password ends', () => {
 
       const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
 
-      if (/^commit/i.test(text)) {
+      if (!deleting && /^delete from "auth_sessions"/i.test(text)) {
+        deleting = true
+
+        return admin
+          .query<{ out: Date }>(
+            `update auth_sessions set expires_at = clock_timestamp() + interval '400 milliseconds'
+              where user_id = $1 returning expires_at as out`,
+            [userId],
+          )
+          .then(({ rows }) => {
+            outAt = rows[0]?.out ?? outAt
+          })
+          .then(forward)
+      }
+
+      if (deleting && /^commit/i.test(text)) {
         vi.setSystemTime(new Date(outAt.getTime() + 10_000))
 
         // The clock of the database past the expiry too before the commit
-        // goes: a time read from it afterwards would count the session as run
-        // out. `Date` is faked, the clock of `performance` is not.
-        const waitFor = outAt.getTime() + 300 - (performance.timeOrigin + performance.now())
+        // goes: a time read from it afterwards would count the session as
+        // run out.
+        const waitPast = async (): Promise<void> => {
+          while (!(await databaseIsPast(outAt))) {
+            await new Promise((resolve) => setTimeout(resolve, 50))
+          }
+        }
 
-        return new Promise((resolve) => setTimeout(resolve, Math.max(0, waitFor))).then(forward)
+        return waitPast().then(forward)
       }
 
       return forward()
@@ -1880,6 +1898,68 @@ describe('the work of a session a new password ends', () => {
     )
 
     expect(rows).toEqual([{ before: true }])
+  })
+
+  /**
+   * Let in while alive and run out by the time its row goes: the work ended
+   * when the session ran out, by the clock of the database (#1047).
+   */
+  it('ends at its expiry when a session runs out between its sign out and the delete', async () => {
+    const email = 'abmelden-abgelaufen@example.de'
+    const userId = await newcomer(email)
+    const working = await signIn(email)
+
+    await instance.chooseTenant(working, north.id)
+    // Begun well before, so that the end is the expiry and not the start.
+    await admin.query(
+      "update tenant_sessions set started_at = now() - interval '1 day' where user_id = $1",
+      [userId],
+    )
+
+    const query = Client.prototype.query
+    let outAt = new Date(Number.NaN)
+    let done = false
+
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+      if (!done && /^delete from "auth_sessions"/i.test(text)) {
+        done = true
+
+        return admin
+          .query<{ out: Date }>(
+            `update auth_sessions set expires_at = clock_timestamp() - interval '1 second'
+              where user_id = $1 returning expires_at as out`,
+            [userId],
+          )
+          .then(({ rows }) => {
+            outAt = rows[0]?.out ?? outAt
+          })
+          .then(forward)
+      }
+
+      return forward()
+    } as typeof query
+
+    try {
+      await http().post('/auth/sign-out').set('cookie', working).set('origin', origin).expect(201)
+    } finally {
+      Client.prototype.query = query
+    }
+
+    expect(done).toBe(true)
+    expect(await stretchesOf(userId)).toEqual([
+      { open: false, reason: 'session.expire', user: null },
+    ])
+
+    const { rows } = await admin.query<{ atExpiry: boolean }>(
+      'select ended_at = $2 as "atExpiry" from tenant_sessions where user_id = $1',
+      [userId, outAt],
+    )
+
+    expect(rows).toEqual([{ atExpiry: true }])
   })
 
   it('ends as run out, and in no name, when a session that ran out comes back to set a password', async () => {
@@ -2860,9 +2940,9 @@ describe('an access past its last day', () => {
       [working.id, north.id],
     )
     const first = (rows[0]?.id ?? '') as (typeof tenantSessions.$inferSelect)['id']
-    let written: () => void = () => undefined
+    let written: (holder: number) => void = () => undefined
     let release: () => void = () => undefined
-    const isWritten = new Promise<void>((resolve) => {
+    const isWritten = new Promise<number>((resolve) => {
       written = resolve
     })
     const released = new Promise<void>((resolve) => {
@@ -2876,17 +2956,37 @@ describe('an access past its last day', () => {
           .update(tenantSessions)
           .set({ endedAt: sql`clock_timestamp()` })
           .where(eq(tenantSessions.id, first))
-        written()
+
+        const { rows: own } = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`)
+
+        written(Number(own[0]?.pid))
         await released
       },
     )
 
-    await isWritten
-
+    const holder = await isWritten
     const pass = endPastLastDays(instance.database, 1)
+    let waited = false
 
-    setTimeout(release, 500)
+    // The other close goes once the pass waits for it, at the stretch its
+    // first piece chose, and not before.
+    for (let tries = 0; tries < 200 && !waited; tries += 1) {
+      const { rows: waiting } = await admin.query<{ n: number }>(
+        'select count(*)::int as n from pg_stat_activity where $1 = any(pg_blocking_pids(pid))',
+        [holder],
+      )
+
+      waited = (waiting[0]?.n ?? 0) > 0
+
+      if (!waited) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+    }
+
+    release()
     await Promise.all([pass, other])
+
+    expect(waited).toBe(true)
 
     const ends = await endsIn(working.id, north.id)
 
@@ -2977,6 +3077,135 @@ describe('an access past its last day', () => {
     )
 
     expect(await renewSession(instance.database, read, userId)).toBe(true)
+  })
+
+  /**
+   * A check of the access that fails renews nothing and fails nothing: the
+   * session lives until its present expiry, and the request goes on (#1047).
+   */
+  it('is not renewed, and fails nothing, when the check of its access fails', async () => {
+    const email = 'verlaengern-pruefung-scheitert@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions set expires_at = now() + interval '1 hour' where id = $1
+       returning expires_at`,
+      [working.id],
+    )
+    const read = {
+      id: working.id,
+      expiresAt: rows[0]?.expires_at ?? new Date(),
+      longLived: false,
+      activeTenantId: north.id,
+    }
+    const query = Client.prototype.query
+    let refused = false
+
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+      if (!refused && /from "memberships"/i.test(text)) {
+        refused = true
+
+        return Promise.reject(new Error('The check of the access, refused in this test'))
+      }
+
+      return forward()
+    } as typeof query
+
+    try {
+      expect(await renewSession(instance.database, read, userId)).toBe(false)
+    } finally {
+      Client.prototype.query = query
+    }
+
+    expect(refused).toBe(true)
+
+    const after = await admin.query<{ expires_at: Date }>(
+      'select expires_at from auth_sessions where id = $1',
+      [working.id],
+    )
+
+    expect(after.rows[0]?.expires_at.getTime()).toBe(rows[0]?.expires_at.getTime())
+  })
+
+  /**
+   * A block and the removal of the data go through also when the work cannot
+   * be closed with the end of the access first: their own close ends it then,
+   * and the person is out (#1047).
+   */
+  for (const way of [
+    {
+      what: 'blocks',
+      email: 'sperre-schliessen-scheitert@example.de',
+      run: (userId: string) =>
+        setBlocked(probeAccess, instance.database, { tenantId: north.id, userId }, userId, true),
+    },
+    {
+      what: 'removes the data of the access',
+      email: 'daten-schliessen-scheitert@example.de',
+      run: async (userId: string) => {
+        await removeAccountData(
+          probeAccess,
+          instance.database,
+          { tenantId: north.id, userId },
+          userId,
+        )
+      },
+    },
+  ]) {
+    it(`${way.what} also when the close of the work with the end of the access fails`, async () => {
+      const userId = await joined(way.email, [north.id])
+      const working = await atWork(way.email)
+
+      await lastDayAgo(north.id, userId, 2)
+
+      const query = Client.prototype.query
+      let refused = false
+
+      Client.prototype.query = function (this: Client, ...args: unknown[]) {
+        const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
+        const values = (typeof config === 'string' ? args[1] : (config?.values ?? args[1])) as
+          unknown[] | undefined
+        const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+        if (!refused && (values ?? []).includes('membership.end')) {
+          refused = true
+
+          return Promise.reject(new Error('The close of the work, refused in this test'))
+        }
+
+        return forward()
+      } as typeof query
+
+      try {
+        await way.run(userId)
+      } finally {
+        Client.prototype.query = query
+      }
+
+      expect(refused).toBe(true)
+      expect((await endsIn(working.id, north.id)).map((end) => end.at !== null)).toEqual([true])
+    })
+  }
+
+  /**
+   * The sessions of an access that ended go in the same pass as those that
+   * ran out, and the pass counts them too (#1047).
+   */
+  it('counts the sessions of an access that ended among those it took out', async () => {
+    // What other tests left goes first, so that the count is this one's.
+    await sweepExpiredSessions(instance.database)
+
+    const email = 'letzter-tag-gezaehlt@example.de'
+    const userId = await joined(email, [north.id])
+
+    await atWork(email)
+    await lastDayAgo(north.id, userId, 2)
+
+    expect(await sweepExpiredSessions(instance.database)).toBe(1)
   })
 
   it('ends with the access a session that was still alive then, though it ran out after', async () => {

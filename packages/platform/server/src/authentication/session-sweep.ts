@@ -318,8 +318,8 @@ export async function carryStretch(
 const sweepBatch = 1000
 
 /**
- * Takes out every session that ran out (opengewerk#1029) and says how many
- * went.
+ * Takes out every session that ran out (opengewerk#1029) and every one whose
+ * access ended (opengewerk#1030), and says how many went.
  *
  * A session ends when its time is up (`session-lifetime.ts`). Its row stayed
  * after that: better-auth deletes it only when the same cookie comes back, and
@@ -362,6 +362,7 @@ export async function sweepExpiredSessions(
     const lastDays = await endPastLastDays(database, batch)
 
     held = lastDays.held
+    gone += lastDays.removed
 
     if (lastDays.held.length > 0) {
       failed = true
@@ -513,10 +514,11 @@ export async function endPastLastDays(
   let closed = 0
   const held: TenantId[] = []
   let failure: unknown
+  const tally = { removed: 0 }
 
   for (const tenantId of await everyTenant(database)) {
     try {
-      closed += await endPastLastDaysIn(database, tenantId, batch)
+      closed += await endPastLastDaysIn(database, tenantId, batch, tally)
     } catch (error) {
       if (held.length === 0) {
         failure = error
@@ -526,13 +528,17 @@ export async function endPastLastDays(
     }
   }
 
-  return held.length === 0 ? { closed, held } : { closed, held, failure }
+  const { removed } = tally
+
+  return held.length === 0 ? { closed, held, removed } : { closed, held, removed, failure }
 }
 
 /** What a pass over the last days did, and the tenants it could not finish. */
 export interface LastDaysPass {
   readonly closed: number
   readonly held: readonly TenantId[]
+  /** The sessions it took out, of every tenant, also of one it could not finish. */
+  readonly removed: number
   /** The first failure, where a tenant failed. */
   readonly failure?: unknown
 }
@@ -570,6 +576,29 @@ export async function endPastLastDayOf(
   }
 
   return 0
+}
+
+/**
+ * `endPastLastDayOf` before a block or the removal of the data of an access,
+ * which go through whatever it does (#1047): a block that fails because a
+ * close of the work failed would leave the person in. Their own close ends
+ * what is still open then, at their time and for their reason, and the log
+ * says that the end of the access could not be written.
+ */
+export async function endPastLastDayOrLeaveIt(
+  database: Database,
+  tenantId: TenantId,
+  userId: string,
+): Promise<void> {
+  try {
+    await endPastLastDayOf(database, tenantId, userId)
+  } catch (error) {
+    console.error(
+      'Die Arbeitsabschnitte eines abgelaufenen Zugangs ließen sich nicht mit seinem Ende schließen; ' +
+        'sie enden mit der Sperre oder dem Entfernen der Daten.',
+      error,
+    )
+  }
 }
 
 /** One pass of `endPastLastDayOf`, or null where the end of the access moved meanwhile. */
@@ -659,6 +688,7 @@ async function endPastLastDaysIn(
   database: Database,
   tenantId: TenantId,
   batch: number,
+  tally: { removed: number },
 ): Promise<number> {
   let closed = 0
 
@@ -682,6 +712,7 @@ async function endPastLastDaysIn(
       tenantId,
       people.slice(start, start + batch),
       batch,
+      tally,
     )
   }
 
@@ -710,6 +741,7 @@ async function endPastLastDaysOfRound(
   tenantId: TenantId,
   round: readonly string[],
   batch: number,
+  tally: { removed: number },
 ): Promise<number> {
   const ended = await database.forTenant({ tenantId }, (tx) =>
     tx
@@ -845,15 +877,20 @@ async function endPastLastDaysOfRound(
   if (going.length > 0) {
     await database.forInstance(async (instance) => {
       for (let at = 0; at < going.length; at += batch) {
-        await instance.delete(authSessions).where(
-          and(
-            inArray(
-              authSessions.id,
-              going.slice(at, at + batch).map((session) => session.id),
+        const taken = await instance
+          .delete(authSessions)
+          .where(
+            and(
+              inArray(
+                authSessions.id,
+                going.slice(at, at + batch).map((session) => session.id),
+              ),
+              eq(authSessions.activeTenantId, tenantId),
             ),
-            eq(authSessions.activeTenantId, tenantId),
-          ),
-        )
+          )
+          .returning({ id: authSessions.id })
+
+        tally.removed += taken.length
       }
     })
   }

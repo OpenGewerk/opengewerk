@@ -34,7 +34,7 @@ import type { AddressMail } from './notices.js'
 import { holdRoles, leadsItsTenant, rolesOfTenant } from './roles.js'
 import { removeSecondFactor } from './second-factor.js'
 import { revokeCredentials } from './credentials.js'
-import { endPastLastDayOf, endStretchesOfTakenOut, firstOf } from './session-sweep.js'
+import { endPastLastDayOrLeaveIt, endStretchesOfTakenOut, firstOf } from './session-sweep.js'
 
 /**
  * Who works in one tenant, and everything whoever leads it can do about it.
@@ -488,7 +488,7 @@ export async function setBlocked(
   // A block closes the stretches now; where the access ended before, the
   // work ended with it (opengewerk#1030).
   if (blocked) {
-    await endPastLastDayOf(database, identity.tenantId, userId)
+    await endPastLastDayOrLeaveIt(database, identity.tenantId, userId)
   }
 
   await database.forTenant(identity, async (tx) => {
@@ -917,7 +917,7 @@ export async function removeAccountData(
   // What the pass did not close yet ends with the access, not now
   // (opengewerk#1030); nothing where the access has not ended, which the
   // check below refuses.
-  await endPastLastDayOf(database, actor.tenantId, userId)
+  await endPastLastDayOrLeaveIt(database, actor.tenantId, userId)
 
   await database.forTenant(actor, async (tx) => {
     const membership = await membershipOf(access, tx, actor.tenantId, userId)
