@@ -522,6 +522,28 @@ describe('a customer that is due (#845)', () => {
     expect(alert.textContent).not.toContain('Nichts wurde gelöscht')
   })
 
+  it('keeps the refusal in view when the list read again is empty', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) })
+
+    signedInAs('owner')
+    overview(true)
+    serverSays(
+      'POST',
+      '/privacy/erasures',
+      { message: 'Ein ausgewählter Lead ist nicht mehr da.' },
+      409,
+    )
+    render(inQueries(<PrivacyScreen />))
+
+    await user.click(await screen.findByRole('button', { name: 'Ausgewählte löschen' }))
+    // Somebody else took them meanwhile: the list read again is empty.
+    overview(true, [], [], [], [])
+    await user.click(await screen.findByRole('button', { name: 'Endgültig löschen' }))
+
+    expect(await screen.findByText('Nichts ist zum Löschen fällig.')).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toContain('nicht mehr da')
+  })
+
   it('goes with the leads chosen, each kind on its own', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) })
 

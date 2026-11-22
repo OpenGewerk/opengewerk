@@ -273,6 +273,12 @@ function DueTable({
     return (
       <Panel title="Zum Löschen fällig" roomy>
         <div className="flex flex-col gap-2">
+          {/* A refusal stays in view also once the list read again is empty. */}
+          {problem ? (
+            <span role="alert" className="block text-conflict">
+              {problem}
+            </span>
+          ) : null}
           <SettingsText>Nichts ist zum Löschen fällig.</SettingsText>
           <SettingsText muted small>
             {note}
