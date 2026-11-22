@@ -7,6 +7,8 @@ import {
   type IsoDate,
   type JobId,
   type CustomerId,
+  lastServiceDay,
+  reminderContract,
   reminderStillHolds,
   RuleError,
   shippedRules,
@@ -17,13 +19,19 @@ import {
   MailDeliveryError,
   type TenantTransaction,
 } from '@opengewerk/platform-server'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 
 import type { DocumentFiles, MailedFile } from '../api/document-files.js'
 import { dutyOf } from '../api/e-invoice.controller.js'
 import { frozenContent } from '../documents/content.js'
 import { todayInGermany } from '../today.js'
-import { appointments, customers, documents, jobs } from '../database/schema/index.js'
+import {
+  appointments,
+  customers,
+  documents,
+  jobs,
+  maintenanceContracts,
+} from '../database/schema/index.js'
 import { customerRestricted } from '../privacy/customer-erasure.js'
 import { appointmentInvitation } from '../notifications/confirmation-mail.js'
 import {
@@ -251,7 +259,7 @@ export const restrictedCustomerMail =
 
 /** Why a reminder whose ground no longer holds stays unsent (#1026). */
 export const lapsedReminderMail =
-  'Die Grundlage der Erinnerung gilt nicht mehr: Der Kunde hat abbestellt, oder seine Einwilligung oder die Bestätigung des Hinweises auf den Widerspruch fehlt jetzt. Die Nachricht geht deshalb nicht mehr hinaus.'
+  'Die Grundlage der Erinnerung gilt nicht mehr: Der Kunde hat abbestellt, eine andere E-Mail-Adresse, oder seine Einwilligung, die Bestätigung des Hinweises auf den Widerspruch oder sein Vertrag fehlt jetzt. Die Nachricht geht deshalb nicht mehr hinaus.'
 
 /** Why a message about a job that belongs to another customer now stays unsent. */
 export const reassignedCustomerMail =
@@ -366,8 +374,10 @@ export async function refuseLapsedTransition(
  * file would carry to the address of the first. And not a reminder whose
  * ground no longer holds (#1026): a customer who objected since, a consent
  * taken back, a confirmation of the notice taken away, also one written
- * before the update that asked for the confirmation. Given up on with the
- * reason, like a message whose document has no file to give.
+ * before the update that asked for the confirmation; a contract that no
+ * longer covers the day it is about; or an address the customer no longer
+ * has, which a confirmation for the new one does not cover. Given up on
+ * with the reason, like a message whose document has no file to give.
  */
 export async function refuseWithheldCustomerMail(
   database: Database,
@@ -400,15 +410,29 @@ export async function refuseWithheldCustomerMail(
 
       const [customer] = await tx
         .select({
+          email: customers.email,
           ground: customers.reminderGround,
           confirmed: customers.objectionNoticeConfirmed,
         })
         .from(customers)
         .where(eq(customers.id, customerId as CustomerId))
 
-      return customer && !reminderStillHolds(row.body, customer.ground, customer.confirmed)
-        ? lapsedReminderMail
-        : null
+      if (!customer) {
+        return null
+      }
+
+      if (
+        customer.email !== row.recipientAddress ||
+        !reminderStillHolds(row.body, customer.ground, customer.confirmed)
+      ) {
+        return lapsedReminderMail
+      }
+
+      const contract = reminderContract(row.body)
+
+      return contract === null || (await stillCovers(tx, customerId, contract, row.cause))
+        ? null
+        : lapsedReminderMail
     },
   )
 
@@ -420,6 +444,49 @@ export async function refuseWithheldCustomerMail(
       { permanent: true },
     )
   }
+}
+
+/**
+ * Whether the contract a waiting reminder names still covers the day it is
+ * about, the last part of its cause (#1026, CodeRabbit): as the reminder
+ * asked when it was written (`contractOf`), its last day of service on or
+ * after that day. A contract given notice or deleted since covers nothing.
+ */
+async function stillCovers(
+  tx: TenantTransaction,
+  customerId: string,
+  number: string,
+  cause: string,
+): Promise<boolean> {
+  const dueOn = cause.slice(cause.lastIndexOf(':') + 1)
+  const [contract] = await tx
+    .select({
+      startsOn: maintenanceContracts.startsOn,
+      termMonths: maintenanceContracts.termMonths,
+      renewal: maintenanceContracts.renewal,
+      renewalMonths: maintenanceContracts.renewalMonths,
+      noticeMonths: maintenanceContracts.noticeMonths,
+      endsOn: maintenanceContracts.endsOn,
+    })
+    .from(maintenanceContracts)
+    .where(
+      and(
+        eq(maintenanceContracts.customerId, customerId as CustomerId),
+        eq(maintenanceContracts.number, number),
+      ),
+    )
+
+  if (!contract) {
+    return false
+  }
+
+  const last = lastServiceDay({
+    ...contract,
+    startsOn: contract.startsOn as IsoDate,
+    endsOn: contract.endsOn as IsoDate | null,
+  } as Parameters<typeof lastServiceDay>[0])
+
+  return last === null || last >= dueOn
 }
 
 /** The cause of a reminder to a customer: `customer_reminder:<kind>:<customer>:<…>`. */

@@ -152,6 +152,26 @@ export function reminderStillHolds(
 }
 
 /**
+ * The number of the contract a reminder rests on, as its text names it
+ * (`reminderSentence`), or null for one that rests on no contract (#1026,
+ * CodeRabbit).
+ */
+export function reminderContract(text: string): string | null {
+  const marker = '<contract>'
+  const [before = '', after = ''] = reminderSentence(null, marker).split(marker)
+  const start = text.indexOf(before)
+
+  if (start === -1) {
+    return null
+  }
+
+  const from = start + before.length
+  const end = text.indexOf(after, from)
+
+  return end === -1 ? null : text.slice(from, end)
+}
+
+/**
  * What is wrong with a ground and its day as a customer is to have them, or
  * null: a ground is one of the list or none, and a ground has the day it was
  * given, which none has not.

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   reminderGroundProblem,
+  reminderContract,
   reminderGroundText,
   reminderSentence,
   reminderStillHolds,
@@ -121,5 +122,14 @@ describe('the ground of a customer', () => {
     expect(reminderStillHolds(byConsent, null, false)).toBe(false)
     expect(reminderStillHolds(ofContract, null, false)).toBe(true)
     expect(reminderStillHolds(ofContract, 'objected', false)).toBe(false)
+  })
+
+  it('names the contract a reminder rests on, and none for one without', () => {
+    expect(
+      reminderContract(`Guten Tag.\n\n${reminderSentence(null, 'WV-2037-0004')}\n\n-- \nNord`),
+    ).toBe('WV-2037-0004')
+    expect(
+      reminderContract(`Guten Tag.\n\n${reminderSentence('existing_customer', null)}`),
+    ).toBeNull()
   })
 })
