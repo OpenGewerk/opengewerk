@@ -522,6 +522,28 @@ describe('a customer that is due (#845)', () => {
     expect(alert.textContent).not.toContain('Nichts wurde gelöscht')
   })
 
+  /**
+   * The first kind sent and no answer back: the server may have written it
+   * and lost the line, so the screen claims neither way.
+   */
+  it('says neither that something went nor that nothing did when no answer comes', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) })
+
+    signedInAs('owner')
+    overview(true, [], [], [], due)
+    serverSays('POST', '/privacy/erasures', {}, 0)
+    render(inQueries(<PrivacyScreen />))
+
+    await user.click(await screen.findByRole('button', { name: 'Ausgewählte löschen' }))
+    await user.click(await screen.findByRole('button', { name: 'Endgültig löschen' }))
+
+    const alert = await screen.findByRole('alert')
+
+    expect(alert.textContent).toContain('ließ sich nicht bestätigen')
+    expect(alert.textContent).not.toContain('Nichts wurde gelöscht')
+    expect(alert.textContent).not.toContain('Davor gelöscht')
+  })
+
   it('keeps the refusal in view when the list read again is empty', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) })
 

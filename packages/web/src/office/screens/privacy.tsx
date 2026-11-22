@@ -246,13 +246,14 @@ function DueTable({
     } catch (error) {
       setAsking(false)
 
-      // Without an answer of its own, the words of the fallback: nothing went,
-      // or only the kinds before the one that failed.
+      // A refusal says itself why. Without an answer nothing is known of the
+      // kind that failed: the server may have written it and lost the line
+      // back, so the words neither say it went nor that it did not.
       const said = saidWhy(
         error,
         gone.length === 0
-          ? 'Das Löschen ging nicht durch. Nichts wurde gelöscht.'
-          : 'Das Löschen ging nicht ganz durch.',
+          ? 'Ob das Löschen durchging, ließ sich nicht bestätigen. Die Liste zeigt, was noch da ist.'
+          : 'Ob der Rest gelöscht ist, ließ sich nicht bestätigen. Die Liste zeigt, was noch da ist.',
       )
 
       setProblem(
