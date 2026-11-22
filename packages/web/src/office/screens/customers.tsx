@@ -1211,6 +1211,10 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
     confirmed: customer?.['objectionNoticeConfirmed'] === true,
     email: asTextOrNull(String(customer?.['email'] ?? '')),
   }))
+  // What the box said for the address the form opened with, when the address
+  // last left it: back at that address, the box says it again, also where the
+  // office had emptied it (#1026, the review).
+  const [boxAtOpenedAddress, setBoxAtOpenedAddress] = useState(String(opened.confirmed))
   // Null until somebody changes the tags: until then the form shows what the
   // record has, also once rows arrive after it opened, and sends nothing.
   const [chosen, setChosen] = useState<ChosenTags | null>(null)
@@ -1230,18 +1234,25 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
   }
 
   const set = (field: keyof CustomerDraft) => (value: string) => {
+    if (field !== 'email') {
+      setDraft((current) => ({ ...current, [field]: value }))
+
+      return
+    }
+
+    // The notice is confirmed for the address it was given with (#1026): a
+    // new one asks for it again, and back at the one the form opened with,
+    // the box says what it last said there (the review).
+    const atOpened =
+      asTextOrNull(draft.email) === opened.email
+        ? draft.objectionNoticeConfirmed
+        : boxAtOpenedAddress
+
+    setBoxAtOpenedAddress(atOpened)
     setDraft((current) => ({
       ...current,
-      [field]: value,
-      // The notice is confirmed for the address it was given with (#1026): a
-      // new one asks for it again, and the one the form opened with, typed
-      // again, has what it had (the review).
-      ...(field === 'email'
-        ? {
-            objectionNoticeConfirmed:
-              asTextOrNull(value) === opened.email ? String(opened.confirmed) : 'false',
-          }
-        : {}),
+      email: value,
+      objectionNoticeConfirmed: asTextOrNull(value) === opened.email ? atOpened : 'false',
     }))
   }
   const back = () => {

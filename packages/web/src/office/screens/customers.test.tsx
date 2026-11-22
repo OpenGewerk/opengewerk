@@ -583,6 +583,41 @@ describe('the reminders of a customer (#316)', () => {
     },
   )
 
+  /**
+   * Back at the address the form opened with, the box says what it last said
+   * for it (#1026, the review): a box the office emptied stays empty when the
+   * address is touched and ends up the same.
+   */
+  it('keep an emptied confirmation when the address is touched and stays the same', async () => {
+    server.put('customers', {
+      ...customer('c-5', 'Familie Kranz', 'private', 'Hamburg'),
+      email: 'kranz@example.com',
+      reminderGround: 'existing_customer',
+      reminderGroundOn: '2024-03-12',
+      objectionNoticeConfirmed: true,
+    })
+    const sent = recording()
+
+    await mount('/kunden/c-5/bearbeiten')
+    const user = userEvent.setup()
+    const notice = () =>
+      screen.getByLabelText(
+        /Bei der Erhebung der Adresse auf das Widerspruchsrecht hingewiesen/,
+      ) as HTMLInputElement
+
+    await user.click(await screen.findByLabelText(/Widerspruchsrecht hingewiesen/))
+    expect(notice().checked).toBe(false)
+
+    await user.type(screen.getByLabelText('E-Mail'), 'x{Backspace}')
+    expect(notice().checked).toBe(false)
+
+    await user.click(screen.getByRole('button', { name: 'Speichern' }))
+
+    await waitFor(() => {
+      expect(sent).toEqual([{ objectionNoticeConfirmed: false }])
+    })
+  })
+
   it('send a ground with its day, today until somebody says otherwise', async () => {
     await mount('/kunden/neu')
     const user = userEvent.setup()

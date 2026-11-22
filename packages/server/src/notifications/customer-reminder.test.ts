@@ -374,6 +374,20 @@ describe('a reminder that waits to go out', () => {
       await expect(refuseWithheldCustomerMail(database, await waiting('vertrag'))).rejects.toThrow(
         lapsedReminderMail,
       )
+
+      // The maintenance of a contract rests on the contract itself, whatever
+      // installations it covers now, as `contractOf` asks (the review): the
+      // deadline of the reminder made one of the maintenance of WV-2037-vertrag.
+      const contractCause = (await waiting('vertrag')).cause
+      await admin.query(
+        `update deadlines set kind = 'maintenance.visit',
+            source_id = (select id from maintenance_contracts where number = 'WV-2037-vertrag')
+          where id = $1`,
+        [contractCause.split(':')[3]],
+      )
+      await expect(refuseWithheldCustomerMail(database, await waiting('vertrag'))).resolves.toBe(
+        undefined,
+      )
     } finally {
       await stored('lehmann', 'existing_customer', true)
       await stored('vertrag', null, false)

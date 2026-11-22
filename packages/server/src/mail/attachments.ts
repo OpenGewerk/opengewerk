@@ -25,6 +25,7 @@ import { and, eq, isNull, sql } from 'drizzle-orm'
 import type { DocumentFiles, MailedFile } from '../api/document-files.js'
 import { dutyOf } from '../api/e-invoice.controller.js'
 import { frozenContent } from '../documents/content.js'
+import { deadlineKinds } from '../deadlines/registry.js'
 import { todayInGermany } from '../today.js'
 import {
   appointments,
@@ -458,8 +459,10 @@ export async function refuseWithheldCustomerMail(
  * the reminder was written; one deleted since covers nothing. A reminder of
  * an installation needs the contract to cover the installation still, as
  * `contractOf` asks (the review): its deadline, which the cause names, says
- * which one. Shared reminders name a site instead, and those of appliances
- * never rest on a contract.
+ * which one. The maintenance of a contract rests on that contract itself,
+ * the source of its deadline, whatever installations it covers now. Shared
+ * reminders name a site instead, and those of appliances never rest on a
+ * contract.
  */
 async function stillCovers(
   tx: TenantTransaction,
@@ -470,7 +473,11 @@ async function stillCovers(
   const parts = cause.split(':')
   const dueOn = parts[parts.length - 1] ?? ''
   const [deadline] = await tx
-    .select({ installationId: deadlines.installationId })
+    .select({
+      kind: deadlines.kind,
+      sourceId: deadlines.sourceId,
+      installationId: deadlines.installationId,
+    })
     .from(deadlines)
     .where(eq(deadlines.id, (parts[3] ?? '') as DeadlineId))
 
@@ -478,6 +485,7 @@ async function stillCovers(
     return false
   }
 
+  const ofContract = deadlineKinds.kind(deadline.kind)?.source === 'maintenance_visit'
   const [contract] = await tx
     .select({
       startsOn: maintenanceContracts.startsOn,
@@ -492,9 +500,13 @@ async function stillCovers(
       and(
         eq(maintenanceContracts.customerId, customerId as CustomerId),
         eq(maintenanceContracts.number, number),
-        ...(deadline.installationId === null
-          ? []
-          : [sql`${deadline.installationId}::uuid = any(${maintenanceContracts.installationIds})`]),
+        ...(ofContract
+          ? [sql`${maintenanceContracts.id} = ${deadline.sourceId}::uuid`]
+          : deadline.installationId === null
+            ? []
+            : [
+                sql`${deadline.installationId}::uuid = any(${maintenanceContracts.installationIds})`,
+              ]),
       ),
     )
 
