@@ -1132,9 +1132,10 @@ type DocumentRow = typeof documents.$inferSelect
  * day before or ahead. So the date is set to today in Germany, in the
  * transaction and under the lock of the issuing, before anything is read
  * that goes by it: the payment term, the statement of cash accounting, and
- * the rate of an invoice without a day of work. Any other document keeps its
- * date; the duty is the invoice's, and a quote or a report is dated as
- * written.
+ * the rate of an invoice without a day of work. A recurring invoice a lead
+ * made ahead of its period is dated on that day as well: the period of
+ * service on it says what it is for. Any other document keeps its date; the
+ * duty is the invoice's, and a quote or a report is dated as written.
  */
 async function datedForIssue(
   tx: TenantTransaction,
@@ -1147,35 +1148,17 @@ async function datedForIssue(
     return document
   }
 
-  const day = issueDayOf(document, today)
-
-  if (document.documentDate === day) {
+  if (document.documentDate === today) {
     return document
   }
 
   const [dated] = await tx
     .update(documents)
-    .set({ documentDate: day })
+    .set({ documentDate: today })
     .where(eq(documents.id, document.id))
     .returning()
 
   return dated ?? document
-}
-
-/**
- * The day an invoice issued today is dated on: today, and a recurring invoice
- * never before the first day of its period (Feature-Gliederung 3.5), as the
- * one issued by itself (`contractInvoice`).
- */
-export function issueDayOf(
-  document: Pick<DocumentRow, 'kind' | 'serviceFrom'>,
-  today: IsoDate,
-): IsoDate {
-  return document.kind === 'recurring_invoice' &&
-    document.serviceFrom !== null &&
-    document.serviceFrom > today
-    ? (document.serviceFrom as IsoDate)
-    : today
 }
 
 /** A report the customer signed and nobody issued yet, which a signature fixed without a number. */

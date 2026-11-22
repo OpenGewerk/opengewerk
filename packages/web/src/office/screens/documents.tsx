@@ -145,19 +145,6 @@ export interface JobDocumentsState {
 }
 
 /**
- * The day an invoice issued today is dated on, as the server dates it
- * (`issueDayOf`, #1039): today, and a recurring invoice never before the
- * first day of its period.
- */
-function issueDay(document: RecordState): string {
-  const from = text(document, 'serviceFrom')
-
-  return text(document, 'kind') === 'recurring_invoice' && from !== '' && from > today()
-    ? from
-    : today()
-}
-
-/**
  * The documents of a job, and the two ways to start one.
  *
  * Two buttons and not one with a choice behind it. A quote and a cost
@@ -948,8 +935,8 @@ function DocumentView({ document }: { readonly document: RecordState }) {
           {...(issueThen ? { then: issueThen } : {})}
           {...(isInvoice(kind) &&
           text(document, 'status') === 'draft' &&
-          text(document, 'documentDate') !== issueDay(document)
-            ? { redatedFrom: text(document, 'documentDate'), redatedTo: issueDay(document) }
+          text(document, 'documentDate') !== today()
+            ? { redatedFrom: text(document, 'documentDate') }
             : {})}
           onDone={(said) => {
             setIssuing(false)
