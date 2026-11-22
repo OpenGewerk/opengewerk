@@ -2222,6 +2222,70 @@ describe('work that cannot be closed when its session ends', () => {
     ])
   })
 
+  /**
+   * A switch closes in the tenant it chose only what began before it. A
+   * second request of the same session that chose that tenant meanwhile, to
+   * register the device, keeps its stretch open (#1047).
+   */
+  it('leaves open the stretch another request of the session opened in the chosen tenant meanwhile', async () => {
+    const email = 'wechsel-gleichzeitig@example.de'
+
+    await joinedNorth(email)
+    await addStaffMember(instance.authentication, instance.database, {
+      email,
+      name: 'Sven Gleichzeitig',
+      password,
+      tenantId: south.id,
+      roles: ['member'],
+    })
+
+    const working = await atWork(email)
+    const query = Client.prototype.query
+    let state: 'before' | 'second' | 'done' = 'before'
+
+    // The switch to the south has written the session; before it cleans up in
+    // the south, the same session chooses the south again for its device.
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const values = (typeof config === 'string' ? args[1] : (config?.values ?? args[1])) as
+        unknown[] | undefined
+      const forward = () => (query as (...given: unknown[]) => Promise<unknown>).apply(this, args)
+
+      if (
+        state === 'before' &&
+        /^update "tenant_sessions"/i.test(text) &&
+        (values ?? []).includes(south.id)
+      ) {
+        state = 'second'
+
+        return instance
+          .chooseTenant(working.cookies, south.id, newId<'device'>())
+          .then(() => {
+            state = 'done'
+          })
+          .then(forward)
+      }
+
+      return forward()
+    } as typeof query
+
+    try {
+      await instance.chooseTenant(working.cookies, south.id)
+    } finally {
+      Client.prototype.query = query
+    }
+
+    expect(state).toBe('done')
+
+    const { rows } = await admin.query<{ open: boolean }>(
+      'select ended_at is null as open from tenant_sessions where session_id = $1 and tenant_id = $2',
+      [working.id, south.id],
+    )
+
+    expect(rows).toEqual([{ open: true }, { open: true }])
+  })
+
   it('leaves both stretches open when a session chooses its tenant again for its device', async () => {
     const email = 'geraet-registrieren@example.de'
 
@@ -2964,8 +3028,15 @@ describe('an access past its last day', () => {
       },
     )
 
-    const holder = await isWritten
+    // A failure of the other close ends the wait for its signal too, and
+    // shows; one of the pass shows below, once both are through.
+    other.catch(() => undefined)
+
+    const holder = await Promise.race([isWritten, other.then(() => Number.NaN)])
     const pass = endPastLastDays(instance.database, 1)
+
+    pass.catch(() => undefined)
+
     let waited = false
 
     // The other close goes once the pass waits for it, at the stretch its

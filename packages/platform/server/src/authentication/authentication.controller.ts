@@ -235,13 +235,14 @@ export class AuthenticationController {
             gt(authSessions.expiresAt, sql`clock_timestamp()`),
           ),
         )
-        .returning({ id: authSessions.id })
+        .returning({ id: authSessions.id, at: sql<Date | string>`clock_timestamp()` })
 
       return written === undefined
         ? null
         : {
             tenantId: before?.activeTenantId ?? null,
             signInMethod: before?.signInMethod ?? 'password',
+            switchedAt: new Date(written.at),
           }
     }, user.userId)
 
@@ -269,11 +270,14 @@ export class AuthenticationController {
     // that stretch ended when the session left, and closes now, before the
     // new one opens (opengewerk#1030). The same tenant chosen again, to
     // register the device, leaves the open stretch as it is.
+    // Only what began before this switch: another request of the same
+    // session may have chosen this tenant meanwhile and opened its stretch,
+    // which stays open (#1047).
     if (previous.tenantId !== chosen) {
       await endStretchesOrLeaveThem(
         this.database,
         [{ id: user.sessionId, userId: user.userId, tenantId: chosen }],
-        { reason: 'session.switch', actor: user.userId },
+        { reason: 'session.switch', actor: user.userId, startedBefore: previous.switchedAt },
       )
     }
 

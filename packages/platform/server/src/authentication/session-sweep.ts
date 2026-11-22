@@ -1,5 +1,5 @@
 import { type SignInMethod, signInMethods, type TenantId } from '@opengewerk/platform-domain'
-import { and, asc, eq, inArray, isNull, lte, notInArray, or, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, lt, lte, notInArray, or, sql } from 'drizzle-orm'
 
 import type { Database } from '../database/database.js'
 import { everyTenant } from '../database/every-tenant.js'
@@ -40,11 +40,19 @@ export interface EndedSession {
 export async function endStretchesOf(
   database: Database,
   sessions: readonly EndedSession[],
-  how: { readonly now?: Date; readonly reason?: string; readonly actor?: string } = {},
+  how: {
+    readonly now?: Date
+    readonly reason?: string
+    readonly actor?: string
+    /** Only stretches begun before this moment (#1047): a switch leaves alone what began after it. */
+    readonly startedBefore?: Date
+  } = {},
 ): Promise<number> {
   let closed = 0
   const now = how.now ?? new Date()
-  const { reason, actor } = how
+  const { reason, actor, startedBefore } = how
+  const begunBefore =
+    startedBefore === undefined ? [] : [lt(tenantSessions.startedAt, startedBefore)]
   const byTenant = new Map<TenantId, EndedSession[]>()
 
   for (const session of sessions) {
@@ -111,6 +119,7 @@ export async function endStretchesOf(
                 eq(tenantSessions.sessionId, session.id),
                 eq(tenantSessions.userId, session.userId),
                 isNull(tenantSessions.endedAt),
+                ...begunBefore,
               ),
             )
             .returning({ id: tenantSessions.id })
@@ -153,6 +162,7 @@ export async function endStretchesOf(
                 eq(tenantSessions.sessionId, session.id),
                 eq(tenantSessions.userId, session.userId),
                 isNull(tenantSessions.endedAt),
+                ...begunBefore,
               ),
             )
             .returning({ id: tenantSessions.id })
@@ -176,7 +186,13 @@ export async function endStretchesOf(
 export async function endStretchesOrLeaveThem(
   database: Database,
   sessions: readonly EndedSession[],
-  how: { readonly now?: Date; readonly reason?: string; readonly actor?: string } = {},
+  how: {
+    readonly now?: Date
+    readonly reason?: string
+    readonly actor?: string
+    /** Only stretches begun before this moment (#1047): a switch leaves alone what began after it. */
+    readonly startedBefore?: Date
+  } = {},
 ): Promise<void> {
   try {
     await endStretchesOf(database, sessions, how)
@@ -875,9 +891,13 @@ async function endPastLastDaysOfRound(
   const going = sessions.filter((session) => closedFor.has(session.user_id))
 
   if (going.length > 0) {
-    await database.forInstance(async (instance) => {
+    // Counted once the deletes are committed: a later one that fails takes
+    // the earlier ones back with it.
+    tally.removed += await database.forInstance(async (instance) => {
+      let taken = 0
+
       for (let at = 0; at < going.length; at += batch) {
-        const taken = await instance
+        const rows = await instance
           .delete(authSessions)
           .where(
             and(
@@ -890,8 +910,10 @@ async function endPastLastDaysOfRound(
           )
           .returning({ id: authSessions.id })
 
-        tally.removed += taken.length
+        taken += rows.length
       }
+
+      return taken
     })
   }
 
