@@ -28,6 +28,7 @@ import {
   closingTransitionMail,
   lapsedTransitionMail,
   refuseLapsedTransition,
+  deletedCustomerMail,
   restrictedCustomerMail,
 } from '../mail/attachments.js'
 import type { OutboxRow } from '../mail/outbox.js'
@@ -361,6 +362,50 @@ describe('an issued invoice', () => {
 
     expect(message?.status).toBe('failed')
     expect(message?.lastError).toContain(restrictedCustomerMail)
+  })
+
+  /**
+   * Deleted after the message was written (#1055): deleting a customer asks
+   * nothing about its documents, so an invoice may still wait for it. It is
+   * given up on with the reason, and nothing goes out.
+   */
+  it('stays unsent once its customer is deleted after it was written', async () => {
+    const customerId = await customer(person)
+    const id = await issuedInvoice(customerId)
+
+    await sending(id).expect(202)
+    await http().delete(`/customers/${customerId}`).set('x-test-identity', office()).expect(200)
+
+    const post = recording()
+
+    expect(await cycle(post.transport)).toMatchObject({ sent: 0 })
+    expect(post.sent).toEqual([])
+
+    const [message] = await messagesOf(id)
+
+    expect(message?.status).toBe('failed')
+    expect(message?.lastError).toContain(deletedCustomerMail)
+  })
+
+  /**
+   * Written after its customer was deleted, the office sends it on purpose,
+   * and it goes as it did before (#1055, the review): only a message that
+   * was waiting when the customer was deleted is given up.
+   */
+  it('goes to a customer deleted before it was written', async () => {
+    const customerId = await customer(person)
+    const id = await issuedInvoice(customerId)
+
+    await http().delete(`/customers/${customerId}`).set('x-test-identity', office()).expect(200)
+    await sending(id).expect(202)
+
+    const post = recording()
+
+    expect(await cycle(post.transport)).toMatchObject({ sent: 1 })
+
+    const [message] = await messagesOf(id)
+
+    expect(message?.status).toBe('sent')
   })
 
   it('waits while the renderer is down, and goes once it is back', async () => {

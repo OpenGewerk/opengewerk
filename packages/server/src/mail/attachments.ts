@@ -264,7 +264,10 @@ export const restrictedCustomerMail =
 
 /** Why a reminder whose ground no longer holds stays unsent (#1026). */
 export const lapsedReminderMail =
-  'Die Grundlage der Erinnerung gilt nicht mehr: Der Kunde ist gelöscht, hat abbestellt oder eine andere E-Mail-Adresse, oder seine Einwilligung, die Bestätigung des Hinweises auf den Widerspruch oder sein Vertrag fehlt jetzt. Die Nachricht geht deshalb nicht mehr hinaus.'
+  'Die Grundlage der Erinnerung gilt nicht mehr: Der Kunde hat abbestellt oder eine andere E-Mail-Adresse, oder seine Einwilligung, die Bestätigung des Hinweises auf den Widerspruch oder sein Vertrag fehlt jetzt. Die Nachricht geht deshalb nicht mehr hinaus.'
+
+export const deletedCustomerMail =
+  'Der Kunde ist inzwischen gelöscht. Die Nachricht geht deshalb nicht mehr hinaus.'
 
 /** Why a message about a job that belongs to another customer now stays unsent. */
 export const reassignedCustomerMail =
@@ -381,8 +384,12 @@ export async function refuseLapsedTransition(
  * taken back, a confirmation of the notice taken away, also one written
  * before the update that asked for the confirmation; a contract that no
  * longer covers the day it is about; or an address the customer no longer
- * has, which a confirmation for the new one does not cover. Given up on
- * with the reason, like a message whose document has no file to give.
+ * has, which a confirmation for the new one does not cover. And no message
+ * of any kind to a customer deleted since it was written (#1055): deleting
+ * one asks nothing about its documents or jobs, so a document, a
+ * confirmation or a reminder may still wait for it. A message written after
+ * the deletion goes as it did before. Given up on with the reason, like a
+ * message whose document has no file to give.
  */
 export async function refuseWithheldCustomerMail(
   database: Database,
@@ -409,6 +416,17 @@ export async function refuseWithheldCustomerMail(
         return restrictedCustomerMail
       }
 
+      // Deleted after the message was written (#1055). One written after
+      // the deletion, which the office sends on purpose, goes as before.
+      const [held] = await tx
+        .select({ deletedAt: customers.deletedAt })
+        .from(customers)
+        .where(eq(customers.id, customerId as CustomerId))
+
+      if (held?.deletedAt != null && held.deletedAt > row.createdAt) {
+        return deletedCustomerMail
+      }
+
       if (row.kind !== 'customer_reminder') {
         return null
       }
@@ -422,10 +440,9 @@ export async function refuseWithheldCustomerMail(
         .from(customers)
         .where(and(eq(customers.id, customerId as CustomerId), isNull(customers.deletedAt)))
 
-      // A customer deleted since is reminded of nothing, as the run that
-      // writes reminders asks (#1026, the review).
+      // A customer deleted since: no reminder is ever written to one.
       if (!customer) {
-        return lapsedReminderMail
+        return deletedCustomerMail
       }
 
       if (

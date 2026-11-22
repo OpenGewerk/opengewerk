@@ -21,6 +21,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import {
+  deletedCustomerMail,
   mailAttachments,
   reassignedCustomerMail,
   restrictedCustomerMail,
@@ -348,6 +349,61 @@ describe('a confirmation of an appointment (#315)', () => {
         id,
         status: 'failed',
         last_error: expect.stringContaining(restrictedCustomerMail) as unknown,
+      })),
+    )
+  })
+
+  /**
+   * Messages written before their customer was deleted (#1055), waiting as a
+   * mail server that did not answer leaves them: deleting a customer asks
+   * nothing about its jobs, so a confirmation of a job, a reminder and a
+   * confirmation of an appointment may still wait. The pass gives all of
+   * them up with the reason.
+   */
+  it('wait unsent once their customer is deleted, of every kind', async () => {
+    const customerId = await aCustomer()
+    const job = await aJob(customerId)
+    // Written well before the customer is deleted.
+    const waiting = async (
+      kind: string,
+      cause: string,
+      names: { jobId?: string; appointmentId?: string } = {},
+    ) => {
+      const { rows } = await admin.query<{ id: string }>(
+        `insert into mail_outbox
+           (tenant_id, kind, cause, sender_name, recipient_address, recipient_name, subject, body,
+            job_id, appointment_id, customer_id, created_at)
+         values ($1, $2, $3, 'Elektro Nord GmbH', 'arslan@example.de', 'Familie Arslan', 'Betreff',
+                 'Text', $4, $5, $6, '2020-01-01T00:00:00Z')
+         returning id`,
+        [north.id, kind, cause, names.jobId ?? null, names.appointmentId ?? null, customerId],
+      )
+
+      return rows[0]?.id ?? ''
+    }
+    const received = await waiting('job_received', `job_received:${job}:deleted`, { jobId: job })
+    const reminded = await waiting(
+      'customer_reminder',
+      `customer_reminder:e_check:${customerId}:${job}:2031-11-08`,
+    )
+    // Without an appointment of its own: one made here would have the pass
+    // write its confirmation only after the deletion.
+    const confirmed = await waiting('appointment_confirmation', `appointment:${job}:deleted`)
+
+    await http().delete(`/customers/${customerId}`).set('x-test-identity', office()).expect(200)
+
+    expect(await cycle()).toEqual([])
+
+    const { rows } = await admin.query<{ id: string; status: string; last_error: string | null }>(
+      'select id, status, last_error from mail_outbox where id = any($1) order by id',
+      [[received, reminded, confirmed]],
+    )
+
+    expect(rows).toEqual(
+      [received, reminded, confirmed].sort().map((id) => ({
+        id,
+        status: 'failed',
+        last_error: expect.stringContaining(deletedCustomerMail) as unknown,
       })),
     )
   })

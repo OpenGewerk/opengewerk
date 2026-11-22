@@ -28,7 +28,11 @@ import { type DeadlineJob, runDeadlinesOf } from '../deadlines/engine.js'
 import { deadlineKinds } from '../deadlines/registry.js'
 import type { DeadlineValues } from '../deadlines/sources.js'
 import { mailOutbox } from '../database/schema/index.js'
-import { lapsedReminderMail, refuseWithheldCustomerMail } from '../mail/attachments.js'
+import {
+  deletedCustomerMail,
+  lapsedReminderMail,
+  refuseWithheldCustomerMail,
+} from '../mail/attachments.js'
 import { callNotes } from './customer-reminder.js'
 
 /**
@@ -380,7 +384,7 @@ describe('a reminder that waits to go out', () => {
         [customers['lehmann']],
       )
       await expect(refuseWithheldCustomerMail(database, await waiting('lehmann'))).rejects.toThrow(
-        lapsedReminderMail,
+        deletedCustomerMail,
       )
 
       // A contract given notice before the day the reminder is about.
