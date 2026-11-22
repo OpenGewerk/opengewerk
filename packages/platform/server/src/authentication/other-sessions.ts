@@ -1,9 +1,5 @@
-import type { TenantId } from '@opengewerk/platform-domain'
-import { and, eq, inArray, isNull } from 'drizzle-orm'
-
 import type { Database } from '../database/database.js'
-import { tenantSessions } from '../schema.js'
-import { revokeCredentials, theSession } from './credentials.js'
+import { endStretchesOfRevoked, revokeCredentials, theSession } from './credentials.js'
 
 /**
  * Ends every session of an account apart from the one named, as a new
@@ -18,9 +14,12 @@ import { revokeCredentials, theSession } from './credentials.js'
  * it.
  *
  * The rows go first, so that the sessions stop whatever happens next; the
- * stretches of work are closed after, tenant by tenant. The count of the
- * credentials goes up with them (`credentials.ts`), so that a sign in with
- * the factor that is gone, written a moment later, is refused as well.
+ * stretches of work are closed after, as a new password closes them
+ * (`endStretchesOfRevoked`): a session that had run out ends as run out, an
+ * access past its end with itself, and a close that fails is left to the
+ * pass. The count of the credentials goes up with them (`credentials.ts`),
+ * so that a sign in with the factor that is gone, written a moment later, is
+ * refused as well.
  */
 export async function endOtherSessions(
   database: Database,
@@ -28,32 +27,11 @@ export async function endOtherSessions(
   keep: string,
   reason: string,
 ): Promise<void> {
-  const { ended } = await database.forInstance(
-    (tx) => revokeCredentials(tx, userId, theSession(keep)),
-    userId,
-  )
+  const revoked = await database.forInstance(async (tx) => {
+    const at = new Date()
 
-  const byTenant = new Map<TenantId, string[]>()
+    return { ...(await revokeCredentials(tx, userId, theSession(keep))), at }
+  }, userId)
 
-  for (const { id, tenantId } of ended) {
-    if (tenantId) {
-      byTenant.set(tenantId as TenantId, [...(byTenant.get(tenantId as TenantId) ?? []), id])
-    }
-  }
-
-  for (const [tenantId, sessionIds] of byTenant) {
-    await database.forTenant({ tenantId, userId, reason }, (tx) =>
-      tx
-        .update(tenantSessions)
-        .set({ endedAt: new Date() })
-        .where(
-          and(
-            eq(tenantSessions.tenantId, tenantId),
-            eq(tenantSessions.userId, userId),
-            inArray(tenantSessions.sessionId, sessionIds),
-            isNull(tenantSessions.endedAt),
-          ),
-        ),
-    )
-  }
+  await endStretchesOfRevoked(database, userId, revoked, reason)
 }

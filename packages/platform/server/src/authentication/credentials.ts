@@ -142,21 +142,45 @@ export async function writePassword(
     return null
   }
 
-  const now = revoked.at
+  await endStretchesOfRevoked(
+    database,
+    userId,
+    revoked,
+    asking === undefined ? 'password.reset' : 'password.change',
+  )
+
+  return revoked.generation
+}
+
+/**
+ * Closes the stretches of work of the sessions a count of the credentials
+ * took out, measured at the moment they went (`at`): those at work under the
+ * reason of what took them out and in the person's name, those that had run
+ * out already as run out. An access past its end ends its stretch with
+ * itself (`endStretchesOf`), and a close that fails is left to the pass
+ * (`endStretchesOrLeaveThem`).
+ */
+export async function endStretchesOfRevoked(
+  database: Database,
+  userId: string,
+  revoked: {
+    readonly ended: Awaited<ReturnType<typeof revokeCredentials>>['ended']
+    readonly at: Date
+  },
+  reason: string,
+): Promise<void> {
   const ended = revoked.ended.map((session) => ({ ...session, userId }))
 
   await endStretchesOrLeaveThem(
     database,
-    ended.filter((session) => session.expiresAt > now),
-    { now, reason: asking === undefined ? 'password.reset' : 'password.change', actor: userId },
+    ended.filter((session) => session.expiresAt > revoked.at),
+    { now: revoked.at, reason, actor: userId },
   )
   await endStretchesOrLeaveThem(
     database,
-    ended.filter((session) => session.expiresAt <= now),
-    { now },
+    ended.filter((session) => session.expiresAt <= revoked.at),
+    { now: revoked.at },
   )
-
-  return revoked.generation
 }
 
 /** The session that is named, as what `keep` takes. */

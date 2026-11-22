@@ -27,6 +27,12 @@ export interface EndedSession {
  * names, or else whether the sessions ran out or were ended, and in the name
  * of the person whose action ended them, where one did. Says how many it
  * closed; one closed before is not counted again.
+ *
+ * Where the access of the person in the tenant ended before the stretch would
+ * (opengewerk#1030), it ends with the access and for that reason, on every
+ * way a session goes, not only in the pass: signing out after midnight, a
+ * device cut off, a new password or better-auth taking a session out whose
+ * cookie came back. Whichever came first is when the work ended.
  */
 export async function endStretchesOf(
   database: Database,
@@ -41,12 +47,82 @@ export async function endStretchesOf(
   for (const session of sessions) {
     if (session.tenantId !== null) {
       const tenantId = session.tenantId as TenantId
+      const group = byTenant.get(tenantId)
 
-      byTenant.set(tenantId, [...(byTenant.get(tenantId) ?? []), session])
+      if (group === undefined) {
+        byTenant.set(tenantId, [session])
+      } else {
+        group.push(session)
+      }
     }
   }
 
-  for (const [tenantId, ended] of byTenant) {
+  const endOf = (session: EndedSession) =>
+    session.expiresAt !== undefined && session.expiresAt < now ? session.expiresAt : now
+
+  for (const [tenantId, all] of byTenant) {
+    // Whose access here ended, and when: midnight after the last day, in
+    // Germany, as the day itself is counted (`last-day.ts`).
+    const users = [...new Set(all.map((session) => session.userId))]
+    const accessEnded = await database.forTenant({ tenantId }, (tx) =>
+      tx
+        .select({
+          userId: memberships.userId,
+          endedAt: sql<
+            Date | string
+          >`((${memberships.lastDay} + 1)::timestamp at time zone 'Europe/Berlin')`,
+        })
+        .from(memberships)
+        .where(
+          and(eq(memberships.tenantId, tenantId), inArray(memberships.userId, users), pastItsEnd()),
+        ),
+    )
+    const accessEnd = new Map(accessEnded.map((row) => [row.userId, new Date(row.endedAt)]))
+    const withTheAccess: EndedSession[] = []
+    const ended: EndedSession[] = []
+
+    for (const session of all) {
+      const over = accessEnd.get(session.userId)
+
+      if (over !== undefined && over < endOf(session)) {
+        withTheAccess.push(session)
+      } else {
+        ended.push(session)
+      }
+    }
+
+    if (withTheAccess.length > 0) {
+      closed += await database.forTenant({ tenantId, reason: 'membership.end' }, async (tx) => {
+        let done = 0
+
+        for (const session of withTheAccess) {
+          const over = accessEnd.get(session.userId) ?? now
+          const rows = await tx
+            .update(tenantSessions)
+            .set({
+              endedAt: sql`greatest(${tenantSessions.startedAt}, ${over.toISOString()}::timestamptz)`,
+            })
+            .where(
+              and(
+                eq(tenantSessions.tenantId, tenantId),
+                eq(tenantSessions.sessionId, session.id),
+                eq(tenantSessions.userId, session.userId),
+                isNull(tenantSessions.endedAt),
+              ),
+            )
+            .returning({ id: tenantSessions.id })
+
+          done += rows.length
+        }
+
+        return done
+      })
+    }
+
+    if (ended.length === 0) {
+      continue
+    }
+
     const expired = ended.every(
       (session) => session.expiresAt !== undefined && session.expiresAt <= now,
     )
@@ -59,8 +135,7 @@ export async function endStretchesOf(
       },
       async (tx) => {
         for (const session of ended) {
-          const end =
-            session.expiresAt !== undefined && session.expiresAt < now ? session.expiresAt : now
+          const end = endOf(session)
 
           // Never before the stretch began: one a session opened a moment
           // after the time this close was worked out ends where it began.
@@ -380,7 +455,8 @@ export async function sweepExpiredSessions(
  * access past its end does no work, every request into the tenant is refused
  * and none is renewed (`renewSession`). This way a failure loses nothing: a
  * close that fails leaves the sessions, and the next pass does it all again;
- * a delete that fails leaves sessions whose work is already closed. The
+ * a delete that fails undoes the close of the round with it, and the next
+ * pass does that again as well. The
  * sessions it deletes are the ones it read, while the round still holds the
  * memberships. A stretch whose session is gone otherwise ends with the access
  * as well, and the orphans leave such stretches to this step

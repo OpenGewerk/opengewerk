@@ -19,6 +19,7 @@ import {
   reached,
 } from './probe-application.js'
 import { writePassword } from './credentials.js'
+import { endOtherSessions } from './other-sessions.js'
 import { renewSession } from './session-lifetime.js'
 import {
   carryStretch,
@@ -2132,6 +2133,56 @@ describe('an access past its last day', () => {
     expect(await endOfWork(inSouth.id)).toBeNull()
     expect(await sessionsOf(todayEmail)).toContain(lastToday.id)
     expect(await endOfWork(lastToday.id)).toBeNull()
+  })
+
+  it('ends the work with the access when somebody signs out after the last day, before the pass', async () => {
+    const email = 'letzter-tag-abmelden@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+
+    await begunDaysAgo(working.id)
+    await lastDayAgo(north.id, userId, 2)
+    // Signing out works, though every request into the tenant is refused.
+    await http()
+      .post('/auth/sign-out')
+      .set('cookie', working.cookies)
+      .set('origin', origin)
+      .expect(201)
+
+    expect((await endOfWork(working.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(working.id)).toBe('membership.end')
+  })
+
+  it('ends the work with the access when better-auth takes out a session that ran out after it', async () => {
+    const email = 'letzter-tag-cookie@example.de'
+    const userId = await joined(email, [north.id])
+    const ran = await atWork(email)
+
+    await begunDaysAgo(ran.id)
+    await lastDayAgo(north.id, userId, 2)
+    // Ran out a minute ago, a day after the access ended, and its cookie comes back.
+    await admin.query(
+      `update auth_sessions set expires_at = now() - interval '1 minute' where id = $1`,
+      [ran.id],
+    )
+    await http().get('/auth/tenants').set('cookie', ran.cookies).expect(401)
+
+    expect((await endOfWork(ran.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(ran.id)).toBe('membership.end')
+  })
+
+  it('ends the work with the access when a factor given up takes the other sessions out after the last day', async () => {
+    const email = 'letzter-tag-faktor@example.de'
+    const userId = await joined(email, [north.id])
+    const kept = await atWork(email)
+    const other = await atWork(email)
+
+    await begunDaysAgo(other.id)
+    await lastDayAgo(north.id, userId, 2)
+    await endOtherSessions(instance.database, userId, kept.id, 'passkey.remove')
+
+    expect((await endOfWork(other.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(other.id)).toBe('membership.end')
   })
 
   it('ends at the end of the day a stretch whose session is already gone', async () => {
