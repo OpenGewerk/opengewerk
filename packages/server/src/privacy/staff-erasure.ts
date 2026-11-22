@@ -200,9 +200,14 @@ function timeEntryYears(user: SQL | null): SQL {
              n.started_at, n.written
         from links l
         cross join lateral (
+          -- One look into the index for each link. An entry is corrected
+          -- once at most, so the limit changes no row; it keeps the planner
+          -- from joining every correction of the business at each link,
+          -- which made a long chain cost its length times all of them.
           select t.id, t.tenant_id, t.user_id, t.started_at, ${written(sql`t`)} as written
             from time_entries t
            where t.tenant_id = l.tenant_id and t.corrects_entry_id = l.id
+           limit 1
         ) n
     ), time_years as materialized (
       select f.user_id, ${yearOf(sql`f.started_at`)} as year,
@@ -488,6 +493,57 @@ export interface HeldStaffYear {
   readonly entitlements: readonly string[]
 }
 
+/**
+ * How far each entry of a year stands from the end of its chain of
+ * corrections: 0 for one nothing of the year corrects, one more for each
+ * correction after it. The entries go a level at a time, the end of every
+ * chain first: the trigger works the year of a correction out of the entry it
+ * corrects, which has to be there still. Worked out here in one walk up each
+ * chain from its end, each entry once (`time_entries_corrected_once` keeps a
+ * chain a line). A recursive query did it before and read every entry of the
+ * year again at each link, the length of a chain times the entries of the
+ * year. An entry no end of a chain reaches, one that would correct itself, is
+ * left out, as before.
+ */
+function heightsOf(
+  rows: readonly {
+    readonly id: string
+    readonly corrects_entry_id: string | null
+    readonly written: number
+  }[],
+): { readonly id: string; readonly height: number; readonly written: number }[] {
+  const byId = new Map(rows.map((row) => [row.id, row]))
+  const corrected = new Set(
+    rows.flatMap((row) =>
+      row.corrects_entry_id !== null && byId.has(row.corrects_entry_id)
+        ? [row.corrects_entry_id]
+        : [],
+    ),
+  )
+  const heights = new Map<string, number>()
+
+  for (const end of rows) {
+    if (corrected.has(end.id)) {
+      continue
+    }
+
+    let height = 0
+    let at: (typeof rows)[number] | undefined = end
+
+    while (at !== undefined && !heights.has(at.id)) {
+      heights.set(at.id, height)
+      height += 1
+      at = at.corrects_entry_id === null ? undefined : byId.get(at.corrects_entry_id)
+    }
+  }
+
+  return rows.flatMap((row) => {
+    const height = heights.get(row.id)
+
+    return height === undefined ? [] : [{ id: row.id, height, written: Number(row.written) }]
+  })
+}
+
 export async function holdStaffYear(
   tx: TenantTransaction,
   year: DueStaffYear,
@@ -497,34 +553,18 @@ export async function holdStaffYear(
   const written = sql`extract(year from (updated_at at time zone 'Europe/Berlin'))::int`
   const read = async (query: SQL) => (await tx.execute<{ id: string; written: number }>(query)).rows
 
-  // How far each entry of the year stands from the end of its chain of
-  // corrections: 0 for one nothing corrects, one more for each correction
-  // after it. Worked out once, and the entries go a level at a time, the
-  // end of every chain first: the trigger works the year of a correction
-  // out of the entry it corrects, which has to be there still. Each level
-  // names its own entries only; a round per link with every id left grew
-  // with the square of the length of a chain.
   const entries =
     year.userId === null
       ? []
-      : (
-          await tx.execute<{ id: string; height: number; written: number }>(sql`
-            with recursive year_entries as (
+      : heightsOf(
+          (
+            await tx.execute<{ id: string; corrects_entry_id: string | null; written: number }>(sql`
               select id, corrects_entry_id,
                      greatest(${written}, extract(year from ((ended_at - interval '1 millisecond') at time zone 'Europe/Berlin'))::int) as written
                 from time_entries
-               where user_id = ${year.userId} and time_entry_year(id) = ${year.year}
-            ), heights as (
-              select e.id, e.corrects_entry_id, 0 as height from year_entries e
-               where not exists (select 1 from year_entries c where c.corrects_entry_id = e.id)
-              union all
-              select p.id, p.corrects_entry_id, h.height + 1
-                from heights h join year_entries p on p.id = h.corrects_entry_id
-            )
-            select h.id, max(h.height)::int as height, max(y.written)::int as written
-              from heights h join year_entries y on y.id = h.id
-             group by h.id`)
-        ).rows
+               where user_id = ${year.userId} and time_entry_year(id) = ${year.year}`)
+          ).rows,
+        )
   const onCall =
     year.userId === null
       ? []

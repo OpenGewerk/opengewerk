@@ -160,21 +160,6 @@ export function previewIdentity(tenantId: TenantId): Identity {
 }
 
 /**
- * The business and the person, straight into the tables, the way the tests
- * set up theirs.
- *
- * The user row carries no credential of any kind: no password, no passkey, no
- * second factor behind the flag. Nobody can sign in as it, and the preview
- * mounts no sign in anyway. It exists because a membership has to point at a
- * user, and the membership is what the route that lists the businesses of the
- * person asking reads.
- *
- * It is also the operator of the instance (#188), as the account of a real
- * first run is, so that the area of the instance can be looked at. All of it
- * in one transaction under the reason of a first run, which is what the logs
- * of the business and of the instance then say.
- */
-/**
  * Dates the days of leave of the years before this one back to their own
  * year, once the sample data went in (opengewerk#1033): a year of a person
  * counts its eight years from the last time one of its records was written,
@@ -206,6 +191,21 @@ export async function dateSampleYears(admin: Pool, tenantId: TenantId): Promise<
   }
 }
 
+/**
+ * The business and the person, straight into the tables, the way the tests
+ * set up theirs.
+ *
+ * The user row carries no credential of any kind: no password, no passkey, no
+ * second factor behind the flag. Nobody can sign in as it, and the preview
+ * mounts no sign in anyway. It exists because a membership has to point at a
+ * user, and the membership is what the route that lists the businesses of the
+ * person asking reads.
+ *
+ * It is also the operator of the instance (#188), as the account of a real
+ * first run is, so that the area of the instance can be looked at. All of it
+ * in one transaction under the reason of a first run, which is what the logs
+ * of the business and of the instance then say.
+ */
 export async function admitPreviewUser(
   admin: Pool,
   tenant: { readonly id: TenantId; readonly name: string },
