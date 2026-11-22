@@ -441,18 +441,20 @@ export const zeroRateDeclarations: Readonly<Partial<Record<DocumentKind, string>
 export const reportZeroRateDeclaration = `Mit seiner Unterschrift erklärt der Kunde, dass er Betreiber der Photovoltaikanlage ist, zu der die Positionen dieses Berichts gehören, die zum Nullsteuersatz abgerechnet werden, ${zeroRatePlant}`
 
 /**
- * Whether a report carries the declaration (#1046): one taxed as usual, of a
- * job on a PV system or a storage. The kind of the installation stands for
- * the plant, as nobody on site picks a rate; under section 19 or a reverse
- * charge no rate is applied at all. Every other kind takes it with the
- * contract, see `zeroRateDeclarations`.
+ * Whether a report carries the declaration (#1046): one of a job on a PV
+ * system or a storage. The kind of the installation stands for the plant, as
+ * nobody on site picks a rate. The tax treatment does not count: a report
+ * written on a device has none until the server proposes one on its arrival,
+ * and a device and the server have to agree on the page the customer signs
+ * (the review). Under section 19 or a reverse charge no line ends up at the
+ * zero rate, and the sentence speaks of those lines alone. Every other kind
+ * takes it with the contract, see `zeroRateDeclarations`.
  */
 export function reportZeroRateDeclarationOf(
-  report: { readonly kind: DocumentKind; readonly taxTreatment: TaxTreatment },
+  kind: DocumentKind,
   installationKind: string | null,
 ): string | null {
-  return report.kind === 'time_and_material_report' &&
-    report.taxTreatment === 'standard' &&
+  return kind === 'time_and_material_report' &&
     (installationKind === 'pv_system' || installationKind === 'battery')
     ? reportZeroRateDeclaration
     : null

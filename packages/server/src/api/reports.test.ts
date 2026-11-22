@@ -787,6 +787,33 @@ describe('the declaration for the zero rate on a report', () => {
   )
 
   /**
+   * Whatever tax treatment the server proposed for a report from a device
+   * (the review): the device does not know it and shows the declaration, and
+   * the signature lands with it.
+   */
+  it.each(['small_business', 'reverse_charge'])(
+    'is given with the signature under a report the server proposed %s for',
+    async (treatment) => {
+      const report = await writeReport('2026-09-21', 'time_and_material_report', jobOn['pv_system'])
+
+      await admin.query('update documents set tax_treatment = $2 where id = $1', [
+        report.id,
+        treatment,
+      ])
+
+      const { receipts } = await push([
+        signing(report, {
+          zeroRateDeclaration: reportZeroRateDeclaration,
+          contentFingerprint: fingerprintOf(report, reportZeroRateDeclaration),
+        }),
+      ])
+
+      expect(receipts[0]?.outcome).toBe('applied')
+      expect(await declared(report)).toEqual([{ declaration: reportZeroRateDeclaration }])
+    },
+  )
+
+  /**
    * A device of the version before shows none and sends none: its signature
    * lands, without one, and the report prints none.
    */

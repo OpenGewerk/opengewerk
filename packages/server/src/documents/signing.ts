@@ -55,7 +55,6 @@ export async function signatureRefusal(
       introText: documents.introText,
       fieldValues: documents.fieldValues,
       fieldsVersion: documents.fieldsVersion,
-      taxTreatment: documents.taxTreatment,
       deletedAt: documents.deletedAt,
     })
     .from(documents)
@@ -101,7 +100,7 @@ export async function signatureRefusal(
   // signature lands without one. A declaration the report does not carry,
   // or another text, is a page the server does not hold.
   const declaration = reportZeroRateDeclarationOf(
-    document,
+    document.kind,
     await installationKindOf(tx, document.jobId),
   )
   const sent = values['zeroRateDeclaration'] ?? null

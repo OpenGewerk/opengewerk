@@ -1348,6 +1348,24 @@ describe('a report signed on site', () => {
     expect(screen.queryByText('Gesamtbetrag')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Position hinzufügen' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Bearbeiten' })).toBeNull()
+    // Signed without the declaration for the zero rate, it says nothing of it.
+    expect(screen.queryByText('Nullsteuersatz')).toBeNull()
+  })
+
+  /**
+   * Whether the customer gave the declaration for the zero rate with the
+   * signature (#1046, the review): the office needs it for the invoice.
+   */
+  it('says that the customer gave the declaration for the zero rate with the signature', async () => {
+    await mount('/belege/d-1', {
+      ...signed,
+      document_signatures: [{ ...signature, zeroRateDeclaration: 'Mit seiner Unterschrift …' }],
+    })
+
+    const card = within(await screen.findByRole('region', { name: 'Unterschrift' }))
+
+    expect(card.getByText('Nullsteuersatz')).toBeDefined()
+    expect(card.getByText('Erklärung abgegeben')).toBeDefined()
   })
 
   it('is issued by the office, the one step left for it', async () => {

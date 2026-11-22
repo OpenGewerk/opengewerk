@@ -94,6 +94,35 @@ describe('the fingerprint of what was signed', () => {
    * was shown; a page without one keeps the mark of the form before, so that
    * a device of the version before still signs one the server can work out.
    */
+  /**
+   * Without a declaration the mark is byte for byte the one of the form
+   * before (#1046, CodeRabbit): worked out with that version for this page.
+   */
+  it('keeps the mark of the form before for a page without the declaration', () => {
+    expect(
+      signedContentFingerprint({
+        subject: 'Wartung PV-Anlage',
+        documentDate: '2026-09-21',
+        customerId: 'c-1',
+        jobId: 'j-1',
+        introText: 'Wechselrichter getauscht.',
+        fields: null,
+        fieldsVersion: null,
+        lines: [
+          {
+            id: 'l-1',
+            position: 1,
+            kind: 'item',
+            designation: 'Arbeitszeit',
+            description: null,
+            quantityMilli: 1500,
+            unit: 'hour',
+          },
+        ],
+      }),
+    ).toBe('sha256:77316b6a1bb12856f50ed24db2477e2840b7ca7b18d51399ec20a7f3f8647d22')
+  })
+
   it('takes the declaration for the zero rate in where the page showed one', () => {
     const before = signedContentFingerprint(report())
     const declared = signedContentFingerprint(report({ zeroRateDeclaration: 'Erklärung A' }))

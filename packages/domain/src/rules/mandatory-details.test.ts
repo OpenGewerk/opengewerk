@@ -427,26 +427,19 @@ describe('the printed notes', () => {
   })
 
   /**
-   * A report carries it for a job on a PV system or a storage (#1046), taxed
-   * as usual: nobody on site picks a rate, so the installation stands for the
-   * plant, and under section 19 or a reverse charge no rate applies at all.
+   * A report carries it for a job on a PV system or a storage (#1046):
+   * nobody on site picks a rate, so the installation stands for the plant.
+   * The tax treatment does not count, as a report written on a device has
+   * none until the server proposes one (the review).
    */
   it('give a report the declaration for the zero rate for a job on a PV system or a storage alone', () => {
-    const report = { kind: 'time_and_material_report', taxTreatment: 'standard' } as const
+    const report = 'time_and_material_report'
 
     expect(reportZeroRateDeclarationOf(report, 'pv_system')).toBe(reportZeroRateDeclaration)
     expect(reportZeroRateDeclarationOf(report, 'battery')).toBe(reportZeroRateDeclaration)
     expect(reportZeroRateDeclarationOf(report, 'wallbox')).toBeNull()
     expect(reportZeroRateDeclarationOf(report, null)).toBeNull()
-    expect(
-      reportZeroRateDeclarationOf({ ...report, taxTreatment: 'small_business' }, 'pv_system'),
-    ).toBeNull()
-    expect(
-      reportZeroRateDeclarationOf({ ...report, taxTreatment: 'reverse_charge' }, 'battery'),
-    ).toBeNull()
-    expect(
-      reportZeroRateDeclarationOf({ ...report, kind: 'delivery_note' }, 'pv_system'),
-    ).toBeNull()
+    expect(reportZeroRateDeclarationOf('delivery_note', 'pv_system')).toBeNull()
     expect(reportZeroRateDeclaration).toContain('Mit seiner Unterschrift erklärt der Kunde')
   })
 

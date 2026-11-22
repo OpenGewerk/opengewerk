@@ -60,7 +60,6 @@ import {
   lineUnitLabel,
   lineUnitOf,
   lineUnitShort,
-  taxTreatmentOf,
 } from '../../app/labels.js'
 import { ArticleChoice, type StockOf } from '../article-choice.js'
 import { SiteHeader } from '../header.js'
@@ -1213,7 +1212,7 @@ function SigningStep({
   const job = useRecord('jobs', maybeText(report, 'jobId') ?? undefined)
   const installation = useRecord('installations', maybeText(job, 'installationId') ?? undefined)
   const declaration = reportZeroRateDeclarationOf(
-    { kind: documentKindOf(report), taxTreatment: taxTreatmentOf(report) },
+    documentKindOf(report),
     maybeText(installation, 'kind'),
   )
   const fingerprint = signedContentFingerprint(signedContentOf(report, lines, declaration))
