@@ -29,6 +29,7 @@ import {
   endPastLastDayOf,
   endPastLastDays,
   endStretchesOf,
+  type LastDaysPass,
   sweepExpiredSessions,
 } from './session-sweep.js'
 import { addStaffMember, replacePassword } from './staff.js'
@@ -1661,6 +1662,43 @@ describe('a session that ran out', () => {
     expect(rows).toEqual([{ atItsStart: true }])
   })
 
+  /**
+   * The bound of a switch to the microsecond (#1047, CodeRabbit): a stretch
+   * begun within the same millisecond before it is closed, one begun after
+   * it stays open.
+   */
+  it('closes before a switch to the microsecond', async () => {
+    const working = await atWork(member.email)
+    const session = [
+      { id: working.id, userId: userIds.get(member.email) ?? '', tenantId: north.id },
+    ]
+    const switchedAt = '2026-01-02 03:04:05.1238+00'
+    const open = async () => {
+      const { rows } = await admin.query<{ open: boolean }>(
+        'select ended_at is null as open from tenant_sessions where session_id = $1',
+        [working.id],
+      )
+
+      return rows
+    }
+
+    await admin.query(
+      `update tenant_sessions set started_at = '2026-01-02 03:04:05.1239+00' where session_id = $1`,
+      [working.id],
+    )
+    await endStretchesOf(instance.database, session, { startedBefore: switchedAt })
+
+    expect(await open()).toEqual([{ open: true }])
+
+    await admin.query(
+      `update tenant_sessions set started_at = '2026-01-02 03:04:05.1232+00' where session_id = $1`,
+      [working.id],
+    )
+    await endStretchesOf(instance.database, session, { startedBefore: switchedAt })
+
+    expect(await open()).toEqual([{ open: false }])
+  })
+
   it('takes a backlog in rounds of a bounded size, all of it in one pass', async () => {
     const template = await atWork(member.email)
     const backlog = Array.from({ length: 5 }, () => newId<'session'>())
@@ -2280,6 +2318,91 @@ describe('work that cannot be closed when its session ends', () => {
 
     const { rows } = await admin.query<{ open: boolean }>(
       'select ended_at is null as open from tenant_sessions where session_id = $1 and tenant_id = $2',
+      [working.id, south.id],
+    )
+
+    expect(rows).toEqual([{ open: true }, { open: true }])
+  })
+
+  /**
+   * Two choices of the same tenant by one session at once (#1047,
+   * CodeRabbit): the second waits for the first to write its choice and
+   * finds the tenant chosen, so neither closes the stretch the other opened.
+   */
+  it('lets a second choice of the same tenant wait for the first and close nothing it opened', async () => {
+    const email = 'wechsel-doppelt@example.de'
+
+    await joinedNorth(email)
+    await addStaffMember(instance.authentication, instance.database, {
+      email,
+      name: 'Doris Doppelt',
+      password,
+      tenantId: south.id,
+      roles: ['member'],
+    })
+
+    const working = await atWork(email)
+    const query = Client.prototype.query
+    let state: 'before' | 'held' | 'done' = 'before'
+    let second: Promise<void> | undefined
+
+    // The first choice has read the session; the second starts before the
+    // first writes, and the first goes on once the second waits or is done.
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const forward = () => (query as (...given: unknown[]) => Promise<unknown>).apply(this, args)
+
+      if (
+        state === 'before' &&
+        /^select "active_tenant_id", "sign_in_method" from "auth_sessions"/i.test(text)
+      ) {
+        state = 'held'
+
+        const pid = (this as Client & { processID: number }).processID
+
+        return forward().then(async (result) => {
+          let settled = false
+
+          second = instance.chooseTenant(working.cookies, south.id).finally(() => {
+            settled = true
+          })
+          second.catch(() => undefined)
+
+          for (let tries = 0; tries < 200 && !settled; tries += 1) {
+            const { rows } = await admin.query<{ n: number }>(
+              'select count(*)::int as n from pg_stat_activity where $1 = any(pg_blocking_pids(pid))',
+              [pid],
+            )
+
+            if ((rows[0]?.n ?? 0) > 0) {
+              break
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, 50))
+          }
+
+          state = 'done'
+
+          return result
+        })
+      }
+
+      return forward()
+    } as typeof query
+
+    try {
+      await instance.chooseTenant(working.cookies, south.id)
+      await second
+    } finally {
+      Client.prototype.query = query
+    }
+
+    expect(state).toBe('done')
+
+    const { rows } = await admin.query<{ open: boolean }>(
+      `select ended_at is null as open from tenant_sessions where session_id = $1 and tenant_id = $2
+        order by started_at, id`,
       [working.id, south.id],
     )
 
@@ -3099,8 +3222,18 @@ describe('an access past its last day', () => {
 
     const holder = await Promise.race([isWritten, other.then(() => Number.NaN)])
     const pass = endPastLastDays(instance.database, 1)
+    let passed = false
 
-    pass.catch(() => undefined)
+    // A pass that ends, with a failure or with a failure in its result, ends
+    // the wait too; both show below.
+    pass.then(
+      () => {
+        passed = true
+      },
+      () => {
+        passed = true
+      },
+    )
 
     let waited = false
 
@@ -3111,7 +3244,7 @@ describe('an access past its last day', () => {
     // Let go in any case, so that a failure here leaves no open transaction
     // behind for the pass and the tests after it.
     try {
-      for (let tries = 0; tries < 200 && !waited; tries += 1) {
+      for (let tries = 0; tries < 200 && !waited && !passed; tries += 1) {
         const { rows: waiting } = await admin.query<{ n: number }>(
           'select count(*)::int as n from pg_stat_activity where $1 = any(pg_blocking_pids(pid))',
           [holder],
@@ -3133,6 +3266,12 @@ describe('an access past its last day', () => {
       if (result.status === 'rejected') {
         throw result.reason
       }
+    }
+
+    const [ran] = settled ?? []
+
+    if (ran?.status === 'fulfilled' && (ran.value as LastDaysPass).failure !== undefined) {
+      throw (ran.value as LastDaysPass).failure
     }
 
     expect(waited).toBe(true)

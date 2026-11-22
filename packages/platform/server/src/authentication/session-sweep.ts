@@ -1,5 +1,5 @@
 import { type SignInMethod, signInMethods, type TenantId } from '@opengewerk/platform-domain'
-import { and, asc, eq, inArray, isNull, lt, lte, notInArray, or, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, lte, notInArray, or, sql } from 'drizzle-orm'
 
 import type { Database } from '../database/database.js'
 import { everyTenant } from '../database/every-tenant.js'
@@ -44,15 +44,22 @@ export async function endStretchesOf(
     readonly now?: Date
     readonly reason?: string
     readonly actor?: string
-    /** Only stretches begun before this moment (#1047): a switch leaves alone what began after it. */
-    readonly startedBefore?: Date
+    /**
+     * Only stretches begun before this moment (#1047): a switch leaves alone
+     * what began after it. As PostgreSQL wrote it, to the microsecond: a
+     * `Date` would cut it to the millisecond and pass over a stretch begun
+     * within that millisecond before the switch.
+     */
+    readonly startedBefore?: string
   } = {},
 ): Promise<number> {
   let closed = 0
   const now = how.now ?? new Date()
   const { reason, actor, startedBefore } = how
   const begunBefore =
-    startedBefore === undefined ? [] : [lt(tenantSessions.startedAt, startedBefore)]
+    startedBefore === undefined
+      ? []
+      : [sql`${tenantSessions.startedAt} < ${startedBefore}::timestamptz`]
   const byTenant = new Map<TenantId, EndedSession[]>()
 
   for (const session of sessions) {
@@ -190,8 +197,8 @@ export async function endStretchesOrLeaveThem(
     readonly now?: Date
     readonly reason?: string
     readonly actor?: string
-    /** Only stretches begun before this moment (#1047): a switch leaves alone what began after it. */
-    readonly startedBefore?: Date
+    /** Only stretches begun before this moment, to the microsecond (`endStretchesOf`). */
+    readonly startedBefore?: string
   } = {},
 ): Promise<void> {
   try {

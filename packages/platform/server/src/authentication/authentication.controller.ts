@@ -213,6 +213,9 @@ export class AuthenticationController {
     )
 
     const previous = await this.database.forInstance(async (tx) => {
+      // Locked until the choice is written: another request of the same
+      // session waits and reads the tenant this one leaves it in, not the one
+      // both found (#1047, CodeRabbit).
       const [before] = await tx
         .select({
           activeTenantId: authSessions.activeTenantId,
@@ -220,6 +223,7 @@ export class AuthenticationController {
         })
         .from(authSessions)
         .where(eq(authSessions.id, user.sessionId))
+        .for('update')
 
       // The row decides at the moment it is written, as when a session is
       // renewed (opengewerk#1029): a session that ran out while the request
@@ -235,14 +239,15 @@ export class AuthenticationController {
             gt(authSessions.expiresAt, sql`clock_timestamp()`),
           ),
         )
-        .returning({ id: authSessions.id, at: sql<Date | string>`clock_timestamp()` })
+        // As text, to the microsecond: the bound of the closes below.
+        .returning({ id: authSessions.id, at: sql<string>`clock_timestamp()::text` })
 
       return written === undefined
         ? null
         : {
             tenantId: before?.activeTenantId ?? null,
             signInMethod: before?.signInMethod ?? 'password',
-            switchedAt: new Date(written.at),
+            switchedAt: written.at,
           }
     }, user.userId)
 
