@@ -489,7 +489,7 @@ export const sourceWords: Readonly<
     person: 'Der Inhaber',
     interval: {
       label: 'Fällig nach',
-      hint: 'Fällig acht Jahre nach dem Ende des Jahres, bei einem später erfassten oder berichtigten Eintrag oder einem, der ins nächste Jahr reicht, nach dem Ende dieses späteren Jahres, wenn die Lohnunterlagen gehen dürfen.',
+      hint: 'Fällig acht Jahre nach dem Ende des Jahres, bei einem später erfassten oder berichtigten Eintrag oder einem, der ins nächste Jahr reicht, acht Jahre nach dem Ende dieses späteren Jahres, wenn die Lohnunterlagen gehen dürfen.',
     },
     anchor: 'dem Ende des Jahres',
   },

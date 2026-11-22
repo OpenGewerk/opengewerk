@@ -49,12 +49,7 @@ export function staffYearKey(personId: string, year: number): string {
 }
 
 function uuids(values: readonly string[]): SQL {
-  return values.length === 0
-    ? sql`array[]::uuid[]`
-    : sql`array[${sql.join(
-        values.map((value) => sql`${value}`),
-        sql`, `,
-      )}]::uuid[]`
+  return sql`${`{${values.join(',')}}`}::uuid[]`
 }
 
 /** A sickness that is due. */

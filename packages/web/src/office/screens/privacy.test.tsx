@@ -156,7 +156,15 @@ beforeEach(() => {
       body: typeof init?.body === 'string' ? JSON.parse(init.body) : init?.body,
     })
 
-    const answer = answers.get(`${method} ${path}`) ?? { status: 200, body: {} }
+    // An answer for one kind of erasure, where a test gives one.
+    const kind =
+      typeof init?.body === 'string'
+        ? (JSON.parse(init.body) as { kind?: unknown }).kind
+        : undefined
+    const answer = (typeof kind === 'string'
+      ? answers.get(`${method} ${path}#${kind}`)
+      : undefined) ??
+      answers.get(`${method} ${path}`) ?? { status: 200, body: {} }
 
     return Promise.resolve(
       new Response(JSON.stringify(answer.body), {
@@ -430,6 +438,51 @@ describe('the requests for deletion (#845)', () => {
 })
 
 describe('a customer that is due (#845)', () => {
+  it('loads the list again and names what went before when a later kind is refused', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) })
+
+    signedInAs('owner')
+    overview(
+      true,
+      [],
+      [],
+      [],
+      [
+        ...due,
+        {
+          deadlineId: 'd-3',
+          kind: 'customer',
+          recordId: 'c-9',
+          name: 'Gerhard Moll',
+          detail: 'Privatkunde, letzter Kontakt 12.06.2023',
+          dueOn: '2026-06-12',
+        },
+      ],
+    )
+    serverSays('POST', '/privacy/erasures', [])
+    serverSays(
+      'POST',
+      '/privacy/erasures#customer',
+      { message: 'Ein ausgewählter Kunde ist noch nicht zum Löschen fällig.' },
+      409,
+    )
+    render(inQueries(<PrivacyScreen />))
+
+    await user.click(await screen.findByRole('button', { name: 'Ausgewählte löschen' }))
+    await user.click(await screen.findByRole('button', { name: 'Endgültig löschen' }))
+
+    const alert = await screen.findByRole('alert')
+
+    expect(alert.textContent).toContain('noch nicht zum Löschen fällig')
+    expect(alert.textContent).toContain('Davor gelöscht: Leads, die nie Kunde wurden.')
+    // The leads are gone: the list is read again, so they are no longer chosen.
+    await waitFor(() => {
+      expect(
+        calls.filter((call) => call.method === 'GET' && call.path === '/privacy'),
+      ).toHaveLength(2)
+    })
+  })
+
   it('goes with the leads chosen, each kind on its own', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) })
 

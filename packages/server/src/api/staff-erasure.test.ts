@@ -317,15 +317,19 @@ async function reachedBefore(
   await Promise.race([stopped.reached, ended])
 }
 
-/** Waits until a statement waits for a lock, of the kind `event` names or any. */
-async function untilWaiting(event?: string): Promise<void> {
+/**
+ * Waits until a statement waits for a lock, of the kind `event` names or any,
+ * and where `statement` is given, one whose text has it.
+ */
+async function untilWaiting(event?: string, statement?: string): Promise<void> {
   for (let tries = 0; tries < 200; tries += 1) {
     const waiting =
       event === undefined
         ? await count("select count(*) as n from pg_stat_activity where wait_event_type = 'Lock'")
         : await count(
-            "select count(*) as n from pg_stat_activity where wait_event_type = 'Lock' and wait_event = $1",
-            [event],
+            `select count(*) as n from pg_stat_activity
+              where wait_event_type = 'Lock' and wait_event = $1 and query like $2`,
+            [event, `%${statement ?? ''}%`],
           )
 
     if (waiting > 0) {
@@ -877,7 +881,7 @@ describe('what of the staff is due (#846)', () => {
     // the list as well and waits for the first.
     const again = erase('staff_year', [key]).then((answer) => answer)
 
-    await untilWaiting('advisory').finally(stopped.release)
+    await untilWaiting('advisory', 'pg_advisory_xact_lock').finally(stopped.release)
 
     expect((await asked).status).toBe(201)
     expect((await again).status).toBe(409)
@@ -905,7 +909,7 @@ describe('what of the staff is due (#846)', () => {
       return answer
     })
 
-    await untilWaiting('advisory').finally(stopped.release)
+    await untilWaiting('advisory', 'pg_advisory_xact_lock').finally(stopped.release)
 
     expect(through).toBe(false)
     expect((await asked).status).toBe(201)

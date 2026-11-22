@@ -238,6 +238,7 @@ describe('a time entry', () => {
       ),
     )
 
+    expect(receipts).toHaveLength(chain.length)
     expect(receipts.every((receipt) => receipt.outcome === 'applied')).toBe(true)
 
     const oneMore = await push([

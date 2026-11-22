@@ -175,7 +175,7 @@ export const processingActivities = [
     subjects: 'Beschäftigte',
     data: 'Beginn, Ende, Pausen und Fahrten, Notiz und Auftrag; der Standort beim Beginn und Ende nur mit Einwilligung der Person',
     deletion:
-      'mit Urlaub und Rufbereitschaft des Jahres acht Jahre nach dessen Ende, bei einem später erfassten oder berichtigten Eintrag oder einem, der ins nächste Jahr reicht, nach dem Ende dieses späteren Jahres',
+      'mit Urlaub und Rufbereitschaft des Jahres acht Jahre nach dessen Ende, bei einem später erfassten oder berichtigten Eintrag oder einem, der ins nächste Jahr reicht, acht Jahre nach dem Ende dieses späteren Jahres',
     purpose: 'Arbeitszeit erfassen, den Lohn abrechnen und die Aufzeichnungen aufbewahren',
     legalBasis:
       'Art. 6 Abs. 1 Buchst. b und c DSGVO mit § 17 MiLoG, § 16 ArbZG und § 147 AO; für den Standort Art. 6 Abs. 1 Buchst. a DSGVO',
