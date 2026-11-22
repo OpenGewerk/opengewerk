@@ -2676,6 +2676,65 @@ describe('an access past its last day', () => {
     return rows.map((row) => ({ at: row.ended_at?.getTime() ?? null, reason: row.reason }))
   }
 
+  it('takes no second connection while a transaction of the last days is open', async () => {
+    const email = 'letzter-tag-verbindung@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+    const ranOut = await atWork(email)
+
+    await begunDaysAgo(working.id)
+    await begunDaysAgo(ranOut.id)
+    await lastDayAgo(north.id, userId, 2)
+    // One that ran out before the access ended, closed on a way of its own.
+    await admin.query(
+      `update auth_sessions s
+          set expires_at = ((m.last_day + 1)::timestamp at time zone 'Europe/Berlin') - interval '1 hour'
+         from memberships m
+        where s.id = $1 and m.user_id = s.user_id and m.tenant_id = $2`,
+      [ranOut.id, north.id],
+    )
+
+    const forTenant = instance.database.forTenant.bind(instance.database)
+    const forInstance = instance.database.forInstance.bind(instance.database)
+    let open = 0
+    let nested = 0
+    const tenants = vi.spyOn(instance.database, 'forTenant').mockImplementation(((
+      identity: Parameters<Database['forTenant']>[0],
+      work: Parameters<Database['forTenant']>[1],
+    ) => {
+      nested += open > 0 ? 1 : 0
+
+      return forTenant(identity, async (tx) => {
+        open += 1
+
+        try {
+          return await work(tx)
+        } finally {
+          open -= 1
+        }
+      })
+    }) as unknown as Database['forTenant'])
+    const instances = vi.spyOn(instance.database, 'forInstance').mockImplementation(((
+      ...args: Parameters<Database['forInstance']>
+    ) => {
+      nested += open > 0 ? 1 : 0
+
+      return forInstance(...args)
+    }) as unknown as Database['forInstance'])
+
+    try {
+      await endPastLastDays(instance.database)
+    } finally {
+      tenants.mockRestore()
+      instances.mockRestore()
+    }
+
+    expect(nested).toBe(0)
+    expect(await sessionsOf(email)).not.toContain(working.id)
+    expect((await endOfWork(working.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))
+    expect(await reasonOfEnd(ranOut.id)).toBe('session.expire')
+  })
+
   it('refuses pieces of a size below 1 before it opens anything', async () => {
     await expect(endPastLastDays(instance.database, 0)).rejects.toThrow(RangeError)
     await expect(endOrphanedStretches(instance.database, 0)).rejects.toThrow(RangeError)
@@ -2831,7 +2890,8 @@ describe('an access past its last day', () => {
     await begunDaysAgo(working.id)
     await lastDayAgo(north.id, userId, 2)
 
-    // The close of the round fails once, after its sessions went.
+    // The close of the round fails once, and its sessions stay with it: they
+    // go only after it commits.
     const forTenant = instance.database.forTenant.bind(instance.database)
     let failed = false
     const failing = vi.spyOn(instance.database, 'forTenant').mockImplementation(((
@@ -2856,9 +2916,12 @@ describe('an access past its last day', () => {
       failing.mockRestore()
     }
 
-    expect(await sessionsOf(email)).not.toContain(working.id)
+    expect(await sessionsOf(email)).toContain(working.id)
     expect(await endOfWork(working.id)).toBeNull()
 
+    // Before the next pass the session goes another way, its stretch left
+    // open: the pass closes it with the access, not as an orphan.
+    await admin.query('delete from auth_sessions where id = $1', [working.id])
     await sweepExpiredSessions(instance.database)
 
     expect((await endOfWork(working.id))?.getTime()).toBe(await endOfLastDay(north.id, userId))

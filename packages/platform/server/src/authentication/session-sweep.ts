@@ -487,9 +487,9 @@ export async function sweepExpiredSessions(
  * with a stretch still open there, also one left open by an earlier release
  * or one whose session is gone; both lists are bounded by what is open, not
  * by how many accesses ever ended. Each round holds the memberships it found
- * past their end in its own transaction until it is through (`FOR SHARE`): a
- * last day moved on meanwhile waits for the round, instead of losing its
- * sessions to a round that read it a moment before.
+ * past their end while it closes (`FOR SHARE`): a last day moved on meanwhile
+ * waits for the round, instead of losing its sessions to a round that read it
+ * a moment before (`endPastLastDaysOfRound`).
  *
  * Here the stretches close first and the sessions go after, the other way
  * round from everywhere else a session ends. There the order keeps a session
@@ -497,10 +497,9 @@ export async function sweepExpiredSessions(
  * access past its end does no work, every request into the tenant is refused
  * and none is renewed (`renewSession`). This way a failure loses nothing: a
  * close that fails leaves the sessions, and the next pass does it all again;
- * a delete that fails undoes the close of the round with it, and the next
- * pass does that again as well. The
- * sessions it deletes are the ones it read, while the round still holds the
- * memberships. A stretch whose session is gone otherwise ends with the access
+ * a delete that fails leaves the sessions, their stretches closed, and the
+ * next pass takes them. The sessions it deletes are the ones it read, of the
+ * people it closed. A stretch whose session is gone otherwise ends with the access
  * as well, and the orphans leave such stretches to this step
  * (`endOrphanedStretches`). A tenant at a time, the people in rounds of a
  * bounded size. Says how many stretches it closed.
@@ -678,65 +677,125 @@ async function endPastLastDaysIn(
   const people = [...new Set([...working, ...open].map((row) => row.userId))]
 
   for (let start = 0; start < people.length; start += batch) {
-    const round = people.slice(start, start + batch)
+    closed += await endPastLastDaysOfRound(
+      database,
+      tenantId,
+      people.slice(start, start + batch),
+      batch,
+    )
+  }
 
-    closed += await database.forTenant({ tenantId, reason: 'membership.end' }, async (tx) => {
-      const ended = await tx
-        .select({ userId: memberships.userId, lastDay: memberships.lastDay })
+  return closed
+}
+
+/**
+ * One round of `endPastLastDaysIn`, step by step, each in a transaction of its
+ * own, so that none holds a connection while it waits for another: the round
+ * that holds the memberships writes into the log of the tenant and with it
+ * holds its chain, and a pool taken by writes waiting for that chain would
+ * leave the round no connection, and every request of the instance with it.
+ *
+ * First who of the round is past the end, then their sessions working here,
+ * the ones that ran out before the access ended closed when they ran out.
+ * Then the round holds the memberships it read (`FOR SHARE`), asks again
+ * whether each is still past its end, and closes the other stretches of those
+ * with the end of their access, in pieces. A last day moved on meanwhile
+ * waits for it, or came first and keeps the person out. Only after its commit
+ * the sessions it read go, of those it closed and while they still work here:
+ * a session past the end of its access does no work, and a delete that fails
+ * leaves them to the next pass, the stretches closed already.
+ */
+async function endPastLastDaysOfRound(
+  database: Database,
+  tenantId: TenantId,
+  round: readonly string[],
+  batch: number,
+): Promise<number> {
+  const ended = await database.forTenant({ tenantId }, (tx) =>
+    tx
+      .select({ userId: memberships.userId, lastDay: memberships.lastDay })
+      .from(memberships)
+      .where(
+        and(
+          eq(memberships.tenantId, tenantId),
+          inArray(memberships.userId, [...round]),
+          pastItsEnd(),
+        ),
+      ),
+  )
+
+  if (ended.length === 0) {
+    return 0
+  }
+
+  const lastDays = sql.join(
+    ended.map((row) => sql`(${row.userId}, ${row.lastDay}::date)`),
+    sql`, `,
+  )
+  // The end of the last day is midnight after it, in Germany, as the day
+  // itself is counted (`last-day.ts`).
+  const accessEnded = sql`((m.last_day + 1)::timestamp at time zone 'Europe/Berlin')`
+
+  // The sessions working there, each with whether it ran out before its
+  // access ended.
+  const sessions = await database.forInstance(async (instance) => {
+    const { rows } = await instance.execute<{
+      id: string
+      user_id: string
+      expires_at: Date | string
+      ran_out: boolean
+    }>(sql`
+      select s.id, s.user_id, s.expires_at, s.expires_at <= ${accessEnded} as ran_out
+        from ${authSessions} s
+        join (values ${lastDays}) as m(user_id, last_day) on s.user_id = m.user_id
+       where s.active_tenant_id = ${tenantId}`)
+
+    return rows
+  })
+
+  // Those end when they ran out, under the reason of the expiry, in a
+  // transaction of their own, since the reason is the transaction's.
+  const ranOutClosed = await endStretchesOf(
+    database,
+    sessions
+      .filter((session) => session.ran_out)
+      .map((session) => ({
+        id: session.id,
+        userId: session.user_id,
+        tenantId,
+        expiresAt: new Date(session.expires_at),
+      })),
+  )
+
+  const { stretches, users } = await database.forTenant(
+    { tenantId, reason: 'membership.end' },
+    async (tx) => {
+      const still = await tx
+        .select({ userId: memberships.userId })
         .from(memberships)
         .where(
-          and(eq(memberships.tenantId, tenantId), inArray(memberships.userId, round), pastItsEnd()),
+          and(
+            eq(memberships.tenantId, tenantId),
+            inArray(
+              memberships.userId,
+              ended.map((row) => row.userId),
+            ),
+            pastItsEnd(),
+          ),
         )
         .for('share')
 
-      if (ended.length === 0) {
-        return 0
+      if (still.length === 0) {
+        return { stretches: 0, users: [] as string[] }
       }
 
-      const users = ended.map((row) => row.userId)
-      const lastDays = sql.join(
-        ended.map((row) => sql`(${row.userId}, ${row.lastDay}::date)`),
-        sql`, `,
-      )
-      // The end of the last day is midnight after it, in Germany, as the day
-      // itself is counted (`last-day.ts`).
-      const accessEnded = sql`((m.last_day + 1)::timestamp at time zone 'Europe/Berlin')`
+      const users = still.map((row) => row.userId)
 
-      // The sessions working there, each with whether it ran out before its
-      // access ended.
-      const sessions = await database.forInstance(async (instance) => {
-        const { rows } = await instance.execute<{
-          id: string
-          user_id: string
-          expires_at: Date | string
-          ran_out: boolean
-        }>(sql`
-          select s.id, s.user_id, s.expires_at, s.expires_at <= ${accessEnded} as ran_out
-            from ${authSessions} s
-            join (values ${lastDays}) as m(user_id, last_day) on s.user_id = m.user_id
-           where s.active_tenant_id = ${tenantId}`)
-
-        return rows
-      })
-      const ranOut = sessions.filter((session) => session.ran_out)
-
-      // Those end when they ran out, under the reason of the expiry, in a
-      // transaction of their own, since the reason is the transaction's.
-      const ranOutClosed = await endStretchesOf(
-        database,
-        ranOut.map((session) => ({
-          id: session.id,
-          userId: session.user_id,
-          tenantId,
-          expiresAt: new Date(session.expires_at),
-        })),
-      )
-
-      // The others with the access, never before the stretch began. The
-      // membership is asked again here, under the lock the round holds. The
-      // stretches of the sessions that ran out are closed and committed by
-      // now, so `endedAt` keeps them out, without a list of them.
-      const stretches = await inPieces(batch, (open) =>
+      // The others with the access, never before the stretch began, the
+      // membership asked again in each piece. The stretches of the sessions
+      // that ran out are closed and committed by now, so `endedAt` keeps them
+      // out, without a list of them.
+      const closing = await inPieces(batch, (open) =>
         tx
           .update(tenantSessions)
           .set({
@@ -773,32 +832,35 @@ async function endPastLastDaysIn(
           .returning({ id: tenantSessions.id }),
       )
 
-      // Then the sessions it read go, as a block takes them, while the
-      // round still holds the memberships; one that changed to another
-      // tenant meanwhile works there and stays. In pieces of the size of a
-      // round: the people of a round are bounded, their sessions are not,
-      // and a statement takes at most 65,535 values.
-      if (sessions.length > 0) {
-        await database.forInstance(async (instance) => {
-          for (let at = 0; at < sessions.length; at += batch) {
-            await instance.delete(authSessions).where(
-              and(
-                inArray(
-                  authSessions.id,
-                  sessions.slice(at, at + batch).map((session) => session.id),
-                ),
-                eq(authSessions.activeTenantId, tenantId),
-              ),
-            )
-          }
-        })
-      }
+      return { stretches: closing, users }
+    },
+  )
 
-      return stretches + ranOutClosed
+  // Then the sessions it read go, as a block takes them, of the people it
+  // closed; one that changed to another tenant meanwhile works there and
+  // stays. In pieces of the size of a round: the people of a round are
+  // bounded, their sessions are not, and a statement takes at most 65,535
+  // values.
+  const closedFor = new Set(users)
+  const going = sessions.filter((session) => closedFor.has(session.user_id))
+
+  if (going.length > 0) {
+    await database.forInstance(async (instance) => {
+      for (let at = 0; at < going.length; at += batch) {
+        await instance.delete(authSessions).where(
+          and(
+            inArray(
+              authSessions.id,
+              going.slice(at, at + batch).map((session) => session.id),
+            ),
+            eq(authSessions.activeTenantId, tenantId),
+          ),
+        )
+      }
     })
   }
 
-  return closed
+  return stretches + ranOutClosed
 }
 
 /**
