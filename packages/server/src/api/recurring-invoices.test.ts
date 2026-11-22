@@ -22,9 +22,10 @@ import { invoiceable, readyToInvoice } from './test-invoice.js'
 
 /**
  * The recurring invoices of maintenance contracts paid per period (#295): one
- * per period and never two, dated on the first day of the period and taxed by
- * its rate, the first of a contract a draft and the next issued by nobody
- * where the contract wants it, and those sent to the customer once.
+ * per period and never two, dated on the day it is made and never before the
+ * first day of its period, taxed by the rate of the period's end (#1017), the
+ * first of a contract a draft and the next issued by nobody where the contract
+ * wants it, and those sent to the customer once.
  */
 
 const north = newId<'tenant'>() as TenantId
