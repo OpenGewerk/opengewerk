@@ -1212,7 +1212,13 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
   const customer = useRecord('customers', customerId)
   const tagged = useTagsBy('customer')
   const held = customerId ? (tagged.get(customerId)?.ids ?? []) : []
-  const [draft, setDraft] = useState<CustomerDraft>(() => draftOf(customer))
+  // The fields, and how often somebody used the box of the confirmation in
+  // this form: kept together, so that the end of a write can tell from the
+  // same state whether the box was used while it was on its way.
+  const [draft, setDraft] = useState<CustomerDraft & { readonly noticeUses: number }>(() => ({
+    ...draftOf(customer),
+    noticeUses: 0,
+  }))
   // The address the notice was confirmed for when the form opened, none
   // where the row on this device is from before the question (#1026): what
   // changed in the form is measured against it, not against a row another
@@ -1229,13 +1235,12 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
   const [opened, setOpened] = useState<Readonly<Record<string, unknown>>>(() =>
     asCustomer(draftOf(customer) as unknown as Record<string, string>),
   )
-  // How often somebody used the box in this form, and how often by the start
-  // of the last write that went through (#1026, the review, CodeRabbit): only
-  // a use after that changes what is confirmed, also one made while the write
-  // was on its way. An address typed anew or spelled otherwise changes none.
-  const [noticeUses, setNoticeUses] = useState(0)
+  // How often the box was used by the start of the last write that went
+  // through (#1026, the review, CodeRabbit): only a use after that changes
+  // what is confirmed, also one made while the write was on its way. An
+  // address typed anew or spelled otherwise changes none.
   const [noticeUsesWritten, setNoticeUsesWritten] = useState(0)
-  const noticeTouched = noticeUses > noticeUsesWritten
+  const noticeTouched = draft.noticeUses > noticeUsesWritten
   // Null until somebody changes the tags: until then the form shows what the
   // record has, also once rows arrive after it opened, and sends nothing.
   const [chosen, setChosen] = useState<ChosenTags | null>(null)
@@ -1272,8 +1277,7 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
 
     // The uses of the box this write knows of; one made while it is on its
     // way still counts for the next.
-    const usesAtStart = noticeUses
-    const addressAtStart = draft.objectionNoticeAddress
+    const usesAtStart = draft.noticeUses
 
     try {
       const written = asCustomer(draft as unknown as Record<string, string>)
@@ -1323,7 +1327,7 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
         // box shows it, unless somebody used it while the write was on its way.
         setOpenedFor(written.objectionNoticeAddress)
         setDraft((current) =>
-          current.objectionNoticeAddress === addressAtStart
+          current.noticeUses === usesAtStart
             ? { ...current, objectionNoticeAddress: written.objectionNoticeAddress ?? '' }
             : current,
         )
@@ -1509,10 +1513,10 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
                       onChange={(event) => {
                         const confirmed = event.target.checked
 
-                        setNoticeUses((uses) => uses + 1)
                         setDraft((current) => ({
                           ...current,
                           objectionNoticeAddress: confirmed ? current.email : '',
+                          noticeUses: current.noticeUses + 1,
                         }))
                       }}
                       className="mt-0.5 size-4 shrink-0 accent-copper-solid"

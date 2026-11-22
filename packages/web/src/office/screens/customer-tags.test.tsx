@@ -647,4 +647,62 @@ describe('what a form and a device can know about tags', () => {
       patch.mockRestore()
     }
   })
+
+  /**
+   * A confirmation given again while the write is on its way stays (CodeRabbit):
+   * the box ends up as it started, and the end of the write still does not
+   * take it back, so the next try sends it.
+   */
+  it('keeps a confirmation given again while the write was on its way', async () => {
+    business()
+    server.put('customers', {
+      ...customer('c-hv', 'Hausverwaltung Süd GmbH', 'property_management'),
+      email: 'info@hv-sued.example',
+      reminderGround: 'existing_customer',
+      reminderGroundOn: '2024-03-12',
+    })
+    tagAnswer = { status: 422, body: { message: 'Einen der Tags gibt es nicht mehr.' } }
+    let answer: () => void = () => {}
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve
+    })
+    const original = writer.patch
+    const patch = vi.spyOn(writer, 'patch').mockImplementationOnce(async (entity, id, values) => {
+      await answered
+
+      return original(entity, id, values)
+    })
+    const notice = () => screen.getByLabelText(/Widerspruchsrecht hingewiesen/) as HTMLInputElement
+
+    try {
+      await mount('/kunden/c-hv/bearbeiten')
+      const user = userEvent.setup()
+      const ground = (await screen.findByLabelText('Grundlage')) as HTMLSelectElement
+
+      await user.click(notice())
+      await user.selectOptions(ground, 'Einwilligung')
+      await user.click(screen.getByRole('button', { name: 'Wallbox entfernen' }))
+      await user.click(screen.getByRole('button', { name: 'Speichern' }))
+      await user.selectOptions(ground, 'Bestandskunde nach § 7 Abs. 3 UWG')
+      await user.click(notice())
+      await user.click(notice())
+      answer()
+      await screen.findByRole('alert')
+
+      expect(patch.mock.calls.map((call) => call[2])).toEqual([{ reminderGround: 'consent' }])
+      expect(notice().checked).toBe(true)
+
+      await user.click(screen.getByRole('button', { name: 'Speichern' }))
+
+      await waitFor(() => {
+        expect(patch).toHaveBeenCalledTimes(2)
+      })
+      expect(patch.mock.calls[1]?.[2]).toEqual({
+        reminderGround: 'existing_customer',
+        objectionNoticeAddress: 'info@hv-sued.example',
+      })
+    } finally {
+      patch.mockRestore()
+    }
+  })
 })
