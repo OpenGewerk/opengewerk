@@ -131,14 +131,18 @@ export async function writePassword(
       return null
     }
 
-    return revokeCredentials(tx, userId)
+    // The moment the sessions go: whether one was at work or had run out is
+    // asked of it, not of the moment its stretch closes after the commit.
+    const at = new Date()
+
+    return { ...(await revokeCredentials(tx, userId)), at }
   }, userId)
 
   if (revoked === null) {
     return null
   }
 
-  const now = new Date()
+  const now = revoked.at
   const ended = revoked.ended.map((session) => ({ ...session, userId }))
 
   await endStretchesOrLeaveThem(

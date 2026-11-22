@@ -1,6 +1,6 @@
 import { otherAccountSignedIn, workingAsHeader, workingInHeader } from '@opengewerk/platform-domain'
 import { and, eq } from 'drizzle-orm'
-import type { Pool } from 'pg'
+import { Client, type Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
@@ -1816,6 +1816,48 @@ describe('the work of a session a new password ends', () => {
     expect(rows).toEqual([
       { ranOut: false, reason: 'password.reset', user: userId },
       { ranOut: true, reason: 'session.expire', user: null },
+    ])
+  })
+
+  it('counts a session as at work by the moment the password took it out, not by a later one (#1034)', async () => {
+    const email = 'passwort-langsam@example.de'
+    const userId = await newcomer(email)
+    const working = await signIn(email)
+
+    await instance.chooseTenant(working, north.id)
+
+    // At work when the password takes it out, and run out five seconds
+    // later, by the time a slow commit is through.
+    const outAt = new Date(Date.now() + 5_000)
+
+    await admin.query('update auth_sessions set expires_at = $2 where user_id = $1', [
+      userId,
+      outAt,
+    ])
+
+    const query = Client.prototype.query
+
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date() })
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+
+      if (/^commit/i.test(text)) {
+        vi.setSystemTime(new Date(outAt.getTime() + 10_000))
+      }
+
+      return (query as (...given: unknown[]) => unknown).apply(this, args)
+    } as typeof query
+
+    try {
+      expect(await writePassword(instance.database, userId, 'neuer-hash', undefined)).not.toBeNull()
+    } finally {
+      Client.prototype.query = query
+      vi.useRealTimers()
+    }
+
+    expect(await stretchesOf(userId)).toEqual([
+      { open: false, reason: 'password.reset', user: userId },
     ])
   })
 
