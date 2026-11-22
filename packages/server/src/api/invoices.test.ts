@@ -58,6 +58,7 @@ interface DocumentRow {
   readonly kind: string
   readonly status: string
   readonly number: string | null
+  readonly documentDate: string
   readonly predecessorDocumentId: string | null
   readonly serviceFrom: string | null
   readonly serviceUntil: string | null
@@ -111,6 +112,11 @@ async function linesOf(documentId: string) {
     .expect(200)
 
   return answer.body as LineRow[]
+}
+
+/** A day as the documents print it. */
+function germanDay(day: string): string {
+  return day.split('-').reverse().join('.')
 }
 
 async function issue(documentId: string, expected = 201, body: Record<string, unknown> = {}) {
@@ -473,8 +479,13 @@ describe('cumulative progress invoices', () => {
     const html = jobs.at(-1)?.html ?? ''
 
     expect(html).toContain('Gesamtleistung')
-    expect(html).toContain(`abzüglich Abschlagsrechnung ${first.number ?? ''} vom 21.09.2026`)
-    expect(html).toContain(`abzüglich Abschlagsrechnung ${second.number ?? ''} vom 21.09.2026`)
+    // Each with the day it was issued on, which is its date (#1039).
+    expect(html).toContain(
+      `abzüglich Abschlagsrechnung ${first.number ?? ''} vom ${germanDay(first.documentDate)}`,
+    )
+    expect(html).toContain(
+      `abzüglich Abschlagsrechnung ${second.number ?? ''} vom ${germanDay(second.documentDate)}`,
+    )
     expect(html).toContain('eingegangen bis 18.09.2026')
     expect(html).toMatch(/Rechnungsbetrag<\/td><td class="figure">2\.856,00\s€/)
   })

@@ -31,6 +31,7 @@ import {
   type InstructionGap,
   isAllowed,
   isCancellable,
+  isInvoice,
   type IsoDate,
   type MissingDetail,
   missingDetails,
@@ -459,7 +460,11 @@ export class DocumentsController {
         }
       }
 
-      const { content, missing } = await contentForIssuing(tx, existing)
+      // One moment for the date and the issuing, so that an invoice issued
+      // across midnight in Germany is not dated the day before its issue.
+      const issuedAt = new Date()
+      const dated = await datedForIssue(tx, existing, todayInGermany(issuedAt))
+      const { content, missing } = await contentForIssuing(tx, dated)
 
       if (missing.length > 0) {
         throw lacking(missing)
@@ -479,7 +484,7 @@ export class DocumentsController {
         })
       }
 
-      return issueWith(tx, identity, existing, content)
+      return issueWith(tx, identity, dated, content, issuedAt)
     })
   }
 
@@ -910,7 +915,11 @@ export class DocumentsController {
         )
       }
 
-      const documentDate = todayInGermany()
+      // One moment for the date, the number and the issue, so that a
+      // cancellation made around midnight does not carry the day before its
+      // issue (#1039, the review).
+      const issuedAt = new Date()
+      const documentDate = todayInGermany(issuedAt)
       const content = cancellationOf(currentContent(snapshot.content), {
         number: null,
         documentDate,
@@ -979,7 +988,6 @@ export class DocumentsController {
         )
       }
 
-      const issuedAt = new Date()
       const number = await assignDocumentNumber(
         tx,
         identity.tenantId,
@@ -1117,6 +1125,42 @@ export class DocumentsController {
 
 type DocumentRow = typeof documents.$inferSelect
 
+/**
+ * An invoice as it is issued: with the day of its issue as its date (#1039).
+ * An invoice states the day it was issued on (§ 14 Abs. 4 Satz 1 Nr. 3 UStG),
+ * and a draft keeps the date it was written with or given, which can be a
+ * day before or ahead. So the date is set to today in Germany, in the
+ * transaction and under the lock of the issuing, before anything is read
+ * that goes by it: the payment term, the statement of cash accounting, and
+ * the rate of an invoice without a day of work. A recurring invoice a lead
+ * made ahead of its period is dated on that day as well: the period of
+ * service on it says what it is for. Any other document keeps its date; the
+ * duty is the invoice's, and a quote or a report is dated as written.
+ */
+async function datedForIssue(
+  tx: TenantTransaction,
+  document: DocumentRow,
+  today: IsoDate,
+): Promise<DocumentRow> {
+  // Only a draft: an invoice a customer signed in a version before 0.6.3 is
+  // fixed, and issuing it is all that is left (#1039, the review).
+  if (!isInvoice(document.kind) || document.status !== 'draft') {
+    return document
+  }
+
+  if (document.documentDate === today) {
+    return document
+  }
+
+  const [dated] = await tx
+    .update(documents)
+    .set({ documentDate: today })
+    .where(eq(documents.id, document.id))
+    .returning()
+
+  return dated ?? document
+}
+
 /** A report the customer signed and nobody issued yet, which a signature fixed without a number. */
 function isSignedReport(document: Pick<DocumentRow, 'kind' | 'status'>): boolean {
   return document.status === 'signed' && document.kind === 'time_and_material_report'
@@ -1133,8 +1177,8 @@ export async function issueWith(
   identity: Pick<RequestIdentity, 'tenantId'> & { readonly userId: string | null },
   existing: DocumentRow,
   content: DocumentContent,
+  issuedAt: Date = new Date(),
 ): Promise<DocumentRow> {
-  const issuedAt = new Date()
   const number = await assignDocumentNumber(tx, identity.tenantId, existing.kind, issuedAt)
 
   // `deletedAt` a second time, and not out of habit. The lock above keeps

@@ -3,7 +3,7 @@ import { Test } from '@nestjs/testing'
 import { Database, newId } from '@opengewerk/platform-server'
 import type { Pool } from 'pg'
 import request from 'supertest'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
@@ -47,6 +47,20 @@ function http() {
 
 async function issue(documentId: string) {
   await http().post(`/documents/${documentId}/issue`).set('x-test-identity', office()).expect(201)
+}
+
+/**
+ * Issues on that day in Germany. An invoice carries the day it is issued
+ * on (#1039), and the term is read by it.
+ */
+async function issueOn(day: string, documentId: string) {
+  vi.useFakeTimers({ toFake: ['Date'], now: new Date(`${day}T10:00:00+02:00`) })
+
+  try {
+    await issue(documentId)
+  } finally {
+    vi.useRealTimers()
+  }
 }
 
 /** What the document froze about its payment term when it was issued. */
@@ -125,7 +139,7 @@ afterAll(async () => {
 describe('before the business has set a payment term', () => {
   it('an invoice asks for payment fourteen days after its date', async () => {
     const invoice = await issuableDraft(app, office(), customerId)
-    await issue(invoice)
+    await issueOn('2026-09-18', invoice)
 
     expect(await frozenTerm(invoice)).toEqual({ days: 14, dueOn: '2026-10-02' })
   })
@@ -151,13 +165,13 @@ describe('the setting', () => {
     await setting(30, '2026-10-01', office()).expect(403)
   })
 
-  it('applies from its day on, and leaves what is dated before it alone', async () => {
+  it('applies from its day on, and leaves what is issued before it alone', async () => {
     await setting(30, '2026-10-01').expect(201)
 
     const before = await issuableDraft(app, office(), customerId, { documentDate: '2026-09-30' })
     const after = await issuableDraft(app, office(), customerId, { documentDate: '2026-10-05' })
-    await issue(before)
-    await issue(after)
+    await issueOn('2026-09-30', before)
+    await issueOn('2026-10-05', after)
 
     expect(await frozenTerm(before)).toEqual({ days: 14, dueOn: '2026-10-14' })
     expect(await frozenTerm(after)).toEqual({ days: 30, dueOn: '2026-11-04' })
@@ -175,7 +189,7 @@ describe('a term of the document itself', () => {
     expect((cleared.body as { paymentTermDays: number | null }).paymentTermDays).toBeNull()
 
     await change(invoice, { paymentTermDays: 0 }).expect(200)
-    await issue(invoice)
+    await issueOn('2026-10-06', invoice)
 
     expect(await frozenTerm(invoice)).toEqual({ days: 0, dueOn: '2026-10-06' })
   })

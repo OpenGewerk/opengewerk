@@ -24,10 +24,11 @@ import { proposedTreatment } from '../documents/treatment.js'
  * first day of the period: a recurring invoice with the period as the time of
  * service and the flat price as its one line. Dated on the day it is made,
  * which is the day of its issue where it is issued by itself (section 14 (4)
- * sentence 1 no. 3 UStG), and never before the first day of its period; one
- * that waits as a draft keeps that day as every draft keeps its date, until
- * the office changes it. Until #1017 it was dated on that
- * first day also when it was made later, after a time the instance was down,
+ * sentence 1 no. 3 UStG), also when a lead on the deadline makes it before
+ * its period: the period of service says what it is for. One that waits as a
+ * draft is dated anew when the office issues it (#1039). Until #1017 it was
+ * dated on the first day of its period, also when it was made later, after a
+ * time the instance was down, and until #1039 when it was made earlier,
  * because the rules taxed a document by its date; they tax by the day of the
  * work now, and the period of service carries that.
  *
@@ -45,6 +46,7 @@ export async function contractInvoice(
   tx: TenantTransaction,
   deadline: DeadlineRow,
   today: IsoDate,
+  now: Date = new Date(),
 ): Promise<void> {
   const [contract] = await tx
     .select()
@@ -89,7 +91,7 @@ export async function contractInvoice(
       customerId: contract.customerId,
       siteId: contract.siteId,
       kind: 'recurring_invoice',
-      documentDate: today > period.from ? today : period.from,
+      documentDate: today,
       subject: `${contract.designation}, ${periodText(period)}`,
       serviceFrom: period.from,
       serviceUntil: period.until,
@@ -145,6 +147,6 @@ export async function contractInvoice(
   }
 
   if (ready.missing.length === 0) {
-    await issueWith(tx, { tenantId: locked.tenantId, userId: null }, locked, ready.content)
+    await issueWith(tx, { tenantId: locked.tenantId, userId: null }, locked, ready.content, now)
   }
 }

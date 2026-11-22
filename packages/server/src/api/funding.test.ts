@@ -477,8 +477,8 @@ describe('the papers of a funding programme at an installation (#307)', () => {
   it('list every proof with what lies in, what is missing and what the operator brings', async () => {
     const { printed } = await papers(`/installations/${wallbox}/funding/${program}`)
     const cover = printed[0]?.html ?? ''
-    const { rows } = await admin.query<{ number: string }>(
-      'select number from documents where id = $1',
+    const { rows } = await admin.query<{ number: string; day: string }>(
+      "select number, to_char(document_date, 'DD.MM.YYYY') as day from documents where id = $1",
       [invoice],
     )
 
@@ -487,7 +487,7 @@ describe('the papers of a funding programme at an installation (#307)', () => {
     expect(cover).toContain('<th>Bemessungsleistung</th><td>11 kW</td>')
     expect(cover).toMatch(
       new RegExp(
-        `Rechnung mit einzeln ausgewiesenen Positionen</td><td class="state enclosed">liegt bei</td><td class="said">${rows[0]?.number ?? 'x'} vom 18\\.09\\.2026`,
+        `Rechnung mit einzeln ausgewiesenen Positionen</td><td class="state enclosed">liegt bei</td><td class="said">${rows[0]?.number ?? 'x'} vom ${(rows[0]?.day ?? 'x').replaceAll('.', '\\.')}`,
       ),
     )
     expect(cover).toContain(
