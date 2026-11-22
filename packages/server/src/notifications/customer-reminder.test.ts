@@ -738,6 +738,23 @@ describe('the ground of a customer at its route', () => {
       expect(JSON.stringify(refused.body)).toContain('für die E-Mail-Adresse des Kunden bestätigt')
     }
 
+    // A confirmation that held for the stored address neither, as a device
+    // can create a customer with one, goes with the next address as well,
+    // also when that is the one it names (CodeRabbit).
+    const vogt = await created({
+      name: 'Familie Vogt',
+      email: 'b.vogt@example.com',
+      reminderGround: 'existing_customer',
+      reminderGroundOn: '2024-03-12',
+    })
+
+    await admin.query(
+      `update customers set objection_notice_address = 'a.vogt@example.com' where id = $1`,
+      [vogt],
+    )
+    await send('patch', `/customers/${vogt}`, { email: 'a.vogt@example.com' }).expect(200)
+    expect(await stored(vogt)).toEqual({ confirmed: false, on: '2024-03-12' })
+
     const becker = await created({
       name: 'Schreinerei Becker',
       reminderGround: 'consent',

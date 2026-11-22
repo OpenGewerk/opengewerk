@@ -81,12 +81,15 @@ function requireReminderGround(
 ): void {
   // A new address takes a confirmation for another one away (#1026,
   // CodeRabbit): it confirms nothing for the new one, and going back to the
-  // old address later must not make it hold again without the box.
+  // old address later must not make it hold again without the box. A
+  // confirmation that did not hold for the stored address either, as a
+  // device can create a customer with one, goes as well.
   if (
     'email' in values &&
     !('objectionNoticeAddress' in values) &&
     stored.confirmedFor !== null &&
-    !objectionNoticeConfirmedFor(values['email'], stored.confirmedFor)
+    (!objectionNoticeConfirmedFor(stored.email, stored.confirmedFor) ||
+      !objectionNoticeConfirmedFor(values['email'], stored.confirmedFor))
   ) {
     values['objectionNoticeAddress'] = null
   }
