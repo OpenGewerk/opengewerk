@@ -546,24 +546,40 @@ export interface LastDaysPass {
  *
  * One step after the other, each in a transaction of its own, so that none
  * holds a connection while it waits for another: a route calls this, and
- * enough of them at once would take every connection of the pool. The
- * stretches closed with the access are asked again in their statement
- * whether it is over, as the pass asks.
+ * enough of them at once would take every connection of the pool. Which
+ * sessions ran out first and when the others end both come from the end of
+ * the access read at the start; the last step holds the membership and closes
+ * only while that end still holds. Moved meanwhile, the steps begin again
+ * with the new one, a few times at most; then the caller closes them.
  */
 export async function endPastLastDayOf(
   database: Database,
   tenantId: TenantId,
   userId: string,
 ): Promise<number> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const closed = await endPastLastDayOnce(database, tenantId, userId)
+
+    if (closed !== null) {
+      return closed
+    }
+  }
+
+  return 0
+}
+
+/** One pass of `endPastLastDayOf`, or null where the end of the access moved meanwhile. */
+async function endPastLastDayOnce(
+  database: Database,
+  tenantId: TenantId,
+  userId: string,
+): Promise<number | null> {
+  const accessEnd = sql<
+    Date | string
+  >`((${memberships.lastDay} + 1)::timestamp at time zone 'Europe/Berlin')`
+  const ofThePerson = and(eq(memberships.tenantId, tenantId), eq(memberships.userId, userId))
   const [membership] = await database.forTenant({ tenantId }, (tx) =>
-    tx
-      .select({
-        endedAt: sql<
-          Date | string
-        >`((${memberships.lastDay} + 1)::timestamp at time zone 'Europe/Berlin')`,
-      })
-      .from(memberships)
-      .where(and(eq(memberships.tenantId, tenantId), eq(memberships.userId, userId), pastItsEnd())),
+    tx.select({ endedAt: accessEnd }).from(memberships).where(and(ofThePerson, pastItsEnd())),
   )
 
   if (membership === undefined) {
@@ -584,32 +600,41 @@ export async function endPastLastDayOf(
       .filter((session) => session.expiresAt <= over)
       .map((session) => ({ id: session.id, userId, tenantId, expiresAt: session.expiresAt })),
   )
-  const withTheAccess = await database.forTenant({ tenantId, reason: 'membership.end' }, (tx) =>
-    tx
-      .update(tenantSessions)
-      .set({
-        endedAt: sql`greatest(${tenantSessions.startedAt}, (
-            select ((${memberships.lastDay} + 1)::timestamp at time zone 'Europe/Berlin')
-              from ${memberships}
-             where ${memberships.tenantId} = ${tenantSessions.tenantId}
-               and ${memberships.userId} = ${tenantSessions.userId}))`,
-      })
-      .where(
-        and(
-          eq(tenantSessions.tenantId, tenantId),
-          eq(tenantSessions.userId, userId),
-          isNull(tenantSessions.endedAt),
-          sql`exists (
-              select 1 from ${memberships}
-               where ${memberships.tenantId} = ${tenantSessions.tenantId}
-                 and ${memberships.userId} = ${tenantSessions.userId}
-                 and ${pastItsEnd()})`,
-        ),
-      )
-      .returning({ id: tenantSessions.id }),
+  const withTheAccess = await database.forTenant(
+    { tenantId, reason: 'membership.end' },
+    async (tx) => {
+      const [still] = await tx
+        .select({ userId: memberships.userId })
+        .from(memberships)
+        .where(
+          and(ofThePerson, pastItsEnd(), sql`${accessEnd} = ${over.toISOString()}::timestamptz`),
+        )
+        .for('share')
+
+      if (still === undefined) {
+        return null
+      }
+
+      // Never before the stretch began.
+      const rows = await tx
+        .update(tenantSessions)
+        .set({
+          endedAt: sql`greatest(${tenantSessions.startedAt}, ${over.toISOString()}::timestamptz)`,
+        })
+        .where(
+          and(
+            eq(tenantSessions.tenantId, tenantId),
+            eq(tenantSessions.userId, userId),
+            isNull(tenantSessions.endedAt),
+          ),
+        )
+        .returning({ id: tenantSessions.id })
+
+      return rows.length
+    },
   )
 
-  return ranOut + withTheAccess.length
+  return withTheAccess === null ? null : ranOut + withTheAccess
 }
 
 /** `endPastLastDays` in one tenant. Says how many stretches it closed. */
