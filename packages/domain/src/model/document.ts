@@ -402,6 +402,33 @@ export const retentionNote =
  */
 export const cashAccountingNote = 'Versteuerung nach vereinnahmten Entgelten.'
 
+/**
+ * What the customer declares for the zero rate of section 12 (3) UStG. The
+ * business has to show that its conditions are met, and section 12.18 (6)
+ * UStAE (BMF, 27.02.2023) lets a declaration of the customer do: that they run
+ * the plant, and that either the building qualifies or the plant has at most
+ * 30 kW (peak) in the Marktstammdatenregister. It may be part of the contract,
+ * so a quote or an order confirmation with a line at the zero rate carries it,
+ * and the customer gives it with the contract (#1025). The same sentence holds
+ * for a storage, an essential component or a spare part delivered later, which
+ * the administration counts the same way.
+ *
+ * The building is said in the words of section 12 (3) number 1 UStG, because
+ * "a qualifying building" tells a customer nothing. The same reasoning as for
+ * `taxNotes` keeps the wording here and not in a package.
+ */
+const zeroRateDeclared =
+  'dass er Betreiber der Photovoltaikanlage ist, zu der die Positionen mit 0 % gehören, und dass ' +
+  'sie sich entweder auf oder in der Nähe einer Wohnung oder eines öffentlichen oder anderen ' +
+  'Gebäudes befindet, das für dem Gemeinwohl dienende Tätigkeiten genutzt wird, oder ihre ' +
+  'installierte Bruttoleistung laut Marktstammdatenregister nicht mehr als 30 kW (peak) beträgt ' +
+  'oder betragen wird (§ 12 Abs. 3 UStG).'
+
+export const zeroRateDeclarations: Readonly<Partial<Record<DocumentKind, string>>> = {
+  quote: `Mit der Annahme dieses Angebots erklärt der Kunde, ${zeroRateDeclared}`,
+  order_confirmation: `Mit seinem Auftrag erklärt der Kunde, ${zeroRateDeclared}`,
+}
+
 export interface Document extends Synced {
   readonly id: DocumentId
   readonly customerId: CustomerId

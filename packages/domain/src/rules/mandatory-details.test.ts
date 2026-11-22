@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import type { IssuerContent, LineContent, RecipientContent } from '../model/document-content.js'
-import { cashAccountingNote, retentionNote, taxNotes } from '../model/document.js'
+import {
+  cashAccountingNote,
+  retentionNote,
+  taxNotes,
+  zeroRateDeclarations,
+} from '../model/document.js'
 import { type ContentSources, documentContent, printedNotes } from './document-content.js'
 import { detailsRegime, missingDetails } from './mandatory-details.js'
 import { shippedRules } from './shipped.js'
@@ -331,6 +336,7 @@ describe('the printed notes', () => {
         taxTreatment: 'small_business',
         recipientIsBusiness: false,
         statesCashAccounting: false,
+        zeroRated: false,
       }),
     ).toEqual([taxNotes.small_business])
   })
@@ -342,6 +348,7 @@ describe('the printed notes', () => {
         taxTreatment: 'standard',
         recipientIsBusiness: false,
         statesCashAccounting: false,
+        zeroRated: false,
       }),
     ).toEqual([retentionNote])
     expect(
@@ -350,6 +357,7 @@ describe('the printed notes', () => {
         taxTreatment: 'standard',
         recipientIsBusiness: true,
         statesCashAccounting: false,
+        zeroRated: false,
       }),
     ).toEqual([])
     expect(
@@ -358,6 +366,7 @@ describe('the printed notes', () => {
         taxTreatment: 'standard',
         recipientIsBusiness: false,
         statesCashAccounting: false,
+        zeroRated: false,
       }),
     ).toEqual([])
   })
@@ -369,8 +378,35 @@ describe('the printed notes', () => {
         taxTreatment: 'small_business',
         recipientIsBusiness: false,
         statesCashAccounting: false,
+        zeroRated: false,
       }),
     ).toEqual([taxNotes.small_business])
+  })
+
+  /**
+   * Section 12.18 (6) UStAE: the business proves the zero rate, and the
+   * customer's declaration is enough for that and may be part of the contract
+   * (#1025).
+   */
+  it('carry the declaration for the zero rate where the customer agrees to a line at it', () => {
+    const solar = {
+      ...position(2, 800000, 'Solarmodule liefern und montieren'),
+      vatRate: 'zero',
+    } satisfies LineContent
+    const lines = [position(1, 100000), solar]
+
+    expect(invoice({ kind: 'quote' }, { lines }).notes).toEqual([zeroRateDeclarations.quote])
+    expect(invoice({ kind: 'order_confirmation' }, { lines }).notes).toEqual([
+      zeroRateDeclarations.order_confirmation,
+    ])
+    // Nothing to declare without a line at the zero rate.
+    expect(invoice({ kind: 'quote' }).notes).toEqual([])
+    // An invoice states the rate the contract agreed on and asks nothing.
+    expect(invoice({ kind: 'final_invoice' }, { lines }).notes).toEqual([retentionNote])
+    // Under section 19 no rate applies at all.
+    expect(invoice({ kind: 'quote', taxTreatment: 'small_business' }, { lines }).notes).toEqual([
+      taxNotes.small_business,
+    ])
   })
 
   it('say from 2028 that the business pays its tax on what it receives, before the retention', () => {

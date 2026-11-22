@@ -119,6 +119,7 @@ describe('a signed document', () => {
         taxTreatment: 'small_business',
         recipientIsBusiness: false,
         statesCashAccounting: false,
+        zeroRated: false,
       }),
     ).toEqual([])
     expect(
@@ -127,6 +128,7 @@ describe('a signed document', () => {
         taxTreatment: 'small_business',
         recipientIsBusiness: false,
         statesCashAccounting: false,
+        zeroRated: false,
       }),
     ).toHaveLength(1)
   })

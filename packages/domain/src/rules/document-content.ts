@@ -5,6 +5,7 @@ import {
   retentionNote,
   showsPrices,
   taxNotes,
+  zeroRateDeclarations,
 } from '../model/document.js'
 import type {
   DeductionContent,
@@ -123,12 +124,18 @@ export interface ContentSources {
  * for it: an invoice, taxed as usual, to somebody who is not a business. Under
  * section 19 there is no taxable supply for the obligation to hang on, and a
  * reverse charge only ever goes to a business.
+ *
+ * The declaration for the zero rate where the customer agrees to lines at it,
+ * on a quote and an order confirmation (#1025). `zeroRated` says whether the
+ * totals have a group at 0 percent, which only a document taxed as usual has:
+ * under section 19 or a reverse charge no rate is applied at all.
  */
 export function printedNotes(document: {
   readonly kind: Document['kind']
   readonly taxTreatment: Document['taxTreatment']
   readonly recipientIsBusiness: boolean
   readonly statesCashAccounting: boolean
+  readonly zeroRated: boolean
 }): readonly string[] {
   const notes: string[] = []
   const taxNote = taxNotes[document.taxTreatment]
@@ -137,6 +144,12 @@ export function printedNotes(document: {
   // that says no VAT is charged answers a question it never raised.
   if (taxNote && showsPrices(document.kind)) {
     notes.push(taxNote)
+  }
+
+  const declaration = zeroRateDeclarations[document.kind]
+
+  if (declaration && document.zeroRated) {
+    notes.push(declaration)
   }
 
   if (document.statesCashAccounting) {
@@ -225,6 +238,7 @@ export function documentContent(rules: RuleSet, sources: ContentSources): Docume
       taxTreatment: document.taxTreatment,
       recipientIsBusiness: sources.recipient.isBusiness,
       statesCashAccounting,
+      zeroRated: totals.byRate.some((entry) => entry.rate === 'zero'),
     }),
     signature: sources.signature,
     deductions: sources.deductions,
