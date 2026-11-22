@@ -794,15 +794,11 @@ export async function endOrphanedStretches(
 
     for (let start = 0; start < open.length; start += batch) {
       const ids = open.slice(start, start + batch).map((row) => row.sessionId)
-      const alive = await database.forInstance((tx) =>
-        tx
-          .select({ id: authSessions.id, tenantId: authSessions.activeTenantId })
-          .from(authSessions)
-          .where(inArray(authSessions.id, ids)),
-      )
-      const living = new Map(alive.map((row) => [row.id, row.tenantId]))
-      // The stretches themselves, read after the sessions: what closes is
-      // what was read here, by its key, never one a session opened since.
+      // The stretches first, then where their sessions work: what closes is
+      // what was read here, by its key, never one a session opened since, and
+      // a session that works elsewhere when asked after left a stretch it had
+      // here when it was read. Asked the other way round, a session that left
+      // and came back between the two would lose the stretch it works in.
       const stretches = await database.forTenant({ tenantId }, (tx) =>
         tx
           .select({
@@ -825,6 +821,13 @@ export async function endOrphanedStretches(
           ),
       )
       const latest = new Map(stretches.map((stretch) => [stretch.sessionId, stretch.id]))
+      const alive = await database.forInstance((tx) =>
+        tx
+          .select({ id: authSessions.id, tenantId: authSessions.activeTenantId })
+          .from(authSessions)
+          .where(inArray(authSessions.id, ids)),
+      )
+      const living = new Map(alive.map((row) => [row.id, row.tenantId]))
       // Gone, working in another tenant since a switch whose close of the
       // stretch here failed (opengewerk#1030), or back here since and at work
       // in a newer one: the work of this stretch ended either way.

@@ -2124,6 +2124,82 @@ describe('work that cannot be closed when its session ends', () => {
     ])
   })
 
+  it('leaves the stretch of a session that left and came back while the sweep read it', async () => {
+    const email = 'wechsel-im-lauf@example.de'
+
+    await joinedNorth(email)
+    await addStaffMember(instance.authentication, instance.database, {
+      email,
+      name: 'Sven Schließen',
+      password,
+      tenantId: south.id,
+      roles: ['member'],
+    })
+
+    const working = await atWork(email)
+    const query = Client.prototype.query
+    let state: 'before' | 'away' | 'gone' | 'back' | 'done' = 'before'
+
+    // Into the south once the sweep has read which sessions have a stretch
+    // open in the north, and back once it has asked where they work.
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const values = (typeof config === 'string' ? args[1] : (config?.values ?? args[1])) as
+        unknown[] | undefined
+      const forward = () => (query as (...given: unknown[]) => Promise<unknown>).apply(this, args)
+
+      if (
+        state === 'before' &&
+        /select distinct "session_id" from "tenant_sessions"/i.test(text) &&
+        (values ?? []).includes(north.id)
+      ) {
+        state = 'away'
+
+        return forward().then(async (result) => {
+          await instance.chooseTenant(working.cookies, south.id)
+          state = 'gone'
+
+          return result
+        })
+      }
+
+      if (state === 'gone' && /"active_tenant_id" from "auth_sessions"/i.test(text)) {
+        state = 'back'
+
+        return forward().then(async (result) => {
+          await instance.chooseTenant(working.cookies, north.id)
+          state = 'done'
+
+          return result
+        })
+      }
+
+      return forward()
+    } as typeof query
+
+    try {
+      await endOrphanedStretches(instance.database)
+    } finally {
+      Client.prototype.query = query
+    }
+
+    const { rows } = await admin.query<{ open: boolean; reason: string | null }>(
+      `select t.ended_at is null as open, a.reason from tenant_sessions t
+         left join audit_entries a
+           on a.table_name = 'tenant_sessions' and a.record_id = t.id and a.field = 'ended_at'
+        where t.session_id = $1 and t.tenant_id = $2
+        order by t.started_at, t.id`,
+      [working.id, north.id],
+    )
+
+    expect(state).toBe('done')
+    expect(rows).toEqual([
+      { open: false, reason: 'session.switch' },
+      { open: true, reason: null },
+    ])
+  })
+
   it('cuts a device off also when its work cannot be closed (#1031)', async () => {
     const email = 'geraet-schliessen@example.de'
 
