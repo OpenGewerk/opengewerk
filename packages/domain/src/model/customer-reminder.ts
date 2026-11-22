@@ -92,11 +92,20 @@ export type ReminderWay = 'mail' | 'call'
  * Compared without case and surrounding space, as an address is.
  */
 export function objectionNoticeConfirmedFor(email: unknown, confirmedFor: unknown): boolean {
-  // Whatever a request carries: what is no text is no address (the review).
-  const own = typeof email === 'string' ? email.trim().toLowerCase() : ''
-  const given = typeof confirmedFor === 'string' ? confirmedFor.trim().toLowerCase() : ''
+  return sameEmailAddress(email, confirmedFor)
+}
 
-  return own !== '' && own === given
+/**
+ * Whether two texts are the same e-mail address: compared without case and
+ * surrounding space, and never when one is empty. Whatever a request carries
+ * that is no text is no address (the review). The confirmation of the notice
+ * and the check before a reminder goes out compare the same way.
+ */
+export function sameEmailAddress(left: unknown, right: unknown): boolean {
+  const one = typeof left === 'string' ? left.trim().toLowerCase() : ''
+  const other = typeof right === 'string' ? right.trim().toLowerCase() : ''
+
+  return one !== '' && one === other
 }
 
 export function reminderWay(

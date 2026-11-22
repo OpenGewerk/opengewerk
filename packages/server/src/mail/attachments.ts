@@ -13,6 +13,7 @@ import {
   reminderContract,
   reminderStillHolds,
   RuleError,
+  sameEmailAddress,
   shippedRules,
 } from '@opengewerk/domain'
 import {
@@ -428,7 +429,9 @@ export async function refuseWithheldCustomerMail(
       }
 
       if (
-        customer.email !== row.recipientAddress ||
+        // The same address, spelled otherwise or not, as the confirmation
+        // compares it (the review).
+        !sameEmailAddress(customer.email, row.recipientAddress) ||
         !reminderStillHolds(
           row.body,
           customer.ground,

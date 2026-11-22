@@ -349,6 +349,16 @@ describe('a reminder that waits to go out', () => {
         lapsedReminderMail,
       )
 
+      // Confirmed again, and the address only spelled otherwise since: that
+      // is still the address the reminder was written to (the review).
+      await stored('lehmann', 'existing_customer', true)
+      await admin.query(`update customers set email = 'Klaus.Lehmann@example.com' where id = $1`, [
+        customers['lehmann'],
+      ])
+      await expect(refuseWithheldCustomerMail(database, await waiting('lehmann'))).resolves.toBe(
+        undefined,
+      )
+
       // Confirmed again, but for another address: the waiting reminder was
       // written to the one the customer had (CodeRabbit).
       await stored('lehmann', 'existing_customer', true)
