@@ -2340,6 +2340,7 @@ describe('an access past its last day', () => {
     // the pass has read the membership as past its end.
     const held = await admin.connect()
     let committed = false
+    let pass: Promise<unknown> | undefined
 
     try {
       await held.query('begin')
@@ -2349,7 +2350,10 @@ describe('an access past its last day', () => {
       )
 
       const holder = await held.query<{ pid: number }>('select pg_backend_pid() as pid')
-      const pass = sweepExpiredSessions(instance.database)
+      pass = sweepExpiredSessions(instance.database)
+      // Its refusal is the test's, also while the loop still polls.
+      pass.catch(() => undefined)
+
       let blocked = false
 
       for (let tries = 0; tries < 200 && !blocked; tries += 1) {
@@ -2374,6 +2378,8 @@ describe('an access past its last day', () => {
       expect(blocked).toBe(true)
     } finally {
       held.release(!committed)
+      // Without the lock the pass goes on; it ends before the test does.
+      await pass?.catch(() => undefined)
     }
 
     expect(await sessionsOf(email)).toContain(working.id)
@@ -2391,6 +2397,7 @@ describe('an access past its last day', () => {
     // the session it read as working in the north.
     const held = await admin.connect()
     let committed = false
+    let pass: Promise<unknown> | undefined
 
     try {
       await held.query('begin')
@@ -2400,7 +2407,10 @@ describe('an access past its last day', () => {
       ])
 
       const holder = await held.query<{ pid: number }>('select pg_backend_pid() as pid')
-      const pass = sweepExpiredSessions(instance.database)
+      pass = sweepExpiredSessions(instance.database)
+      // Its refusal is the test's, also while the loop still polls.
+      pass.catch(() => undefined)
+
       let blocked = false
 
       for (let tries = 0; tries < 200 && !blocked; tries += 1) {
@@ -2425,6 +2435,8 @@ describe('an access past its last day', () => {
       expect(blocked).toBe(true)
     } finally {
       held.release(!committed)
+      // Without the lock the pass goes on; it ends before the test does.
+      await pass?.catch(() => undefined)
     }
 
     expect(await sessionsOf(email)).toContain(working.id)
