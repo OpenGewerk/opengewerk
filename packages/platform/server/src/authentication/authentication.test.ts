@@ -2970,21 +2970,25 @@ describe('an access past its last day', () => {
 
     // The other close goes once the pass waits for it, at the stretch its
     // first piece chose, and not before.
-    for (let tries = 0; tries < 200 && !waited; tries += 1) {
-      const { rows: waiting } = await admin.query<{ n: number }>(
-        'select count(*)::int as n from pg_stat_activity where $1 = any(pg_blocking_pids(pid))',
-        [holder],
-      )
+    // Let go in any case, so that a failure here leaves no open transaction
+    // behind for the pass and the tests after it.
+    try {
+      for (let tries = 0; tries < 200 && !waited; tries += 1) {
+        const { rows: waiting } = await admin.query<{ n: number }>(
+          'select count(*)::int as n from pg_stat_activity where $1 = any(pg_blocking_pids(pid))',
+          [holder],
+        )
 
-      waited = (waiting[0]?.n ?? 0) > 0
+        waited = (waiting[0]?.n ?? 0) > 0
 
-      if (!waited) {
-        await new Promise((resolve) => setTimeout(resolve, 50))
+        if (!waited) {
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
       }
+    } finally {
+      release()
+      await Promise.all([pass, other])
     }
-
-    release()
-    await Promise.all([pass, other])
 
     expect(waited).toBe(true)
 
