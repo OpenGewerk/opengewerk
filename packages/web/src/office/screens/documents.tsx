@@ -933,6 +933,9 @@ function DocumentView({ document }: { readonly document: RecordState }) {
           documentId={documentId}
           deductions={closing ? figures.deductions : []}
           {...(issueThen ? { then: issueThen } : {})}
+          {...(isInvoice(kind) && text(document, 'documentDate') !== today()
+            ? { redatedFrom: text(document, 'documentDate') }
+            : {})}
           onDone={(said) => {
             setIssuing(false)
             setIssueThen(undefined)

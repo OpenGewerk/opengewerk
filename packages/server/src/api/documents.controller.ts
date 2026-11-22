@@ -31,6 +31,7 @@ import {
   type InstructionGap,
   isAllowed,
   isCancellable,
+  isInvoice,
   type IsoDate,
   type MissingDetail,
   missingDetails,
@@ -459,7 +460,8 @@ export class DocumentsController {
         }
       }
 
-      const { content, missing } = await contentForIssuing(tx, existing)
+      const dated = await datedForIssue(tx, existing)
+      const { content, missing } = await contentForIssuing(tx, dated)
 
       if (missing.length > 0) {
         throw lacking(missing)
@@ -479,7 +481,7 @@ export class DocumentsController {
         })
       }
 
-      return issueWith(tx, identity, existing, content)
+      return issueWith(tx, identity, dated, content)
     })
   }
 
@@ -1116,6 +1118,32 @@ export class DocumentsController {
 }
 
 type DocumentRow = typeof documents.$inferSelect
+
+/**
+ * An invoice as it is issued: with the day of its issue as its date (#1039).
+ * An invoice states the day it was issued on (§ 14 Abs. 4 Satz 1 Nr. 3 UStG),
+ * and a draft keeps the date it was written with or given, which can be a
+ * day before or ahead. So the date is set to today in Germany, in the
+ * transaction and under the lock of the issuing, before anything is read
+ * that goes by it: the payment term, the statement of cash accounting, and
+ * whether the law requires the e-invoice. Any other document keeps its date;
+ * the duty is the invoice's, and a quote or a report is dated as written.
+ */
+async function datedForIssue(tx: TenantTransaction, document: DocumentRow): Promise<DocumentRow> {
+  const today = todayInGermany()
+
+  if (!isInvoice(document.kind) || document.documentDate === today) {
+    return document
+  }
+
+  const [dated] = await tx
+    .update(documents)
+    .set({ documentDate: today })
+    .where(eq(documents.id, document.id))
+    .returning()
+
+  return dated ?? document
+}
 
 /** A report the customer signed and nobody issued yet, which a signature fixed without a number. */
 function isSignedReport(document: Pick<DocumentRow, 'kind' | 'status'>): boolean {
