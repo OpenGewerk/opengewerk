@@ -139,6 +139,9 @@ describe('a message', () => {
 
     expect(failure.code).toBe('ETIMEDOUT')
     expect(failure.permanent).toBe(false)
+    // The deadline ran out while the server held back its answer to DATA,
+    // not before: on a slow machine it can end earlier and prove nothing.
+    expect(slow.reached.data).toBe(1)
 
     await new Promise((resolve) => setTimeout(resolve, 1_200))
     transport.close()
@@ -172,6 +175,9 @@ describe('a message', () => {
     const failure = await failureOf(transport.send(large))
 
     expect(failure.code).toBe('ETIMEDOUT')
+    // The server asked for the message and stopped reading before the
+    // deadline ran out (#1054).
+    expect(late.reached).toEqual({ data: 1, pausedReading: 1 })
 
     await new Promise((resolve) => setTimeout(resolve, 3_000))
     transport.close()

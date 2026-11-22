@@ -137,7 +137,8 @@ export async function removeSecondFactor(
   }, actor)
 
   // No session is kept: every device that was signed in may be the lost one.
-  await endOtherSessions(database, userId, '', reasons.reset)
+  // Its stretches close in the name of whoever reset it (opengewerk#1048).
+  await endOtherSessions(database, userId, '', reasons.reset, actor)
 
   for (const tenantId of await tenantsOf(database, userId)) {
     await database.forTenant({ tenantId, userId: actor, reason: reasons.reset }, (tx) =>

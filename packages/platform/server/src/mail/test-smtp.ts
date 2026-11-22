@@ -27,6 +27,13 @@ export interface FakeSmtpServer {
   readonly received: readonly ReceivedMail[]
   /** How many connections are open right now. */
   open(): number
+  /**
+   * How far the conversations got (#1054): how often a sender said DATA,
+   * counted as it says it, before any wait of `slowData`, and how often the
+   * server stopped reading for `readsLate`. A test of a deadline shows with
+   * them that it reached the part it is about, and did not run out before.
+   */
+  readonly reached: { readonly data: number; readonly pausedReading: number }
   close(): Promise<void>
 }
 
@@ -42,6 +49,7 @@ export interface FakeSmtpServer {
 export async function fakeSmtpServer(options: FakeSmtpOptions = {}): Promise<FakeSmtpServer> {
   const received: ReceivedMail[] = []
   const sockets = new Set<Socket>()
+  const reached = { data: 0, pausedReading: 0 }
 
   const server: Server = createServer((socket) => {
     sockets.add(socket)
@@ -131,6 +139,7 @@ export async function fakeSmtpServer(options: FakeSmtpOptions = {}): Promise<Fak
           }
         } else if (command === 'DATA') {
           lines = []
+          reached.data += 1
 
           const takeData = () => {
             if (socket.destroyed) {
@@ -141,6 +150,7 @@ export async function fakeSmtpServer(options: FakeSmtpOptions = {}): Promise<Fak
             say('354 End data with <CR><LF>.<CR><LF>')
 
             if (options.readsLate !== undefined) {
+              reached.pausedReading += 1
               socket.pause()
               setTimeout(() => {
                 socket.resume()
@@ -177,6 +187,7 @@ export async function fakeSmtpServer(options: FakeSmtpOptions = {}): Promise<Fak
     port: address.port,
     received,
     open: () => sockets.size,
+    reached,
     close: () =>
       new Promise<void>((resolve) => {
         for (const socket of sockets) {
