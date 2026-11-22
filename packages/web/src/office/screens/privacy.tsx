@@ -246,17 +246,24 @@ function DueTable({
     } catch (error) {
       setAsking(false)
 
-      const said = saidWhy(error, 'Das Löschen ging nicht durch. Nichts wurde gelöscht.')
+      // Without an answer of its own, the words of the fallback: nothing went,
+      // or only the kinds before the one that failed.
+      const said = saidWhy(
+        error,
+        gone.length === 0
+          ? 'Das Löschen ging nicht durch. Nichts wurde gelöscht.'
+          : 'Das Löschen ging nicht ganz durch.',
+      )
 
-      if (gone.length === 0) {
-        setProblem(said)
-      } else {
-        setProblem(
-          `${said} Davor gelöscht: ${gone.map((kind) => erasureKindWords[kind].title).join('; ')}.`,
-        )
-        await queries.invalidateQueries({ queryKey: privacyKey })
-        await queries.invalidateQueries({ queryKey: ['prospects'] })
-      }
+      setProblem(
+        gone.length === 0
+          ? said
+          : `${said} Davor gelöscht: ${gone.map((kind) => erasureKindWords[kind].title).join('; ')}.`,
+      )
+      // The list read again, whatever went: the kinds before are gone, and
+      // the server may say that whether one is still due is for the list.
+      await queries.invalidateQueries({ queryKey: privacyKey })
+      await queries.invalidateQueries({ queryKey: ['prospects'] })
     } finally {
       setBusy(false)
     }

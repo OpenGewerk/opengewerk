@@ -166,6 +166,11 @@ beforeEach(() => {
       : undefined) ??
       answers.get(`${method} ${path}`) ?? { status: 200, body: {} }
 
+    // A status of 0 is a request that never reached the server.
+    if (answer.status === 0) {
+      return Promise.reject(new TypeError('Failed to fetch'))
+    }
+
     return Promise.resolve(
       new Response(JSON.stringify(answer.body), {
         status: answer.status,
@@ -481,6 +486,40 @@ describe('a customer that is due (#845)', () => {
         calls.filter((call) => call.method === 'GET' && call.path === '/privacy'),
       ).toHaveLength(2)
     })
+  })
+
+  it('says nothing about nothing having gone when a later kind never reaches the server', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) })
+
+    signedInAs('owner')
+    overview(
+      true,
+      [],
+      [],
+      [],
+      [
+        ...due,
+        {
+          deadlineId: 'd-3',
+          kind: 'customer',
+          recordId: 'c-9',
+          name: 'Gerhard Moll',
+          detail: 'Privatkunde, letzter Kontakt 12.06.2023',
+          dueOn: '2026-06-12',
+        },
+      ],
+    )
+    serverSays('POST', '/privacy/erasures', [])
+    serverSays('POST', '/privacy/erasures#customer', {}, 0)
+    render(inQueries(<PrivacyScreen />))
+
+    await user.click(await screen.findByRole('button', { name: 'Ausgewählte löschen' }))
+    await user.click(await screen.findByRole('button', { name: 'Endgültig löschen' }))
+
+    const alert = await screen.findByRole('alert')
+
+    expect(alert.textContent).toContain('Davor gelöscht: Leads, die nie Kunde wurden.')
+    expect(alert.textContent).not.toContain('Nichts wurde gelöscht')
   })
 
   it('goes with the leads chosen, each kind on its own', async () => {
