@@ -770,16 +770,16 @@ async function endPastLastDaysOfRound(
   const { stretches, users } = await database.forTenant(
     { tenantId, reason: 'membership.end' },
     async (tx) => {
+      // Each with the last day the round read: which session ran out before
+      // the access ended was worked out by it. One moved meanwhile, also to
+      // another day past, waits for the next pass, which reads it anew.
       const still = await tx
         .select({ userId: memberships.userId })
         .from(memberships)
         .where(
           and(
             eq(memberships.tenantId, tenantId),
-            inArray(
-              memberships.userId,
-              ended.map((row) => row.userId),
-            ),
+            sql`(${memberships.userId}, ${memberships.lastDay}) in (values ${lastDays})`,
             pastItsEnd(),
           ),
         )

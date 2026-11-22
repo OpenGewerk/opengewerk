@@ -2676,6 +2676,59 @@ describe('an access past its last day', () => {
     return rows.map((row) => ({ at: row.ended_at?.getTime() ?? null, reason: row.reason }))
   }
 
+  it('leaves to the next pass an access whose last day moved on to another past day while the round read it', async () => {
+    const email = 'letzter-tag-runde-verschoben@example.de'
+    const userId = await joined(email, [north.id])
+    const working = await atWork(email)
+
+    await begunDaysAgo(working.id)
+    await lastDayAgo(north.id, userId, 3)
+
+    // Runs out an hour after the access ended, by the last day read first.
+    const { rows } = await admin.query<{ expires_at: Date }>(
+      `update auth_sessions s
+          set expires_at = ((m.last_day + 1)::timestamp at time zone 'Europe/Berlin') + interval '1 hour'
+         from memberships m
+        where s.id = $1 and m.user_id = s.user_id and m.tenant_id = $2
+       returning s.expires_at`,
+      [working.id, north.id],
+    )
+
+    // The office moves the last day on by one, still past, as the round is
+    // about to hold the memberships it read.
+    const query = Client.prototype.query
+    let moved = false
+
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const forward = () => (query as (...given: unknown[]) => unknown).apply(this, args)
+
+      if (!moved && /from "memberships"/i.test(text) && /for share/i.test(text)) {
+        moved = true
+
+        return lastDayAgo(north.id, userId, 2).then(forward)
+      }
+
+      return forward()
+    } as typeof query
+
+    try {
+      await endPastLastDays(instance.database)
+    } finally {
+      Client.prototype.query = query
+    }
+
+    expect(moved).toBe(true)
+    expect(await endOfWork(working.id)).toBeNull()
+
+    // The next pass reads the new end: the session ran out before it.
+    await endPastLastDays(instance.database)
+
+    expect((await endOfWork(working.id))?.getTime()).toBe(rows[0]?.expires_at.getTime())
+    expect(await reasonOfEnd(working.id)).toBe('session.expire')
+  })
+
   it('takes no second connection while a transaction of the last days is open', async () => {
     const email = 'letzter-tag-verbindung@example.de'
     const userId = await joined(email, [north.id])
