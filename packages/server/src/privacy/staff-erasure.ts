@@ -178,7 +178,10 @@ function yearsOf(upTo: number | null): SQL {
  * persons times the corrections of the business it grew with the square of
  * its size. Past a hundred links the function stops at the entry a hundred
  * links up and takes its year, and so does this, so that the list and the
- * deletion put an entry into the same year.
+ * deletion put an entry into the same year. Where that makes an entry of one
+ * year the correction of an entry of another, the year it corrects is held
+ * (`held_years`): its entry goes only after the correction, which belongs to
+ * a later year and goes with that one, so the year is not offered until then.
  */
 function timeEntryYears(user: SQL | null): SQL {
   const yearOf = (moment: SQL) =>
@@ -222,6 +225,15 @@ function timeEntryYears(user: SQL | null): SQL {
         from links l
         left join links up on l.depth > 100 and up.first = l.first and up.depth = l.depth - 100
        group by 1, 2
+    ), held_years as materialized (
+      select distinct l.user_id,
+             ${yearOf(sql`coalesce(before.started_at, l.first_started_at)`)} as year
+        from links l
+        join links up on up.first = l.first and up.depth = l.depth - 100
+        left join links before on before.first = l.first and before.depth = l.depth - 101
+       where l.depth > 100
+         and ${yearOf(sql`up.started_at`)}
+             <> ${yearOf(sql`coalesce(before.started_at, l.first_started_at)`)}
     )`
 }
 
@@ -254,6 +266,7 @@ export async function dueStaffYears(
     with recursive ${timeEntryYears(null)}
     select p.id as person_id, p.name, p.user_id, y.year, max(y.entered) as entered
       from people p cross join lateral ${yearsOf(lastYearDue(today))} as y
+     where not exists (select 1 from held_years h where h.user_id = p.user_id and h.year = y.year)
      group by p.id, p.name, p.user_id, y.year
      order by y.year, p.name, p.id`)
 
@@ -554,18 +567,34 @@ export async function holdStaffYear(
   const written = sql`extract(year from (updated_at at time zone 'Europe/Berlin'))::int`
   const read = async (query: SQL) => (await tx.execute<{ id: string; written: number }>(query)).rows
 
-  const entries =
+  const yearRows =
     year.userId === null
       ? []
-      : heightsOf(
-          (
-            await tx.execute<{ id: string; corrects_entry_id: string | null; written: number }>(sql`
-              select id, corrects_entry_id,
-                     greatest(${written}, extract(year from ((ended_at - interval '1 millisecond') at time zone 'Europe/Berlin'))::int) as written
-                from time_entries
-               where user_id = ${year.userId} and time_entry_year(id) = ${year.year}`)
-          ).rows,
-        )
+      : (
+          await tx.execute<{ id: string; corrects_entry_id: string | null; written: number }>(sql`
+            select id, corrects_entry_id,
+                   greatest(${written}, extract(year from ((ended_at - interval '1 millisecond') at time zone 'Europe/Berlin'))::int) as written
+              from time_entries
+             where user_id = ${year.userId} and time_entry_year(id) = ${year.year}`)
+        ).rows
+
+  // Held while an entry of a later year corrects one of its own, past a
+  // hundred links (`held_years`): that one goes first, with its year. The
+  // list leaves such a year out; this is for a list read before.
+  if (year.userId !== null && yearRows.length > 0) {
+    const { rows: held } = await tx.execute(sql`
+      select 1 from time_entries c
+       where c.user_id = ${year.userId}
+         and c.corrects_entry_id = any(${uuids(yearRows.map((row) => row.id))})
+         and time_entry_year(c.id) <> ${year.year}
+       limit 1`)
+
+    if (held.length > 0) {
+      return null
+    }
+  }
+
+  const entries = heightsOf(yearRows)
   const onCall =
     year.userId === null
       ? []

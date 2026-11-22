@@ -1135,8 +1135,28 @@ describe('what of the staff is due (#846)', () => {
 
     const listed = ((await dueFor(owner)) ?? []).map((entry) => entry.recordId)
 
-    expect(listed).toContain(staffYearKey(dennis.person, oldYear - 1))
+    // The year of the last link is the one it was written in, and not due.
+    // The year before is held by it: its hundredth link goes only after the
+    // one that corrects it, which goes with the later year.
     expect(listed).not.toContain(staffYearKey(dennis.person, oldYear))
+    expect(listed).not.toContain(staffYearKey(dennis.person, oldYear - 1))
+
+    // Read again for a list from before, the year before is held as well.
+    const year = {
+      key: staffYearKey(dennis.person, oldYear - 1),
+      personId: dennis.person,
+      personName: 'Dennis',
+      userId: 'kurt',
+      year: oldYear - 1,
+      countsFrom: oldYear,
+      dueOn: today,
+    }
+
+    expect(
+      await database.forTenant({ tenantId: north, userId: 'lena' }, (tx) =>
+        holdStaffYear(tx, year, today),
+      ),
+    ).toBeNull()
   })
 
   it('shows a sickness to whoever keeps absences and a file only to whoever reads the files, in the list of deadlines as well', async () => {
