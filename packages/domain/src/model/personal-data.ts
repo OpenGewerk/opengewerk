@@ -130,6 +130,8 @@ export const personalDataCatalogue: Readonly<Record<string, PersonalData>> = {
     columns: [
       'name',
       'email',
+      // The address the notice on the objection was confirmed for (#1026).
+      'objection_notice_address',
       'phone',
       'street',
       'house_number',
