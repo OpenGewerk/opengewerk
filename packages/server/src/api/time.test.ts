@@ -224,6 +224,36 @@ describe('a time entry', () => {
     expect(withoutReason.message).toMatch(/Grund/)
   })
 
+  it('is corrected a hundred times over at most (#1033)', async () => {
+    const first = newId<'time-entry'>()
+    const chain = [first, ...Array.from({ length: 100 }, () => newId<'time-entry'>())]
+    const { receipts } = await push(
+      chain.map((id, at) =>
+        creating(
+          id,
+          at === 0
+            ? aMorning()
+            : aMorning({ correctsEntryId: chain[at - 1] ?? null, note: `Korrektur ${String(at)}` }),
+        ),
+      ),
+    )
+
+    expect(receipts.every((receipt) => receipt.outcome === 'applied')).toBe(true)
+
+    const oneMore = await push([
+      creating(
+        newId<'time-entry'>(),
+        aMorning({ correctsEntryId: chain[100] ?? null, note: 'Korrektur 101' }),
+      ),
+    ])
+
+    expect(oneMore.receipts[0]).toMatchObject({
+      outcome: 'conflict',
+      reason: 'record_is_fixed',
+      fields: ['correctsEntryId'],
+    })
+  })
+
   it('of a colleague is not there to be corrected', async () => {
     const theirs = newId<'time-entry'>()
 

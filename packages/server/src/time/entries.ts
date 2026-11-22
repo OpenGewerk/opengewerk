@@ -5,9 +5,18 @@ import { locationConsents, timeEntries } from '../database/schema/index.js'
 
 /** Why a time entry from a device cannot land, in the shape of a sync conflict. */
 export interface TimeEntryRefusal {
-  readonly reason: 'record_missing' | 'changed_elsewhere'
+  readonly reason: 'record_missing' | 'changed_elsewhere' | 'record_is_fixed'
   readonly fields: readonly string[]
 }
+
+/**
+ * How many corrections a chain takes (opengewerk#1033). The deletion concept
+ * counts a correction with the year of the entry its chain began with, and
+ * the database finds that entry a hundred links up at most
+ * (`time_entry_year`, 0131); past that a link would count with another, a
+ * year could hold the year of its own correction, and neither would ever go.
+ */
+export const mostCorrections = 100
 
 /**
  * Who the request acts for, from the transaction. The trigger that writes the
@@ -61,7 +70,23 @@ export async function correctionRefusal(
     .from(timeEntries)
     .where(eq(timeEntries.correctsEntryId, corrects as never))
 
-  return already ? { reason: 'changed_elsewhere', fields: ['correctsEntryId'] } : null
+  if (already) {
+    return { reason: 'changed_elsewhere', fields: ['correctsEntryId'] }
+  }
+
+  const { rows } = await tx.execute<{ depth: number }>(sql`
+    with recursive up as (
+      select id, corrects_entry_id, 0 as depth from time_entries where id = ${corrects}
+      union all
+      select t.id, t.corrects_entry_id, u.depth + 1
+        from time_entries t join up u on t.id = u.corrects_entry_id
+       where u.depth < ${mostCorrections}
+    )
+    select max(depth)::int as depth from up`)
+
+  return Number(rows[0]?.depth ?? 0) >= mostCorrections
+    ? { reason: 'record_is_fixed', fields: ['correctsEntryId'] }
+    : null
 }
 
 /**
