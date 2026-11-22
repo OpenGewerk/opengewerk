@@ -684,7 +684,12 @@ export async function holdPerson(
 
   const [again] = await duePeople(tx, today, [person.personId])
 
-  return again !== undefined && again.holds.length === 0 ? again : null
+  // The account read with the list is the one held above and the one whose
+  // devices, feeds and name `takePerson` takes: a file that belongs to
+  // another account now, or to none, changed, and is not deleted.
+  return again !== undefined && again.holds.length === 0 && again.userId === person.userId
+    ? again
+    : null
 }
 
 /**

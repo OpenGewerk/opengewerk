@@ -170,6 +170,7 @@ export function previewIdentity(tenantId: TenantId): Identity {
  */
 export async function dateSampleYears(admin: Pool, tenantId: TenantId): Promise<void> {
   const client = await admin.connect()
+  let broken = false
 
   try {
     await client.query('begin')
@@ -183,11 +184,15 @@ export async function dateSampleYears(admin: Pool, tenantId: TenantId): Promise<
     )
     await client.query('commit')
   } catch (error) {
-    await client.query('rollback')
+    // The error of the update is the one to tell; a client whose rollback
+    // failed too goes, rather than back to the pool.
+    await client.query('rollback').catch(() => {
+      broken = true
+    })
 
     throw error
   } finally {
-    client.release()
+    client.release(broken)
   }
 }
 

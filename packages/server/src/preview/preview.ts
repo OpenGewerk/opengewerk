@@ -65,9 +65,8 @@ async function start(): Promise<void> {
 
   const address = `http://127.0.0.1:${String(port)}`
 
-  await plantSampleData(address, today())
-
   try {
+    await plantSampleData(address, today())
     await dateSampleYears(admin, tenant.id)
   } finally {
     await admin.end()

@@ -321,8 +321,19 @@ async function reachedBefore(
  * Waits until a statement waits for a lock, of the kind `event` names or any,
  * and where `statement` is given, one whose text has it.
  */
-async function untilWaiting(holder: number, event?: string, statement?: string): Promise<void> {
+async function untilWaiting(
+  holder: number,
+  event?: string,
+  statement?: string,
+  stop?: () => boolean,
+): Promise<void> {
   for (let tries = 0; tries < 200; tries += 1) {
+    // Raced against work that may end first: then nobody waits for the
+    // answer, and the watch ends with it rather than ask on into the next test.
+    if (stop?.()) {
+      return
+    }
+
     // Only a statement that waits for `holder`: another session waiting for
     // the same kind of lock lets nothing go too early.
     const waiting =
@@ -605,6 +616,30 @@ describe('what of the staff is due (#846)', () => {
       .query(`update memberships set last_day = null where tenant_id = $1 and user_id = 'kurt'`, [
         north,
       ])
+      .finally(stopped.release)
+
+    expect((await asked).status).toBe(409)
+    expect(
+      await count(`select count(*) as n from working_times where person_id = $1`, [dennis.person]),
+    ).toBe(1)
+  })
+
+  /**
+   * The account read with the list is the one whose devices, feeds and name
+   * go with the file. Taken off the person between the list and the hold, it
+   * is not deleted: the file changed (#1045).
+   */
+  it('keeps the file of somebody whose account changed while the deletion read it (#1033)', async () => {
+    const dennis = await kraft()
+
+    await pass()
+
+    const stopped = holdQuery((statement) => /from memberships where user_id/i.test(statement))
+    const asked = erase('person', [dennis.person]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+    await admin
+      .query('update people set user_id = null where id = $1', [dennis.person])
       .finally(stopped.release)
 
     expect((await asked).status).toBe(409)
@@ -944,12 +979,20 @@ describe('what of the staff is due (#846)', () => {
     let failed: unknown
 
     try {
+      let ended = false
+
       failed = await Promise.race([
-        noonPass().then(
-          () => 'went through',
-          (error: unknown) => error,
+        noonPass()
+          .then(
+            () => 'went through',
+            (error: unknown) => error,
+          )
+          .finally(() => {
+            ended = true
+          }),
+        untilWaiting(stopped.holder(), 'advisory', undefined, () => ended).then(
+          () => 'waited for the person',
         ),
-        untilWaiting(stopped.holder(), 'advisory').then(() => 'waited for the person'),
       ])
     } finally {
       stopped.release()
