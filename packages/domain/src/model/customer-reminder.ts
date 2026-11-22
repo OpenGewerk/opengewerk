@@ -91,13 +91,12 @@ export type ReminderWay = 'mail' | 'call'
  * and a new address, written by any client on any device, needs it again.
  * Compared without case and surrounding space, as an address is.
  */
-export function objectionNoticeConfirmedFor(
-  email: string | null | undefined,
-  confirmedFor: string | null | undefined,
-): boolean {
-  const own = email?.trim().toLowerCase() ?? ''
+export function objectionNoticeConfirmedFor(email: unknown, confirmedFor: unknown): boolean {
+  // Whatever a request carries: what is no text is no address (the review).
+  const own = typeof email === 'string' ? email.trim().toLowerCase() : ''
+  const given = typeof confirmedFor === 'string' ? confirmedFor.trim().toLowerCase() : ''
 
-  return own !== '' && own === (confirmedFor?.trim().toLowerCase() ?? '')
+  return own !== '' && own === given
 }
 
 export function reminderWay(

@@ -483,8 +483,8 @@ describe('the reminders of a customer (#316)', () => {
   /**
    * A confirmation nobody changed in the form stays out of the write (#1026,
    * the review): not when the stored address is typed again, not from a row
-   * this device holds from before the question. A new address sends it empty
-   * where the form opened with one, since it confirms nothing for the new.
+   * this device holds from before the question, and not with a new address,
+   * for which the confirmation of the old one confirms nothing anyway.
    */
   it.each([
     ['the stored address typed again', 'gruber@example.com', 'gruber@example.com', {}],
@@ -493,34 +493,31 @@ describe('the reminders of a customer (#316)', () => {
       'a new address',
       'gruber@example.com',
       'neu.gruber@example.com',
-      { email: 'neu.gruber@example.com', objectionNoticeAddress: null },
+      { email: 'neu.gruber@example.com' },
     ],
-  ])(
-    'send no confirmation nobody changed, or an empty one, with %s',
-    async (_how, confirmedFor, typed, more) => {
-      server.put('customers', {
-        ...customer('c-1', 'Familie Gruber', 'private', 'Hamburg'),
-        email: 'gruber@example.com',
-        reminderGround: 'existing_customer',
-        reminderGroundOn: '2024-03-12',
-        ...(confirmedFor === undefined ? {} : { objectionNoticeAddress: confirmedFor }),
-      })
-      const sent = recording()
+  ])('send no confirmation nobody changed, with %s', async (_how, confirmedFor, typed, more) => {
+    server.put('customers', {
+      ...customer('c-1', 'Familie Gruber', 'private', 'Hamburg'),
+      email: 'gruber@example.com',
+      reminderGround: 'existing_customer',
+      reminderGroundOn: '2024-03-12',
+      ...(confirmedFor === undefined ? {} : { objectionNoticeAddress: confirmedFor }),
+    })
+    const sent = recording()
 
-      await mount('/kunden/c-1/bearbeiten')
-      const user = userEvent.setup()
-      const email = (await screen.findByLabelText('E-Mail')) as HTMLInputElement
+    await mount('/kunden/c-1/bearbeiten')
+    const user = userEvent.setup()
+    const email = (await screen.findByLabelText('E-Mail')) as HTMLInputElement
 
-      await user.clear(email)
-      await user.type(email, typed)
-      await user.type(screen.getByLabelText('Telefon'), '040 123')
-      await user.click(screen.getByRole('button', { name: 'Speichern' }))
+    await user.clear(email)
+    await user.type(email, typed)
+    await user.type(screen.getByLabelText('Telefon'), '040 123')
+    await user.click(screen.getByRole('button', { name: 'Speichern' }))
 
-      await waitFor(() => {
-        expect(sent).toEqual([{ ...more, phone: '040 123' }])
-      })
-    },
-  )
+    await waitFor(() => {
+      expect(sent).toEqual([{ ...more, phone: '040 123' }])
+    })
+  })
 
   /**
    * What changed in the form is measured against what it opened with (#1026,
@@ -576,6 +573,66 @@ describe('the reminders of a customer (#316)', () => {
       expect(
         server.all('customers').find((row) => row['id'] === 'c-4')?.['objectionNoticeAddress'],
       ).toBe(after)
+    },
+  )
+
+  /**
+   * Only the box changes what is confirmed (#1026, the review): an address
+   * spelled otherwise than the confirmation does not give again one another
+   * device took away, and a new address typed here does not take away the one
+   * another device gave for it.
+   */
+  it.each([
+    [
+      'take back a confirmation, with the address spelled otherwise',
+      { email: 'Berg@example.com', objectionNoticeAddress: 'berg@example.com' },
+      { objectionNoticeAddress: null },
+      null,
+      { phone: '040 789' },
+    ],
+    [
+      'confirm the new address this device types too',
+      { email: 'berg@example.com', objectionNoticeAddress: 'berg@example.com' },
+      { email: 'neu.berg@example.com', objectionNoticeAddress: 'neu.berg@example.com' },
+      'neu.berg@example.com',
+      { phone: '040 789' },
+    ],
+  ])(
+    'leave it as it is when another device does %s',
+    async (_how, opened, meanwhile, typed, expected) => {
+      server.put('customers', {
+        ...customer('c-4', 'Familie Berg', 'private', 'Hamburg'),
+        reminderGround: 'existing_customer',
+        reminderGroundOn: '2024-03-12',
+        ...opened,
+      })
+      const sent = recording()
+
+      await mount('/kunden/c-4/bearbeiten')
+      const user = userEvent.setup()
+      const email = (await screen.findByLabelText('E-Mail')) as HTMLInputElement
+
+      server.put('customers', {
+        ...(server.all('customers').find((row) => row['id'] === 'c-4') ?? {}),
+        ...meanwhile,
+        version: 2,
+      })
+      await lastClient?.synchronise()
+
+      if (typed !== null) {
+        await user.clear(email)
+        await user.type(email, typed)
+      }
+
+      await user.type(screen.getByLabelText('Telefon'), '040 789')
+      await user.click(screen.getByRole('button', { name: 'Speichern' }))
+
+      await waitFor(() => {
+        expect(sent).toEqual([expected])
+      })
+      expect(
+        server.all('customers').find((row) => row['id'] === 'c-4')?.['objectionNoticeAddress'],
+      ).toBe(meanwhile.objectionNoticeAddress)
     },
   )
 

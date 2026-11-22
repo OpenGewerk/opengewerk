@@ -720,6 +720,17 @@ describe('the ground of a customer at its route', () => {
     }).expect(200)
     expect(await stored(albers)).toEqual({ confirmed: true, on: '2024-04-02' })
 
+    // An address that is no text is refused with the sentence, not with an
+    // error of the server (the review).
+    for (const email of [5, ['neu.albers@example.com']]) {
+      const refused = await send('patch', `/customers/${albers}`, {
+        email,
+        objectionNoticeAddress: 'neu.albers@example.com',
+      }).expect(422)
+
+      expect(JSON.stringify(refused.body)).toContain('für die E-Mail-Adresse des Kunden bestätigt')
+    }
+
     const becker = await created({
       name: 'Schreinerei Becker',
       reminderGround: 'consent',

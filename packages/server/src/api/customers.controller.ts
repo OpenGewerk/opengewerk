@@ -105,7 +105,7 @@ function requireReminderGround(
   if (
     'objectionNoticeAddress' in values &&
     values['objectionNoticeAddress'] !== null &&
-    !objectionNoticeConfirmedFor(email as string | null, values['objectionNoticeAddress'] as string)
+    !objectionNoticeConfirmedFor(email, values['objectionNoticeAddress'])
   ) {
     throw new UnprocessableEntityException(
       'Der Hinweis auf den Widerspruch wird für die E-Mail-Adresse des Kunden bestätigt.',

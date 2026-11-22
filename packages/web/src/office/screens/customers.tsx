@@ -1222,6 +1222,10 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
       ? customer['objectionNoticeAddress']
       : null,
   )
+  // Whether somebody used the box in this form (#1026, the review): only then
+  // does a change go with the write. An address typed anew or spelled
+  // otherwise changes none.
+  const [noticeTouched, setNoticeTouched] = useState(false)
   // Null until somebody changes the tags: until then the form shows what the
   // record has, also once rows arrive after it opened, and sends nothing.
   const [chosen, setChosen] = useState<ChosenTags | null>(null)
@@ -1261,10 +1265,16 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
 
       // A confirmation nobody changed in the form stays out of the write, so
       // that it cannot take back or give again one another device changed
-      // meanwhile (#1026, the review). A new address sends it empty where the
-      // form opened with one; where it opened with none, nothing is sent, and
-      // one given meanwhile names the old address and confirms nothing.
-      if (editing && values['objectionNoticeAddress'] === openedFor) {
+      // meanwhile (#1026, the review): sent only where somebody used the box,
+      // and then only where it ends up other than the form opened with. A new
+      // address needs nothing sent, as a confirmation for the old one
+      // confirms nothing for it.
+      if (
+        editing &&
+        (!noticeTouched ||
+          objectionNoticeConfirmedFor(values['objectionNoticeAddress'], openedFor) ||
+          (values['objectionNoticeAddress'] === null && openedFor === null))
+      ) {
         delete values['objectionNoticeAddress']
       }
 
@@ -1457,6 +1467,7 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
                       onChange={(event) => {
                         const confirmed = event.target.checked
 
+                        setNoticeTouched(true)
                         setDraft((current) => ({
                           ...current,
                           objectionNoticeAddress: confirmed ? current.email : '',

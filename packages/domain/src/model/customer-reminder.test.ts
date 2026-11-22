@@ -147,5 +147,8 @@ describe('the ground of a customer', () => {
     expect(objectionNoticeConfirmedFor('albers@example.com', null)).toBe(false)
     expect(objectionNoticeConfirmedFor(null, null)).toBe(false)
     expect(objectionNoticeConfirmedFor('', '')).toBe(false)
+    // What a request carries that is no text is no address (the review).
+    expect(objectionNoticeConfirmedFor(5, '5')).toBe(false)
+    expect(objectionNoticeConfirmedFor(['a@example.com'], 'a@example.com')).toBe(false)
   })
 })
