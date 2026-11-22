@@ -1273,6 +1273,7 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
     // The uses of the box this write knows of; one made while it is on its
     // way still counts for the next.
     const usesAtStart = noticeUses
+    const addressAtStart = draft.objectionNoticeAddress
 
     try {
       const written = asCustomer(draft as unknown as Record<string, string>)
@@ -1316,10 +1317,16 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
       // sends again only what changes after it (CodeRabbit), the box too.
       if (editing) {
         setOpened(written)
-
-        if ('objectionNoticeAddress' in values) {
-          setOpenedFor(values['objectionNoticeAddress'] as string | null)
-        }
+        // The confirmation the customer holds after this write, as far as the
+        // form can tell (the review): the route takes it away with another
+        // ground or a new address, and `asCustomer` works out the same. The
+        // box shows it, unless somebody used it while the write was on its way.
+        setOpenedFor(written.objectionNoticeAddress)
+        setDraft((current) =>
+          current.objectionNoticeAddress === addressAtStart
+            ? { ...current, objectionNoticeAddress: written.objectionNoticeAddress ?? '' }
+            : current,
+        )
 
         setNoticeUsesWritten(usesAtStart)
       }
