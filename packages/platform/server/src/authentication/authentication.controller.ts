@@ -258,11 +258,14 @@ export class AuthenticationController {
     // first everywhere else (opengewerk#1031): a close that fails leaves the
     // stretch to the sweep, which closes one whose session works elsewhere
     // (`endOrphanedStretches`), and the session works on where it chose.
+    // Here too only what began before this switch: another request of the
+    // same session may have gone back meanwhile and opened its stretch there
+    // (#1047, the review).
     if (previous.tenantId !== null && previous.tenantId !== chosen) {
       await endStretchesOrLeaveThem(
         this.database,
         [{ id: user.sessionId, userId: user.userId, tenantId: previous.tenantId }],
-        { reason: 'session.switch', actor: user.userId },
+        { reason: 'session.switch', actor: user.userId, startedBefore: previous.switchedAt },
       )
     }
 

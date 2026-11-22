@@ -2286,6 +2286,71 @@ describe('work that cannot be closed when its session ends', () => {
     expect(rows).toEqual([{ open: true }, { open: true }])
   })
 
+  /**
+   * The close in the tenant a switch leaves, too, takes only what began
+   * before the switch. A second request of the same session that went back
+   * meanwhile keeps the stretch it opened there (#1047, the review).
+   */
+  it('leaves open the stretch another request of the session opened in the tenant it left meanwhile', async () => {
+    const email = 'wechsel-zurueck-gleichzeitig@example.de'
+
+    await joinedNorth(email)
+    await addStaffMember(instance.authentication, instance.database, {
+      email,
+      name: 'Sven Zurück',
+      password,
+      tenantId: south.id,
+      roles: ['member'],
+    })
+
+    const working = await atWork(email)
+    const query = Client.prototype.query
+    let state: 'before' | 'back' | 'done' = 'before'
+
+    // The switch to the south has written the session; before it closes its
+    // stretch in the north, the same session goes back to the north.
+    Client.prototype.query = function (this: Client, ...args: unknown[]) {
+      const config = args[0] as string | { text?: string; values?: unknown[] } | undefined
+      const text = typeof config === 'string' ? config : (config?.text ?? '')
+      const values = (typeof config === 'string' ? args[1] : (config?.values ?? args[1])) as
+        unknown[] | undefined
+      const forward = () => (query as (...given: unknown[]) => Promise<unknown>).apply(this, args)
+
+      if (
+        state === 'before' &&
+        /^update "tenant_sessions"/i.test(text) &&
+        (values ?? []).includes(north.id)
+      ) {
+        state = 'back'
+
+        return instance
+          .chooseTenant(working.cookies, north.id)
+          .then(() => {
+            state = 'done'
+          })
+          .then(forward)
+      }
+
+      return forward()
+    } as typeof query
+
+    try {
+      await instance.chooseTenant(working.cookies, south.id)
+    } finally {
+      Client.prototype.query = query
+    }
+
+    expect(state).toBe('done')
+
+    const { rows } = await admin.query<{ open: boolean }>(
+      `select ended_at is null as open from tenant_sessions where session_id = $1 and tenant_id = $2
+        order by started_at, id`,
+      [working.id, north.id],
+    )
+
+    expect(rows).toEqual([{ open: false }, { open: true }])
+  })
+
   it('leaves both stretches open when a session chooses its tenant again for its device', async () => {
     const email = 'geraet-registrieren@example.de'
 
