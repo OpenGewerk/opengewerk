@@ -153,49 +153,55 @@ export function smtpTransport(
     connectionTimeout: timeouts.connection,
     greetingTimeout: timeouts.greeting,
     socketTimeout: timeouts.socket,
+    // A connection that ends is torn down at once. Ended the gentle way, the
+    // socket would still hand the server what waits in this process, and
+    // after the deadline of a message that can be all of it. What the system
+    // has taken already goes out either way.
+    socketCloseTimeout: 0,
     disableFileAccess: true,
     disableUrlAccess: true,
   })
 
   return {
     async send(mail) {
-      const sending = transport.sendMail({
-        from: { name: mail.from.name, address: mail.from.address },
-        replyTo: mail.replyTo ?? undefined,
-        to: mail.to.name ? { name: mail.to.name, address: mail.to.address } : mail.to.address,
-        subject: mail.subject,
-        text: mail.text,
-        attachments: mail.attachments.map((attachment) => ({
-          filename: attachment.filename,
-          content: Buffer.from(attachment.content),
-          contentType: attachment.contentType,
-        })),
-      })
-      // Settled later or never once the deadline has answered; nobody waits
-      // for it then, and its end is no failure of the process.
-      sending.catch(() => undefined)
-
-      let deadline: NodeJS.Timeout | undefined
+      // The deadline ends the conversation with the server, not only the wait
+      // for it: nodemailer drops the connection of a send that is called off,
+      // and what of the message has not left this process by then never
+      // reaches the server (opengewerk#1036). What has left it, the system
+      // still delivers: a message of a few hundred kilobytes has mostly left
+      // right after the server asked for it, and a server that takes it then
+      // has it, although the outbox counts it as not sent.
+      const deadline = new AbortController()
+      const timer = setTimeout(() => {
+        deadline.abort()
+      }, timeouts.whole ?? defaultTimeouts.whole)
 
       try {
-        await Promise.race([
-          sending,
-          new Promise<never>((_, reject) => {
-            deadline = setTimeout(() => {
-              reject(
-                new MailDeliveryError(
-                  'Der Mailserver hat die Nachricht nicht in der Zeit angenommen, die eine Nachricht hat.',
-                  'ETIMEDOUT',
-                  null,
-                ),
-              )
-            }, timeouts.whole ?? defaultTimeouts.whole)
-          }),
-        ])
+        await transport.sendMail({
+          from: { name: mail.from.name, address: mail.from.address },
+          replyTo: mail.replyTo ?? undefined,
+          to: mail.to.name ? { name: mail.to.name, address: mail.to.address } : mail.to.address,
+          subject: mail.subject,
+          text: mail.text,
+          attachments: mail.attachments.map((attachment) => ({
+            filename: attachment.filename,
+            content: Buffer.from(attachment.content),
+            contentType: attachment.contentType,
+          })),
+          signal: deadline.signal,
+        })
       } catch (error) {
+        if (deadline.signal.aborted) {
+          throw new MailDeliveryError(
+            'Der Mailserver hat die Nachricht nicht in der Zeit angenommen, die eine Nachricht hat.',
+            'ETIMEDOUT',
+            null,
+          )
+        }
+
         throw asDeliveryError(error)
       } finally {
-        clearTimeout(deadline)
+        clearTimeout(timer)
       }
     },
     async verify() {

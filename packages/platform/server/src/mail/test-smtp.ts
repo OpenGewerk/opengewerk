@@ -16,11 +16,17 @@ export interface FakeSmtpOptions {
   readonly refuse?: readonly string[]
   /** Takes a message and never says whether it took it, the way a server that hangs over one does. */
   readonly stallAfterData?: boolean
+  /** Milliseconds it waits before it answers DATA, the way a server that is slow to take a message does. */
+  readonly slowData?: number
+  /** Milliseconds it stops reading once it asked for the message, the way a server behind a slow line takes it. */
+  readonly readsLate?: number
 }
 
 export interface FakeSmtpServer {
   readonly port: number
   readonly received: readonly ReceivedMail[]
+  /** How many connections are open right now. */
+  open(): number
   close(): Promise<void>
 }
 
@@ -124,9 +130,29 @@ export async function fakeSmtpServer(options: FakeSmtpOptions = {}): Promise<Fak
             say('250 2.1.5 Ok')
           }
         } else if (command === 'DATA') {
-          inData = true
           lines = []
-          say('354 End data with <CR><LF>.<CR><LF>')
+
+          const takeData = () => {
+            if (socket.destroyed) {
+              return
+            }
+
+            inData = true
+            say('354 End data with <CR><LF>.<CR><LF>')
+
+            if (options.readsLate !== undefined) {
+              socket.pause()
+              setTimeout(() => {
+                socket.resume()
+              }, options.readsLate)
+            }
+          }
+
+          if (options.slowData === undefined) {
+            takeData()
+          } else {
+            setTimeout(takeData, options.slowData)
+          }
         } else if (command === 'RSET' || command === 'NOOP') {
           say('250 2.0.0 Ok')
         } else if (command === 'QUIT') {
@@ -150,6 +176,7 @@ export async function fakeSmtpServer(options: FakeSmtpOptions = {}): Promise<Fak
   return {
     port: address.port,
     received,
+    open: () => sockets.size,
     close: () =>
       new Promise<void>((resolve) => {
         for (const socket of sockets) {
