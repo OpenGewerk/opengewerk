@@ -144,15 +144,12 @@ function yearsOf(upTo: number | null): SQL {
   const bound = (year: SQL) => (upTo === null ? sql`true` : sql`${year} <= ${upTo}`)
   const entered = (table: SQL) =>
     sql`extract(year from (${table}.updated_at at time zone 'Europe/Berlin'))::int`
-  const timeYear = sql`time_entry_year(t.id)`
   const callYear = sql`extract(year from (s.starts_at at time zone 'Europe/Berlin'))::int`
   const absenceYear = sql`extract(year from a.first_day)::int`
 
   return sql`(
-    select ${timeYear} as year,
-           greatest(${entered(sql`t`)}, extract(year from ((t.ended_at - interval '1 millisecond') at time zone 'Europe/Berlin'))::int) as entered
-      from time_entries t
-     where p.user_id is not null and t.user_id = p.user_id and ${bound(timeYear)}
+    select t.year, t.entered from ${timeEntryYears(sql`p.user_id`)} as t
+     where p.user_id is not null and ${bound(sql`t.year`)}
     union select ${callYear},
            greatest(${entered(sql`s`)}, extract(year from ((s.ends_at - interval '1 millisecond') at time zone 'Europe/Berlin'))::int)
       from on_call_shifts s
@@ -162,6 +159,54 @@ function yearsOf(upTo: number | null): SQL {
      where a.person_id = p.id and ${bound(absenceYear)}
     union select l.year, ${entered(sql`l`)} from leave_entitlements l
      where l.person_id = p.id and ${bound(sql`l.year`)}
+  )`
+}
+
+/**
+ * The records of time of one person, each with its year and the year it was
+ * last written or ends in, as `yearsOf` counts them (opengewerk#1033). Its
+ * year is that of the entry its chain of corrections began with, as
+ * `time_entry_year` (0131) has it, here worked out for all of them at once:
+ * each chain walked down from its first entry, one look into
+ * `time_entries_corrected_once` for each correction, and an entry that
+ * nothing corrects costs none. The function walks up from every entry it is
+ * asked for, and the list asks every minute and on every visit of the page:
+ * a person who corrects often made each of them longer by every link of every
+ * chain. Past a hundred links the function stops at the entry a hundred
+ * links up and takes its year, and so does this, so that the list and the
+ * deletion put an entry into the same year.
+ */
+function timeEntryYears(user: SQL): SQL {
+  const yearOf = (moment: SQL) =>
+    sql`extract(year from (${moment} at time zone 'Europe/Berlin'))::int`
+  const entered = (entry: SQL) =>
+    sql`greatest(${yearOf(sql`${entry}.updated_at`)}, ${yearOf(sql`(${entry}.ended_at - interval '1 millisecond')`)})`
+
+  return sql`(
+    with recursive links as (
+      select n.id, n.tenant_id, n.user_id, f.id as first, f.started_at as first_started_at,
+             1 as depth, n.started_at, ${entered(sql`n`)} as entered
+        from time_entries f
+        join time_entries n on n.tenant_id = f.tenant_id and n.corrects_entry_id = f.id
+       where f.user_id = ${user} and f.corrects_entry_id is null
+      union all
+      select n.id, n.tenant_id, n.user_id, l.first, l.first_started_at, l.depth + 1,
+             n.started_at, n.entered
+        from links l
+        cross join lateral (
+          select t.id, t.tenant_id, t.user_id, t.started_at, ${entered(sql`t`)} as entered
+            from time_entries t
+           where t.tenant_id = l.tenant_id and t.corrects_entry_id = l.id
+        ) n
+    )
+    select ${yearOf(sql`f.started_at`)} as year, ${entered(sql`f`)} as entered
+      from time_entries f
+     where f.user_id = ${user} and f.corrects_entry_id is null
+    union all
+    select ${yearOf(sql`coalesce(up.started_at, l.first_started_at)`)}, l.entered
+      from links l
+      left join links up on l.depth > 100 and up.first = l.first and up.depth = l.depth - 100
+     where l.user_id = ${user}
   )`
 }
 
@@ -273,6 +318,29 @@ export async function duePeople(
   })
 }
 
+/**
+ * Whether a deletion of the staff waits for a row that another write holds
+ * (opengewerk#1033). By hand it does: it holds its rows before its line of
+ * the protocol, as every write of the staff takes its row before the counter
+ * and the chain of the business. By itself it does not: the pass took the
+ * counter and the chain already with the deadline it claimed, and a write
+ * that holds the row waits for them. The deletion gives up then
+ * (`lock_not_available`), its transaction rolls back with the claim, and the
+ * next pass tries again.
+ */
+export type Waiting = 'wait' | 'give up'
+
+/**
+ * The lock a deletion holds a row with before its line of the protocol:
+ * against a change and a deletion, and not against the check of a key that
+ * a new row pointing at it makes. That check comes after the new row took the
+ * counter (`stamp_sync_columns`), and it would wait for the deletion while
+ * the deletion waits for the counter.
+ */
+function held(waiting: Waiting): SQL {
+  return sql.raw(waiting === 'wait' ? 'for no key update' : 'for no key update nowait')
+}
+
 /** The rows a deletion took or emptied, by table, for the change log. */
 export interface StaffTouched {
   readonly table: string
@@ -297,9 +365,10 @@ export async function holdSickness(
   tx: TenantTransaction,
   absenceId: string,
   today: IsoDate,
+  waiting: Waiting = 'wait',
 ): Promise<{ readonly lastDay: IsoDate; readonly dueOn: IsoDate } | null> {
   const { rows } = await tx.execute<{ last_day: string }>(sql`
-    select last_day::text from absences where id = ${absenceId} and kind = 'sickness' for update`)
+    select last_day::text from absences where id = ${absenceId} and kind = 'sickness' ${held(waiting)}`)
   const [sickness] = rows
 
   if (sickness === undefined) {
@@ -377,7 +446,7 @@ async function takeName(
  *
  * So it is read again here, in the transaction of the deletion and before its
  * line of the protocol. Times on call, absences and days of leave are
- * corrected in their row and read `for update`: a correction committed before
+ * corrected in their row and held (`held`): a correction committed before
  * is seen, one after waits until the deletion is through and then finds
  * nothing. A record of time is never changed in its row, the application may
  * not; a correction is a record of its own, and one that comes in meanwhile is
@@ -401,6 +470,7 @@ export async function holdStaffYear(
   tx: TenantTransaction,
   year: DueStaffYear,
   today: IsoDate,
+  waiting: Waiting = 'wait',
 ): Promise<HeldStaffYear | null> {
   const written = sql`extract(year from (updated_at at time zone 'Europe/Berlin'))::int`
   const read = async (query: SQL) => (await tx.execute<{ id: string; written: number }>(query)).rows
@@ -441,14 +511,14 @@ export async function holdStaffYear(
              from on_call_shifts
            where user_id = ${year.userId}
              and extract(year from (starts_at at time zone 'Europe/Berlin'))::int = ${year.year}
-           order by id for update`)
+           order by id ${held(waiting)}`)
   const absences = await read(sql`select id,
        greatest(${written}, extract(year from last_day)::int) as written from absences
      where person_id = ${year.personId} and extract(year from first_day)::int = ${year.year}
-     order by id for update`)
+     order by id ${held(waiting)}`)
   const entitlements = await read(sql`select id, ${written} as written from leave_entitlements
      where person_id = ${year.personId} and year = ${year.year}
-     order by id for update`)
+     order by id ${held(waiting)}`)
   const rows = [...entries, ...onCall, ...absences, ...entitlements]
 
   // Nothing left: another deletion took the year meanwhile, and a line of the
@@ -457,11 +527,19 @@ export async function holdStaffYear(
     return null
   }
 
-  const lastWritten = Math.max(year.year, ...rows.map((row) => Number(row.written)))
+  // Without spreading the rows into the call: a year with more than a hundred
+  // thousand of them would be more arguments than a call takes.
+  const lastWritten = rows.reduce((latest, row) => Math.max(latest, Number(row.written)), year.year)
   const dueOn = staffYearErasureDueOn(year.year, today, shippedRules, lastWritten)
 
   if (dueOn > today) {
     return null
+  }
+
+  // The last year of a file that went takes the name with it (`takeName`),
+  // which changes the file: held as well.
+  if (await fileGone(tx, year.personId)) {
+    await tx.execute(sql`select 1 from people where id = ${year.personId} ${held(waiting)}`)
   }
 
   return {
@@ -481,21 +559,41 @@ export class StaffYearChanged extends Error {}
  * deletion, before its line of the protocol, and holds it there
  * (opengewerk#1033): the access here and the person itself, so that an
  * access opened again, a last day moved on or a return waits for the
- * deletion and then finds nothing, or comes first and keeps the file. Due
- * still, and nothing holds it, or null.
+ * deletion and then finds nothing, or comes first and keeps the file. Held as
+ * well is every row `takePerson` deletes or empties that a write can change:
+ * the working time agreed, the qualifications, the devices and the calendar
+ * feeds. The certificates of before and the answers about the place are only
+ * ever added, and the opt-outs of push gone otherwise only by the person
+ * here, whose access has ended. Due still, and nothing holds it, or null.
  */
 export async function holdPerson(
   tx: TenantTransaction,
   person: DuePerson,
   today: IsoDate,
+  waiting: Waiting = 'wait',
 ): Promise<DuePerson | null> {
   if (person.userId !== null) {
     await tx.execute(
-      sql`select 1 from memberships where user_id = ${person.userId} order by id for share`,
+      sql`select 1 from memberships where user_id = ${person.userId} order by id ${sql.raw(
+        waiting === 'wait' ? 'for share' : 'for share nowait',
+      )}`,
     )
   }
 
-  await tx.execute(sql`select 1 from people where id = ${person.personId} for update`)
+  await tx.execute(sql`select 1 from people where id = ${person.personId} ${held(waiting)}`)
+
+  for (const rows of [
+    sql`select 1 from working_times where person_id = ${person.personId}`,
+    sql`select 1 from qualifications where person_id = ${person.personId}`,
+    ...(person.userId === null
+      ? []
+      : [
+          sql`select 1 from push_subscriptions where user_id = ${person.userId}`,
+          sql`select 1 from calendar_feeds where user_id = ${person.userId} and ended_at is null`,
+        ]),
+  ]) {
+    await tx.execute(sql`${rows} order by id ${held(waiting)}`)
+  }
 
   const [again] = await duePeople(tx, today, [person.personId])
 

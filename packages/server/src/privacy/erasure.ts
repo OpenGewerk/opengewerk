@@ -49,6 +49,7 @@ import {
   takeStaffYear,
   type HeldStaffYear,
   holdStaffYear,
+  type Waiting,
 } from './staff-erasure.js'
 
 /** What the change log calls a deletion under the concept, and its switch. */
@@ -162,6 +163,15 @@ export class ErasureRefused extends Error {}
  * so it fails there, and the next pass reads the year again.
  */
 export class ErasureInterrupted extends Error {}
+
+/**
+ * A record of the staff the pass would delete by itself while somebody works
+ * on it (opengewerk#1033): its person is being deleted by hand, or a write
+ * holds one of its rows. The pass does not wait for it (`Waiting`), and
+ * nothing went; its transaction rolls back with the claim of the deadline,
+ * and the next pass tries again.
+ */
+export class ErasureBusy extends Error {}
 
 /**
  * Deletes leads under the deletion concept (#317), each one that is due and
@@ -361,6 +371,7 @@ interface StaffRecord {
    */
   readonly hold?: (
     tx: TenantTransaction,
+    waiting: Waiting,
   ) => Promise<{ readonly dueOn: IsoDate; readonly label: string } | null>
   readonly take: (tx: TenantTransaction) => Promise<StaffTouched[]>
 }
@@ -388,8 +399,8 @@ async function staffRecords(
         name: sickness.personName,
         label: sicknessErasureLabel(sickness.lastDay),
         personId: sickness.personId,
-        hold: async (inner) => {
-          const held = await holdSickness(inner, sickness.absenceId, today)
+        hold: async (inner, waiting) => {
+          const held = await holdSickness(inner, sickness.absenceId, today, waiting)
 
           return held === null
             ? null
@@ -407,8 +418,8 @@ async function staffRecords(
         name: year.personName,
         label: staffYearErasureLabel(year.year),
         personId: year.personId,
-        hold: async (inner) => {
-          held = (await holdStaffYear(inner, year, today)) ?? undefined
+        hold: async (inner, waiting) => {
+          held = (await holdStaffYear(inner, year, today, waiting)) ?? undefined
 
           return held === undefined
             ? null
@@ -431,8 +442,8 @@ async function staffRecords(
           name: person.personName,
           label: personErasureLabel(person.leftOn),
           personId: person.personId,
-          hold: async (inner) => {
-            const again = await holdPerson(inner, person, today)
+          hold: async (inner, waiting) => {
+            const again = await holdPerson(inner, person, today, waiting)
 
             return again === null
               ? null
@@ -502,14 +513,33 @@ async function eraseStaff(
     return record
   })
 
+  // By hand a deletion waits for what it holds; by itself it gives up,
+  // since the pass holds the chain of the business already (`Waiting`).
+  const waiting: Waiting = input.automatic ? 'give up' : 'wait'
+  const busy = () =>
+    new ErasureBusy(
+      `${erasureKindWords[kind].one}: an einem ausgewählten Eintrag wird gerade gearbeitet. ` +
+        'Gelöscht ist nichts; der nächste Lauf versucht es wieder.',
+    )
+
   // Two deletions of the staff of one person one after the other
   // (opengewerk#1033): a year and a sickness in it, or two requests for the
   // same year, lock the same rows, and each in an order of its own. Taken by
   // person, in the order of their ids, before any row.
   for (const personId of [...new Set(chosen.map((record) => record.personId))].sort()) {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${`staff-erasure:${personId}`}, 0))`,
-    )
+    const key = sql`hashtextextended(${`staff-erasure:${personId}`}, 0)`
+
+    if (waiting === 'wait') {
+      await tx.execute(sql`select pg_advisory_xact_lock(${key})`)
+    } else {
+      const { rows } = await tx.execute<{ taken: boolean }>(
+        sql`select pg_try_advisory_xact_lock(${key}) as taken`,
+      )
+
+      if (rows[0]?.taken !== true) {
+        throw busy()
+      }
+    }
   }
 
   // Every record held before the first line of the protocol, and in the
@@ -524,7 +554,10 @@ async function eraseStaff(
     one.recordId.localeCompare(other.recordId),
   )) {
     if (record.hold !== undefined) {
-      const held = await record.hold(tx)
+      const held = await record.hold(tx, waiting).catch((error: unknown) => {
+        // `lock_not_available`: a write holds a row of it, and the pass gave up.
+        throw databaseCode(error) === '55P03' ? busy() : error
+      })
 
       if (held === null) {
         throw new ErasureRefused(gone)
