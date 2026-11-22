@@ -10,6 +10,7 @@ import {
   reminderGroundExplanation,
   reminderGroundLabel,
   reminderGrounds,
+  objectionNoticeConfirmedFor,
   reminderGroundText,
 } from '@opengewerk/domain'
 import {
@@ -115,10 +116,14 @@ function asCustomer(values: Record<string, string>) {
     // A ground has its day and none has none (#316), whatever the field held before.
     reminderGround: values['reminderGround'] || null,
     reminderGroundOn: values['reminderGround'] ? asTextOrNull(values['reminderGroundOn']) : null,
-    // Only a customer of § 7 Abs. 3 UWG has the confirmation (#1026).
-    objectionNoticeConfirmed:
+    // Only a customer of § 7 Abs. 3 UWG has the confirmation (#1026), and only
+    // for the address the form holds: one for an address since replaced is
+    // none.
+    objectionNoticeAddress:
       values['reminderGround'] === 'existing_customer' &&
-      values['objectionNoticeConfirmed'] === 'true',
+      objectionNoticeConfirmedFor(values['email'], values['objectionNoticeAddress'])
+        ? asTextOrNull(values['email'])
+        : null,
     // How the customer found the business (#312), none where nobody said.
     source: values['source'] || null,
     notes: asTextOrNull(values['notes']),
@@ -793,7 +798,12 @@ function CustomerFacts({ customer }: { readonly customer: RecordState }) {
               typeof customer['reminderGroundOn'] === 'string'
                 ? (customer['reminderGroundOn'] as IsoDate)
                 : null,
-              customer['objectionNoticeConfirmed'] === true,
+              objectionNoticeConfirmedFor(
+                typeof customer['email'] === 'string' ? customer['email'] : null,
+                typeof customer['objectionNoticeAddress'] === 'string'
+                  ? customer['objectionNoticeAddress']
+                  : null,
+              ),
             ),
           },
           // How the customer found the business (#312), with the lead it came from.
@@ -1145,7 +1155,7 @@ interface CustomerDraft {
   isConstructionServiceRecipient: string
   reminderGround: string
   reminderGroundOn: string
-  objectionNoticeConfirmed: string
+  objectionNoticeAddress: string
   source: string
   notes: string
 }
@@ -1171,7 +1181,7 @@ function draftOf(customer: RecordState | null): CustomerDraft {
       customer?.['isConstructionServiceRecipient'] === true ? 'true' : 'false',
     reminderGround: held('reminderGround'),
     reminderGroundOn: held('reminderGroundOn'),
-    objectionNoticeConfirmed: customer?.['objectionNoticeConfirmed'] === true ? 'true' : 'false',
+    objectionNoticeAddress: held('objectionNoticeAddress'),
     source: held('source'),
     notes: held('notes'),
   }
@@ -1203,18 +1213,15 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
   const tagged = useTagsBy('customer')
   const held = customerId ? (tagged.get(customerId)?.ids ?? []) : []
   const [draft, setDraft] = useState<CustomerDraft>(() => draftOf(customer))
-  // The confirmation and the address the form opened with, none where the
-  // row on this device is from before the question (#1026): what changed in
-  // the form is measured against them, not against a row another device
-  // changed while it was open (the review).
-  const [opened] = useState(() => ({
-    confirmed: customer?.['objectionNoticeConfirmed'] === true,
-    email: asTextOrNull(String(customer?.['email'] ?? '')),
-  }))
-  // What the box said for the address the form opened with, when the address
-  // last left it: back at that address, the box says it again, also where the
-  // office had emptied it (#1026, the review).
-  const [boxAtOpenedAddress, setBoxAtOpenedAddress] = useState(String(opened.confirmed))
+  // The address the notice was confirmed for when the form opened, none
+  // where the row on this device is from before the question (#1026): what
+  // changed in the form is measured against it, not against a row another
+  // device changed while it was open (the review).
+  const [openedFor] = useState(() =>
+    typeof customer?.['objectionNoticeAddress'] === 'string'
+      ? customer['objectionNoticeAddress']
+      : null,
+  )
   // Null until somebody changes the tags: until then the form shows what the
   // record has, also once rows arrive after it opened, and sends nothing.
   const [chosen, setChosen] = useState<ChosenTags | null>(null)
@@ -1233,27 +1240,11 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
     )
   }
 
+  // The notice is confirmed for the address it was given for (#1026): the
+  // box is ticked while that is the address typed, so a new one leaves it
+  // empty and the old one, typed again, ticks it again.
   const set = (field: keyof CustomerDraft) => (value: string) => {
-    if (field !== 'email') {
-      setDraft((current) => ({ ...current, [field]: value }))
-
-      return
-    }
-
-    // The notice is confirmed for the address it was given with (#1026): a
-    // new one asks for it again, and back at the one the form opened with,
-    // the box says what it last said there (the review).
-    const atOpened =
-      asTextOrNull(draft.email) === opened.email
-        ? draft.objectionNoticeConfirmed
-        : boxAtOpenedAddress
-
-    setBoxAtOpenedAddress(atOpened)
-    setDraft((current) => ({
-      ...current,
-      email: value,
-      objectionNoticeConfirmed: asTextOrNull(value) === opened.email ? atOpened : 'false',
-    }))
+    setDraft((current) => ({ ...current, [field]: value }))
   }
   const back = () => {
     void navigate({ to: editing ? `/kunden/${customerId}` : '/' })
@@ -1268,17 +1259,13 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
     try {
       const values: Record<string, unknown> = asCustomer(draft as unknown as Record<string, string>)
 
-      // A confirmation nobody changed stays out of the write: a row on this
-      // device from before the question has none, and sending its false
-      // would take away one somebody gave meanwhile (#1026, the review). With
-      // a new address it goes along in any case, so that one given meanwhile
-      // for the old address does not stay with the new one (CodeRabbit).
-      if (
-        editing &&
-        values['objectionNoticeConfirmed'] === opened.confirmed &&
-        values['email'] === opened.email
-      ) {
-        delete values['objectionNoticeConfirmed']
+      // A confirmation nobody changed in the form stays out of the write, so
+      // that it cannot take back or give again one another device changed
+      // meanwhile (#1026, the review). A new address sends it empty where the
+      // form opened with one; where it opened with none, nothing is sent, and
+      // one given meanwhile names the old address and confirms nothing.
+      if (editing && values['objectionNoticeAddress'] === openedFor) {
+        delete values['objectionNoticeAddress']
       }
 
       const result: EditResult = editing
@@ -1461,13 +1448,18 @@ function CustomerFormScreen({ customerId }: { readonly customerId: string | unde
                   <label className="flex items-start gap-[9px] text-[14px] leading-[1.4] text-ink">
                     <input
                       type="checkbox"
-                      checked={draft.objectionNoticeConfirmed === 'true'}
+                      checked={objectionNoticeConfirmedFor(
+                        draft.email,
+                        draft.objectionNoticeAddress,
+                      )}
+                      // Confirmed for an address, so nothing to confirm without one.
+                      disabled={asTextOrNull(draft.email) === null}
                       onChange={(event) => {
                         const confirmed = event.target.checked
 
                         setDraft((current) => ({
                           ...current,
-                          objectionNoticeConfirmed: confirmed ? 'true' : 'false',
+                          objectionNoticeAddress: confirmed ? current.email : '',
                         }))
                       }}
                       className="mt-0.5 size-4 shrink-0 accent-copper-solid"

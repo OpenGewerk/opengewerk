@@ -85,6 +85,21 @@ export function reminderGroundText(
  */
 export type ReminderWay = 'mail' | 'call'
 
+/**
+ * Whether the notice on the objection is confirmed for the address the
+ * customer has (#1026): the confirmation names the address it was given for,
+ * and a new address, written by any client on any device, needs it again.
+ * Compared without case and surrounding space, as an address is.
+ */
+export function objectionNoticeConfirmedFor(
+  email: string | null | undefined,
+  confirmedFor: string | null | undefined,
+): boolean {
+  const own = email?.trim().toLowerCase() ?? ''
+
+  return own !== '' && own === (confirmedFor?.trim().toLowerCase() ?? '')
+}
+
 export function reminderWay(
   ground: ReminderGround | null,
   underContract: boolean,
@@ -176,19 +191,26 @@ export function reminderContract(text: string): string | null {
  * null: a ground is one of the list or none, and a ground has the day it was
  * given, which none has not.
  *
- * The confirmation of the notice on the objection (#1026) is yes, no or not
- * part of the write, and yes only for a customer of section 7 (3) UWG. Such a
- * customer without it may be stored, as every one from before the question
- * is, and counts as none (`reminderWay`); the record says so.
+ * The confirmation of the notice on the objection (#1026) is the address it
+ * was given for, none, or not part of the write, and an address only for a
+ * customer of section 7 (3) UWG. Such a customer without it may be stored, as
+ * every one from before the question is, and counts as none (`reminderWay`);
+ * the record says so.
  */
 export function reminderGroundProblem(
   ground: unknown,
   since: unknown,
-  objectionNoticeConfirmed: unknown,
+  objectionNoticeAddress: unknown,
 ): string | null {
-  if (objectionNoticeConfirmed !== undefined && typeof objectionNoticeConfirmed !== 'boolean') {
-    return 'Ob der Hinweis auf den Widerspruch gegeben wurde, ist ja oder nein.'
+  if (
+    objectionNoticeAddress !== undefined &&
+    objectionNoticeAddress !== null &&
+    (typeof objectionNoticeAddress !== 'string' || objectionNoticeAddress.trim() === '')
+  ) {
+    return 'Die Bestätigung des Hinweises auf den Widerspruch nennt die E-Mail-Adresse, für die er gegeben wurde.'
   }
+
+  const objectionNoticeConfirmed = typeof objectionNoticeAddress === 'string'
 
   const elsewhere =
     'Die Bestätigung des Hinweises auf den Widerspruch gehört nur zum Bestandskunden nach § 7 Abs. 3 UWG.'

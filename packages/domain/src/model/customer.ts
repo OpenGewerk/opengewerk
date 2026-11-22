@@ -59,11 +59,13 @@ export interface Customer extends Synced, Address {
   readonly reminderGround: ReminderGround | null
   readonly reminderGroundOn: IsoDate | null
   /**
-   * That the office confirmed the notice on the objection given when the
-   * address was collected (#1026), which a customer of § 7 Abs. 3 UWG needs
-   * before a reminder goes out; false for every other ground.
+   * The address for which the office confirmed the notice on the objection
+   * given when it was collected (#1026), which a customer of § 7 Abs. 3 UWG
+   * needs before a reminder goes out: confirmed only while it is the address
+   * the customer has (`objectionNoticeConfirmedFor`); null for every other
+   * ground.
    */
-  readonly objectionNoticeConfirmed: boolean
+  readonly objectionNoticeAddress: string | null
 
   /**
    * How the customer found the business (#312): the source of the lead it

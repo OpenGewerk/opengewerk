@@ -7,6 +7,7 @@ import {
   filledMailText,
   type IsoDate,
   lastServiceDay,
+  objectionNoticeConfirmedFor,
   letterheadSignature,
   type MailFacts,
   type MaintenanceContractId,
@@ -135,7 +136,7 @@ export async function remindCustomer(
       name: customers.name,
       email: customers.email,
       ground: customers.reminderGround,
-      noticeConfirmed: customers.objectionNoticeConfirmed,
+      noticeFor: customers.objectionNoticeAddress,
     })
     .from(customers)
     .where(and(eq(customers.id, deadline.customerId as CustomerId), isNull(customers.deletedAt)))
@@ -150,7 +151,7 @@ export async function remindCustomer(
     customer.ground,
     contract !== null,
     customer.email !== null,
-    customer.noticeConfirmed,
+    objectionNoticeConfirmedFor(customer.email, customer.noticeFor),
   )
 
   if (way === null) {

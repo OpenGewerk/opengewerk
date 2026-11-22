@@ -2032,9 +2032,9 @@ describe('the rollback of 0151', () => {
     await admin.query('insert into tenants (id, name) values ($1, $2)', [tenant.id, tenant.name])
     await admin.query(
       `insert into customers (tenant_id, kind, name, email, reminder_ground, reminder_ground_on,
-         objection_notice_confirmed)
+         objection_notice_address)
        values ($1, 'private', 'Familie Albers', 'albers@example.com', 'existing_customer',
-         '2024-03-12', true)`,
+         '2024-03-12', 'albers@example.com')`,
       [tenant.id],
     )
 
@@ -2052,7 +2052,7 @@ describe('the rollback of 0151', () => {
 
     expect(failures).toHaveLength(1)
     expect(failures[0]).toContain('Die Rücknahme von 0151 würde sie löschen')
-    expect(await columnNames(admin, 'customers')).toContain('objection_notice_confirmed')
+    expect(await columnNames(admin, 'customers')).toContain('objection_notice_address')
   })
 })
 

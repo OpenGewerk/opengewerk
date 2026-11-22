@@ -460,7 +460,7 @@ export async function emptyCustomer(
     sql`update customers set name = 'Gelöschter Kunde', email = null, phone = null, street = null,
            house_number = null, postal_code = null, city = null, vat_id = null, buyer_reference = null,
            tax_exemption_certificate_number = null, tax_exemption_valid_until = null, notes = null,
-           reminder_ground = null, reminder_ground_on = null, objection_notice_confirmed = false, source = null,
+           reminder_ground = null, reminder_ground_on = null, objection_notice_address = null, source = null,
            deleted_at = coalesce(deleted_at, now())
      where id = ${k} returning id`,
   )

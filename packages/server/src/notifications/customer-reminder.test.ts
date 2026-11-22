@@ -183,7 +183,7 @@ beforeAll(async () => {
   // The last column: the notice on the objection confirmed (#1026). `ungeprueft`
   // is a customer of the business stored as one before the office was asked,
   // as every one is after the migration.
-  const people: [string, string | null, string | null, string | null, boolean][] = [
+  const people: [string, string | null, string | null, string | null, boolean | string][] = [
     ['lehmann', 'klaus.lehmann@example.com', 'existing_customer', '2024-03-12', true],
     ['ohne', 'ohne@example.com', null, null, false],
     ['becker', null, 'consent', '2025-05-02', false],
@@ -194,15 +194,31 @@ beforeAll(async () => {
     ['einwilligung', 'einwilligung@example.com', 'consent', '2025-05-02', false],
     ['vertragende', 'vertragende@example.com', null, null, false],
     ['ungeprueft', 'ungeprueft@example.com', 'existing_customer', '2024-03-12', false],
+    // Confirmed for the address the customer had before (#1026).
+    [
+      'umgezogen',
+      'umgezogen@example.com',
+      'existing_customer',
+      '2024-03-12',
+      'alt.umgezogen@example.com',
+    ],
   ]
 
   for (const [who, email, ground, since, confirmed] of people) {
     customers[who] = newId<'customer'>()
     await admin.query(
       `insert into customers (id, tenant_id, kind, name, email, reminder_ground, reminder_ground_on,
-         objection_notice_confirmed)
+         objection_notice_address)
        values ($1, $2, 'private', $3, $4, $5, $6, $7)`,
-      [customers[who], north, `Kunde ${who}`, email, ground, since, confirmed],
+      [
+        customers[who],
+        north,
+        `Kunde ${who}`,
+        email,
+        ground,
+        since,
+        typeof confirmed === 'string' ? confirmed : confirmed ? email : null,
+      ],
     )
   }
 
@@ -298,7 +314,7 @@ describe('a reminder that waits to go out', () => {
           set reminder_ground = $2,
               reminder_ground_on = case when $4::text is null then null
                                         else coalesce(reminder_ground_on, date '2037-09-01') end,
-              objection_notice_confirmed = $3
+              objection_notice_address = case when $3::boolean then email end
         where id = $1`,
       [customers[who], ground, confirmed, ground],
     )
@@ -473,7 +489,8 @@ describe('a reminder of a due inspection to the customer', () => {
    */
   it('goes to a customer of the business only with the notice at the collection confirmed', async () => {
     await switchOn()
-    due.inspection = [inspectionOf('ungeprueft')]
+    // Not confirmed, and confirmed for an address the customer no longer has.
+    due.inspection = [inspectionOf('ungeprueft'), inspectionOf('umgezogen')]
 
     await runDeadlinesOf(engine(), north, now)
 
@@ -612,6 +629,7 @@ describe('the ground of a customer at its route', () => {
     const made = await send('post', '/customers', {
       kind: 'private',
       name: 'Familie Gruber',
+      email: 'gruber@example.com',
       reminderGround: 'existing_customer',
       reminderGroundOn: '2024-03-12',
     }).expect(201)
@@ -619,7 +637,8 @@ describe('the ground of a customer at its route', () => {
     const confirmed = async () =>
       (
         await admin.query<{ confirmed: boolean }>(
-          'select objection_notice_confirmed as confirmed from customers where id = $1',
+          `select coalesce(objection_notice_address = email, false) as confirmed
+             from customers where id = $1`,
           [id],
         )
       ).rows[0]?.confirmed
@@ -627,9 +646,10 @@ describe('the ground of a customer at its route', () => {
 
     expect(await confirmed()).toBe(false)
 
-    await send('patch', `/customers/${id}`, { ...ground, objectionNoticeConfirmed: true }).expect(
-      200,
-    )
+    await send('patch', `/customers/${id}`, {
+      ...ground,
+      objectionNoticeAddress: 'gruber@example.com',
+    }).expect(200)
     expect(await confirmed()).toBe(true)
 
     await send('patch', `/customers/${id}`, ground).expect(200)
@@ -638,7 +658,7 @@ describe('the ground of a customer at its route', () => {
     await send('patch', `/customers/${id}`, {
       reminderGround: 'consent',
       reminderGroundOn: '2025-05-02',
-      objectionNoticeConfirmed: true,
+      objectionNoticeAddress: 'gruber@example.com',
     }).expect(422)
     await send('patch', `/customers/${id}`, {
       reminderGround: 'consent',
@@ -651,10 +671,10 @@ describe('the ground of a customer at its route', () => {
    * The office sends only what changed (`writeDirectly`): the confirmation
    * alone, the day alone. Both are checked against the ground the customer
    * holds (#1026, the review): the confirmation goes with a customer of the
-   * business, the day with any ground, and neither without one. A new
-   * address does not take the confirmation away here; the form empties the
-   * box and sends that, since a box ticked again would not come with the
-   * address.
+   * business, the day with any ground, and neither without one. The
+   * confirmation names the address: a new one written alone, as a client
+   * that does not know the field writes it, leaves it confirming nothing,
+   * and one for another address than the customer's is refused.
    */
   it('takes the confirmation and the day alone, checked against the stored ground', async () => {
     const created = async (body: Record<string, unknown>) =>
@@ -668,7 +688,7 @@ describe('the ground of a customer at its route', () => {
     const stored = async (id: string) =>
       (
         await admin.query<{ confirmed: boolean; on: string | null }>(
-          `select objection_notice_confirmed as confirmed,
+          `select coalesce(objection_notice_address = email, false) as confirmed,
                   to_char(reminder_ground_on, 'YYYY-MM-DD') as on
              from customers where id = $1`,
           [id],
@@ -681,17 +701,24 @@ describe('the ground of a customer at its route', () => {
       reminderGroundOn: '2024-03-12',
     })
 
-    await send('patch', `/customers/${albers}`, { objectionNoticeConfirmed: true }).expect(200)
+    await send('patch', `/customers/${albers}`, {
+      objectionNoticeAddress: 'albers@example.com',
+    }).expect(200)
     expect(await stored(albers)).toEqual({ confirmed: true, on: '2024-03-12' })
 
     await send('patch', `/customers/${albers}`, { reminderGroundOn: '2024-04-02' }).expect(200)
     expect(await stored(albers)).toEqual({ confirmed: true, on: '2024-04-02' })
 
-    await send('patch', `/customers/${albers}`, {
-      email: 'neu.albers@example.com',
-      objectionNoticeConfirmed: false,
-    }).expect(200)
+    await send('patch', `/customers/${albers}`, { email: 'neu.albers@example.com' }).expect(200)
     expect(await stored(albers)).toEqual({ confirmed: false, on: '2024-04-02' })
+
+    await send('patch', `/customers/${albers}`, {
+      objectionNoticeAddress: 'albers@example.com',
+    }).expect(422)
+    await send('patch', `/customers/${albers}`, {
+      objectionNoticeAddress: 'neu.albers@example.com',
+    }).expect(200)
+    expect(await stored(albers)).toEqual({ confirmed: true, on: '2024-04-02' })
 
     const becker = await created({
       name: 'Schreinerei Becker',
@@ -699,13 +726,19 @@ describe('the ground of a customer at its route', () => {
       reminderGroundOn: '2025-05-02',
     })
 
-    await send('patch', `/customers/${becker}`, { objectionNoticeConfirmed: true }).expect(422)
+    await send('patch', `/customers/${becker}`, {
+      email: 'becker@example.com',
+      objectionNoticeAddress: 'becker@example.com',
+    }).expect(422)
     expect(await stored(becker)).toEqual({ confirmed: false, on: '2025-05-02' })
 
     const ohne = await created({ name: 'Familie Ohne' })
 
     await send('patch', `/customers/${ohne}`, { reminderGroundOn: '2025-05-02' }).expect(422)
-    await send('patch', `/customers/${ohne}`, { objectionNoticeConfirmed: true }).expect(422)
+    await send('patch', `/customers/${ohne}`, {
+      email: 'ohne@example.com',
+      objectionNoticeAddress: 'ohne@example.com',
+    }).expect(422)
     expect(await stored(ohne)).toEqual({ confirmed: false, on: null })
   })
 })

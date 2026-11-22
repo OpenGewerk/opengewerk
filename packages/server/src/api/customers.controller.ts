@@ -10,7 +10,11 @@ import {
   Put,
   UnprocessableEntityException,
 } from '@nestjs/common'
-import { type CustomerId, reminderGroundProblem } from '@opengewerk/domain'
+import {
+  type CustomerId,
+  objectionNoticeConfirmedFor,
+  reminderGroundProblem,
+} from '@opengewerk/domain'
 import { Database, pick, requireFields, requireSomething } from '@opengewerk/platform-server'
 import { and, eq, isNull } from 'drizzle-orm'
 
@@ -38,7 +42,7 @@ const writableFields = [
   'taxExemptionValidUntil',
   'reminderGround',
   'reminderGroundOn',
-  'objectionNoticeConfirmed',
+  'objectionNoticeAddress',
   'notes',
 ] as const
 
@@ -46,18 +50,17 @@ const writableFields = [
 interface StoredGround {
   readonly ground: string | null
   readonly since: string | null
-  readonly confirmed: boolean
+  readonly email: string | null
+  readonly confirmedFor: string | null
 }
 
 /** A customer that does not exist yet holds no ground. */
-const noGround: StoredGround = { ground: null, since: null, confirmed: false }
+const noGround: StoredGround = { ground: null, since: null, email: null, confirmedFor: null }
 
 /** Whether a write touches the ground for reminders, its day or the confirmation. */
 function touchesReminderGround(values: Record<string, unknown>): boolean {
   return (
-    'reminderGround' in values ||
-    'reminderGroundOn' in values ||
-    'objectionNoticeConfirmed' in values
+    'reminderGround' in values || 'reminderGroundOn' in values || 'objectionNoticeAddress' in values
   )
 }
 
@@ -84,15 +87,29 @@ function requireReminderGround(
   const since = 'reminderGroundOn' in values ? values['reminderGroundOn'] : stored.since
 
   if ('reminderGround' in values && ground !== 'existing_customer') {
-    values['objectionNoticeConfirmed'] ??= false
+    values['objectionNoticeAddress'] ??= null
   }
 
-  const confirmed =
-    'objectionNoticeConfirmed' in values ? values['objectionNoticeConfirmed'] : stored.confirmed
-  const problem = reminderGroundProblem(ground, since, confirmed)
+  const confirmedFor =
+    'objectionNoticeAddress' in values ? values['objectionNoticeAddress'] : stored.confirmedFor
+  const problem = reminderGroundProblem(ground, since, confirmedFor)
 
   if (problem !== null) {
     throw new UnprocessableEntityException(problem)
+  }
+
+  // A confirmation written is for the address the customer has after the
+  // write; one for another address would confirm nothing (#1026).
+  const email = 'email' in values ? values['email'] : stored.email
+
+  if (
+    'objectionNoticeAddress' in values &&
+    values['objectionNoticeAddress'] !== null &&
+    !objectionNoticeConfirmedFor(email as string | null, values['objectionNoticeAddress'] as string)
+  ) {
+    throw new UnprocessableEntityException(
+      'Der Hinweis auf den Widerspruch wird für die E-Mail-Adresse des Kunden bestätigt.',
+    )
   }
 }
 
@@ -150,7 +167,8 @@ export class CustomersController {
           .select({
             ground: customers.reminderGround,
             since: customers.reminderGroundOn,
-            confirmed: customers.objectionNoticeConfirmed,
+            email: customers.email,
+            confirmedFor: customers.objectionNoticeAddress,
           })
           .from(customers)
           .where(and(eq(customers.id, id as CustomerId), isNull(customers.deletedAt)))

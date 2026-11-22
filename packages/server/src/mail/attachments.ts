@@ -9,6 +9,7 @@ import {
   type CustomerId,
   type DeadlineId,
   lastServiceDay,
+  objectionNoticeConfirmedFor,
   reminderContract,
   reminderStillHolds,
   RuleError,
@@ -415,7 +416,7 @@ export async function refuseWithheldCustomerMail(
         .select({
           email: customers.email,
           ground: customers.reminderGround,
-          confirmed: customers.objectionNoticeConfirmed,
+          confirmedFor: customers.objectionNoticeAddress,
         })
         .from(customers)
         .where(and(eq(customers.id, customerId as CustomerId), isNull(customers.deletedAt)))
@@ -428,7 +429,11 @@ export async function refuseWithheldCustomerMail(
 
       if (
         customer.email !== row.recipientAddress ||
-        !reminderStillHolds(row.body, customer.ground, customer.confirmed)
+        !reminderStillHolds(
+          row.body,
+          customer.ground,
+          objectionNoticeConfirmedFor(customer.email, customer.confirmedFor),
+        )
       ) {
         return lapsedReminderMail
       }

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   reminderGroundProblem,
+  objectionNoticeConfirmedFor,
   reminderContract,
   reminderGroundText,
   reminderSentence,
@@ -81,23 +82,24 @@ describe('the ground of a customer', () => {
   })
 
   it('is one of the list with its day, or none without one', () => {
-    expect(reminderGroundProblem(null, null, false)).toBeNull()
-    expect(reminderGroundProblem('consent', '2024-03-12', false)).toBeNull()
-    expect(reminderGroundProblem('objected', '2026-11-02', false)).toBeNull()
-    expect(reminderGroundProblem('newsletter', '2024-03-12', false)).not.toBeNull()
-    expect(reminderGroundProblem('consent', null, false)).not.toBeNull()
-    expect(reminderGroundProblem('consent', '12.03.2024', false)).not.toBeNull()
-    expect(reminderGroundProblem(null, '2024-03-12', false)).not.toBeNull()
+    expect(reminderGroundProblem(null, null, null)).toBeNull()
+    expect(reminderGroundProblem('consent', '2024-03-12', null)).toBeNull()
+    expect(reminderGroundProblem('objected', '2026-11-02', null)).toBeNull()
+    expect(reminderGroundProblem('newsletter', '2024-03-12', null)).not.toBeNull()
+    expect(reminderGroundProblem('consent', null, null)).not.toBeNull()
+    expect(reminderGroundProblem('consent', '12.03.2024', null)).not.toBeNull()
+    expect(reminderGroundProblem(null, '2024-03-12', null)).not.toBeNull()
   })
 
   it('has the confirmation of the notice only with a customer of the business', () => {
-    expect(reminderGroundProblem('existing_customer', '2024-03-12', true)).toBeNull()
+    expect(reminderGroundProblem('existing_customer', '2024-03-12', 'a@example.com')).toBeNull()
     // Stored, and counted as none until somebody confirms it.
-    expect(reminderGroundProblem('existing_customer', '2024-03-12', false)).toBeNull()
+    expect(reminderGroundProblem('existing_customer', '2024-03-12', null)).toBeNull()
     expect(reminderGroundProblem('existing_customer', '2024-03-12', undefined)).toBeNull()
-    expect(reminderGroundProblem('consent', '2024-03-12', true)).not.toBeNull()
-    expect(reminderGroundProblem(null, null, true)).not.toBeNull()
-    expect(reminderGroundProblem('existing_customer', '2024-03-12', 'yes')).not.toBeNull()
+    expect(reminderGroundProblem('consent', '2024-03-12', 'a@example.com')).not.toBeNull()
+    expect(reminderGroundProblem(null, null, 'a@example.com')).not.toBeNull()
+    expect(reminderGroundProblem('existing_customer', '2024-03-12', 42)).not.toBeNull()
+    expect(reminderGroundProblem('existing_customer', '2024-03-12', ' ')).not.toBeNull()
   })
 
   it('says of a customer of the business that nobody confirmed the notice', () => {
@@ -131,5 +133,19 @@ describe('the ground of a customer', () => {
     expect(
       reminderContract(`Guten Tag.\n\n${reminderSentence('existing_customer', null)}`),
     ).toBeNull()
+  })
+
+  /**
+   * The confirmation names the address it was given for (#1026): it holds
+   * while that is the address the customer has, without case or space, and
+   * a new address needs it again.
+   */
+  it('holds the confirmation for the address it was given for alone', () => {
+    expect(objectionNoticeConfirmedFor('albers@example.com', 'albers@example.com')).toBe(true)
+    expect(objectionNoticeConfirmedFor('Albers@Example.com ', 'albers@example.com')).toBe(true)
+    expect(objectionNoticeConfirmedFor('neu.albers@example.com', 'albers@example.com')).toBe(false)
+    expect(objectionNoticeConfirmedFor('albers@example.com', null)).toBe(false)
+    expect(objectionNoticeConfirmedFor(null, null)).toBe(false)
+    expect(objectionNoticeConfirmedFor('', '')).toBe(false)
   })
 })

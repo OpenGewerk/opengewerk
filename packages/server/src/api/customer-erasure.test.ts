@@ -685,7 +685,7 @@ describe('deleting a customer (#845)', () => {
     // A customer of the business, the notice on the objection confirmed (#1026).
     await admin.query(
       `update customers set reminder_ground = 'existing_customer', reminder_ground_on = '2024-03-12',
-         objection_notice_confirmed = true where id = $1`,
+         objection_notice_address = 'vossberg@example.com' where id = $1`,
       [customer],
     )
     await record(customer).expect(201)
@@ -721,11 +721,11 @@ describe('deleting a customer (#845)', () => {
     expect(
       (
         await admin.query(
-          'select reminder_ground, objection_notice_confirmed from customers where id = $1',
+          'select reminder_ground, objection_notice_address from customers where id = $1',
           [customer],
         )
       ).rows,
-    ).toEqual([{ reminder_ground: null, objection_notice_confirmed: false }])
+    ).toEqual([{ reminder_ground: null, objection_notice_address: null }])
     expect(
       (
         await admin.query(

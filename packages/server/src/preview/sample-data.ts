@@ -261,7 +261,7 @@ export async function plantSampleData(base: string, today: IsoDate): Promise<voi
       reminderGround: 'existing_customer',
       reminderGroundOn: '2024-03-12',
       // Told about the objection when the address was collected (#1026).
-      objectionNoticeConfirmed: true,
+      objectionNoticeAddress: 'technik@nordblick.example',
     }),
   )
 

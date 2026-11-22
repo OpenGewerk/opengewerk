@@ -1,5 +1,5 @@
 {
-  "id": "0b8b06aa-0584-4714-8a20-c28584ee1e0a",
+  "id": "49eeb523-426e-4efd-b7a3-19ccb8bda8fa",
   "prevId": "a8e1924e-9e9f-4928-88f8-8d21a78fc469",
   "version": "7",
   "dialect": "postgresql",
@@ -6828,12 +6828,11 @@
           "primaryKey": false,
           "notNull": false
         },
-        "objection_notice_confirmed": {
-          "name": "objection_notice_confirmed",
-          "type": "boolean",
+        "objection_notice_address": {
+          "name": "objection_notice_address",
+          "type": "text",
           "primaryKey": false,
-          "notNull": true,
-          "default": false
+          "notNull": false
         },
         "source": {
           "name": "source",
