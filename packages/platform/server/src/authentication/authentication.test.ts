@@ -2970,6 +2970,8 @@ describe('an access past its last day', () => {
 
     // The other close goes once the pass waits for it, at the stretch its
     // first piece chose, and not before.
+    let settled: PromiseSettledResult<unknown>[] | undefined
+
     // Let go in any case, so that a failure here leaves no open transaction
     // behind for the pass and the tests after it.
     try {
@@ -2987,7 +2989,14 @@ describe('an access past its last day', () => {
       }
     } finally {
       release()
-      await Promise.all([pass, other])
+      // Both to their end, whatever fails, and a failure still shows below.
+      settled = await Promise.allSettled([pass, other])
+    }
+
+    for (const result of settled ?? []) {
+      if (result.status === 'rejected') {
+        throw result.reason
+      }
     }
 
     expect(waited).toBe(true)
