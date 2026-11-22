@@ -1115,6 +1115,42 @@ describe('a second factor', () => {
  * away, for an account that works there and nowhere else.
  */
 describe('taking a second factor away', () => {
+  /**
+   * The stretch of the person at work ends in the name of whoever reset the
+   * second factor, with the reason of the reset (opengewerk#1048), as the
+   * change of the factor itself says.
+   */
+  it('ends the stretch of the person at work in the name of whoever reset it', async () => {
+    const working = { email: 'zuruecksetzen@example.de', name: 'Rita Rücksetzen' }
+    const { userId } = await addStaffMember(instance.authentication, instance.database, {
+      ...working,
+      password,
+      tenantId: north.id,
+      roles: ['member'],
+    })
+    const authenticator = await addPasskey(working.email, 'Telefon')
+    const theirs = cookiesOf(await passkeySignIn(authenticator))
+    const lead = await sessionToChange(leader.email)
+
+    await instance.chooseTenant(theirs, north.id)
+    await instance.chooseTenant(lead, north.id)
+    await http()
+      .delete(`/staff/${userId}/second-factor`)
+      .set('cookie', lead)
+      .set('origin', origin)
+      .expect(200)
+
+    const { rows } = await admin.query<{ actor: string | null; reason: string | null }>(
+      `select a.user_id as actor, a.reason from tenant_sessions t
+         join audit_entries a
+           on a.table_name = 'tenant_sessions' and a.record_id = t.id and a.field = 'ended_at'
+        where t.user_id = $1 and t.tenant_id = $2`,
+      [userId, north.id],
+    )
+
+    expect(rows).toEqual([{ actor: userIds.get(leader.email), reason: 'second-factor.reset' }])
+  })
+
   it('leaves the account its password, signs it out everywhere and says so in the log', async () => {
     const lost = { email: 'verloren@example.de', name: 'Lisa Verloren' }
     const { userId } = await addStaffMember(instance.authentication, instance.database, {

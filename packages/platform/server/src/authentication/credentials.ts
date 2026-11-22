@@ -170,12 +170,14 @@ export async function endStretchesOfRevoked(
   userId: string,
   revoked: Pick<Awaited<ReturnType<typeof revokeCredentials>>, 'ended' | 'at'>,
   reason: string,
+  // Who closes them, the person unless somebody else acts (opengewerk#1048).
+  actor: string = userId,
 ): Promise<void> {
   await endStretchesOfTakenOut(
     database,
     revoked.ended.map((session) => ({ ...session, userId })),
     revoked.at,
-    { reason, actor: userId },
+    { reason, actor },
   )
 }
 

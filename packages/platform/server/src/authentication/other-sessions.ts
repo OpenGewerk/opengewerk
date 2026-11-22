@@ -26,11 +26,14 @@ export async function endOtherSessions(
   userId: string,
   keep: string,
   reason: string,
+  // Whoever takes the sessions out, the person themselves unless the office
+  // does it for them (opengewerk#1048).
+  actor: string = userId,
 ): Promise<void> {
   const revoked = await database.forInstance(
     (tx) => revokeCredentials(tx, userId, theSession(keep)),
-    userId,
+    actor,
   )
 
-  await endStretchesOfRevoked(database, userId, revoked, reason)
+  await endStretchesOfRevoked(database, userId, revoked, reason, actor)
 }

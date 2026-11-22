@@ -33,7 +33,7 @@ import { beforeItsEnd, hasEnded, refuseWithoutLastDay, stillWorks } from './last
 import type { AddressMail } from './notices.js'
 import { holdRoles, leadsItsTenant, rolesOfTenant } from './roles.js'
 import { removeSecondFactor } from './second-factor.js'
-import { revokeCredentials } from './credentials.js'
+import { endStretchesOfRevoked, revokeCredentials } from './credentials.js'
 import { endPastLastDayOrLeaveIt, endStretchesOfTakenOut, firstOf } from './session-sweep.js'
 
 /**
@@ -964,11 +964,12 @@ export async function removeAccountData(
     return { account: false }
   }
 
-  return database.forInstance(async (tx) => {
+  const revoked = await database.forInstance(async (tx) => {
     // The sessions and every sign in under way go, and the count of the
     // credentials goes up (`credentials.ts`): a sign in that read the
     // password before it went is refused as it writes its session.
-    await revokeCredentials(tx, userId)
+    const taken = await revokeCredentials(tx, userId)
+
     await tx.delete(authPasskeys).where(eq(authPasskeys.userId, userId))
     await tx.delete(authTwoFactors).where(eq(authTwoFactors.userId, userId))
     await tx.delete(authAccounts).where(eq(authAccounts.userId, userId))
@@ -983,8 +984,21 @@ export async function removeAccountData(
       })
       .where(eq(authUsers.id, userId))
 
-    return { account: true }
+    return taken
   }, actor.userId)
+
+  // What it took out of the tenants next door ends there as on every other
+  // way (opengewerk#1050): with the access, or when a session ran out
+  // before, and not later with the pass.
+  await endStretchesOfRevoked(
+    database,
+    userId,
+    revoked,
+    actor.reason ?? 'session.end',
+    actor.userId ?? userId,
+  )
+
+  return { account: true }
 }
 
 /**
