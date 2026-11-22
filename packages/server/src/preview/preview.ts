@@ -7,6 +7,7 @@ import { runDeadlineCycle, startDeadlineWorker } from '../deadlines/engine.js'
 import { applicationDatabaseUrl } from '../database/test-database.js'
 import {
   admitPreviewUser,
+  dateSampleYears,
   preparePreviewDatabase,
   previewDatabaseUrl,
   previewIdentity,
@@ -48,8 +49,10 @@ async function start(): Promise<void> {
 
   try {
     await admitPreviewUser(admin, tenant)
-  } finally {
+  } catch (error) {
     await admin.end()
+
+    throw error
   }
 
   const identity = previewIdentity(tenant.id)
@@ -63,6 +66,12 @@ async function start(): Promise<void> {
   const address = `http://127.0.0.1:${String(port)}`
 
   await plantSampleData(address, today())
+
+  try {
+    await dateSampleYears(admin, tenant.id)
+  } finally {
+    await admin.end()
+  }
 
   // The deadlines follow what was just planted, once at once and then every
   // minute like on an installation, so that the list "Fristen" has its open

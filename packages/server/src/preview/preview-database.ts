@@ -174,6 +174,38 @@ export function previewIdentity(tenantId: TenantId): Identity {
  * in one transaction under the reason of a first run, which is what the logs
  * of the business and of the instance then say.
  */
+/**
+ * Dates the days of leave of the years before this one back to their own
+ * year, once the sample data went in (opengewerk#1033): a year of a person
+ * counts its eight years from the last time one of its records was written,
+ * and through the routes every row is written today, so the year the boards
+ * "Datenschutz" draw as due would never be. Past the triggers, so that the
+ * moment stays as given and the log of the business shows no change nobody
+ * made; nothing else is touched.
+ */
+export async function dateSampleYears(admin: Pool, tenantId: TenantId): Promise<void> {
+  const client = await admin.connect()
+
+  try {
+    await client.query('begin')
+    await client.query('set local session_replication_role = replica')
+    await client.query(
+      `update leave_entitlements
+          set updated_at = make_timestamptz(year, 1, 2, 9, 0, 0, 'Europe/Berlin')
+        where tenant_id = $1
+          and year < extract(year from (now() at time zone 'Europe/Berlin'))::int`,
+      [tenantId],
+    )
+    await client.query('commit')
+  } catch (error) {
+    await client.query('rollback')
+
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
 export async function admitPreviewUser(
   admin: Pool,
   tenant: { readonly id: TenantId; readonly name: string },
