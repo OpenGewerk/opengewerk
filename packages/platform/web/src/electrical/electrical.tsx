@@ -241,7 +241,7 @@ function known<Value extends string>(
 }
 
 /** The nominal voltage of a circuit, up to 500 V for a record without one (#1021). */
-function voltageClassOf(record: RecordState | null | undefined): CircuitVoltageClass {
+export function voltageClassOf(record: RecordState | null | undefined): CircuitVoltageClass {
   return oneOf(record, 'voltageClass', circuitVoltageClasses, 'up_to_500')
 }
 

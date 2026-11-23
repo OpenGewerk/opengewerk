@@ -495,6 +495,24 @@ describe('the figures of a circuit', () => {
         ),
       ),
     ).toEqual({ code: checkViolation, constraint: 'circuits_selective_rcd_has_type' })
+
+    // Selective alone, on a circuit whose type is stored: judged with that type.
+    const typed = newId<'circuit'>()
+
+    await push(as(north.id, 'office'), [
+      created('circuits', typed, {
+        distributionBoardId: boardId,
+        designation: 'F3',
+        rcdType: 'b',
+        position: 2,
+      }),
+    ])
+
+    const selectiveAlone = await push(as(north.id, 'office'), [
+      changed('circuits', typed, { rcdSelective: { from: false, to: true } }),
+    ])
+
+    expect(selectiveAlone.receipts.map((receipt) => receipt.outcome)).toEqual(['applied'])
   })
 
   it('refuse a kind of board nobody knows before the database would', async () => {

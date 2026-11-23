@@ -92,8 +92,9 @@ const rows: Readonly<Record<string, RecordState[]>> = {
   equipment: [],
 }
 
-async function mount(path: string) {
-  for (const [entity, list] of Object.entries(rows)) {
+async function mount(path: string, changed: Readonly<Record<string, RecordState[]>> = {}) {
+  // What a test changes goes in after the rows, in place of the row it names.
+  for (const [entity, list] of [...Object.entries(rows), ...Object.entries(changed)]) {
     for (const row of list) {
       server.put(entity, row)
     }
@@ -322,6 +323,22 @@ describe('a board in the office', () => {
 })
 
 describe('a circuit in the office', () => {
+  /** A selective RCD and a nominal voltage other than the ordinary one say so (#1021). */
+  it('says of a selective RCD and of SELV or PELV that they are', async () => {
+    const kitchen = rows['circuits']?.find((row) => row['id'] === 'k-2') ?? {}
+
+    await mount('/stromkreise/k-2', {
+      circuits: [{ ...kitchen, voltageClass: 'selv_pelv', rcdSelective: true } as RecordState],
+    })
+
+    const detail = await screen.findByRole('region', { name: 'F2, Steckdosen Küche' })
+    const protection = within(detail).getByRole('region', { name: 'Schutzeinrichtung' })
+    expect(within(protection).getByText('Typ A selektiv, 30 mA')).toBeDefined()
+    const cable = within(detail).getByRole('region', { name: 'Leitung und Verbraucher' })
+    expect(within(cable).getByText('Nennspannung')).toBeDefined()
+    expect(within(cable).getByText('SELV oder PELV')).toBeDefined()
+  })
+
   it('lists the equipment on it and takes more', async () => {
     await mount('/stromkreise/k-2')
     const user = userEvent.setup()
@@ -340,6 +357,8 @@ describe('a circuit in the office', () => {
     expect(within(cable).getByText('NYM-J')).toBeDefined()
     expect(within(cable).getByText('3 × 2,5 mm²')).toBeDefined()
     expect(within(cable).getByText('18,5 m')).toBeDefined()
+    // An ordinary circuit says nothing of its nominal voltage (#1021).
+    expect(within(cable).queryByText('Nennspannung')).toBeNull()
 
     const equipment = screen.getByRole('region', { name: 'Betriebsmittel' })
     await user.click(
