@@ -1,6 +1,6 @@
 import type { RecordState, SignedContent } from '@opengewerk/domain'
 import { count } from '@opengewerk/platform-web/sync'
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 
 import { lineKindOf, lineUnitOf } from '../app/labels.js'
 
@@ -62,61 +62,63 @@ export function signedContentOf(
   }
 }
 
-/** A signature on the pad and the fingerprint of the page it was drawn under. */
-interface Drawn {
-  readonly path: string
-  readonly fingerprint: string
-}
-
 /**
  * The signature on a pad, held to the page the customer read while drawing it
- * (#1063). Should the page change after that, through the sync or a new answer
- * of the server, the drawing goes: `pad` is the key that mounts the pad again,
- * empty, and `pageChanged` says why it is empty, until the customer draws
- * again. A signature only ever goes out over the page they saw while signing.
+ * (#1063). The page is noted as the finger first touches the drawing area of
+ * an empty pad, so `onPointerDown` belongs on an element around the pad, in
+ * the capture phase: the pad itself tells of a stroke only once it ends.
  *
- * The pad tells of a stroke only once it ends, so a stroke is held to the page
- * it was begun under: `onPointerDown` belongs on an element around the pad,
- * in the capture phase, and notes the page as the finger touches it.
+ * Should the page change while anything is drawn or being drawn, through the
+ * sync or a new answer of the server, the drawing goes at once: `pad` is the
+ * key that mounts the pad again, empty, and `pageChanged` says why it is
+ * empty, until the customer draws again. A second finger, or the page changing
+ * back, brings nothing back. A signature only ever goes out over the page the
+ * customer saw from the first touch to the last stroke.
  */
 export function useSignatureFor(fingerprint: string): {
   readonly path: string | null
   readonly pad: number
   readonly pageChanged: boolean
   readonly onChange: (path: string | null) => void
-  readonly onPointerDown: () => void
+  readonly onPointerDown: (event: { readonly target: EventTarget | null }) => void
 } {
-  const [drawn, setDrawn] = useState<Drawn | null>(null)
+  const [drawn, setDrawn] = useState<string | null>(null)
+  // The page the pad was first touched under since it was last empty.
+  const [under, setUnder] = useState<string | null>(null)
   const [pad, setPad] = useState(0)
   const [pageChanged, setPageChanged] = useState(false)
-  const begunUnder = useRef<string | null>(null)
 
   // Put right while rendering, as React has it for state that follows a
   // value, and not in an effect.
-  if (drawn !== null && drawn.fingerprint !== fingerprint) {
+  if (under !== null && under !== fingerprint) {
     setDrawn(null)
+    setUnder(null)
     setPageChanged(true)
     setPad((count) => count + 1)
   }
 
   return {
-    path: drawn?.path ?? null,
+    path: drawn,
     pad,
     pageChanged,
     onChange: (path) => {
       if (path === null) {
         setDrawn(null)
+        setUnder(null)
 
         return
       }
 
-      // Begun under another page, the drawing is held to that one and goes
-      // in the render that follows.
-      setDrawn({ path, fingerprint: begunUnder.current ?? fingerprint })
+      setDrawn(path)
+      setUnder(fingerprint)
       setPageChanged(false)
     },
-    onPointerDown: () => {
-      begunUnder.current = fingerprint
+    onPointerDown: (event) => {
+      // Only a touch of the drawing area itself, not of the hint or the button
+      // beside it: those draw nothing.
+      if (event.target instanceof Element && event.target.closest('svg') !== null) {
+        setUnder(fingerprint)
+      }
     },
   }
 }
