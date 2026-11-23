@@ -1554,6 +1554,7 @@ export function ProtocolSheet({
                 value={value}
                 circuit={null}
                 appliance={appliance}
+                conditions={measuringConditions(null, draft)}
                 performedOn={performedOn}
                 partOnly={partOnly}
                 photos={photos}
@@ -1568,6 +1569,7 @@ export function ProtocolSheet({
                 value={value}
                 circuit={null}
                 appliance={appliance}
+                conditions={measuringConditions(null, draft)}
                 performedOn={performedOn}
                 partOnly={partOnly}
                 photos={photos}

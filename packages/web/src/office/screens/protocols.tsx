@@ -449,6 +449,7 @@ function OneField({
       value={value}
       circuit={null}
       appliance={protocol.appliance}
+      conditions={measuringConditions(null, protocol.draft)}
       performedOn={protocol.performedOn}
       partOnly={protocol.partOnly}
       photos={protocol.photos}
@@ -462,6 +463,7 @@ function OneField({
       value={value}
       circuit={null}
       appliance={protocol.appliance}
+      conditions={measuringConditions(null, protocol.draft)}
       performedOn={protocol.performedOn}
       partOnly={protocol.partOnly}
       photos={protocol.photos}

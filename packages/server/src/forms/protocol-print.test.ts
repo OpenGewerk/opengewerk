@@ -144,6 +144,45 @@ describe('a printed recurring inspection in version 2 (#1022)', () => {
   })
 })
 
+describe('a printed protocol of a wallbox in version 2 (#1075)', () => {
+  const second = elektroRegistry.definitionFor('vde-0100-722', 2)
+
+  it('judges the tripping current by the rated residual current it names', () => {
+    expect(second).not.toBeNull()
+
+    const printed = (rated: string) =>
+      protocolPrintJob({
+        ...protocol,
+        definition: second as FormDefinition,
+        values: { rcd_rated_residual_current: rated, rcd_trip_current: 8000 },
+        performedOn: '2026-11-20',
+        rules: elektroRules,
+      }).html
+
+    // 8 mA lie between half and all of 10 mA, and under half of 30 mA.
+    expect(printed('10')).not.toContain('außerhalb des Grenzwerts')
+    expect(printed('30')).toContain('außerhalb des Grenzwerts')
+  })
+
+  it('names the range under the measuring, with its sources', () => {
+    const legend = (values: Record<string, string>) =>
+      protocolPrintJob({
+        ...protocol,
+        definition: second as FormDefinition,
+        values,
+        performedOn: '2026-11-20',
+        rules: elektroRules,
+      }).html
+
+    expect(legend({})).toContain(
+      '<li><strong>Auslösestrom IΔ:</strong> zwischen 15,1 und 30,0 mA; DIN VDE 0100-722 (VDE 0100-722):2019-06, 722.531.3.101; DIN EN 61008-1',
+    )
+    expect(legend({ rcd_rated_residual_current: '10' })).toContain(
+      '<li><strong>Auslösestrom IΔ:</strong> zwischen 5,1 und 10,0 mA; DIN EN 61008-1',
+    )
+  })
+})
+
 describe('the next inspection on a printed protocol (#301)', () => {
   const recurring = elektroRegistry.definitionFor('vde-0105-100', 1)
 

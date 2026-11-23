@@ -298,11 +298,12 @@ describe('version 2 of the commissioning protocol of a wallbox (#1075)', () => {
     return found
   }
 
-  function judged(milli: number, version = 2) {
+  function judged(milli: number, version = 2, form: Record<string, unknown> = {}) {
     return limitVerdict(chargingMeasurement(version, 'rcd_trip_current'), milli, {
       rules: elektroRules,
       on,
       circuit: null,
+      conditions: measuringConditions(null, form),
     })
   }
 
@@ -316,6 +317,34 @@ describe('version 2 of the commissioning protocol of a wallbox (#1075)', () => {
     // The 30 mA per connection point and the range of DIN EN 61008-1.
     expect(judged(12_000)?.source).toContain('722.531.3.101')
     expect(judged(12_000)?.source).toContain('61008-1')
+  })
+
+  it('judges an RCD of 10 mA between half and all of its own rated residual current', () => {
+    const ten = { rcd_rated_residual_current: '10' }
+
+    expect(judged(5000, 2, ten)).toMatchObject({
+      within: false,
+      fromMilli: 5001,
+      limitMilli: 10_000,
+    })
+    expect(judged(8000, 2, ten)).toMatchObject({ within: true })
+    expect(judged(10_100, 2, ten)).toMatchObject({ within: false })
+    // The range is that of DIN EN 61008-1, the 30 mA of DIN VDE 0100-722 are not the limit then.
+    expect(judged(8000, 2, ten)?.source).not.toContain('722.531.3.101')
+    expect(judged(8000, 2, { rcd_rated_residual_current: '30' })).toMatchObject({ within: false })
+  })
+
+  it('reads the rated residual current of the protocol in whole milliamperes up to 30', () => {
+    expect(measuringConditions(null, { rcd_rated_residual_current: '10' })).toEqual({
+      rcdRatedResidualMicro: 10_000,
+    })
+    expect(measuringConditions(null, { rcd_rated_residual_current: '30' })).toEqual({
+      rcdRatedResidualMicro: 30_000,
+    })
+
+    for (const odd of ['300', '0', '31', '10.5', 'zehn', 10, null]) {
+      expect(measuringConditions(null, { rcd_rated_residual_current: odd })).toEqual({})
+    }
   })
 
   it('leaves version 1 as it was for the protocols filled in it', () => {

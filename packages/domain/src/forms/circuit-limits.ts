@@ -36,12 +36,15 @@ function circuitOf(item: unknown): CircuitFacts | null {
  * the environment its block names, dry or damp, and the earthing system and
  * the nominal voltage in the head of the protocol, the voltage in thousandths
  * of a volt as the form keeps it. A block without them is a dry circuit in a
- * TN or TT system at 230 V.
+ * TN or TT system at 230 V. The protocol of a wallbox names the rated residual
+ * current of its RCD (#1075), in microamperes, the thousandths of the
+ * milliamperes its tripping current is measured in.
  */
 export interface MeasuringConditions {
   readonly environment?: 'dry' | 'damp'
   readonly earthingSystem?: string
   readonly nominalVoltageMilli?: number
+  readonly rcdRatedResidualMicro?: number
 }
 
 function conditionsOf(item: unknown): MeasuringConditions | null {
@@ -118,25 +121,30 @@ export const rcdTripCurrentRange: LimitCalculator = (_field, { rules, on, item }
 /**
  * The tripping current of the RCD before a charging point between half and all
  * of its rated residual current (#1075), as version 4 of the first inspection
- * judges a circuit's (#1021). The protocol of a wallbox names no circuit: its
- * rated residual current is the 30 mA DIN VDE 0100-722 asks for each
- * connection point, a rule of the package as every other limit.
+ * judges a circuit's (#1021). The protocol of a wallbox names no circuit but
+ * the rated residual current of the RCD, 30 or 10 mA, and without it the 30 mA
+ * DIN VDE 0100-722 allows at most for each connection point, a rule of the
+ * package as every other limit.
  */
-export const chargingRcdTripCurrentRange: LimitCalculator = (_field, { rules, on }) => {
-  const rated = rules.at('elektro.charging.rcd_rated_residual_current', on)
+export const chargingRcdTripCurrentRange: LimitCalculator = (_field, { rules, on, item }) => {
+  const named = conditionsOf(item)?.rcdRatedResidualMicro
+  const rule = rules.at('elektro.charging.rcd_rated_residual_current', on)
   const least = rules.at('elektro.rcd.trip_current_minimum', on)
   const most = rules.at('elektro.rcd.trip_current_maximum', on)
+  const rated = named ?? rule?.value
 
-  if (!rated || !least || !most) {
+  if (rated === undefined || !least || !most) {
     return { none: 'Für diesen Tag ist kein Grenzwert hinterlegt.' }
   }
 
+  const shares = sourcesOf(least.source, most.source)
+
   // Microamperes are thousandths of the field's milliamperes, the shares basis points.
   return {
-    limitMilli: Math.floor((rated.value * most.value) / 10_000),
-    fromMilli: Math.floor((rated.value * least.value) / 10_000) + 1,
+    limitMilli: Math.floor((rated * most.value) / 10_000),
+    fromMilli: Math.floor((rated * least.value) / 10_000) + 1,
     atLeast: false,
-    source: sourcesOf(rated.source, sourcesOf(least.source, most.source)),
+    source: named === undefined && rule ? sourcesOf(rule.source, shares) : shares,
   }
 }
 

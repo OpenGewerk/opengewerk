@@ -803,6 +803,7 @@ function SectionStep({
               value={protocol.draft[field.key] as FieldValue | undefined}
               circuit={null}
               appliance={protocol.appliance}
+              conditions={measuringConditions(null, protocol.draft)}
               performedOn={protocol.performedOn}
               onChange={(changed) => {
                 protocol.set(field.key, changed)

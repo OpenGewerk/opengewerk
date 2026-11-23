@@ -613,6 +613,47 @@ describe('a test protocol on site (#79)', () => {
     expect(screen.queryByText(/Wert außerhalb/)).toBeNull()
   })
 
+  it('judges the tripping current of a wallbox by the rated residual current the protocol names (#1075)', async () => {
+    const user = userEvent.setup()
+
+    server.put('form_records', {
+      id: 'p-wallbox',
+      definitionKey: 'vde-0100-722',
+      definitionVersion: 2,
+      installationId: 'i-1',
+      jobId: 'j-1',
+      performedOn: '2026-11-20',
+      status: 'draft',
+      values: JSON.stringify({ rcd_rated_residual_current: '10', rcd_trip_current: 8000 }),
+    })
+    await mount('/auftraege/j-1/pruefprotokolle/p-wallbox')
+    await screen.findByRole('list', { name: 'Abschnitte' })
+    await user.click(row('Messen'))
+
+    // 8 mA lie between half and all of 10 mA, and under half of 30 mA.
+    expect(
+      await screen.findByText('Innerhalb des Grenzwerts, zwischen 5,1 und 10,0 mA.'),
+    ).toBeTruthy()
+  })
+
+  it('shows a signed protocol of a wallbox judged by the rated residual current it names (#1075)', async () => {
+    server.put('form_records', {
+      id: 'p-wallbox-signed',
+      definitionKey: 'vde-0100-722',
+      definitionVersion: 2,
+      installationId: 'i-1',
+      jobId: 'j-1',
+      performedOn: '2026-11-20',
+      status: 'signed',
+      values: JSON.stringify({ rcd_rated_residual_current: '10', rcd_trip_current: 8000 }),
+    })
+    await mount('/auftraege/j-1/pruefprotokolle/p-wallbox-signed')
+
+    expect(
+      await screen.findByText(/^Innerhalb des Grenzwerts, zwischen 5,1 und 10,0 mA\./),
+    ).toBeTruthy()
+  })
+
   it('opens the measuring at the first circuit without a value', async () => {
     const user = userEvent.setup()
 

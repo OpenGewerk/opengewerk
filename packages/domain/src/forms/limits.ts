@@ -32,8 +32,9 @@ const workedOutMinimums: ReadonlySet<string> = new Set([
 /**
  * The conditions a circuit was measured in as its block and its protocol say
  * them (#1022): the environment in the block, the earthing system and the
- * nominal voltage in the head, where they are given and known. A form that
- * asks for none of them gives none, and its limits judge as before.
+ * nominal voltage in the head, where they are given and known, and the rated
+ * residual current of the RCD of a wallbox (#1075). A form that asks for none
+ * of them gives none, and its limits judge as before.
  */
 export function measuringConditions(
   block: Readonly<Record<string, unknown>> | null | undefined,
@@ -42,6 +43,7 @@ export function measuringConditions(
   const environment = block?.['environment']
   const earthingSystem = form?.['earthing_system']
   const nominalVoltageMilli = form?.['nominal_voltage']
+  const rcdRated = form?.['rcd_rated_residual_current']
 
   return {
     ...(environment === 'dry' || environment === 'damp' ? { environment } : {}),
@@ -50,6 +52,14 @@ export function measuringConditions(
     Number.isInteger(nominalVoltageMilli) &&
     nominalVoltageMilli > 0
       ? { nominalVoltageMilli }
+      : {}),
+    // The rated residual current of the RCD of a wallbox (#1075), chosen in
+    // whole milliamperes and at most the 30 mA the standard allows.
+    ...(typeof rcdRated === 'string' &&
+    /^\d{1,2}$/.test(rcdRated) &&
+    Number(rcdRated) >= 1 &&
+    Number(rcdRated) <= 30
+      ? { rcdRatedResidualMicro: Number(rcdRated) * 1000 }
       : {}),
   }
 }

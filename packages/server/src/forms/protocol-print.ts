@@ -206,6 +206,7 @@ function fieldRow(
           on: protocol.performedOn,
           circuit: null,
           appliance: protocol.appliance,
+          conditions: measuringConditions(null, protocol.values),
         })
       : null
 
@@ -421,16 +422,20 @@ function limitLegend(fields: readonly BlockField[], protocol: PrintedProtocol): 
         limit !== undefined && isRuleLimit(limit)
           ? protocol.rules.at(limit.rule, protocol.performedOn)
           : null
-      // The limit of an appliance as it was worked out for it (#303), or why there is none.
+      // The limit of an appliance as it was worked out for it (#303), and the
+      // range of a wallbox by the rated residual current its protocol names
+      // (#1075), or why there is none.
       const worked =
         limit?.kind === 'appliance_insulation' ||
         limit?.kind === 'appliance_protective_conductor' ||
-        limit?.kind === 'appliance_protective_conductor_current'
+        limit?.kind === 'appliance_protective_conductor_current' ||
+        limit?.kind === 'charging_rcd_trip_current_range'
           ? limitVerdict(field, null, {
               rules: protocol.rules,
               on: protocol.performedOn,
               circuit: null,
               appliance: protocol.appliance,
+              conditions: measuringConditions(null, protocol.values),
             })
           : null
       const said =

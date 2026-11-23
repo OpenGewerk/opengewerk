@@ -406,12 +406,28 @@
           "hint": "Die Abschaltbedingung nach DIN VDE 0100-410 beurteilt der Prüfer mit dem Überstromschutz des Stromkreises."
         },
         {
+          "kind": "choice",
+          "key": "rcd_rated_residual_current",
+          "label": "Bemessungsdifferenzstrom IΔn der RCD",
+          "hint": "Nach ihm beurteilt das Protokoll den Auslösestrom; ohne Angabe nach 30 mA.",
+          "options": [
+            {
+              "value": "30",
+              "label": "30 mA"
+            },
+            {
+              "value": "10",
+              "label": "10 mA"
+            }
+          ]
+        },
+        {
           "kind": "measurement",
           "key": "rcd_trip_current",
           "label": "Auslösestrom IΔ",
           "unit": "milliampere",
           "decimals": 1,
-          "hint": "Über der Hälfte bis zum vollen Bemessungsdifferenzstrom von 30 mA; darunter ist die RCD zu empfindlich, oder der Stromkreis hat Ableitströme. Eine RCD mit kleinerem Bemessungsdifferenzstrom beurteilt der Prüfer selbst.",
+          "hint": "Über der Hälfte bis zum vollen Bemessungsdifferenzstrom der RCD; darunter ist sie zu empfindlich, oder der Stromkreis hat Ableitströme.",
           "limit": {
             "kind": "charging_rcd_trip_current_range"
           }
