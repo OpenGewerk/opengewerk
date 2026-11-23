@@ -40,6 +40,7 @@ import {
 } from '../absences/absences.js'
 import type { Notification } from '../notifications/notify.js'
 import { notifyPush } from '../notifications/occasions.js'
+import { refreshSurchargeLines } from '../service-calls/on-call.js'
 import { todayInGermany, yearInGermany } from '../today.js'
 import { RequiresMembership, RequiresPermission } from './authorization.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
@@ -366,7 +367,14 @@ export class HolidaysController {
     const values = pick(body, ['state', 'local'] as const)
 
     return answering(() =>
-      this.database.forTenant(identity, (tx) => setHolidays(tx, identity.tenantId, values)),
+      this.database.forTenant(identity, async (tx) => {
+        const set = await setHolidays(tx, identity.tenantId, values)
+
+        // A call on a day that now is or is no longer a holiday (#1087).
+        await refreshSurchargeLines(tx)
+
+        return set
+      }),
     )
   }
 }

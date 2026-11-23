@@ -38,6 +38,7 @@ import {
 import { and, asc, count, eq, isNull } from 'drizzle-orm'
 
 import { documentLines, documents } from '../database/schema/index.js'
+import { refreshSurchargeLine, takesOverSurcharge } from '../service-calls/on-call.js'
 import { RequiresPermission } from './authorization.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
 import { requireReferences } from './references.js'
@@ -261,6 +262,8 @@ export class DocumentLinesController {
         })
         .returning()
 
+      await refreshSurchargeLine(tx, documentId)
+
       return created
     })
   }
@@ -309,9 +312,15 @@ export class DocumentLinesController {
         .set({
           ...(values as Partial<typeof documentLines.$inferInsert>),
           netCents: totalOf(values, existing),
+          // Changed by hand, the line of the surcharge is the office's (#1087).
+          ...(existing.emergencySurcharge && takesOverSurcharge(values, existing)
+            ? { emergencySurcharge: false }
+            : {}),
         })
         .where(eq(documentLines.id, lineId as DocumentLineId))
         .returning()
+
+      await refreshSurchargeLine(tx, documentId)
 
       return updated
     })
@@ -344,6 +353,8 @@ export class DocumentLinesController {
       if (!removed) {
         throw new NotFoundException()
       }
+
+      await refreshSurchargeLine(tx, documentId)
 
       return { removed: removed.id }
     })

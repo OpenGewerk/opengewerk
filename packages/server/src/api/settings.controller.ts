@@ -9,6 +9,7 @@ import { Database, ParameterError } from '@opengewerk/platform-server'
 
 import { parameterAt, parameterHistory, setParameter } from '../database/parameters.js'
 import { SellingPrices } from '../pricing/selling-prices.js'
+import { refreshSurchargeLines, tariffSettings } from '../service-calls/on-call.js'
 import { RequiresPermission } from './authorization.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
 
@@ -112,12 +113,19 @@ export class SettingsController {
           })
         }
 
-        return setParameter(tx, identity.tenantId, {
+        const stored = await setParameter(tx, identity.tenantId, {
           key,
           from,
           value: value as number,
           note: typeof note === 'string' ? note : null,
         })
+
+        // The drafts of emergency calls follow a setting of their surcharge (#1087).
+        if (tariffSettings.has(key)) {
+          await refreshSurchargeLines(tx)
+        }
+
+        return stored
       })
 
       if (markup) {

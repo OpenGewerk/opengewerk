@@ -397,6 +397,49 @@ describe('who is on a job (#140)', () => {
   })
 })
 
+describe('the surcharge of an emergency call at its job (#1087)', () => {
+  it('says what the job holds: the surcharge named before the order, or none recorded', async () => {
+    signedInAs('office')
+
+    const call = {
+      kind: 'service',
+      status: 'active',
+      emergencyAt: '2026-11-07T09:20:00.000Z',
+    } as const
+
+    const { router } = await mount(
+      [
+        job('j-1', { ...call, emergencyNamedFlatCents: 0, emergencyNamedBasisPoints: 5000 }),
+        job('j-2', { ...call, emergencyNamedFlatCents: 3000, emergencyNamedBasisPoints: 0 }),
+        job('j-3', { ...call, emergencyNamedFlatCents: 0, emergencyNamedBasisPoints: 0 }),
+        job('j-4', call),
+        job('j-5', { status: 'active' }),
+      ],
+      '/auftraege/j-1',
+    )
+
+    expect(await screen.findByText('Anruf 07.11.2026, 10:20 Uhr')).toBeDefined()
+    expect(
+      await screen.findByText('50 % auf die Arbeitszeit, vor dem Auftrag genannt'),
+    ).toBeDefined()
+
+    for (const [id, held] of [
+      ['j-2', '30,00 € netto pauschal, vor dem Auftrag genannt'],
+      ['j-3', 'keiner, so vor dem Auftrag genannt'],
+      ['j-4', 'keiner festgehalten, die Rechnung nimmt den des Tages'],
+    ] as const) {
+      await router.navigate({ to: `/auftraege/${id}` })
+
+      expect(await screen.findByText(held)).toBeDefined()
+    }
+
+    await router.navigate({ to: '/auftraege/j-5' })
+    await screen.findByRole('heading', { name: 'Zählerschrank erneuern' })
+
+    expect(screen.queryByText('Zuschlag')).toBeNull()
+  })
+})
+
 describe('the jobs as the boards draw them (#219)', () => {
   const documents: RecordState[] = [
     {

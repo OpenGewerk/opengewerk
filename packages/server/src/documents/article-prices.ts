@@ -86,22 +86,6 @@ export async function articlePricesOn(
 }
 
 /**
- * Whether an invoice out of a report found a price for this line (#296): a
- * line typed by hand, or one whose article has no price that day or in its
- * unit, has none yet. A price of 0,00 € is a price, as for an hour given free.
- */
-export function hasPriceOfDay(
-  line: { readonly kind: string; readonly articleId: string | null; readonly unit: string },
-  prices: ReadonlyMap<string, PriceOfDay>,
-): boolean {
-  if (line.kind !== 'item' || line.articleId === null) {
-    return false
-  }
-
-  return prices.get(line.articleId)?.unit === line.unit
-}
-
-/**
  * A line of a report as an invoice takes it (#296): a report carries no
  * prices, so a position taken from an article gets the article's selling price
  * of the invoice's date, as it would in the office when somebody took the

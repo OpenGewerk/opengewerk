@@ -71,7 +71,7 @@ import {
 import { articlePricesOn, type PriceOfDay, pricedFromArticle } from '../documents/article-prices.js'
 import { contentAndGapsOf, issuerOf, withStoredLogo } from '../documents/content.js'
 import { contractFlatLineFor } from '../contracts/invoice.js'
-import { surchargeLineFor } from '../service-calls/on-call.js'
+import { refreshSurchargeLine, surchargeLineFor } from '../service-calls/on-call.js'
 import { deductionsFor, paymentsOfADraft, showsReceivedPayments } from '../documents/deductions.js'
 import { choicesOf } from '../documents/instructions.js'
 import { proposedTreatment } from '../documents/treatment.js'
@@ -361,6 +361,11 @@ export class DocumentsController {
         .returning()
 
       if (updated) {
+        // A draft moved to another job has the surcharge of that call (#1087).
+        if (values.jobId !== undefined) {
+          await refreshSurchargeLine(tx, updated.id)
+        }
+
         return updated
       }
 
@@ -725,7 +730,7 @@ export class DocumentsController {
       // The invoice out of the report of an emergency call carries the
       // surcharge the business set for its kind (#293), as the last line.
       if (predecessor.kind === 'time_and_material_report') {
-        const surcharge = await surchargeLineFor(tx, predecessor.jobId, priced, prices)
+        const surcharge = await surchargeLineFor(tx, predecessor.jobId, priced)
 
         if (surcharge) {
           await tx.insert(documentLines).values({
@@ -740,6 +745,8 @@ export class DocumentsController {
             unitPriceCents: surcharge.unitPriceCents,
             vatRate: 'standard',
             netCents: surcharge.netCents,
+            // Worked out again from the hours of the draft (#1087).
+            emergencySurcharge: true,
           })
         }
       }

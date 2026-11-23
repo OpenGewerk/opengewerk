@@ -12,7 +12,7 @@ import {
   useBand,
 } from '@opengewerk/platform-web'
 import type { StatusTone } from '@opengewerk/platform-web'
-import { date } from '@opengewerk/platform-web/format'
+import { date, euros } from '@opengewerk/platform-web/format'
 import {
   ChangesButton,
   Empty,
@@ -602,6 +602,33 @@ function Tabs({ tab, onChange }: { readonly tab: Tab; readonly onChange: (tab: T
   )
 }
 
+/**
+ * The surcharge the job of an emergency call holds (#1087): the one named to
+ * the customer before the order, which is the most its invoice charges, or
+ * that none was recorded and the invoice takes the one of the day. So
+ * whoever issues the invoice can check its line without the history.
+ */
+function heldSurcharge(job: RecordState): string {
+  const flatCents = job['emergencyNamedFlatCents']
+  const basisPoints = job['emergencyNamedBasisPoints']
+
+  if (typeof flatCents !== 'number' || typeof basisPoints !== 'number') {
+    return 'keiner festgehalten, die Rechnung nimmt den des Tages'
+  }
+
+  if (flatCents > 0) {
+    return `${euros(flatCents)} netto pauschal, vor dem Auftrag genannt`
+  }
+
+  if (basisPoints > 0) {
+    const percent = (basisPoints / 100).toLocaleString('de-DE', { maximumFractionDigits: 2 })
+
+    return `${percent} % auf die Arbeitszeit, vor dem Auftrag genannt`
+  }
+
+  return 'keiner, so vor dem Auftrag genannt'
+}
+
 /** "Auftrag": for whom, where, what, and what it follows. */
 function JobFacts({ job }: { readonly job: RecordState }) {
   const customer = useRecord('customers', String(job['customerId']))
@@ -637,7 +664,10 @@ function JobFacts({ job }: { readonly job: RecordState }) {
         { label: 'Bauwerk', value: buildingFact(job) },
         { label: 'VOB/B', value: job['vobAgreed'] === true ? 'vereinbart' : 'nicht vereinbart' },
         ...(maybeText(job, 'emergencyAt')
-          ? [{ label: 'Notdienst', value: `Anruf ${berlinMoment(text(job, 'emergencyAt'))} Uhr` }]
+          ? [
+              { label: 'Notdienst', value: `Anruf ${berlinMoment(text(job, 'emergencyAt'))} Uhr` },
+              { label: 'Zuschlag', value: heldSurcharge(job) },
+            ]
           : []),
         ...(job['urgentRepair'] === true
           ? [{ label: 'Dringend', value: 'ja, vom Kunden ausdrücklich angefordert' }]

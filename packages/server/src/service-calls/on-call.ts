@@ -4,6 +4,7 @@ import {
   chargeableSurcharge,
   type ConflictReason,
   defaultNight,
+  type DocumentId,
   emergencyKindAt,
   type EmergencyKind,
   emergencyKinds,
@@ -20,14 +21,14 @@ import {
   shippedRules,
   type SurchargeLine,
   tariffStarts,
+  whyFixed,
 } from '@opengewerk/domain'
 import { isUuid, type TenantTransaction } from '@opengewerk/platform-server'
 import { and, eq, gt, isNull, lte } from 'drizzle-orm'
 
 import { holidaySettingOf } from '../absences/absences.js'
-import { hasPriceOfDay, type PriceOfDay } from '../documents/article-prices.js'
 import { parameterAt, parameterHistory } from '../database/parameters.js'
-import { jobs, onCallShifts } from '../database/schema/index.js'
+import { documentLines, documents, jobs, onCallShifts } from '../database/schema/index.js'
 
 /**
  * How far ahead of the server's clock a device may put the moment of a call:
@@ -117,18 +118,14 @@ const hourUnits: readonly LineUnit[] = ['hour']
  * of its reports, or null: for a job without a moment of a call, for a call
  * in ordinary hours, and for a kind the business set no surcharge for on the
  * day of the call. The public holidays are those of the business on that day.
+ *
+ * Every hour counts at the price it has (#1087), an hour without one yet at
+ * nothing; the draft works the line out again when the office prices it.
  */
 export async function surchargeLineFor(
   tx: TenantTransaction,
   jobId: string | null,
-  lines: readonly {
-    readonly kind: string
-    readonly articleId: string | null
-    readonly unit: LineUnit
-    readonly unitPriceCents: number
-    readonly netCents: number
-  }[],
-  prices: ReadonlyMap<string, PriceOfDay>,
+  lines: readonly { readonly unit: LineUnit; readonly netCents: number }[],
 ): Promise<SurchargeLine | null> {
   if (jobId === null || !isUuid(jobId)) {
     return null
@@ -158,19 +155,184 @@ export async function surchargeLineFor(
     return null
   }
 
-  const hours = lines.filter((line) => hourUnits.includes(line.unit))
-  const hourNetCents = hours.reduce((sum, line) => sum + line.netCents, 0)
-  // Hours without a price yet, as a report has them, decide nothing between a
-  // flat amount and a percentage (#1081); no hours at all cost nothing. An
-  // hour given free at 0,00 € has its price, and so has one priced by hand.
-  const priced = hours.every((line) => line.unitPriceCents > 0 || hasPriceOfDay(line, prices))
+  const hourNetCents = lines
+    .filter((line) => hourUnits.includes(line.unit))
+    .reduce((sum, line) => sum + line.netCents, 0)
 
   return emergencySurchargeLine(
     kind,
-    chargeableSurcharge(tariff.surcharges[kind], namedOf(job), priced ? hourNetCents : null),
+    chargeableSurcharge(tariff.surcharges[kind], namedOf(job), hourNetCents),
     hourNetCents,
   )
 }
+
+/** What of the line of the surcharge the server works out, and a change of which by hand takes it over (#1087). */
+const surchargeFields = [
+  'kind',
+  'designation',
+  'description',
+  'quantityMilli',
+  'unit',
+  'unitPriceCents',
+  'priceBase',
+  'articleId',
+] as const
+
+/**
+ * Whether a change takes the line of the surcharge over from the server
+ * (#1087): one of its text, quantity, unit, price or article set to something
+ * else than it holds. Its place among the lines and its rate of tax are no
+ * change of the surcharge.
+ */
+export function takesOverSurcharge(
+  values: Readonly<Record<string, unknown>>,
+  current: Readonly<Record<string, unknown>>,
+): boolean {
+  return surchargeFields.some(
+    (field) => values[field] !== undefined && values[field] !== current[field],
+  )
+}
+
+/**
+ * The line of the surcharge of a draft worked out again from what it depends
+ * on as it stands now (#1087): the hours of the draft at the price they have,
+ * the job of the draft with its call and the surcharge named before the
+ * order, the settings of the day of the call. Only the marked line changes; a
+ * draft without one, a fixed document and a line the office took over stay
+ * as they are. The line goes where the call no longer has a surcharge, as on
+ * a draft moved to a job that is no emergency.
+ *
+ * Locked like a line written in the office, so that it waits for a
+ * transaction that is issuing the document and then finds it fixed.
+ */
+export async function refreshSurchargeLine(
+  tx: TenantTransaction,
+  documentId: string,
+): Promise<void> {
+  if (!isUuid(documentId)) {
+    return
+  }
+
+  // Most lines are on a document without one, a report above all: asked
+  // first, before the document is locked.
+  const [mark] = await tx
+    .select({ id: documentLines.id })
+    .from(documentLines)
+    .where(
+      and(
+        eq(documentLines.documentId, documentId as DocumentId),
+        eq(documentLines.emergencySurcharge, true),
+        isNull(documentLines.deletedAt),
+      ),
+    )
+    .limit(1)
+
+  if (!mark) {
+    return
+  }
+
+  const [document] = await tx
+    .select({ kind: documents.kind, status: documents.status, jobId: documents.jobId })
+    .from(documents)
+    .where(and(eq(documents.id, documentId as DocumentId), isNull(documents.deletedAt)))
+    .for('no key update')
+
+  if (!document || whyFixed(document) !== null) {
+    return
+  }
+
+  const lines = await tx
+    .select()
+    .from(documentLines)
+    .where(
+      and(eq(documentLines.documentId, documentId as DocumentId), isNull(documentLines.deletedAt)),
+    )
+  const marked = lines.find((line) => line.emergencySurcharge)
+
+  if (!marked) {
+    return
+  }
+
+  const surcharge = await surchargeLineFor(
+    tx,
+    document.jobId,
+    lines.filter((line) => line.id !== marked.id),
+  )
+
+  if (surcharge === null) {
+    await tx
+      .update(documentLines)
+      .set({ deletedAt: new Date() })
+      .where(eq(documentLines.id, marked.id))
+
+    return
+  }
+
+  const next = {
+    designation: surcharge.designation,
+    description: surcharge.description,
+    quantityMilli: surcharge.quantityMilli,
+    unit: surcharge.unit,
+    unitPriceCents: surcharge.unitPriceCents,
+    netCents: surcharge.netCents,
+  }
+
+  // Unchanged, the line keeps its version: a device holds nothing new.
+  if (
+    Object.entries(next).every(([field, value]) => marked[field as keyof typeof next] === value)
+  ) {
+    return
+  }
+
+  await tx.update(documentLines).set(next).where(eq(documentLines.id, marked.id))
+}
+
+/**
+ * The lines of the surcharge of every draft that has one, worked out again
+ * (#1087): of the drafts of one job, after its call or the surcharge named
+ * for it changed, or of all of them, after a setting of the surcharges or the
+ * public holidays changed.
+ */
+export async function refreshSurchargeLines(
+  tx: TenantTransaction,
+  jobId: string | null = null,
+): Promise<void> {
+  if (jobId !== null && !isUuid(jobId)) {
+    return
+  }
+
+  const drafts = await tx
+    .selectDistinct({ id: documentLines.documentId })
+    .from(documentLines)
+    .innerJoin(
+      documents,
+      and(
+        eq(documents.tenantId, documentLines.tenantId),
+        eq(documents.id, documentLines.documentId),
+      ),
+    )
+    .where(
+      and(
+        eq(documentLines.emergencySurcharge, true),
+        isNull(documentLines.deletedAt),
+        eq(documents.status, 'draft'),
+        isNull(documents.deletedAt),
+        ...(jobId === null ? [] : [eq(documents.jobId, jobId as JobId)]),
+      ),
+    )
+
+  // One after the other: a transaction is one connection.
+  for (const draft of drafts) {
+    await refreshSurchargeLine(tx, draft.id)
+  }
+}
+
+/** The fields of a job the surcharge of its call depends on (#1087). */
+export const surchargeFieldsOfJob: readonly string[] = [
+  'emergencyAt',
+  'emergencyNamedFlatCents',
+  'emergencyNamedBasisPoints',
+]
 
 /** The surcharge named before the order of a call (#1081), or null where nobody recorded one. */
 function namedOf(job: {
@@ -232,8 +394,11 @@ export async function emergencyTariffOn(
   }
 }
 
-/** The settings a tariff reads, so that a new value of one of them begins a new tariff. */
-const tariffSettings: ReadonlySet<string> = new Set([
+/**
+ * The settings a tariff reads, so that a new value of one of them begins a
+ * new tariff, and the lines of the surcharge of the drafts follow it (#1087).
+ */
+export const tariffSettings: ReadonlySet<string> = new Set([
   ...emergencyKinds.flatMap((kind) => [
     `emergency.${kind}_flat_cents`,
     `emergency.${kind}_basis_points`,

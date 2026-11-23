@@ -3066,6 +3066,116 @@ describe('the rollback of the declined offers', () => {
 })
 
 /**
+ * The mark of the line of the surcharge (0155, opengewerk#1087). An
+ * installation migrates as the owner of the tables, under FORCE: a draft
+ * from before gets it on the line its invoice was given, as long as nobody
+ * changed that line, it is the only surcharge on the draft and the draft's
+ * job is an emergency call. Every other line stays the office's.
+ */
+describe('the line of the surcharge on the drafts from before 0155', () => {
+  const before = () =>
+    readMigrationIndex().findIndex(
+      (entry) => entry.tag === '0155_document_line_emergency_surcharge',
+    )
+  const customer = newId<'customer'>()
+  const call = newId<'job'>()
+  const plain = newId<'job'>()
+  const given = newId<'document'>()
+  const changedByHand = newId<'document'>()
+  const noCall = newId<'document'>()
+  const twice = newId<'document'>()
+
+  async function forced(table: string): Promise<boolean> {
+    const { rows } = await admin.query<{ forced: boolean }>(
+      'select relforcerowsecurity as forced from pg_class where relname = $1',
+      [table],
+    )
+
+    return rows[0]?.forced ?? false
+  }
+
+  it('is set on the line the invoice was given and on no other', async () => {
+    expect(before()).toBeGreaterThan(0)
+
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), releaseFolder(before()))
+    await admin.query('insert into tenants (id, name) values ($1, $2)', [tenant.id, tenant.name])
+    await admin.query(
+      "insert into customers (id, tenant_id, kind, name) values ($1, $2, 'private', 'Familie Arslan')",
+      [customer, tenant.id],
+    )
+    await admin.query(
+      `insert into jobs (id, tenant_id, customer_id, kind, status, designation, emergency_at)
+       values ($1, $3, $4, 'service', 'active', 'Heizung ohne Strom', '2026-10-28T01:14:00Z'),
+              ($2, $3, $4, 'service', 'active', 'Steckdose lose', null)`,
+      [call, plain, tenant.id, customer],
+    )
+    await admin.query(
+      `insert into documents (id, tenant_id, customer_id, kind, document_date, job_id)
+       values ($1, $5, $6, 'final_invoice', '2026-10-28', $7),
+              ($2, $5, $6, 'final_invoice', '2026-10-28', $7),
+              ($3, $5, $6, 'final_invoice', '2026-10-28', $8),
+              ($4, $5, $6, 'final_invoice', '2026-10-28', $7)`,
+      [given, changedByHand, noCall, twice, tenant.id, customer, call, plain],
+    )
+
+    for (const [document, lines] of [
+      [given, 1],
+      [changedByHand, 1],
+      [noCall, 1],
+      [twice, 2],
+    ] as const) {
+      await admin.query(
+        `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents)
+         values ($1, $2, 1, 'Arbeitszeit', 1000, 'hour', 0, 0)`,
+        [tenant.id, document],
+      )
+
+      for (let line = 0; line < lines; line += 1) {
+        await admin.query(
+          `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents)
+           values ($1, $2, $3, 'Notdienstzuschlag Nacht', 1000, 'flat_rate', 4500, 4500)`,
+          [tenant.id, document, line + 2],
+        )
+      }
+    }
+
+    // The office lowered the surcharge of this one by hand.
+    await admin.query(
+      `update document_lines set unit_price_cents = 4000, net_cents = 4000
+       where document_id = $1 and unit = 'flat_rate'`,
+      [changedByHand],
+    )
+
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+
+    const { rows } = await admin.query<{ document_id: string; marked: number }>(
+      `select document_id, count(*) filter (where emergency_surcharge)::int as marked
+       from document_lines group by document_id`,
+    )
+
+    expect(Object.fromEntries(rows.map((row) => [row.document_id, row.marked]))).toEqual({
+      [given]: 1,
+      [changedByHand]: 0,
+      [noCall]: 0,
+      [twice]: 0,
+    })
+    expect(
+      (
+        await admin.query(
+          'select designation from document_lines where document_id = $1 and emergency_surcharge',
+          [given],
+        )
+      ).rows,
+    ).toEqual([{ designation: 'Notdienstzuschlag Nacht' }])
+
+    for (const table of ['document_lines', 'documents', 'jobs']) {
+      expect(await forced(table), table).toBe(true)
+    }
+  })
+})
+
+/**
  * The rollback of 0128 (#313): an entry in the history is what somebody said
  * or noted. The rollback deletes none; while there is one, it stops.
  */

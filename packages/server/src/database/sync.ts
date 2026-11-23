@@ -43,7 +43,13 @@ import { eq, inArray, sql } from 'drizzle-orm'
 import type { FoundIdentity } from '../api/identity.js'
 import { signatureRefusal } from '../documents/signing.js'
 import { earlyStartArrival } from '../service-calls/instructions.js'
-import { onCallRefusal } from '../service-calls/on-call.js'
+import {
+  onCallRefusal,
+  refreshSurchargeLine,
+  refreshSurchargeLines,
+  surchargeFieldsOfJob,
+  takesOverSurcharge,
+} from '../service-calls/on-call.js'
 import { consentGiven, correctionRefusal } from '../time/entries.js'
 import { proposedTreatment } from '../documents/treatment.js'
 import { pvLinkRefusal } from '../electrical/structure.js'
@@ -668,6 +674,54 @@ function withLineTotal(
 }
 
 /**
+ * The line of the surcharge changed by hand on a device (#1087): from then on
+ * it is the office's, and the server no longer works it out from the hours.
+ */
+function withSurchargeTakenOver(
+  operation: Operation,
+  values: Record<string, unknown>,
+  current: RecordState | null,
+): Record<string, unknown> {
+  return operation.kind === 'update' &&
+    operation.entity === 'document_lines' &&
+    current?.['emergencySurcharge'] === true &&
+    takesOverSurcharge(values, current)
+    ? { ...values, emergencySurcharge: false }
+    : values
+}
+
+/**
+ * What follows a write on a device for the line of the surcharge of a draft
+ * (#1087): a line of the draft, the job of the draft, the call or the
+ * surcharge named for it changed, so the line is worked out again.
+ */
+async function afterSurchargeWrite(
+  tx: TenantTransaction,
+  operation: Operation,
+  values: Record<string, unknown>,
+  current: RecordState | null,
+): Promise<void> {
+  if (operation.entity === 'document_lines') {
+    const drafts = new Set([values['documentId'], current?.['documentId']])
+
+    for (const draft of drafts) {
+      if (typeof draft === 'string') {
+        await refreshSurchargeLine(tx, draft)
+      }
+    }
+  } else if (operation.kind !== 'update') {
+    return
+  } else if (operation.entity === 'documents' && values['jobId'] !== undefined) {
+    await refreshSurchargeLine(tx, operation.recordId)
+  } else if (
+    operation.entity === 'jobs' &&
+    surchargeFieldsOfJob.some((field) => values[field] !== undefined)
+  ) {
+    await refreshSurchargeLines(tx, operation.recordId)
+  }
+}
+
+/**
  * The tax treatment of a document made on a device, proposed here as the
  * route proposes it for one made in the office.
  *
@@ -789,8 +843,12 @@ export const sync = serverSync<FoundIdentity>({
             operation,
             withLineTotal(
               operation.entity,
-              // As the check judged them: a type taken away takes the selective along (#1021).
-              { ...circuitAlong(operation.entity, values, current) },
+              withSurchargeTakenOver(
+                operation,
+                // As the check judged them: a type taken away takes the selective along (#1021).
+                { ...circuitAlong(operation.entity, values, current) },
+                current,
+              ),
               current,
             ),
             sender,
@@ -798,6 +856,8 @@ export const sync = serverSync<FoundIdentity>({
         ),
       ),
     ),
+  afterWrite: async ({ tx, operation, values, current }) =>
+    await afterSurchargeWrite(tx, operation, values, current),
 })
 
 export const { changesSince } = sync

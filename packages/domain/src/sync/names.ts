@@ -129,6 +129,7 @@ export const syncFieldNames: Readonly<Record<string, string>> = {
   unitPriceCents: 'Einzelpreis',
   priceBase: 'Preiseinheit',
   netCents: 'Netto',
+  emergencySurcharge: 'Notdienstzuschlag nach den Stunden',
   vatRate: 'Steuersatz',
   taxTreatment: 'Steuerfall',
   documentDate: 'Belegdatum',
