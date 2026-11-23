@@ -316,7 +316,7 @@ describe('a test protocol in the office (#79)', () => {
     const fields = Object.fromEntries((made?.patches ?? []).map((patch) => [patch.field, patch.to]))
 
     expect(fields['definitionKey']).toBe('vde-0105-100')
-    expect(fields['definitionVersion']).toBe(1)
+    expect(fields['definitionVersion']).toBe(2)
     // What describes the installation and the test, and nothing the first
     // inspection alone knows, such as its occasion.
     expect(readFormValues(fields['values'])).toEqual({
@@ -339,6 +339,84 @@ describe('a test protocol in the office (#79)', () => {
         },
       ],
     })
+  })
+
+  it('judges each circuit of a recurring inspection in the environment its block names (#1022)', async () => {
+    server.put('form_records', {
+      id: 'p-12',
+      definitionKey: 'vde-0105-100',
+      definitionVersion: 2,
+      installationId: 'i-1',
+      jobId: null,
+      performedOn: '2026-11-20',
+      status: 'draft',
+      values: JSON.stringify({
+        tester: 'Paul Prüfer',
+        earthing_system: 'tn_s',
+        circuits: [
+          {
+            circuitId: 'k-1',
+            circuit: kitchen,
+            values: { environment: 'damp', insulation_without_loads: 120 },
+          },
+          {
+            circuitId: 'k-3',
+            circuit: {
+              designation: 'F3',
+              consumer: 'Wallbox',
+              tripCharacteristic: 'c',
+              ratedCurrentMilli: 32_000,
+              ratedResidualCurrentMilli: 30,
+            },
+            values: { environment: 'dry', insulation_without_loads: 120 },
+          },
+        ],
+      }),
+    })
+    await mount('/pruefprotokolle/p-12')
+
+    // 0,120 MΩ holds in the damp kitchen, 500 Ω per volt, and not on the dry F3.
+    const measured = await screen.findByRole('table', { name: 'Stromkreise' })
+
+    expect(within(measured).getAllByText('1 Wert außerhalb')).toHaveLength(1)
+    // Green in the kitchen, red on F3, as the board colours them.
+    const [kitchenCell, wallboxCell] = within(measured).getAllByText('0,120')
+
+    expect(kitchenCell?.className).toContain('text-done')
+    expect(wallboxCell?.className).toContain('text-conflict')
+    expect(
+      screen.getByText(
+        'F3, Isolationswiderstand Riso ohne Verbraucher 0,120 MΩ: Außerhalb des Grenzwerts, mindestens 0,230 MΩ.',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText(/^F1, Isolationswiderstand/)).toBeNull()
+  })
+
+  it('judges a recurring inspection in the earthing system of its head (#1022)', async () => {
+    server.put('form_records', {
+      id: 'p-13',
+      definitionKey: 'vde-0105-100',
+      definitionVersion: 2,
+      installationId: 'i-1',
+      jobId: null,
+      performedOn: '2026-11-20',
+      status: 'draft',
+      values: JSON.stringify({
+        tester: 'Paul Prüfer',
+        earthing_system: 'it',
+        circuits: [
+          { circuitId: 'k-1', circuit: kitchen, values: { insulation_without_loads: 20 } },
+        ],
+      }),
+    })
+    await mount('/pruefprotokolle/p-13')
+
+    // 50 Ω per volt in an IT system: 0,020 MΩ holds, where a TN system asked 0,230 MΩ.
+    const measured = await screen.findByRole('table', { name: 'Stromkreise' })
+
+    expect(within(measured).queryByText('1 Wert außerhalb')).toBeNull()
+    expect(within(measured).getByText('0,020').className).toContain('text-done')
+    expect(screen.queryByText(/^F1, Isolationswiderstand/)).toBeNull()
   })
 
   it('says under the interval of a recurring inspection the day of the next one (#301)', async () => {

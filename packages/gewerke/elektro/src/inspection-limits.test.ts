@@ -4,6 +4,8 @@ import {
   type FormDefinition,
   limitVerdict,
   type MeasurementField,
+  type MeasuringConditions,
+  measuringConditions,
 } from '@opengewerk/domain'
 import { describe, expect, it } from 'vitest'
 
@@ -19,14 +21,14 @@ import { elektroRegistry, elektroRules } from './index.js'
 
 const on = '2026-11-20'
 
-function measurementOf(version: number, key: string): MeasurementField {
-  const definition = elektroRegistry.definitionFor('vde-0100-600', version) as FormDefinition
+function measurementOf(version: number, key: string, form = 'vde-0100-600'): MeasurementField {
+  const definition = elektroRegistry.definitionFor(form, version) as FormDefinition
   const circuits = fieldsOf(definition).find((field) => field.key === 'circuits')
   const found =
     circuits?.kind === 'group' ? circuits.fields.find((field) => field.key === key) : undefined
 
   if (found?.kind !== 'measurement') {
-    throw new Error(`No measurement ${key} in version ${String(version)}`)
+    throw new Error(`No measurement ${key} in version ${String(version)} of ${form}`)
   }
 
   return found
@@ -140,5 +142,115 @@ describe('version 4 of the first inspection (#1021)', () => {
     expect(judge('rcd_trip_time', 400_000, { ...ordinary, rcdSelective: true }, 3).within).toBe(
       false,
     )
+  })
+})
+
+/**
+ * Version 2 of the recurring inspection after DIN VDE 0105-100 (#1022): the
+ * insulation after the whole of table 11 of the DGUV Information 203-072, by
+ * the environment of the circuit, the earthing system and SELV or PELV, and
+ * the loop impedance and tripping current as version 4 of the first
+ * inspection, which section 3.4.3.1.1 of the information names for the
+ * recurring inspection as well.
+ */
+describe('version 2 of the recurring inspection (#1022)', () => {
+  const recurring = (
+    key: string,
+    milli: number,
+    conditions: MeasuringConditions = {},
+    circuit: CircuitFacts | null = ordinary,
+    version = 2,
+  ) =>
+    limitVerdict(measurementOf(version, key, 'vde-0105-100'), milli, {
+      rules: elektroRules,
+      on,
+      circuit,
+      conditions,
+    })
+  const damp = { environment: 'damp' } as const
+  const itSystem = { earthingSystem: 'it' }
+
+  it('judges the insulation without the loads at 1000 Ω per volt dry and 500 Ω per volt damp', () => {
+    expect(recurring('insulation_without_loads', 229)).toMatchObject({
+      within: false,
+      limitMilli: 230,
+    })
+    expect(recurring('insulation_without_loads', 230).within).toBe(true)
+    // A damp circuit with 0,120 MΩ was outside the 0,230 MΩ of a dry one.
+    expect(recurring('insulation_without_loads', 120, damp)).toMatchObject({
+      within: true,
+      limitMilli: 115,
+      text: 'Innerhalb des Grenzwerts, mindestens 0,115 MΩ.',
+    })
+    expect(recurring('insulation_without_loads', 114, damp).within).toBe(false)
+  })
+
+  it('judges the insulation with the loads at 300 Ω per volt dry and 150 Ω per volt damp, never looser', () => {
+    expect(recurring('insulation_with_loads', 68)).toMatchObject({ within: false, limitMilli: 69 })
+    // 150 Ω per volt at 230 V are 34,5 kΩ, held to 35 kΩ.
+    expect(recurring('insulation_with_loads', 34, damp)).toMatchObject({
+      within: false,
+      limitMilli: 35,
+      text: 'Außerhalb des Grenzwerts, mindestens 0,035 MΩ.',
+    })
+    expect(recurring('insulation_with_loads', 35, damp).within).toBe(true)
+  })
+
+  it('judges the insulation in an IT system at 50 Ω per volt, with and without loads, dry and damp', () => {
+    for (const key of ['insulation_without_loads', 'insulation_with_loads']) {
+      expect(recurring(key, 12, itSystem)).toMatchObject({ within: true, limitMilli: 12 })
+      expect(recurring(key, 11, { ...itSystem, ...damp }).within).toBe(false)
+    }
+  })
+
+  it('judges SELV and PELV at 0,25 MΩ in every column, and says it has no row above 500 V', () => {
+    const selv = { ...ordinary, voltageClass: 'selv_pelv' as const }
+
+    for (const key of ['insulation_without_loads', 'insulation_with_loads']) {
+      expect(recurring(key, 249, itSystem, selv)).toMatchObject({ within: false, limitMilli: 250 })
+      expect(recurring(key, 250, damp, selv).within).toBe(true)
+      expect(recurring(key, 900, {}, { ...ordinary, voltageClass: 'above_500' })).toMatchObject({
+        within: null,
+        text: 'Für einen Stromkreis über 500 V nennt Tabelle 11 der DGUV Information 203-072 keinen Mindestwert.',
+      })
+    }
+  })
+
+  it('judges a block without a circuit by the conditions alone', () => {
+    expect(recurring('insulation_without_loads', 120, damp, null)).toMatchObject({
+      within: true,
+      limitMilli: 115,
+    })
+    expect(recurring('insulation_without_loads', 120, {}, null).within).toBe(false)
+  })
+
+  it('judges the loop impedance and the tripping current as version 4 of the first inspection', () => {
+    expect(recurring('loop_impedance', 1_950)).toMatchObject({
+      within: false,
+      limitMilli: 1_916,
+      text:
+        'Außerhalb des Grenzwerts, höchstens 1,91 Ω. ' +
+        'Eine genauere Bewertung nach Anhang D der DIN VDE 0100-600 ist nötig.',
+    })
+    expect(recurring('rcd_trip_current', 15_000).within).toBe(false)
+    expect(recurring('rcd_trip_current', 15_100).within).toBe(true)
+    expect(
+      recurring('rcd_trip_time', 400_000, {}, { ...ordinary, rcdSelective: true }).within,
+    ).toBe(true)
+  })
+
+  it('leaves version 1 as it judged, for the protocols filled in it', () => {
+    expect(recurring('insulation_without_loads', 120, damp, ordinary, 1).within).toBe(false)
+    expect(recurring('insulation_with_loads', 12, itSystem, ordinary, 1).within).toBe(false)
+    expect(recurring('loop_impedance', 1_950, {}, ordinary, 1).within).toBe(true)
+  })
+
+  it('takes the conditions from the block and the head of the protocol, and only what it knows', () => {
+    expect(measuringConditions({ environment: 'damp' }, { earthing_system: 'it' })).toEqual({
+      environment: 'damp',
+      earthingSystem: 'it',
+    })
+    expect(measuringConditions({ environment: 'nass' }, { earthing_system: 4 })).toEqual({})
+    expect(measuringConditions(undefined, null)).toEqual({})
   })
 })

@@ -517,11 +517,17 @@ describe('a test protocol on site (#79)', () => {
         /^Außerhalb des Grenzwerts, mindestens 0,230 MΩ\. Quelle: DGUV Information 203-072:2021-04, Tabelle 11/,
       ),
     ).toBeTruthy()
+    expect(screen.getByText(/1 Wert außerhalb$/)).toBeTruthy()
+    // A damp circuit has its own minimum, 500 Ω per volt without loads (#1022).
+    await user.selectOptions(screen.getByLabelText('Umgebung'), 'feucht')
+    expect(screen.getByText(/^Innerhalb des Grenzwerts, mindestens 0,115 MΩ\./)).toBeTruthy()
+    expect(screen.queryByText(/Wert außerhalb/)).toBeNull()
     await user.type(
       screen.getByLabelText('Isolationswiderstand Riso mit Verbrauchern in MΩ'),
       '0,2',
     )
-    expect(screen.getByText(/^Innerhalb des Grenzwerts, mindestens 0,069 MΩ\./)).toBeTruthy()
+    // Damp as well: 150 Ω per volt with loads, 34,5 kΩ held to 0,035 MΩ.
+    expect(screen.getByText(/^Innerhalb des Grenzwerts, mindestens 0,035 MΩ\./)).toBeTruthy()
 
     await user.click(screen.getByRole('button', { name: 'Weiter zu F2' }))
     await user.click(await screen.findByRole('button', { name: 'Zur Übersicht' }))
@@ -539,6 +545,69 @@ describe('a test protocol on site (#79)', () => {
         `Nächste Prüfung bis zum ${due.slice(8, 10)}.${due.slice(5, 7)}.${due.slice(0, 4)}.`,
       ),
     ).toBeTruthy()
+  })
+
+  it('judges the insulation of a recurring inspection in an IT system at 50 Ω per volt (#1022)', async () => {
+    const user = userEvent.setup()
+
+    await mount('/auftraege/j-1')
+    server.offline = true
+    await user.click(
+      await screen.findByRole('button', {
+        name: 'Prüfprotokoll Wiederholungsprüfung nach DIN VDE 0105-100 anlegen',
+      }),
+    )
+    await screen.findByRole('list', { name: 'Abschnitte' })
+    await user.click(row('Prüfung'))
+    await user.selectOptions(await screen.findByLabelText('Netzform'), 'IT')
+    await user.click(screen.getByRole('button', { name: 'Zur Übersicht' }))
+
+    // 0,020 MΩ is far under the 0,230 MΩ of a TN system and holds in an IT system.
+    await user.click(row('Messen'))
+    await user.type(
+      await screen.findByLabelText('Isolationswiderstand Riso ohne Verbraucher in MΩ'),
+      '0,02',
+    )
+    expect(screen.getByText(/^Innerhalb des Grenzwerts, mindestens 0,012 MΩ\./)).toBeTruthy()
+    expect(screen.queryByText(/Wert außerhalb/)).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'Weiter zu F2' }))
+    await user.click(await screen.findByRole('button', { name: 'Zur Übersicht' }))
+    expect(row('Messen').textContent).not.toContain('außerhalb')
+  })
+
+  it('shows a signed recurring inspection judged in the environment and earthing system it names (#1022)', async () => {
+    server.put('form_records', {
+      id: 'p-signed',
+      definitionKey: 'vde-0105-100',
+      definitionVersion: 2,
+      installationId: 'i-1',
+      jobId: 'j-1',
+      performedOn: '2026-11-20',
+      status: 'signed',
+      values: JSON.stringify({
+        tester: 'Paul Prüfer',
+        earthing_system: 'it',
+        circuits: [
+          {
+            circuitId: 'k-1',
+            circuit: {
+              designation: 'F1',
+              consumer: 'Steckdosen Küche',
+              tripCharacteristic: 'b',
+              ratedCurrentMilli: 16_000,
+              ratedResidualCurrentMilli: 30,
+            },
+            values: { environment: 'damp', insulation_with_loads: 20 },
+          },
+        ],
+      }),
+    })
+    await mount('/auftraege/j-1/pruefprotokolle/p-signed')
+
+    // 50 Ω per volt in an IT system, at 230 V 11,5 kΩ, held to 0,012 MΩ.
+    expect(await screen.findByText(/^Innerhalb des Grenzwerts, mindestens 0,012 MΩ\./)).toBeTruthy()
+    expect(screen.queryByText(/Wert außerhalb/)).toBeNull()
   })
 
   it('opens the measuring at the first circuit without a value', async () => {

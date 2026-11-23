@@ -1,11 +1,13 @@
 import type { CircuitFacts, IsoDate, LimitVerdict, RuleSet } from '@opengewerk/platform-domain'
 
 import type { ApplianceFacts } from '../model/appliance.js'
+import type { MeasuringConditions } from './circuit-limits.js'
 import type { MeasurementField, MeasurementUnit } from './definition.js'
 import { tradeForms } from './engine.js'
 import { isRuleLimit } from '@opengewerk/platform-domain'
 
 export { type CircuitFacts, type LimitVerdict, measuredNumber } from '@opengewerk/platform-domain'
+export type { MeasuringConditions } from './circuit-limits.js'
 
 /** A value in thousandths, as it is written: `0,85 Ω`. */
 export function formatMeasured(milli: number, unit: MeasurementUnit, decimals: number): string {
@@ -16,13 +18,35 @@ export function formatMeasured(milli: number, unit: MeasurementUnit, decimals: n
  * The limits a measured value has to reach rather than stay under. A rule
  * says so itself (`at_least`); of the limits worked out, only the insulation
  * of an appliance does (#303), and the insulation of a circuit after its
- * nominal voltage (#1021); the loop impedance, the tripping current and time
- * and the protective conductor of an appliance are limits to stay under.
+ * nominal voltage (#1021) and both of the recurring inspection (#1022); the
+ * loop impedance, the tripping current and time and the protective conductor
+ * of an appliance are limits to stay under.
  */
 const workedOutMinimums: ReadonlySet<string> = new Set([
   'appliance_insulation',
   'circuit_insulation',
+  'recurring_insulation_without_loads',
+  'recurring_insulation_with_loads',
 ])
+
+/**
+ * The conditions a circuit was measured in as its block and its protocol say
+ * them (#1022): the environment in the block and the earthing system in the
+ * head, where they are given and known. A form that asks for neither gives
+ * none, and its limits judge as before.
+ */
+export function measuringConditions(
+  block: Readonly<Record<string, unknown>> | null | undefined,
+  form: Readonly<Record<string, unknown>> | null | undefined,
+): MeasuringConditions {
+  const environment = block?.['environment']
+  const earthingSystem = form?.['earthing_system']
+
+  return {
+    ...(environment === 'dry' || environment === 'damp' ? { environment } : {}),
+    ...(typeof earthingSystem === 'string' ? { earthingSystem } : {}),
+  }
+}
 
 /** Whether the limit of a field is one to reach, "mindestens", rather than one to stay under. */
 export function limitIsMinimum(field: MeasurementField): boolean {
@@ -40,6 +64,8 @@ export function limitIsMinimum(field: MeasurementField): boolean {
  * of the test, with the rules of the trade package, and for the loop
  * impedance and the tripping current with the circuit it was measured on; for
  * the test of an appliance (#303) with the appliance, its protection class and lead.
+ * The conditions of a circuit (#1022) go with it, and judge a block without a
+ * circuit as well.
  *
  * A value outside its limit is said so, with the limit and its source, and is
  * kept: what was measured goes on the paper, and a protocol that refused it
@@ -53,11 +79,16 @@ export function limitVerdict(
     readonly on: IsoDate
     readonly circuit: CircuitFacts | null
     readonly appliance?: ApplianceFacts | null
+    readonly conditions?: MeasuringConditions
   },
 ): LimitVerdict {
+  const { circuit, appliance, conditions } = context
+
   return tradeForms.limitVerdict(field, measuredMilli, {
     rules: context.rules,
     on: context.on,
-    item: context.circuit ?? context.appliance ?? null,
+    item: circuit
+      ? { ...circuit, ...conditions }
+      : (appliance ?? (conditions ? { ...conditions } : null)),
   })
 }

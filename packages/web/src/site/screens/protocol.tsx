@@ -18,6 +18,8 @@ import {
   isRuleLimit,
   limitIsMinimum,
   limitVerdict,
+  measuringConditions,
+  type MeasuringConditions,
   type MeasurementField,
   measurementUnitSign,
   type RecordState,
@@ -240,7 +242,7 @@ function stateOf(
     const blocks = blocksOf(protocol.draft[group.key])
     const started = blocks.filter((block) => filledIn(group, block) > 0).length
     const outside = blocks.reduce(
-      (sum, block) => sum + outsideIn(group, block, protocol.performedOn),
+      (sum, block) => sum + outsideIn(group, block, protocol.performedOn, protocol.draft),
       0,
     )
     const counted = `${String(started)} von ${String(blocks.length)}`
@@ -867,7 +869,8 @@ function BlockStep({
   }
 
   const filled = filledIn(group, block)
-  const outside = outsideIn(group, block, protocol.performedOn)
+  const outside = outsideIn(group, block, protocol.performedOn, protocol.draft)
+  const conditions = measuringConditions(block.values, protocol.draft)
   const facts = [
     block.circuit ? circuitProtection(block.circuit) : null,
     `${String(filled)} von ${String(group.fields.length)} eingetragen`,
@@ -952,6 +955,7 @@ function BlockStep({
               field={nested}
               value={block.values[nested.key]}
               circuit={block.circuit}
+              conditions={conditions}
               performedOn={protocol.performedOn}
               onChange={(value) => {
                 change(nested.key, value)
@@ -963,6 +967,7 @@ function BlockStep({
               field={nested}
               value={block.values[nested.key]}
               circuit={block.circuit}
+              conditions={conditions}
               performedOn={protocol.performedOn}
               photos={protocol.photos}
               onChange={(value) => {
@@ -1052,6 +1057,7 @@ function MeasureCard({
   value,
   circuit,
   appliance = null,
+  conditions,
   performedOn,
   onChange,
 }: {
@@ -1060,6 +1066,8 @@ function MeasureCard({
   readonly circuit: BlockCircuit | null
   /** The appliance a test after DGUV Vorschrift 3 is done at, its limits worked out of it (#303). */
   readonly appliance?: ApplianceFacts | null
+  /** Where the circuit was measured, from its block and the protocol (#1022). */
+  readonly conditions?: MeasuringConditions
   readonly performedOn: string
   readonly onChange: (value: number | undefined) => void
 }) {
@@ -1071,6 +1079,7 @@ function MeasureCard({
     on: performedOn,
     circuit,
     appliance,
+    conditions,
   })
   const state = verdict.within === false ? 'bad' : verdict.within === true ? 'ok' : 'muted'
   const wrong = state === 'bad' || problem !== undefined

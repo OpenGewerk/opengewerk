@@ -30,6 +30,8 @@ import {
   isProtocolPhoto,
   type IsoDate,
   limitVerdict,
+  measuringConditions,
+  type MeasuringConditions,
   type MeasurementField,
   measurementUnitSign,
   readApplianceFacts,
@@ -579,6 +581,7 @@ export function Verdict({
   value,
   circuit,
   appliance = null,
+  conditions,
   performedOn,
 }: {
   readonly field: MeasurementField
@@ -586,6 +589,8 @@ export function Verdict({
   readonly circuit: BlockCircuit | null
   /** The appliance a test after DGUV Vorschrift 3 is done at (#303). */
   readonly appliance?: ApplianceFacts | null
+  /** Where the circuit was measured, from its block and the protocol (#1022). */
+  readonly conditions?: MeasuringConditions
   readonly performedOn: string
 }) {
   if (!field.limit) {
@@ -597,6 +602,7 @@ export function Verdict({
     on: performedOn,
     circuit,
     appliance,
+    conditions,
   })
 
   return (
@@ -670,6 +676,7 @@ export function FieldInput({
   value,
   circuit,
   appliance = null,
+  conditions,
   performedOn,
   partOnly = false,
   photos,
@@ -679,6 +686,7 @@ export function FieldInput({
   readonly value: FieldValue | undefined
   readonly circuit: BlockCircuit | null
   readonly appliance?: ApplianceFacts | null
+  readonly conditions?: MeasuringConditions
   readonly performedOn: string
   /** The protocol tests only a part of the installation, whose day counts only where it is the sooner (#814, #822). */
   readonly partOnly?: boolean
@@ -725,6 +733,7 @@ export function FieldInput({
             value={value}
             circuit={circuit}
             appliance={appliance}
+            conditions={conditions}
             performedOn={performedOn}
           />
         </div>
@@ -833,6 +842,7 @@ export function FieldText({
   value,
   circuit,
   appliance = null,
+  conditions,
   performedOn,
   partOnly = false,
   photos,
@@ -841,6 +851,7 @@ export function FieldText({
   readonly value: FieldValue | undefined
   readonly circuit: BlockCircuit | null
   readonly appliance?: ApplianceFacts | null
+  readonly conditions?: MeasuringConditions
   readonly performedOn: string
   readonly partOnly?: boolean
   readonly photos: readonly PhotoOption[]
@@ -860,6 +871,7 @@ export function FieldText({
           value={value}
           circuit={circuit}
           appliance={appliance}
+          conditions={conditions}
           performedOn={performedOn}
         />
       ) : isNextInspection(field) ? (
@@ -916,16 +928,30 @@ export function filledIn(field: GroupField, block: GroupBlock): number {
   return field.fields.filter((nested) => block.values[nested.key] !== undefined).length
 }
 
-/** How many measured values of a block lie outside their limits. */
-export function outsideIn(field: GroupField, block: GroupBlock, performedOn: string): number {
+/**
+ * How many measured values of a block lie outside their limits, judged in the
+ * conditions its block and its protocol name (#1022).
+ */
+export function outsideIn(
+  field: GroupField,
+  block: GroupBlock,
+  performedOn: string,
+  form: FormValues | undefined,
+): number {
+  const conditions = measuringConditions(block.values, form)
+
   return field.fields.filter((nested) => {
     const value = block.values[nested.key]
 
     return (
       nested.kind === 'measurement' &&
       typeof value === 'number' &&
-      limitVerdict(nested, value, { rules: protocolRules, on: performedOn, circuit: block.circuit })
-        .within === false
+      limitVerdict(nested, value, {
+        rules: protocolRules,
+        on: performedOn,
+        circuit: block.circuit,
+        conditions,
+      }).within === false
     )
   }).length
 }
@@ -938,6 +964,7 @@ function BlockCard({
   field,
   block,
   index,
+  form,
   performedOn,
   photos,
   editable,
@@ -947,6 +974,8 @@ function BlockCard({
   readonly field: GroupField
   readonly block: GroupBlock
   readonly index: number
+  /** The values of the whole protocol, whose earthing system a limit asks for (#1022). */
+  readonly form: FormValues
   readonly performedOn: string
   readonly photos: readonly PhotoOption[]
   readonly editable: boolean
@@ -956,7 +985,8 @@ function BlockCard({
   const heading = blockHeading(block, index)
   const protection = block.circuit ? circuitProtection(block.circuit) : null
   const filled = filledIn(field, block)
-  const outside = outsideIn(field, block, performedOn)
+  const outside = outsideIn(field, block, performedOn, form)
+  const conditions = measuringConditions(block.values, form)
 
   return (
     <details className="rounded-card border border-line bg-surface">
@@ -986,6 +1016,7 @@ function BlockCard({
               field={nested}
               value={block.values[nested.key]}
               circuit={block.circuit}
+              conditions={conditions}
               performedOn={performedOn}
               photos={photos}
               onChange={(value) => {
@@ -1006,6 +1037,7 @@ function BlockCard({
               field={nested}
               value={block.values[nested.key]}
               circuit={block.circuit}
+              conditions={conditions}
               performedOn={performedOn}
               photos={photos}
             />
@@ -1025,6 +1057,7 @@ function BlockCard({
 function GroupSection({
   field,
   value,
+  form,
   circuits,
   performedOn,
   photos,
@@ -1033,6 +1066,7 @@ function GroupSection({
 }: {
   readonly field: GroupField
   readonly value: FormValue | undefined
+  readonly form: FormValues
   readonly circuits: readonly (BlockCircuit & { readonly id: string })[]
   readonly performedOn: string
   readonly photos: readonly PhotoOption[]
@@ -1073,6 +1107,7 @@ function GroupSection({
             field={field}
             block={block}
             index={index}
+            form={form}
             performedOn={performedOn}
             photos={photos}
             editable={editable}
@@ -1494,6 +1529,7 @@ export function ProtocolSheet({
                   key={field.key}
                   field={field}
                   value={draft[field.key]}
+                  form={draft}
                   circuits={circuits}
                   performedOn={performedOn}
                   photos={photos}
