@@ -1,6 +1,6 @@
 import type { RecordState, SignedContent } from '@opengewerk/domain'
 import { count } from '@opengewerk/platform-web/sync'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { lineKindOf, lineUnitOf } from '../app/labels.js'
 
@@ -74,16 +74,22 @@ interface Drawn {
  * of the server, the drawing goes: `pad` is the key that mounts the pad again,
  * empty, and `pageChanged` says why it is empty, until the customer draws
  * again. A signature only ever goes out over the page they saw while signing.
+ *
+ * The pad tells of a stroke only once it ends, so a stroke is held to the page
+ * it was begun under: `onPointerDown` belongs on an element around the pad,
+ * in the capture phase, and notes the page as the finger touches it.
  */
 export function useSignatureFor(fingerprint: string): {
   readonly path: string | null
   readonly pad: number
   readonly pageChanged: boolean
   readonly onChange: (path: string | null) => void
+  readonly onPointerDown: () => void
 } {
   const [drawn, setDrawn] = useState<Drawn | null>(null)
   const [pad, setPad] = useState(0)
   const [pageChanged, setPageChanged] = useState(false)
+  const begunUnder = useRef<string | null>(null)
 
   // Put right while rendering, as React has it for state that follows a
   // value, and not in an effect.
@@ -104,8 +110,13 @@ export function useSignatureFor(fingerprint: string): {
         return
       }
 
-      setDrawn({ path, fingerprint })
+      // Begun under another page, the drawing is held to that one and goes
+      // in the render that follows.
+      setDrawn({ path, fingerprint: begunUnder.current ?? fingerprint })
       setPageChanged(false)
+    },
+    onPointerDown: () => {
+      begunUnder.current = fingerprint
     },
   }
 }

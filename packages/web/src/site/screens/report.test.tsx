@@ -644,6 +644,58 @@ describe('a report on site', () => {
    * (#1063): nothing goes out over the page they saw before, and they sign
    * again over the page as it now is.
    */
+  /**
+   * The pad tells of a stroke only once it ends; a stroke begun before the
+   * change and ended after it goes as well (#1063).
+   */
+  it('empties the field when the report changes while the first stroke is drawn', async () => {
+    const user = userEvent.setup()
+    const report = { ...draftReport, introText: 'Leuchte im Treppenhaus getauscht.' }
+    const { client } = await mount('/auftraege/j-1/berichte/d-1', { documents: [report] })
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Vom Kunden unterschreiben lassen' }),
+    )
+    await user.type(await screen.findByLabelText('Name'), 'Erika Berg')
+
+    const pad = screen.getByRole('img', { name: 'Unterschriftsfeld' })
+
+    Object.assign(pad, {
+      getBoundingClientRect: () => ({
+        left: 0,
+        top: 0,
+        width: 500,
+        height: 200,
+        right: 500,
+        bottom: 200,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }),
+      setPointerCapture: () => {},
+    })
+    fireEvent.pointerDown(pad, { pointerId: 1, clientX: 50, clientY: 150 })
+
+    server.put('documents', {
+      ...report,
+      introText: 'Leuchte im Treppenhaus getauscht, Bewegungsmelder ersetzt.',
+      version: 2,
+    })
+    await act(() => client.synchronise())
+    await screen.findByText('Leuchte im Treppenhaus getauscht, Bewegungsmelder ersetzt.')
+
+    fireEvent.pointerMove(pad, { pointerId: 1, clientX: 120, clientY: 60 })
+    fireEvent.pointerUp(pad, { pointerId: 1, clientX: 120, clientY: 60 })
+
+    expect(await screen.findByText(/^Der Bericht hat sich geändert/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Feld leeren' })).toHaveProperty('disabled', true)
+
+    await user.click(screen.getByRole('button', { name: 'Unterschreiben' }))
+
+    expect(await screen.findByText('Bitte im Feld unterschreiben.')).toBeTruthy()
+    expect(client.list('document_signatures')).toEqual([])
+  })
+
   it('empties the field when the report changes after the customer drew in it', async () => {
     const user = userEvent.setup()
     const report = { ...draftReport, introText: 'Leuchte im Treppenhaus getauscht.' }

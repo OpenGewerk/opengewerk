@@ -1307,11 +1307,13 @@ function SigningStep({
                   : 'Der Bericht hat sich geändert, nachdem Sie im Feld unterschrieben haben. Bitte lesen Sie ihn noch einmal und unterschreiben Sie neu.'}
               </SiteTrouble>
             ) : null}
-            <SignaturePad
-              key={signature.pad}
-              label="Unterschriftsfeld"
-              onChange={signature.onChange}
-            />
+            <div className="contents" onPointerDownCapture={signature.onPointerDown}>
+              <SignaturePad
+                key={signature.pad}
+                label="Unterschriftsfeld"
+                onChange={signature.onChange}
+              />
+            </div>
           </div>
         </Panel>
       </form>

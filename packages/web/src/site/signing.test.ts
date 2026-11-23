@@ -146,4 +146,31 @@ describe('the signature on the pad', () => {
 
     expect(result.current).toMatchObject({ path: 'M30,30L40,40', pad: 1, pageChanged: false })
   })
+
+  it('goes when the page changes while its first stroke is still being drawn', () => {
+    const { result, rerender } = renderHook(
+      ({ fingerprint }: { fingerprint: string }) => useSignatureFor(fingerprint),
+      { initialProps: { fingerprint: 'fnv1a32:00000001:1' } },
+    )
+
+    // The finger touches the pad, the page changes, and only then the stroke ends.
+    act(() => {
+      result.current.onPointerDown()
+    })
+    rerender({ fingerprint: 'fnv1a32:00000002:1' })
+    act(() => {
+      result.current.onChange('M10,10L20,20')
+    })
+
+    expect(result.current).toMatchObject({ path: null, pad: 1, pageChanged: true })
+
+    act(() => {
+      result.current.onPointerDown()
+    })
+    act(() => {
+      result.current.onChange('M30,30L40,40')
+    })
+
+    expect(result.current).toMatchObject({ path: 'M30,30L40,40', pad: 1, pageChanged: false })
+  })
 })

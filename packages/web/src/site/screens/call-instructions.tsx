@@ -280,11 +280,13 @@ export function SiteInstructionsScreen() {
                 lesen Sie sie noch einmal und unterschreiben Sie neu.
               </SiteTrouble>
             ) : null}
-            <SignaturePad
-              key={signature.pad}
-              label="Unterschriftsfeld"
-              onChange={signature.onChange}
-            />
+            <div className="contents" onPointerDownCapture={signature.onPointerDown}>
+              <SignaturePad
+                key={signature.pad}
+                label="Unterschriftsfeld"
+                onChange={signature.onChange}
+              />
+            </div>
           </div>
         </Panel>
       </form>

@@ -353,6 +353,50 @@ describe('the instructions at the door (#292)', () => {
     })
   })
 
+  it('empty the field when the sheets change while the first stroke is drawn', async () => {
+    const { client, queries } = await mount('/auftraege/j-1/belehrung')
+
+    expect(await screen.findByText('Widerrufsbelehrung')).toBeTruthy()
+
+    await userEvent.type(screen.getByLabelText('Name'), 'Klaus Lehmann')
+
+    const pad = screen.getByLabelText('Unterschriftsfeld')
+
+    Object.assign(pad, {
+      getBoundingClientRect: () => ({
+        left: 0,
+        top: 0,
+        width: 500,
+        height: 200,
+        right: 500,
+        bottom: 200,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }),
+      setPointerCapture: () => {},
+    })
+    fireEvent.pointerDown(pad, { pointerId: 1, clientX: 50, clientY: 150 })
+
+    answers.set('/jobs/j-1/instructions', {
+      ...instructions,
+      request: 'Ich verlange ausdrücklich, dass Elektro Nord GmbH sofort beginnt.',
+      fingerprint: 'fnv1a32:0ddba110:121',
+    })
+    await act(() => queries.invalidateQueries())
+    await screen.findByText('Ich verlange ausdrücklich, dass Elektro Nord GmbH sofort beginnt.')
+
+    fireEvent.pointerMove(pad, { pointerId: 1, clientX: 120, clientY: 60 })
+    fireEvent.pointerUp(pad, { pointerId: 1, clientX: 120, clientY: 60 })
+
+    expect(await screen.findByText(/^Die Belehrung hat sich geändert/)).toBeTruthy()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Unterschreiben' }))
+
+    expect(await screen.findByText('Bitte im Feld unterschreiben.')).toBeTruthy()
+    expect(client.list('early_start_requests')).toEqual([])
+  })
+
   it('take no request without a name and a signature', async () => {
     const { client } = await mount('/auftraege/j-1/belehrung')
 
