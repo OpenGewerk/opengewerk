@@ -15,7 +15,7 @@ import {
 } from '@opengewerk/domain'
 import { type TenantTransaction } from '@opengewerk/platform-server'
 import { auditEntries, auditRedactions, deadlineSettings } from '@opengewerk/platform-server/schema'
-import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm'
 
 import {
   customers,
@@ -572,6 +572,21 @@ export async function customerRestricted(
         eq(erasureRequests.status, 'restricted'),
       ),
     )
+    .limit(1)
+
+  return found !== undefined
+}
+
+/**
+ * Whether a customer is deleted (#1065). What the business writes to a
+ * customer by itself, a confirmation, a recurring invoice, a signed report,
+ * is not written to one. What the office sends by hand is not asked here.
+ */
+export async function customerDeleted(tx: TenantTransaction, customerId: string): Promise<boolean> {
+  const [found] = await tx
+    .select({ id: customers.id })
+    .from(customers)
+    .where(and(eq(customers.id, customerId as CustomerId), isNotNull(customers.deletedAt)))
     .limit(1)
 
   return found !== undefined

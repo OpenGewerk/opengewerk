@@ -425,6 +425,21 @@ describe('a report signed on site', () => {
     expect(await cycle(recording().transport)).toMatchObject({ written: 0 })
   })
 
+  it('is not written to a customer deleted before the pass looked at it (#1065)', async () => {
+    const report = await signedReport(north)
+    const { rows } = await admin.query<{ customer_id: string }>(
+      'select customer_id from documents where id = $1',
+      [report],
+    )
+
+    await http()
+      .delete(`/customers/${rows[0]?.customer_id ?? ''}`)
+      .set('x-test-identity', as(north.id, 'office'))
+      .expect(200)
+
+    expect(await cycle(recording().transport)).toMatchObject({ written: 0, sent: 0 })
+  })
+
   it('waits for an address, and the office can send it by hand once there is one', async () => {
     const id = await signedReport(north, null)
     const post = recording()

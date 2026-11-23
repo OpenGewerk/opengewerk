@@ -33,7 +33,7 @@ import {
 import { issuerOf } from '../documents/content.js'
 import { callInstructions, callOf } from '../service-calls/instructions.js'
 import { causeOf, type Notification, signatureFor } from './notify.js'
-import { customerRestricted } from '../privacy/customer-erasure.js'
+import { customerDeleted, customerRestricted } from '../privacy/customer-erasure.js'
 
 /**
  * The confirmations to a customer (#315, decided on 27.09.2026): about an
@@ -162,8 +162,13 @@ export async function appointmentConfirmationMail(
       .innerJoin(customers, eq(customers.id, jobs.customerId))
       .where(eq(appointments.id, notification.appointmentId as AppointmentId))
 
-    // A customer restricted on a request for deletion gets no mail (#845).
-    if (!row?.customerEmail || (await customerRestricted(tx, row.customerId))) {
+    // A customer restricted on a request for deletion gets no mail (#845),
+    // and a deleted one none written by itself (#1065).
+    if (
+      !row?.customerEmail ||
+      (await customerRestricted(tx, row.customerId)) ||
+      (await customerDeleted(tx, row.customerId))
+    ) {
       return []
     }
 
@@ -259,8 +264,13 @@ export async function jobReceivedMail(
   return database.forTenant({ tenantId, reason: 'notification' }, async (tx) => {
     const call = await callOf(tx, notification.jobId as JobId)
 
-    // A customer restricted on a request for deletion gets no mail (#845).
-    if (!call?.customerEmail || (await customerRestricted(tx, call.customerId))) {
+    // A customer restricted on a request for deletion gets no mail (#845),
+    // and a deleted one none written by itself (#1065).
+    if (
+      !call?.customerEmail ||
+      (await customerRestricted(tx, call.customerId)) ||
+      (await customerDeleted(tx, call.customerId))
+    ) {
       return []
     }
 

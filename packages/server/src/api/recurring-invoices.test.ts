@@ -16,6 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { runDeadlinesOf } from '../deadlines/engine.js'
 import { contractInvoicesToSend } from '../notifications/contract-invoices.js'
+import { documentToCustomer } from '../notifications/notify.js'
 import { ApiModule } from './api.module.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { invoiceable, readyToInvoice } from './test-invoice.js'
@@ -333,5 +334,43 @@ describe('the recurring invoices of a contract (#295)', () => {
     )
 
     expect(await contractInvoicesToSend(database, north, new Date())).toEqual([])
+  })
+
+  /**
+   * Not to a customer deleted since (#1065): not found, and not written
+   * where the pass found it before the deletion.
+   */
+  it('go to nobody by themselves once their customer is deleted', async () => {
+    const gone = newId<'customer'>()
+
+    await admin.query(
+      `insert into customers (id, tenant_id, kind, name, is_business, email, street, house_number, postal_code, city)
+       values ($1, $2, 'business', 'Elektrohandel Kern GmbH', true, 'rechnung@kern.example', $3, $4, $5, $6)`,
+      [
+        gone,
+        north,
+        invoiceable.street,
+        invoiceable.houseNumber,
+        invoiceable.postalCode,
+        invoiceable.city,
+      ],
+    )
+    await contract(addMonths(today, -1), {}, gone)
+    await run(3)
+
+    const wanted = await contractInvoicesToSend(database, north, new Date())
+
+    expect(wanted).toHaveLength(1)
+
+    await request(app.getHttpServer())
+      .delete(`/customers/${gone}`)
+      .set('x-test-identity', office())
+      .expect(200)
+
+    expect(await contractInvoicesToSend(database, north, new Date())).toEqual([])
+
+    for (const notification of wanted) {
+      expect(await documentToCustomer(database, north, notification)).toEqual([])
+    }
   })
 })
