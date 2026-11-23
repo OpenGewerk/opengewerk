@@ -389,7 +389,9 @@ export const requiredWith: Readonly<Partial<Record<InstructionTemplate, readonly
  * the customer is a business, the kind of contract chosen on it, and its date;
  * whether one of its positions delivers goods (#1024), and whether an
  * instruction on withdrawal went out with a document before it in its chain
- * (#1024). The last two are false where nobody worked them out.
+ * (#1024). Where nobody worked them out, a document delivers no goods, and
+ * an order confirmation gets nothing proposed for the chain: only a caller
+ * that read the chain says `instructedBefore: false`.
  */
 export interface DocumentFacts {
   readonly kind: DocumentKind
