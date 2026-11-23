@@ -430,25 +430,34 @@ export class DocumentsController {
     @Body() body: unknown,
   ) {
     return this.database.forTenant(identity, async (tx) => {
-      // The document and its predecessor, locked together in the order of
-      // their ids, the order a transmission from a device locks the
-      // documents it comes to (opengewerk#1094); one after the other, the
-      // two could each hold the one the other waits for. The link to the
-      // predecessor is made with the document and never changes (#129).
-      const [chain] = await tx
-        .select({ predecessorDocumentId: documents.predecessorDocumentId })
-        .from(documents)
-        .where(eq(documents.id, id as DocumentId))
+      // The document and its whole chain upwards, locked together before
+      // anything is written, in the order of their ids, the order a
+      // transmission from a device locks the documents it comes to
+      // (opengewerk#1094). The predecessor is fixed below and the deductions
+      // read every link above it; locked one after the other, or after a
+      // write, issuing could hold one the transmission waits for and wait
+      // for one it holds. The links are made with each document and never
+      // change (#129), so the chain is walked without a lock first.
+      const chain: DocumentId[] = [id as DocumentId]
+
+      for (let link: DocumentId | null = id as DocumentId; link !== null;) {
+        const [found] = await tx
+          .select({ predecessorDocumentId: documents.predecessorDocumentId })
+          .from(documents)
+          .where(eq(documents.id, link))
+        const next: DocumentId | null = found?.predecessorDocumentId ?? null
+
+        link = next !== null && !chain.includes(next) ? next : null
+
+        if (link !== null) {
+          chain.push(link)
+        }
+      }
 
       await tx
         .select({ id: documents.id })
         .from(documents)
-        .where(
-          inArray(documents.id, [
-            id as DocumentId,
-            ...(chain?.predecessorDocumentId ? [chain.predecessorDocumentId] : []),
-          ]),
-        )
+        .where(inArray(documents.id, chain))
         .orderBy(documents.id)
         .for('update')
 

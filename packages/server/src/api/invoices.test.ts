@@ -20,8 +20,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
 import { binary } from './test-binary.js'
+import { holdQuery } from './test-hold.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { invoiceable, readyToInvoice } from './test-invoice.js'
+import { changed, created } from './test-structure.js'
 
 /**
  * The end of the chain, #74: the final invoice out of what the work was agreed
@@ -941,5 +943,80 @@ describe('a chain that does not branch', () => {
       .catch((error: unknown) => error)
 
     expect(refusal).toMatchObject({ code: '23505', constraint: 'documents_one_successor' })
+  })
+})
+
+describe('issuing next to a transmission from a device (opengewerk#1094)', () => {
+  it('locks the whole chain before it writes, so a transmission that comes to the quote waits', async () => {
+    const quote = await draft('quote', { subject: 'Angebot Kette' })
+
+    await add(quote.id, { ...cable, quantityMilli: 1000 })
+    await issue(quote.id)
+
+    const confirmation = await successor(quote.id, 'order_confirmation')
+
+    await issue(confirmation.id)
+
+    const invoice = await successor(confirmation.id, 'final_invoice')
+
+    // A draft of an earlier day: issuing dates it, a logged write, before it
+    // reads the deductions up the chain.
+    await admin.query(
+      "update documents set document_date = '2026-10-01', service_from = '2026-09-30' where id = $1",
+      [invoice.id],
+    )
+
+    // Held at the first deduction it reads, after it wrote.
+    const held = holdQuery((text) => /for share/i.test(text))
+    const issuing = http()
+      .post(`/documents/${invoice.id}/issue`)
+      .set('x-test-identity', office())
+      .send({})
+      .then((answer) => answer.status)
+    let sent: Promise<number> | undefined
+
+    try {
+      await held.reached
+
+      // A transmission: first a write, then a stale change of the issued quote.
+      const write = created('jobs', newId<'job'>(), {
+        customerId,
+        kind: 'service',
+        status: 'active',
+        designation: 'Sicherung',
+      })
+
+      await new Promise((resolve) => setTimeout(resolve, 5))
+
+      const stale = changed('documents', quote.id, {
+        subject: { from: 'Angebot Kette', to: 'Angebot neu' },
+      })
+
+      sent = http()
+        .post('/sync')
+        .set('x-test-identity', office())
+        .send({ deviceId: 'geraet-im-keller', operations: [write, stale] })
+        .then((answer) => answer.status)
+
+      // Until the transmission waits for issuing.
+      let waiting = 0
+
+      for (let tries = 0; tries < 100 && waiting === 0; tries += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+
+        const { rows } = await admin.query<{ waiting: number }>(
+          'select count(*)::int as waiting from pg_stat_activity where $1 = any(pg_blocking_pids(pid))',
+          [held.holder()],
+        )
+
+        waiting = rows[0]?.waiting ?? 0
+      }
+
+      expect(waiting).toBeGreaterThan(0)
+    } finally {
+      held.release()
+    }
+
+    expect({ issue: await issuing, sync: await sent }).toEqual({ issue: 201, sync: 201 })
   })
 })
