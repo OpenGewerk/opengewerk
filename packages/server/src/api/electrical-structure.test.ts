@@ -445,10 +445,11 @@ describe('the figures of a circuit', () => {
   /**
    * The nominal voltage and the selective RCD a test record judges a circuit
    * by (#1021): both arrive, a circuit sent without them is up to 500 V with
-   * a general RCD, and a selective RCD keeps its type, judged as the circuit
-   * stands afterwards and held by the database for every other way in.
+   * a general RCD, and selective is refused on a circuit without a type,
+   * judged as the circuit stands afterwards and held by the database for
+   * every other way in.
    */
-  it('take the nominal voltage and a selective RCD, which keeps its type', async () => {
+  it('take the nominal voltage and a selective RCD, and the selective only with a type', async () => {
     const { boardId } = await board(north.id, northInstallation.id)
     const selective = newId<'circuit'>()
     const plain = newId<'circuit'>()
@@ -480,7 +481,7 @@ describe('the figures of a circuit', () => {
 
     const answer = await push(
       as(north.id, 'office'),
-      [changed('circuits', selective, { rcdType: { from: 'a', to: null } })],
+      [changed('circuits', plain, { rcdSelective: { from: false, to: true } })],
       400,
     )
 
@@ -513,6 +514,41 @@ describe('the figures of a circuit', () => {
     ])
 
     expect(selectiveAlone.receipts.map((receipt) => receipt.outcome)).toEqual(['applied'])
+  })
+
+  /**
+   * Two people at one RCD (#1021): the office makes it selective, and a
+   * device that still holds the circuit from before takes its type away. The
+   * type takes the selective along, as the form does, and the transmission
+   * lands, as it does from a device whose version does not know the selective.
+   */
+  it('take the selective along with a type taken away by a device that did not send it', async () => {
+    const { boardId } = await board(north.id, northInstallation.id)
+    const circuitId = newId<'circuit'>()
+
+    await push(as(north.id, 'office'), [
+      created('circuits', circuitId, {
+        distributionBoardId: boardId,
+        designation: 'F1',
+        rcdType: 'a',
+        position: 0,
+      }),
+    ])
+    await push(as(north.id, 'office'), [
+      {
+        ...changed('circuits', circuitId, { rcdSelective: { from: false, to: true } }),
+        baseVersion: 1,
+      },
+    ])
+
+    const answer = await push(as(north.id, 'technician'), [
+      { ...changed('circuits', circuitId, { rcdType: { from: 'a', to: null } }), baseVersion: 1 },
+    ])
+
+    expect(answer.receipts.map((receipt) => receipt.outcome)).toEqual(['applied'])
+    expect(
+      rowsOf(await pull(as(north.id, 'office')), 'circuits').find((row) => row['id'] === circuitId),
+    ).toMatchObject({ rcdType: null, rcdSelective: false })
   })
 
   it('refuse a kind of board nobody knows before the database would', async () => {

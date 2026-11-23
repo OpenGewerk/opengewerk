@@ -26,6 +26,7 @@ import {
 import {
   attachmentVersionFiles,
   attachmentVersionPlace,
+  circuitAlong,
   contactWithoutParent,
   isUuid,
   serverSync,
@@ -444,7 +445,11 @@ const reportFields: Check = async ({ tx, operation, values, current }) => {
  * database says the same, for the whole transmission at once.
  */
 const structure: Check = ({ operation, values, current }) => {
-  const figures = structureProblem(operation.entity, values, current)
+  const figures = structureProblem(
+    operation.entity,
+    circuitAlong(operation.entity, values, current),
+    current,
+  )
 
   return figures === null ? null : { kind: 'client', message: figures }
 }
@@ -766,7 +771,16 @@ export const sync = serverSync<FoundIdentity>({
         await withProposedTreatment(
           tx,
           operation,
-          withCreator(operation, withLineTotal(operation.entity, values, current), sender),
+          withCreator(
+            operation,
+            withLineTotal(
+              operation.entity,
+              // As the check judged them: a type taken away takes the selective along (#1021).
+              { ...circuitAlong(operation.entity, values, current) },
+              current,
+            ),
+            sender,
+          ),
         ),
       ),
     ),

@@ -32,6 +32,34 @@ export interface StructureRefusal {
   readonly fields: readonly string[]
 }
 
+/**
+ * What an operation on a circuit takes along without saying it (#1021): a
+ * type of RCD taken away takes the selective with it, as the form does. A
+ * device that leaves the selective alone, because somebody set it meanwhile
+ * or because its version does not know it, would otherwise be refused for a
+ * field it never touched, with its whole transmission.
+ *
+ * An application applies it twice, to the values its check judges and to
+ * those it writes (`complete`), so that the check judges what is written.
+ */
+export function circuitAlong(
+  entity: string,
+  values: Readonly<Record<string, unknown>>,
+  current: RecordState | null,
+): Readonly<Record<string, unknown>> {
+  if (
+    entity !== 'circuits' ||
+    !('rcdType' in values) ||
+    values['rcdType'] !== null ||
+    'rcdSelective' in values ||
+    current?.['rcdSelective'] !== true
+  ) {
+    return values
+  }
+
+  return { ...values, rcdSelective: false }
+}
+
 /** The value a field has once the operation is through: what it sets, or what the row holds. */
 export function valueAfter(
   field: string,

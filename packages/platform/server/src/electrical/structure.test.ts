@@ -1,6 +1,7 @@
+import type { RecordState } from '@opengewerk/platform-domain'
 import { describe, expect, it } from 'vitest'
 
-import { structureProblem, valueAfter } from './structure.js'
+import { circuitAlong, structureProblem, valueAfter } from './structure.js'
 
 // What a device may not send of the structure at all (ADR 0014), asked
 // without a database. Whether a section belongs to the board of its circuit
@@ -66,5 +67,33 @@ describe('the value of a field after an operation', () => {
     expect(valueAfter('designation', {}, row)).toBe('F1')
     expect(valueAfter('consumer', { consumer: null }, { ...row, consumer: 'Herd' })).toBeNull()
     expect(valueAfter('cableType', {}, null)).toBeNull()
+  })
+})
+
+/**
+ * What an operation on a circuit takes along without saying it (#1021): a
+ * type of RCD taken away takes a stored selective with it, and nothing else.
+ */
+describe('what a circuit takes along', () => {
+  const stored = { id: 'k-1', rcdType: 'a', rcdSelective: true } as RecordState
+
+  it('is the selective, when the type goes and the operation leaves the selective alone', () => {
+    expect(circuitAlong('circuits', { rcdType: null }, stored)).toEqual({
+      rcdType: null,
+      rcdSelective: false,
+    })
+  })
+
+  it('is nothing otherwise', () => {
+    expect(circuitAlong('circuits', { rcdType: 'b' }, stored)).toEqual({ rcdType: 'b' })
+    expect(circuitAlong('circuits', { rcdType: null, rcdSelective: true }, stored)).toEqual({
+      rcdType: null,
+      rcdSelective: true,
+    })
+    expect(circuitAlong('circuits', { rcdType: null }, { ...stored, rcdSelective: false })).toEqual(
+      { rcdType: null },
+    )
+    expect(circuitAlong('circuits', { rcdType: null }, null)).toEqual({ rcdType: null })
+    expect(circuitAlong('equipment', { rcdType: null }, stored)).toEqual({ rcdType: null })
   })
 })
