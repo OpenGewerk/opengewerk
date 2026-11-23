@@ -38,16 +38,17 @@ import {
  * A filled form on paper (#78), the test protocol of #79 first.
  *
  * Printed on every request out of the record and kept nowhere, like the
- * circuit chart: a signed protocol does not change any more, and everything
- * it depends on is in it, down to the circuit each block was measured on, so
- * the same record prints the same values and verdicts next year. How a value
- * or a limit is written may grow more exact on the way (#1089): since then a
- * value stands with every place that was entered and a limit as exactly as it
- * holds, also on a protocol signed before. A photo it names is the one thing
- * that lies outside the record (#817): it lies among the files, and the page
- * shows the version the server had when the protocol was signed, also once the
- * file is in the bin, and nothing but where it lay once it is purged. A draft
- * says so across the page.
+ * circuit chart: a signed protocol does not change any more, and what was
+ * measured and judged is in it, down to the circuit each block was measured
+ * on, so the same record prints the same values and verdicts next year. How a
+ * value or a limit is written may grow more exact on the way (#1089): since
+ * then a value stands with every place that was entered and a limit as exactly
+ * as it holds, also on a protocol signed before. The head of the page names
+ * the business, what was tested and the site as they stand when it is printed.
+ * A photo it names lies among the files (#817), and the page shows the version
+ * the server had when the protocol was signed, also once the file is in the
+ * bin, and nothing but where it lay once it is purged. A draft says so across
+ * the page.
  *
  * Every measured value stands with its verdict, and the limits are listed
  * with their sources under the table: the reader of a protocol has to be able
