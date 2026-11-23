@@ -663,7 +663,8 @@ function FigureInput({
         const input = event.target.value
         const read = scaledNumber(input, places)
         // Read in the places of its field, a figure is still kept in
-        // thousandths, and there "3000000" km no longer fits the column.
+        // thousandths, and there "3000000" km is above the largest figure
+        // any input takes (`largestStored`), as it was before #1090.
         const stored = read === null ? null : read * 10 ** (3 - places)
 
         setTyped(input)

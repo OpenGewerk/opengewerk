@@ -187,8 +187,8 @@ describe('the fields of a report on site (#78)', () => {
     })
     expect(screen.queryByText('Eine ganze Zahl, ohne Nachkommastellen.')).toBeNull()
 
-    // Three million km read as a whole number, but in thousandths they no
-    // longer fit the column: not written, the draft keeps the 26.
+    // Three million km read as a whole number, but in thousandths they are
+    // above the largest figure an input takes: not written, the draft keeps the 26.
     await user.tripleClick(screen.getByLabelText('Anfahrt in km'))
     await user.paste('3000000')
     expect(screen.getByText('Eine Zahl, etwa 0,85.')).toBeTruthy()
