@@ -764,6 +764,24 @@ describe('a field required under a condition', () => {
         withCondition({ answer: { field: 'condition', is: 'worn' } }, true),
       ),
     ).toEqual(['shelf-inspection: labelled ist schon Pflicht und braucht keine Bedingung.'])
+
+    // A choice with a broken option is said so, and the condition on it does not throw.
+    const conditioned = withCondition({ answer: { field: 'condition', is: 'worn' } })
+    const brokenChoice = {
+      ...conditioned,
+      sections: conditioned.sections.map((section) => ({
+        ...section,
+        fields: section.fields.map((field) =>
+          field.key === 'condition' && field.kind === 'choice'
+            ? { ...field, options: [null, { value: 'worn', label: 'Abgenutzt' }] }
+            : field,
+        ),
+      })),
+    } as unknown as FormDefinition<ProbeTerms>
+
+    expect(engine.definitionProblems(brokenChoice)).toEqual([
+      'shelf-inspection: jede Möglichkeit der Auswahl condition braucht einen eigenen Wert und eine Beschriftung.',
+    ])
   })
 })
 

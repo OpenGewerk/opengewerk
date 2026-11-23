@@ -512,7 +512,7 @@ export function formEngine<T extends FormTerms>(setup: FormEngineSetup<T>): Form
       if (
         !choice ||
         !Array.isArray(choice.options) ||
-        !choice.options.some((option) => option.value === named.is)
+        !choice.options.some((option) => isOption(option) && option.value === named.is)
       ) {
         return 'hängt an einer Antwort, die keine Auswahl des Formulars hat.'
       }
