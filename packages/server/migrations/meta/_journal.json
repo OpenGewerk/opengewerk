@@ -1072,6 +1072,13 @@
       "when": 1795378591025,
       "tag": "0152_signature_zero_rate",
       "breakpoints": true
+    },
+    {
+      "idx": 153,
+      "version": "7",
+      "when": 1795400127498,
+      "tag": "0153_circuit_voltage_class",
+      "breakpoints": true
     }
   ]
 }

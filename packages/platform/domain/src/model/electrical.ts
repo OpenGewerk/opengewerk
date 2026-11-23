@@ -139,6 +139,22 @@ export const rcdTypeLabel: Readonly<Record<RcdType, string>> = {
 }
 
 /**
+ * The nominal voltage of a circuit as Table 6.1 of DIN VDE 0100-600 sorts it
+ * for the insulation test (#1021): SELV and PELV, up to 500 V with FELV among
+ * them, and above 500 V. The circuits of an ordinary installation are up to
+ * 500 V, and that is what a circuit is until somebody says otherwise.
+ */
+export const circuitVoltageClasses = ['up_to_500', 'selv_pelv', 'above_500'] as const
+
+export type CircuitVoltageClass = (typeof circuitVoltageClasses)[number]
+
+export const circuitVoltageClassLabel: Readonly<Record<CircuitVoltageClass, string>> = {
+  up_to_500: 'bis 500 V',
+  selv_pelv: 'SELV oder PELV',
+  above_500: 'über 500 V',
+}
+
+/**
  * The reference installation method of a cable after DIN VDE 0298-4 and
  * IEC 60364-5-52, the letter the current carrying capacity is read under.
  */
@@ -231,11 +247,18 @@ export interface Circuit extends Synced {
   readonly designation: string
   /** What it supplies: `Steckdosen Bad`, `Herd`. */
   readonly consumer: string | null
+  /** Its nominal voltage after Table 6.1 of DIN VDE 0100-600 (#1021). */
+  readonly voltageClass: CircuitVoltageClass
   readonly overcurrentDevice: OvercurrentDevice | null
   readonly tripCharacteristic: TripCharacteristic | null
   /** The rated current In, in milliamperes. */
   readonly ratedCurrentMilli: number | null
   readonly rcdType: RcdType | null
+  /**
+   * Whether the RCD is selective, type S, which trips with a delay so that an
+   * RCD after it trips first (#1021). Only an RCD with a type is one.
+   */
+  readonly rcdSelective: boolean
   /** The rated residual current IΔn, in milliamperes. */
   readonly ratedResidualCurrentMilli: number | null
   /** `NYM-J`, `NYY-J`, `H07V-K`. */
@@ -281,10 +304,12 @@ const largest = {
 
 /** The circuit fields a person fills in, as a device or a form sends them. */
 export const circuitFigureFields = [
+  'voltageClass',
   'overcurrentDevice',
   'tripCharacteristic',
   'ratedCurrentMilli',
   'rcdType',
+  'rcdSelective',
   'ratedResidualCurrentMilli',
   'cableCores',
   'cableCrossSectionMilli',
@@ -343,8 +368,26 @@ export function circuitProblems(
     problems['ratedCurrentMilli'] = 'Der Nennstrom ist größer als 0 und höchstens 6300 A.'
   }
 
+  // The nominal voltage is always one of the three; a circuit without one
+  // is up to 500 V, which is the default of the column, not a null.
+  if (circuit['voltageClass'] === null || !oneOf(circuit['voltageClass'], circuitVoltageClasses)) {
+    problems['voltageClass'] = 'Diese Nennspannung ist unbekannt.'
+  }
+
   if (!oneOf(circuit['rcdType'], rcdTypes)) {
     problems['rcdType'] = 'Dieser RCD-Typ ist unbekannt.'
+  }
+
+  const selective = circuit['rcdSelective']
+
+  if (selective !== undefined && typeof selective !== 'boolean') {
+    problems['rcdSelective'] = 'Ein RCD ist allgemein oder selektiv.'
+  } else if (
+    selective === true &&
+    (circuit['rcdType'] === null || circuit['rcdType'] === undefined) &&
+    problems['rcdType'] === undefined
+  ) {
+    problems['rcdSelective'] = 'Selektiv ist nur ein RCD mit Typ. Bitte zuerst den Typ wählen.'
   }
 
   if (!wholeUpTo(circuit['ratedResidualCurrentMilli'], largest.ratedResidualCurrentMilli)) {
@@ -385,6 +428,7 @@ export type CircuitFigures = Pick<
   | 'tripCharacteristic'
   | 'ratedCurrentMilli'
   | 'rcdType'
+  | 'rcdSelective'
   | 'ratedResidualCurrentMilli'
   | 'cableType'
   | 'cableCores'
@@ -412,16 +456,30 @@ export function overcurrentText(circuit: CircuitFigures): string | null {
   return parts.length === 0 ? null : parts.join(' ')
 }
 
-/** The residual current device: "Typ A 30 mA". Null when nothing about it is known. */
+/**
+ * The residual current device: "Typ A 30 mA", and "Typ A selektiv 30 mA" for
+ * one of type S (#1021). Null when nothing about it is known.
+ */
 export function rcdText(circuit: CircuitFigures): string | null {
   const parts = [
     circuit.rcdType === null ? null : `Typ ${rcdTypeLabel[circuit.rcdType]}`,
+    circuit.rcdType !== null && circuit.rcdSelective ? 'selektiv' : null,
     circuit.ratedResidualCurrentMilli === null
       ? null
       : `${String(circuit.ratedResidualCurrentMilli)} mA`,
   ].filter((part): part is string => part !== null)
 
   return parts.length === 0 ? null : parts.join(' ')
+}
+
+/**
+ * The nominal voltage, only when it is not the ordinary one: "SELV oder PELV",
+ * "über 500 V" (#1021). A circuit up to 500 V says nothing, as nearly all are.
+ */
+export function voltageClassText(circuit: Pick<Circuit, 'voltageClass'>): string | null {
+  return circuit.voltageClass === 'up_to_500'
+    ? null
+    : circuitVoltageClassLabel[circuit.voltageClass]
 }
 
 /**

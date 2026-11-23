@@ -140,8 +140,9 @@ async function hollberg(): Promise<Fixture> {
        values ('${board}', '${north}', '${cabinet}', 'main_distribution', 'Verteiler ${family}', 'Keller ${family}');
      insert into board_sections (tenant_id, distribution_board_id, designation)
        values ('${north}', '${board}', 'Reihe ${family}');
-     insert into circuits (id, tenant_id, distribution_board_id, designation, consumer, rated_current_milli, cable_cross_section_milli)
-       values ('${circuit}', '${north}', '${board}', 'F1', 'Sauna ${family}', 16000, 2500);
+     insert into circuits (id, tenant_id, distribution_board_id, designation, consumer, rated_current_milli, cable_cross_section_milli,
+                           voltage_class, rcd_type, rcd_selective)
+       values ('${circuit}', '${north}', '${board}', 'F1', 'Sauna ${family}', 16000, 2500, 'selv_pelv', 'a', true);
      insert into equipment (tenant_id, circuit_id, designation, serial_number)
        values ('${north}', '${circuit}', 'Steckdose ${family}', 'EQ-${family}');
      insert into inverters (id, tenant_id, installation_id, designation, serial_number, rated_power_w)
@@ -676,10 +677,22 @@ describe('deleting a site (#848)', () => {
     expect(
       (
         await admin.query(
-          'select consumer, rated_current_milli, cable_cross_section_milli from circuits',
+          `select consumer, rated_current_milli, cable_cross_section_milli, rcd_type, rcd_selective,
+                  voltage_class from circuits`,
         )
       ).rows,
-    ).toEqual([{ consumer: null, rated_current_milli: null, cable_cross_section_milli: null }])
+    ).toEqual([
+      {
+        consumer: null,
+        rated_current_milli: null,
+        cable_cross_section_milli: null,
+        // A selective RCD has a type, and the type goes: so does the
+        // selective, and the voltage goes back to what a circuit is (#1021).
+        rcd_type: null,
+        rcd_selective: false,
+        voltage_class: 'up_to_500',
+      },
+    ])
     // And those of an appliance, its lead and heating power (opengewerk#816) included.
     expect(
       (

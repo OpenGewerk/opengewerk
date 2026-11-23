@@ -32,6 +32,63 @@ export interface StructureRefusal {
   readonly fields: readonly string[]
 }
 
+/**
+ * What an operation on a circuit takes along without saying it (#1021): a
+ * type of RCD taken away takes the selective with it, as the form does. A
+ * device that leaves the selective alone, because somebody set it meanwhile
+ * or because its version does not know it, would otherwise be refused for a
+ * field it never touched, with its whole transmission.
+ *
+ * An application applies it twice, to the values its check judges and to
+ * those it writes (`complete`), so that the check judges what is written.
+ */
+export function circuitAlong(
+  entity: string,
+  values: Readonly<Record<string, unknown>>,
+  current: RecordState | null,
+): Readonly<Record<string, unknown>> {
+  if (
+    entity !== 'circuits' ||
+    !('rcdType' in values) ||
+    values['rcdType'] !== null ||
+    'rcdSelective' in values ||
+    current?.['rcdSelective'] !== true
+  ) {
+    return values
+  }
+
+  return { ...values, rcdSelective: false }
+}
+
+/**
+ * A selective RCD sent for a circuit whose type somebody took away since the
+ * device last saw it (#1021): two people disagree, and the device made no
+ * mistake, so it is a conflict about this one circuit and not a refusal of
+ * the whole transmission. Without a version to compare, or with the version
+ * the device saw, a selective without a type stays the mistake
+ * `structureProblem` names.
+ */
+export function selectiveRefusal(
+  entity: string,
+  values: Readonly<Record<string, unknown>>,
+  current: RecordState | null,
+  baseVersion: number | null,
+): StructureRefusal | null {
+  if (
+    entity !== 'circuits' ||
+    values['rcdSelective'] !== true ||
+    'rcdType' in values ||
+    current === null ||
+    (current['rcdType'] ?? null) !== null ||
+    baseVersion === null ||
+    baseVersion === current['version']
+  ) {
+    return null
+  }
+
+  return { reason: 'changed_elsewhere', fields: ['rcdType', 'rcdSelective'] }
+}
+
 /** The value a field has once the operation is through: what it sets, or what the row holds. */
 export function valueAfter(
   field: string,
@@ -60,7 +117,8 @@ const pvFigures: Readonly<
  *
  * A mistake in the client and not a disagreement between two people, like a
  * payment term out of range: the forms ask the same function before anything
- * is queued. Asked here, the answer names the field; left to the database,
+ * is queued. The one disagreement among these is a selective RCD sent while
+ * somebody took its type away, which `selectiveRefusal` answers first. Asked here, the answer names the field; left to the database,
  * the check or the enum would refuse the whole transmission with a sentence
  * nobody on site could act on.
  *
@@ -90,8 +148,15 @@ export function structureProblem(
     return null
   }
 
+  // A field neither sent nor stored stays out: a new circuit sent without its
+  // nominal voltage is up to 500 V by the default of the column, and is not
+  // one whose voltage was set to nothing (#1021).
   const standing = Object.fromEntries(
-    circuitFigureFields.map((field) => [field, valueAfter(field, values, current)]),
+    circuitFigureFields.flatMap((field) =>
+      field in values || (current !== null && field in current)
+        ? [[field, valueAfter(field, values, current)]]
+        : [],
+    ),
   )
 
   return Object.values(circuitProblems(standing))[0] ?? null

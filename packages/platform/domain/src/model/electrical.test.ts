@@ -13,6 +13,7 @@ import {
   overcurrentText,
   rcdText,
   tripCharacteristics,
+  voltageClassText,
 } from './electrical.js'
 
 const nothingKnown: CircuitFigures = {
@@ -20,6 +21,7 @@ const nothingKnown: CircuitFigures = {
   tripCharacteristic: null,
   ratedCurrentMilli: null,
   rcdType: null,
+  rcdSelective: false,
   ratedResidualCurrentMilli: null,
   cableType: null,
   cableCores: null,
@@ -34,6 +36,7 @@ const kitchen: CircuitFigures = {
   tripCharacteristic: 'b',
   ratedCurrentMilli: 16_000,
   rcdType: 'a',
+  rcdSelective: false,
   ratedResidualCurrentMilli: 30,
   cableType: 'NYM-J',
   cableCores: 3,
@@ -179,5 +182,47 @@ describe('the order of a structure', () => {
     const twins = [part('b', 'F1'), part('a', 'F1')]
 
     expect([...twins].sort(inStructureOrder).map((circuit) => circuit.id)).toEqual(['a', 'b'])
+  })
+})
+
+/**
+ * The nominal voltage after Table 6.1 of DIN VDE 0100-600 and the selective
+ * RCD (#1021), which the test record judges a circuit by.
+ */
+describe('the nominal voltage and the selective RCD of a circuit', () => {
+  it('take the three voltages and refuse any other, and no voltage at all', () => {
+    for (const voltageClass of ['up_to_500', 'selv_pelv', 'above_500']) {
+      expect(circuitProblems({ voltageClass })).toEqual({})
+    }
+
+    for (const wrong of ['bis_500', null, 230]) {
+      expect(circuitProblems({ voltageClass: wrong })).toEqual({
+        voltageClass: 'Diese Nennspannung ist unbekannt.',
+      })
+    }
+  })
+
+  it('take a selective RCD with its type, and refuse one without', () => {
+    expect(circuitProblems({ rcdType: 'a', rcdSelective: true })).toEqual({})
+    expect(circuitProblems({ rcdType: null, rcdSelective: false })).toEqual({})
+    expect(circuitProblems({ rcdType: null, rcdSelective: true })).toEqual({
+      rcdSelective: 'Selektiv ist nur ein RCD mit Typ. Bitte zuerst den Typ wählen.',
+    })
+    expect(circuitProblems({ rcdSelective: true })).toEqual({
+      rcdSelective: 'Selektiv ist nur ein RCD mit Typ. Bitte zuerst den Typ wählen.',
+    })
+    expect(circuitProblems({ rcdType: 'a', rcdSelective: 'ja' })).toEqual({
+      rcdSelective: 'Ein RCD ist allgemein oder selektiv.',
+    })
+  })
+
+  it('are written only where they say something', () => {
+    expect(rcdText({ ...kitchen, rcdSelective: true })).toBe('Typ A selektiv 30 mA')
+    expect(rcdText({ ...nothingKnown, rcdSelective: true, ratedResidualCurrentMilli: 300 })).toBe(
+      '300 mA',
+    )
+    expect(voltageClassText({ voltageClass: 'up_to_500' })).toBeNull()
+    expect(voltageClassText({ voltageClass: 'selv_pelv' })).toBe('SELV oder PELV')
+    expect(voltageClassText({ voltageClass: 'above_500' })).toBe('über 500 V')
   })
 })

@@ -10,6 +10,7 @@ import {
   rcdText,
   rcdTypeLabel,
   tripCharacteristicLabel,
+  voltageClassText,
 } from '@opengewerk/domain'
 import {
   Button,
@@ -68,6 +69,7 @@ import {
   useCircuits,
   useEquipment,
   useSections,
+  voltageClassOf,
 } from '../../app/electrical.js'
 import { installationKindOf } from '../../app/labels.js'
 import { useMay } from '../../app/queries.js'
@@ -1051,7 +1053,10 @@ const deviceWord: Readonly<Record<OvercurrentDevice, string>> = {
 /** "Typ A, 30 mA", as the card writes the RCD on a line of its own. */
 function rcdLine(figures: CircuitFigures): string | null {
   const parts = [
-    figures.rcdType === null ? null : `Typ ${rcdTypeLabel[figures.rcdType]}`,
+    figures.rcdType === null
+      ? null
+      : // A selective one says so, as everywhere else (#1021).
+        `Typ ${rcdTypeLabel[figures.rcdType]}${figures.rcdSelective ? ' selektiv' : ''}`,
     figures.ratedResidualCurrentMilli === null
       ? null
       : `${String(figures.ratedResidualCurrentMilli)} mA`,
@@ -1084,6 +1089,7 @@ function CircuitDetail({ circuitId }: { readonly circuitId: string }) {
     .filter(Boolean)
     .join(', ')
   const figures = figuresOf(circuit)
+  const voltage = voltageClassText({ voltageClass: voltageClassOf(circuit) })
   // The circuits of its own group, the section or the board directly, for
   // moving it among them.
   const group = ordered(
@@ -1216,6 +1222,8 @@ function CircuitDetail({ circuitId }: { readonly circuitId: string }) {
         <Panel title="Leitung und Verbraucher" onGround>
           <FactList
             facts={[
+              // Only when it is not the ordinary one, as on site (#1021).
+              ...(voltage === null ? [] : [{ label: 'Nennspannung', value: voltage }]),
               { label: 'Typ', value: figures.cableType },
               { label: 'Querschnitt', value: cableSizeText(figures) },
               { label: 'Länge', value: cableLengthText(figures) },

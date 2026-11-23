@@ -2,6 +2,7 @@ import type {
   BlockCircuit,
   CableInstallationMethod,
   CircuitFigures,
+  CircuitVoltageClass,
   DistributionBoardKind,
   OvercurrentDevice,
   RcdType,
@@ -15,6 +16,8 @@ import {
   cableText,
   characteristicsFor,
   circuitProblems,
+  circuitVoltageClassLabel,
+  circuitVoltageClasses,
   distributionBoardKindLabel,
   distributionBoardKinds,
   inStructureOrder,
@@ -27,6 +30,7 @@ import {
   rcdTypes,
   tripCharacteristicLabel,
   tripCharacteristics,
+  voltageClassText,
 } from '@opengewerk/platform-domain'
 import {
   asTextOrNull,
@@ -236,6 +240,11 @@ function known<Value extends string>(
   return allowed.includes(value as Value) ? (value as Value) : null
 }
 
+/** The nominal voltage of a circuit, up to 500 V for a record without one (#1021). */
+export function voltageClassOf(record: RecordState | null | undefined): CircuitVoltageClass {
+  return oneOf(record, 'voltageClass', circuitVoltageClasses, 'up_to_500')
+}
+
 function figure(record: RecordState, field: string): number | null {
   const value = record[field]
 
@@ -249,6 +258,7 @@ export function figuresOf(circuit: RecordState): CircuitFigures {
     tripCharacteristic: known(circuit, 'tripCharacteristic', tripCharacteristics),
     ratedCurrentMilli: figure(circuit, 'ratedCurrentMilli'),
     rcdType: known(circuit, 'rcdType', rcdTypes),
+    rcdSelective: circuit['rcdSelective'] === true,
     ratedResidualCurrentMilli: figure(circuit, 'ratedResidualCurrentMilli'),
     cableType: maybeText(circuit, 'cableType'),
     cableCores: figure(circuit, 'cableCores'),
@@ -439,10 +449,14 @@ export function CircuitForm({
   const [designation, setDesignation] = useState(text(record, 'designation'))
   const [consumer, setConsumer] = useState(text(record, 'consumer'))
   const [inSection, setInSection] = useState(maybeText(record, 'boardSectionId') ?? section ?? '')
+  const [voltage, setVoltage] = useState<string>(voltageClassOf(record))
   const [device, setDevice] = useState<string>(start?.overcurrentDevice ?? '')
   const [characteristic, setCharacteristic] = useState<string>(start?.tripCharacteristic ?? '')
   const [ratedCurrent, setRatedCurrent] = useState(milliAsInput(start?.ratedCurrentMilli ?? null))
   const [rcdType, setRcdType] = useState<string>(start?.rcdType ?? '')
+  const [selective, setSelective] = useState<string>(
+    start?.rcdSelective === true ? 'selective' : 'general',
+  )
   const [residualCurrent, setResidualCurrent] = useState(
     wholeAsInput(start?.ratedResidualCurrentMilli ?? null),
   )
@@ -482,9 +496,11 @@ export function CircuitForm({
       ...(sections.length > 0 || maybeText(record, 'boardSectionId') !== null
         ? { boardSectionId: inSection === '' ? null : inSection }
         : {}),
+      voltageClass: voltage as CircuitVoltageClass,
       overcurrentDevice: device === '' ? null : (device as OvercurrentDevice),
       tripCharacteristic: characteristic === '' ? null : (characteristic as TripCharacteristic),
       rcdType: rcdType === '' ? null : (rcdType as RcdType),
+      rcdSelective: rcdType !== '' && selective === 'selective',
       cableType: asTextOrNull(cableType),
       cableInstallationMethod: method === '' ? null : (method as CableInstallationMethod),
       ...figures,
@@ -573,6 +589,24 @@ export function CircuitForm({
         ) : null}
       </div>
 
+      {/* Under the first row in the office, after the section on site, as
+          `stromkreis_form()` of the canvas has it (#1021). */}
+      <div
+        className={site ? 'contents' : 'grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,2.4fr)]'}
+      >
+        <SelectField
+          label="Nennspannung"
+          hint="SELV und PELV haben einen eigenen Mindestwert der Isolation."
+          value={voltage}
+          options={circuitVoltageClasses.map((option) => ({
+            value: option,
+            label: circuitVoltageClassLabel[option],
+          }))}
+          onChange={setVoltage}
+          {...problemOf(problems, 'voltageClass')}
+        />
+      </div>
+
       <Group title="Schutzeinrichtung" columns="protection">
         <SelectField
           label="Art"
@@ -625,17 +659,43 @@ export function CircuitForm({
         </Pair>
       </Group>
 
-      <Group title="RCD" columns="two">
-        <SelectField
-          label="Typ"
-          value={rcdType}
-          options={[
-            nothing,
-            ...rcdTypes.map((option) => ({ value: option, label: `Typ ${rcdTypeLabel[option]}` })),
-          ]}
-          onChange={setRcdType}
-          {...problemOf(problems, 'rcdType')}
-        />
+      <Group title="RCD" columns="three">
+        <Pair>
+          <SelectField
+            label="Typ"
+            value={rcdType}
+            options={[
+              nothing,
+              ...rcdTypes.map((option) => ({
+                value: option,
+                label: `Typ ${rcdTypeLabel[option]}`,
+              })),
+            ]}
+            onChange={(value) => {
+              setRcdType(value)
+
+              // A type taken away takes the selective with it, also when a
+              // type is chosen again afterwards (#1021).
+              if (value === '') {
+                setSelective('general')
+              }
+            }}
+            {...problemOf(problems, 'rcdType')}
+          />
+          {/* Selective only with a type: without one there is no RCD to be
+              selective, and the choice stays at "allgemein" (#1021). */}
+          <SelectField
+            label="Ausführung"
+            value={rcdType === '' ? 'general' : selective}
+            options={[
+              { value: 'general', label: 'allgemein' },
+              { value: 'selective', label: 'selektiv (S)' },
+            ]}
+            disabled={rcdType === ''}
+            onChange={setSelective}
+            {...problemOf(problems, 'rcdSelective')}
+          />
+        </Pair>
         <Field
           label={site ? 'Bemessungsdifferenzstrom' : 'Bemessungsdifferenzstrom in mA'}
           numeric
@@ -783,6 +843,7 @@ export function problemOf(problems: Readonly<Record<string, string>>, field: str
 export const groupColumns = {
   protection: 'sm:grid-cols-[minmax(0,2fr)_minmax(max-content,1fr)_minmax(0,1fr)]',
   two: 'sm:grid-cols-2',
+  three: 'sm:grid-cols-3',
   cable: 'sm:grid-cols-4',
 } as const
 
@@ -878,6 +939,7 @@ export function circuitFacts(circuit: RecordState): readonly { label: string; va
 
   return [
     { label: 'Verbraucher', value: maybeText(circuit, 'consumer') },
+    { label: 'Nennspannung', value: voltageClassText({ voltageClass: voltageClassOf(circuit) }) },
     { label: 'Schutzeinrichtung', value: overcurrentText(figures) },
     { label: 'RCD', value: rcdText(figures) },
     { label: 'Leitung', value: cableText(figures) },

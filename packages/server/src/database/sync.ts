@@ -26,11 +26,13 @@ import {
 import {
   attachmentVersionFiles,
   attachmentVersionPlace,
+  circuitAlong,
   contactWithoutParent,
   isUuid,
   serverSync,
   type SyncCheck,
   sectionRefusal,
+  selectiveRefusal,
   structureProblem,
   syncTables,
   type TenantTransaction,
@@ -444,7 +446,23 @@ const reportFields: Check = async ({ tx, operation, values, current }) => {
  * database says the same, for the whole transmission at once.
  */
 const structure: Check = ({ operation, values, current }) => {
-  const figures = structureProblem(operation.entity, values, current)
+  // Two people at one RCD, not a mistake of the device (#1021).
+  const disagreement = selectiveRefusal(
+    operation.entity,
+    values,
+    current,
+    operation.kind === 'update' ? operation.baseVersion : null,
+  )
+
+  if (disagreement !== null) {
+    return { kind: 'conflict', ...disagreement }
+  }
+
+  const figures = structureProblem(
+    operation.entity,
+    circuitAlong(operation.entity, values, current),
+    current,
+  )
 
   return figures === null ? null : { kind: 'client', message: figures }
 }
@@ -766,7 +784,16 @@ export const sync = serverSync<FoundIdentity>({
         await withProposedTreatment(
           tx,
           operation,
-          withCreator(operation, withLineTotal(operation.entity, values, current), sender),
+          withCreator(
+            operation,
+            withLineTotal(
+              operation.entity,
+              // As the check judged them: a type taken away takes the selective along (#1021).
+              { ...circuitAlong(operation.entity, values, current) },
+              current,
+            ),
+            sender,
+          ),
         ),
       ),
     ),
