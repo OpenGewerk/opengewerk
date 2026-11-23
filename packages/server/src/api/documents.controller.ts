@@ -465,6 +465,12 @@ export class DocumentsController {
         }
       }
 
+      // The line of the surcharge as everything stands now, once more before
+      // it is frozen (#1087): a change that raced the draft into being, or
+      // one that came before its line, shows here at the latest. After the
+      // locks above, in their order.
+      await refreshSurchargeLine(tx, existing.id)
+
       // One moment for the date and the issuing, so that an invoice issued
       // across midnight in Germany is not dated the day before its issue.
       const issuedAt = new Date()

@@ -134,6 +134,27 @@ export interface SyncApplication<Sender> {
    * check.
    */
   readonly afterWrite?: (context: SyncCheckContext<Sender>) => Promise<void> | void
+  /**
+   * What the application locks before the first operation of a transmission
+   * writes anything (opengewerk#1094), shown every operation of it: the rows
+   * its operations will lock or write further down, where another
+   * transaction locks such a row first and writes after. Every logged write
+   * takes the counter of the sync and the chain of the log, so a
+   * transmission that wrote first and came to such a row afterwards would
+   * wait for that transaction in a circle, and PostgreSQL would end one of
+   * the two. Locked in the order of their ids.
+   */
+  readonly beforeOperations?: (context: SyncTransmissionContext<Sender>) => Promise<void> | void
+}
+
+/** A transmission as a whole, before its first operation. */
+export interface SyncTransmissionContext<Sender> {
+  readonly tx: TenantTransaction
+  readonly tenantId: TenantId
+  /** Every operation of it, in the order they are applied. */
+  readonly operations: readonly Operation[]
+  /** Whoever sent the transmission, in the words of the application. */
+  readonly sender: Sender
 }
 
 export interface ChangedRows {
@@ -588,8 +609,13 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
 
     async applyOperations(tx, tenantId, operations, sender) {
       const receipts: OperationReceipt[] = []
+      const ordered = inOutboxOrder(operations)
 
-      for (const operation of inOutboxOrder(operations)) {
+      if (application.beforeOperations) {
+        await application.beforeOperations({ tx, tenantId, operations: ordered, sender })
+      }
+
+      for (const operation of ordered) {
         try {
           receipts.push(await applyOne(tx, tenantId, operation, sender))
         } catch (error) {

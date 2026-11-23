@@ -207,11 +207,9 @@ export class JobsController {
 
       // The drafts of the call follow its moment and its named surcharge
       // (#1087), locked before the job is written, as issuing locks first.
-      const surchargeFollows = surchargeFieldsOfJob.some((field) => field in values)
-
-      if (surchargeFollows) {
-        await lockSurchargeDrafts(tx, id)
-      }
+      const drafts = surchargeFieldsOfJob.some((field) => field in values)
+        ? await lockSurchargeDrafts(tx, id)
+        : []
 
       const written = await tx
         .update(jobs)
@@ -219,8 +217,8 @@ export class JobsController {
         .where(and(eq(jobs.id, id as JobId), isNull(jobs.deletedAt)))
         .returning()
 
-      if (written.length > 0 && surchargeFollows) {
-        await refreshSurchargeLines(tx, id)
+      if (written.length > 0) {
+        await refreshSurchargeLines(tx, drafts)
       }
 
       return written

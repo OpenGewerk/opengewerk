@@ -16,6 +16,7 @@ import {
   holidaysIn,
   type IsoDate,
   type JobId,
+  lineLimits,
   type LineUnit,
   longestOnCallDays,
   shippedRules,
@@ -303,6 +304,11 @@ export async function refreshSurchargeLine(
  * call had none (#1087): a new line, as the last one, with the rate of tax of
  * the line that went. The mark leaves the line that went, so that it comes
  * back once and a line removed later stays removed.
+ *
+ * Only where a line that went still carries the mark: one the office removed
+ * while this transaction waited for the draft lost it and stays removed. And
+ * only where the draft has room: on a full one the line waits, marked, until
+ * the office removes another, instead of refusing the change that brought it.
  */
 async function restoreSurchargeLine(
   tx: TenantTransaction,
@@ -311,6 +317,10 @@ async function restoreSurchargeLine(
   lines: readonly { readonly position: number }[],
   surcharge: SurchargeLine,
 ): Promise<void> {
+  if (lines.length >= lineLimits.lines) {
+    return
+  }
+
   const [gone] = await tx
     .select({ vatRate: documentLines.vatRate })
     .from(documentLines)
@@ -323,6 +333,10 @@ async function restoreSurchargeLine(
     )
     .orderBy(desc(documentLines.deletedAt))
     .limit(1)
+
+  if (!gone) {
+    return
+  }
 
   await tx
     .update(documentLines)
@@ -344,7 +358,7 @@ async function restoreSurchargeLine(
     quantityMilli: surcharge.quantityMilli,
     unit: surcharge.unit,
     unitPriceCents: surcharge.unitPriceCents,
-    vatRate: gone?.vatRate ?? 'standard',
+    vatRate: gone.vatRate,
     netCents: surcharge.netCents,
     emergencySurcharge: true,
   })
@@ -368,14 +382,39 @@ export async function lockSurchargeDrafts(
     return []
   }
 
-  const drafts = await tx
+  const drafts = await surchargeDrafts(tx, jobId === null ? null : [jobId]).for('no key update')
+
+  return drafts.map((draft) => draft.id)
+}
+
+/**
+ * The drafts with a line of the surcharge of these jobs, without a lock: for
+ * a transmission that locks them with every other document it comes to,
+ * in one order (#1087).
+ */
+export async function surchargeDraftsOf(
+  tx: TenantTransaction,
+  jobIds: readonly string[],
+): Promise<readonly string[]> {
+  const valid = jobIds.filter((jobId) => isUuid(jobId))
+
+  if (valid.length === 0) {
+    return []
+  }
+
+  return (await surchargeDrafts(tx, valid)).map((draft) => draft.id)
+}
+
+/** The drafts with a line of the surcharge, a line gone included, of these jobs or of all. */
+function surchargeDrafts(tx: TenantTransaction, jobIds: readonly string[] | null) {
+  return tx
     .select({ id: documents.id })
     .from(documents)
     .where(
       and(
         eq(documents.status, 'draft'),
         isNull(documents.deletedAt),
-        ...(jobId === null ? [] : [eq(documents.jobId, jobId as JobId)]),
+        ...(jobIds === null ? [] : [inArray(documents.jobId, jobIds as JobId[])]),
         inArray(
           documents.id,
           tx
@@ -386,24 +425,23 @@ export async function lockSurchargeDrafts(
       ),
     )
     .orderBy(documents.id)
-    .for('no key update')
-
-  return drafts.map((draft) => draft.id)
 }
 
 /**
- * The lines of the surcharge of every draft that has one, worked out again
- * (#1087): of the drafts of one job, after its call or the surcharge named
- * for it changed, or of all of them, after a setting of the surcharges or the
- * public holidays changed. The caller locked them with `lockSurchargeDrafts`
- * before it wrote.
+ * The lines of the surcharge of the drafts `lockSurchargeDrafts` locked
+ * before the caller wrote, worked out again (#1087): of the drafts of one
+ * job, after its call or the surcharge named for it changed, or of all of
+ * them, after a setting of the surcharges or the public holidays changed.
+ * Only those: a draft that came to the job since was worked out by whoever
+ * moved it, and locking it now, after the write, would be the circle the
+ * lock before avoids. Issuing works every draft out once more.
  */
 export async function refreshSurchargeLines(
   tx: TenantTransaction,
-  jobId: string | null = null,
+  drafts: readonly string[],
 ): Promise<void> {
   // One after the other: a transaction is one connection.
-  for (const draft of await lockSurchargeDrafts(tx, jobId)) {
+  for (const draft of drafts) {
     await refreshSurchargeLine(tx, draft)
   }
 }

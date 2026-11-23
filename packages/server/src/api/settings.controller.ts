@@ -119,11 +119,7 @@ export class SettingsController {
 
         // The drafts of emergency calls follow a setting of their surcharge
         // (#1087), locked before the setting is written, as issuing locks first.
-        const surchargeFollows = tariffSettings.has(key)
-
-        if (surchargeFollows) {
-          await lockSurchargeDrafts(tx)
-        }
+        const drafts = tariffSettings.has(key) ? await lockSurchargeDrafts(tx) : []
 
         const stored = await setParameter(tx, identity.tenantId, {
           key,
@@ -132,9 +128,7 @@ export class SettingsController {
           note: typeof note === 'string' ? note : null,
         })
 
-        if (surchargeFollows) {
-          await refreshSurchargeLines(tx)
-        }
+        await refreshSurchargeLines(tx, drafts)
 
         return stored
       })

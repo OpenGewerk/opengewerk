@@ -56,19 +56,88 @@ async function post(path: string, body: Record<string, unknown>, who = office(),
   return answer.body as { id: string; message?: string }
 }
 
+/** A transaction of the business as the application opens one, given back if it fails to open. */
+async function begun(): Promise<PoolClient> {
+  const client = await admin.connect()
+
+  try {
+    await client.query('begin')
+    await client.query("select set_config('app.tenant_id', $1, true)", [north.id])
+    await client.query("select set_config('app.user_id', 'lena', true)")
+
+    return client
+  } catch (error) {
+    await client.query('rollback').catch(() => undefined)
+    client.release()
+    throw error
+  }
+}
+
 /**
  * A transaction of the business that has locked a draft the way issuing
  * does, before it writes anything the log records.
  */
 async function lockedForIssuing(invoice: string): Promise<PoolClient> {
-  const client = await admin.connect()
+  const client = await begun()
 
-  await client.query('begin')
-  await client.query("select set_config('app.tenant_id', $1, true)", [north.id])
-  await client.query("select set_config('app.user_id', 'lena', true)")
-  await client.query('select id from documents where id = $1 for update', [invoice])
+  try {
+    await client.query('select id from documents where id = $1 for update', [invoice])
 
-  return client
+    return client
+  } catch (error) {
+    await client.query('rollback').catch(() => undefined)
+    client.release()
+    throw error
+  }
+}
+
+/** A change written past the routes, as a race would leave it, and committed. */
+async function writtenPastTheRoutes(text: string, values: unknown[]): Promise<void> {
+  const client = await begun()
+
+  try {
+    await client.query(text, values)
+    await client.query('commit')
+  } finally {
+    await client.query('rollback').catch(() => undefined)
+    client.release()
+  }
+}
+
+/**
+ * Waits until a statement waits for the database process `pid`, and fails
+ * when `work` is through first or nothing waits in time.
+ */
+async function waitedFor(pid: number, work: Promise<unknown>): Promise<void> {
+  let done = false
+
+  work.then(
+    () => {
+      done = true
+    },
+    () => {
+      done = true
+    },
+  )
+
+  for (let tries = 0; tries < 200; tries += 1) {
+    const { rows } = await admin.query<{ waiting: number }>(
+      'select count(*)::int as waiting from pg_stat_activity where $1 = any(pg_blocking_pids(pid))',
+      [pid],
+    )
+
+    if ((rows[0]?.waiting ?? 0) > 0) {
+      return
+    }
+
+    if (done) {
+      throw new Error('The work was through without waiting')
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+
+  throw new Error('Nothing waited in time')
 }
 
 const deviceOf = (who: string) =>
@@ -1157,58 +1226,139 @@ describe('the line of the surcharge on a draft (#1087)', () => {
 
     expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000, deleted: false })
   })
-  it('waits for issuing that has read the lines, and leaves the issued line as it was frozen', async () => {
+  it('stays removed when the office removes it while a refresh waits for the draft', async () => {
     const { invoice, hour } = await draftOf()
 
     await price(invoice, hour, 10_000)
 
-    // A line the server would work out anew: 50 % of 100,00 € is 50,00 €.
-    const stale = await lockedForIssuing(invoice)
+    // The office holds the draft, as its line route does, and removes the line.
+    const removing = await lockedForIssuing(invoice)
+    const refreshing = database.forTenant({ tenantId: north.id }, (tx) =>
+      refreshSurchargeLine(tx, invoice),
+    )
 
-    await stale.query(
-      'update document_lines set unit_price_cents = 4000, net_cents = 4000 where document_id = $1 and emergency_surcharge',
+    try {
+      await waitingFor(admin, removing, refreshing)
+      await removing.query(
+        'update document_lines set deleted_at = now(), emergency_surcharge = false where document_id = $1 and emergency_surcharge',
+        [invoice],
+      )
+      await removing.query('commit')
+    } finally {
+      await removing.query('rollback').catch(() => undefined)
+      removing.release()
+    }
+
+    await refreshing
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      deleted: true,
+      emergency_surcharge: false,
+    })
+  })
+
+  const namedTwenty =
+    'update jobs set emergency_named_flat_cents = 2000, emergency_named_basis_points = 0 where id = $1'
+
+  it('is worked out once more when the invoice is issued', async () => {
+    const { job, invoice, hour } = await draftOf()
+
+    await price(invoice, hour, 10_000)
+    // 20,00 € named, past the routes as a race would leave it: the draft still says 50,00 €.
+    await writtenPastTheRoutes(namedTwenty, [job])
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000 })
+
+    await post(`/documents/${invoice}/issue`, {})
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 2000, deleted: false })
+
+    const { rows } = await admin.query<{ frozen: boolean }>(
+      `select jsonb_path_exists(content, '$.** ? (@.designation starts with "Notdienstzuschlag" && @.netCents == 2000)') as frozen
+       from document_snapshots where document_id = $1`,
       [invoice],
     )
-    await stale.query('commit')
-    stale.release()
 
-    // Issuing has locked the draft and read its lines, and is about to write.
-    const held = holdQuery((text) => text.startsWith('update "documents" set "status"'))
+    expect(rows).toEqual([{ frozen: true }])
+  })
+
+  it('waits for issuing that has read the lines, and leaves the issued line as it was frozen', async () => {
+    const { job, invoice, hour } = await draftOf()
+
+    await price(invoice, hour, 10_000)
+
+    // The report first, so that issuing the invoice writes nothing before its number.
+    const { rows } = await admin.query<{ report: string }>(
+      'select predecessor_document_id as report from documents where id = $1',
+      [invoice],
+    )
+
+    await post(`/documents/${rows[0]?.report ?? ''}/issue`, {})
+
+    // Issuing has locked the draft, worked its line out, read its lines and
+    // draws its number next.
+    const held = holdQuery((text) => text.startsWith('insert into "number_ranges"'))
     const issuing = http()
       .post(`/documents/${invoice}/issue`)
       .set('x-test-identity', office())
       .send({})
       .then((answer) => answer.status)
+    let refreshing: Promise<void> | undefined
 
-    await held.reached
-
-    const refreshing = database.forTenant({ tenantId: north.id }, (tx) =>
-      refreshSurchargeLine(tx, invoice),
-    )
-
-    // Until the refresh waits for issuing, or is through without waiting.
-    for (let tries = 0; tries < 100; tries += 1) {
-      const { rows } = await admin.query<{ waiting: number }>(
-        'select count(*)::int as waiting from pg_stat_activity where $1 = any(pg_blocking_pids(pid))',
-        [held.holder()],
+    try {
+      await held.reached
+      // A refresh that did not wait would write 20,00 € into the line issuing froze at 50,00 €.
+      await writtenPastTheRoutes(namedTwenty, [job])
+      refreshing = database.forTenant({ tenantId: north.id }, (tx) =>
+        refreshSurchargeLine(tx, invoice),
       )
-      const through = await Promise.race([
-        refreshing.then(() => true),
-        new Promise<false>((resolve) => setTimeout(() => resolve(false), 50)),
-      ])
-
-      if ((rows[0]?.waiting ?? 0) > 0 || through) {
-        break
-      }
+      await waitedFor(held.holder(), refreshing)
+    } finally {
+      held.release()
     }
-
-    held.release()
 
     expect(await issuing).toBe(201)
 
     await refreshing
 
-    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 4000, deleted: false })
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000, deleted: false })
+  })
+
+  it('waits on a full draft until the office makes room', async () => {
+    const { job, invoice } = await draftOf()
+
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+
+    expect(await surchargeOf(invoice)).toMatchObject({ deleted: true, emergency_surcharge: true })
+
+    const { rows } = await admin.query<{ lines: number }>(
+      'select count(*)::int as lines from document_lines where document_id = $1 and deleted_at is null',
+      [invoice],
+    )
+
+    await writtenPastTheRoutes(
+      `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents)
+       select $1, $2, 100 + n, 'Kleinmaterial', 1000, 'piece', 0, 0 from generate_series(1, $3::int) n`,
+      [north.id, invoice, 2000 - (rows[0]?.lines ?? 0)],
+    )
+
+    // The night again: the change goes through, and the line waits.
+    await patch(`/jobs/${job}`, { emergencyAt: atNight })
+
+    expect(await surchargeOf(invoice)).toMatchObject({ deleted: true, emergency_surcharge: true })
+
+    const { rows: room } = await admin.query<{ id: string }>(
+      "select id from document_lines where document_id = $1 and designation = 'Kleinmaterial' limit 1",
+      [invoice],
+    )
+
+    await removeInOffice(invoice, room[0]?.id ?? '')
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      designation: 'Notdienstzuschlag Nacht',
+      emergency_surcharge: true,
+      deleted: false,
+    })
   })
 })
 
@@ -1382,38 +1532,55 @@ describe('the line of the surcharge on a draft, after the settings (#1087)', () 
       })
     ).id
 
-    return { job: call.id, invoice }
+    const { rows } = await admin.query<{ id: string }>(
+      "select id from document_lines where document_id = $1 and designation = 'Arbeitszeit'",
+      [invoice],
+    )
+
+    return { job: call.id, invoice, hour: rows[0]?.id ?? '' }
   }
+
+  /** One transmission of the office's device, answered as it comes. */
+  const transmitted = (operations: unknown[]) =>
+    http()
+      .post('/sync')
+      .set('x-test-identity', office())
+      .send({ deviceId: deviceOf(office()), operations })
+
+  const toTheNight = (job: string) =>
+    changed('jobs', job, { emergencyAt: { from: '2026-10-24T08:00:00.000Z', to: atNight } })
+
+  type Draft = Awaited<ReturnType<typeof aDraft>>
 
   it.each([
     [
       'the office changes the call',
-      (job: string) =>
+      ({ job }: Draft) =>
         http()
           .patch(`/jobs/${job}`)
           .set('x-test-identity', office())
           .send({ emergencyNamedFlatCents: 2000, emergencyNamedBasisPoints: 0 }),
       200,
     ],
+    ['a device changes the call', ({ job }: Draft) => transmitted([toTheNight(job)]), 201],
     [
-      'a device changes the call',
-      (job: string) =>
-        http()
-          .post('/sync')
-          .set('x-test-identity', office())
-          .send({
-            deviceId: deviceOf(office()),
-            operations: [
-              changed('jobs', job, {
-                emergencyAt: { from: '2026-10-24T08:00:00.000Z', to: atNight },
-              }),
-            ],
-          }),
+      // The first operation writes, and the transmission holds the log from then on.
+      'a device changes the call after another write',
+      ({ job }: Draft) => transmitted([aCall().operation, toTheNight(job)]),
+      201,
+    ],
+    [
+      'a device prices a line of the draft after another write',
+      ({ hour }: Draft) =>
+        transmitted([
+          aCall().operation,
+          changed('document_lines', hour, { unitPriceCents: { from: 0, to: 1000 } }),
+        ]),
       201,
     ],
     [
       'a setting of the surcharges',
-      () =>
+      (_draft: Draft) =>
         http().post('/settings/parameters').set('x-test-identity', owner()).send({
           key: 'emergency.weekend_basis_points',
           from: '2026-11-02',
@@ -1424,23 +1591,23 @@ describe('the line of the surcharge on a draft, after the settings (#1087)', () 
     ],
     [
       'the public holidays',
-      () =>
+      (_draft: Draft) =>
         http().put('/holidays').set('x-test-identity', owner()).send({ state: 'DE-NI', local: [] }),
       200,
     ],
   ] as const)(
     '%s waits for a draft that is being issued, and does not deadlock',
     async (_, change, status) => {
-      const { job, invoice } = await aDraft()
-      const issuing = await lockedForIssuing(invoice)
-      const changing = change(job).then((answer) => answer.status)
+      const draft = await aDraft()
+      const issuing = await lockedForIssuing(draft.invoice)
+      const changing = change(draft).then((answer) => answer.status)
 
       try {
         await waitingFor(admin, issuing, changing)
         // Issuing writes now, as it does after its lock.
         await issuing.query(
           "update documents set subject = coalesce(subject, 'Rechnung') where id = $1",
-          [invoice],
+          [draft.invoice],
         )
         await issuing.query('commit')
       } finally {

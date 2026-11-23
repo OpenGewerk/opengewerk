@@ -370,11 +370,10 @@ export class HolidaysController {
       this.database.forTenant(identity, async (tx) => {
         // The drafts with a line of the surcharge follow the holidays (#1087),
         // locked before the holidays are written, as issuing locks first.
-        await lockSurchargeDrafts(tx)
-
+        const drafts = await lockSurchargeDrafts(tx)
         const set = await setHolidays(tx, identity.tenantId, values)
 
-        await refreshSurchargeLines(tx)
+        await refreshSurchargeLines(tx, drafts)
 
         return set
       }),
