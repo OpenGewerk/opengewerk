@@ -216,6 +216,20 @@ describe('version 2 of the recurring inspection (#1022)', () => {
     }
   })
 
+  it('judges per volt of the nominal voltage the protocol names, and of 230 V without one', () => {
+    // An IT system of 400 V asks 20 kΩ, where 230 V would let 12 kΩ through.
+    expect(
+      recurring('insulation_without_loads', 15, { ...itSystem, nominalVoltageMilli: 400_000 }),
+    ).toMatchObject({ within: false, limitMilli: 20 })
+    // 110 V: 5,5 kΩ, held to 6 kΩ.
+    expect(
+      recurring('insulation_with_loads', 6, { ...itSystem, nominalVoltageMilli: 110_000 }),
+    ).toMatchObject({ within: true, limitMilli: 6 })
+    expect(
+      recurring('insulation_without_loads', 229, { nominalVoltageMilli: 230_000 }).within,
+    ).toBe(false)
+  })
+
   it('judges a block without a circuit by the conditions alone', () => {
     expect(recurring('insulation_without_loads', 120, damp, null)).toMatchObject({
       within: true,
@@ -246,11 +260,16 @@ describe('version 2 of the recurring inspection (#1022)', () => {
   })
 
   it('takes the conditions from the block and the head of the protocol, and only what it knows', () => {
-    expect(measuringConditions({ environment: 'damp' }, { earthing_system: 'it' })).toEqual({
-      environment: 'damp',
-      earthingSystem: 'it',
-    })
-    expect(measuringConditions({ environment: 'nass' }, { earthing_system: 4 })).toEqual({})
+    expect(
+      measuringConditions(
+        { environment: 'damp' },
+        { earthing_system: 'it', nominal_voltage: 400_000 },
+      ),
+    ).toEqual({ environment: 'damp', earthingSystem: 'it', nominalVoltageMilli: 400_000 })
+    expect(
+      measuringConditions({ environment: 'nass' }, { earthing_system: 4, nominal_voltage: 0 }),
+    ).toEqual({})
+    expect(measuringConditions({}, { nominal_voltage: '400' })).toEqual({})
     expect(measuringConditions(undefined, null)).toEqual({})
   })
 })

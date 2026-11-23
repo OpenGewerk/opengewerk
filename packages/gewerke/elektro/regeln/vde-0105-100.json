@@ -27,7 +27,7 @@
       "unit": "factor",
       "value": 1000,
       "source": "DGUV Information 203-072:2021-04, Tabelle 11, Wiederholungsprüfung nach DIN VDE 0105-100/A1 (VDE 0105-100/A1):2017-06",
-      "note": "Ohne angeschlossene Verbraucher, in trockener Umgebung, im TN-, TT- und FELV-System. Ohm je Volt Nennspannung. Ab Fassung 2 des Protokolls (#1022) rechnet es mit U0 = 230 V aus `elektro.loop.nominal_voltage` und rundet zur strengen Seite auf ganze Kiloohm."
+      "note": "Ohne angeschlossene Verbraucher, in trockener Umgebung, im TN-, TT- und FELV-System. Ohm je Volt Nennspannung. Ab Fassung 2 des Protokolls (#1022) rechnet es mit der Nennspannung, die das Protokoll nennt, ohne Angabe mit U0 = 230 V aus `elektro.loop.nominal_voltage`, und rundet zur strengen Seite auf ganze Kiloohm."
     },
     {
       "key": "elektro.insulation.recurring_per_volt_without_loads_damp",
@@ -36,7 +36,7 @@
       "unit": "factor",
       "value": 500,
       "source": "DGUV Information 203-072:2021-04, Tabelle 11, Wiederholungsprüfung nach DIN VDE 0105-100/A1 (VDE 0105-100/A1):2017-06",
-      "note": "Ohne angeschlossene Verbraucher, in feuchter Umgebung, im TN-, TT- und FELV-System. Ohm je Volt Nennspannung. Ab Fassung 2 des Protokolls (#1022) rechnet es mit U0 = 230 V aus `elektro.loop.nominal_voltage` und rundet zur strengen Seite auf ganze Kiloohm."
+      "note": "Ohne angeschlossene Verbraucher, in feuchter Umgebung, im TN-, TT- und FELV-System. Ohm je Volt Nennspannung. Ab Fassung 2 des Protokolls (#1022) rechnet es mit der Nennspannung, die das Protokoll nennt, ohne Angabe mit U0 = 230 V aus `elektro.loop.nominal_voltage`, und rundet zur strengen Seite auf ganze Kiloohm."
     },
     {
       "key": "elektro.insulation.recurring_per_volt_with_loads_dry",
@@ -45,7 +45,7 @@
       "unit": "factor",
       "value": 300,
       "source": "DGUV Information 203-072:2021-04, Tabelle 11, Wiederholungsprüfung nach DIN VDE 0105-100/A1 (VDE 0105-100/A1):2017-06",
-      "note": "Mit angeschlossenen und eingeschalteten Verbrauchern, in trockener Umgebung, im TN-, TT- und FELV-System. Ohm je Volt Nennspannung. Ab Fassung 2 des Protokolls (#1022) rechnet es mit U0 = 230 V aus `elektro.loop.nominal_voltage` und rundet zur strengen Seite auf ganze Kiloohm."
+      "note": "Mit angeschlossenen und eingeschalteten Verbrauchern, in trockener Umgebung, im TN-, TT- und FELV-System. Ohm je Volt Nennspannung. Ab Fassung 2 des Protokolls (#1022) rechnet es mit der Nennspannung, die das Protokoll nennt, ohne Angabe mit U0 = 230 V aus `elektro.loop.nominal_voltage`, und rundet zur strengen Seite auf ganze Kiloohm."
     },
     {
       "key": "elektro.insulation.recurring_per_volt_with_loads_damp",
@@ -54,7 +54,7 @@
       "unit": "factor",
       "value": 150,
       "source": "DGUV Information 203-072:2021-04, Tabelle 11, Wiederholungsprüfung nach DIN VDE 0105-100/A1 (VDE 0105-100/A1):2017-06",
-      "note": "Mit angeschlossenen und eingeschalteten Verbrauchern, in feuchter Umgebung, im TN-, TT- und FELV-System; bei 230 V 34,5 kΩ, auf der strengen Seite 35 kΩ. Ohm je Volt Nennspannung. Ab Fassung 2 des Protokolls (#1022) rechnet es mit U0 = 230 V aus `elektro.loop.nominal_voltage` und rundet zur strengen Seite auf ganze Kiloohm."
+      "note": "Mit angeschlossenen und eingeschalteten Verbrauchern, in feuchter Umgebung, im TN-, TT- und FELV-System; bei 230 V 34,5 kΩ, auf der strengen Seite 35 kΩ. Ohm je Volt Nennspannung. Ab Fassung 2 des Protokolls (#1022) rechnet es mit der Nennspannung, die das Protokoll nennt, ohne Angabe mit U0 = 230 V aus `elektro.loop.nominal_voltage`, und rundet zur strengen Seite auf ganze Kiloohm."
     },
     {
       "key": "elektro.insulation.recurring_per_volt_it",
@@ -63,7 +63,7 @@
       "unit": "factor",
       "value": 50,
       "source": "DGUV Information 203-072:2021-04, Tabelle 11, Wiederholungsprüfung nach DIN VDE 0105-100/A1 (VDE 0105-100/A1):2017-06",
-      "note": "Im IT-System, mit und ohne Verbraucher, trocken und feucht: Die Zeile der Tabelle gilt über alle vier Spalten; bei 230 V 11,5 kΩ, auf der strengen Seite 12 kΩ. Ohm je Volt Nennspannung. Ab Fassung 2 des Protokolls (#1022) rechnet es mit U0 = 230 V aus `elektro.loop.nominal_voltage` und rundet zur strengen Seite auf ganze Kiloohm."
+      "note": "Im IT-System, mit und ohne Verbraucher, trocken und feucht: Die Zeile der Tabelle gilt über alle vier Spalten; bei 230 V 11,5 kΩ, auf der strengen Seite 12 kΩ. Ohm je Volt Nennspannung. Ab Fassung 2 des Protokolls (#1022) rechnet es mit der Nennspannung, die das Protokoll nennt, ohne Angabe mit U0 = 230 V aus `elektro.loop.nominal_voltage`, und rundet zur strengen Seite auf ganze Kiloohm."
     },
     {
       "key": "elektro.insulation.recurring_selv_pelv",

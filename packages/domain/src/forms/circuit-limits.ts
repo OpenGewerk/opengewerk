@@ -33,13 +33,15 @@ function circuitOf(item: unknown): CircuitFacts | null {
 
 /**
  * Where and how a circuit was measured beside what its chart says (#1022):
- * the environment its block names, dry or damp, and the earthing system in the
- * head of the protocol. A block without them is a dry circuit in a TN or TT
- * system.
+ * the environment its block names, dry or damp, and the earthing system and
+ * the nominal voltage in the head of the protocol, the voltage in thousandths
+ * of a volt as the form keeps it. A block without them is a dry circuit in a
+ * TN or TT system at 230 V.
  */
 export interface MeasuringConditions {
   readonly environment?: 'dry' | 'damp'
   readonly earthingSystem?: string
+  readonly nominalVoltageMilli?: number
 }
 
 function conditionsOf(item: unknown): MeasuringConditions | null {
@@ -117,9 +119,10 @@ export const rcdTripCurrentRange: LimitCalculator = (_field, { rules, on, item }
  * The least insulation resistance of the recurring inspection after table 11
  * of the DGUV Information 203-072 (#1022), with or without the loads: 0,25 MΩ
  * for SELV and PELV, in an IT system 50 Ω per volt, and otherwise per volt by
- * the environment, dry or damp. Per volt is at U0 = 230 V, rounded up to whole
- * kiloohms so that it is never looser. The table has no row for a circuit
- * above 500 V, and the protocol says so rather than judge it by another.
+ * the environment, dry or damp. Per volt is of the nominal voltage the
+ * protocol names, and without one of U0 = 230 V, rounded up to whole kiloohms
+ * so that it is never looser. The table has no row for a circuit above 500 V,
+ * and the protocol says so rather than judge it by another.
  */
 function recurringInsulation(loads: 'with_loads' | 'without_loads'): LimitCalculator {
   return (_field, { rules, on, item }) => {
@@ -148,15 +151,18 @@ function recurringInsulation(loads: 'with_loads' | 'without_loads'): LimitCalcul
         : `elektro.insulation.recurring_per_volt_${loads}_${environment}`,
       on,
     )
-    const voltage = rules.at('elektro.loop.nominal_voltage', on)
+    const ordinary = rules.at('elektro.loop.nominal_voltage', on)
+    const voltageMilli =
+      conditions?.nominalVoltageMilli ?? (ordinary ? ordinary.value * 1000 : undefined)
 
-    if (!perVolt || !voltage) {
+    if (!perVolt || voltageMilli === undefined) {
       return { none: 'Für diesen Tag ist kein Grenzwert hinterlegt.' }
     }
 
-    // Ohms per volt times volts are ohms, and a thousandth of a megaohm is a kiloohm.
+    // Ohms per volt times thousandths of a volt are thousandths of an ohm, and
+    // a thousandth of a megaohm, as the field counts, is a kiloohm.
     return {
-      limitMilli: Math.ceil((perVolt.value * voltage.value) / 1000),
+      limitMilli: Math.ceil((perVolt.value * voltageMilli) / 1_000_000),
       atLeast: true,
       source: perVolt.source,
     }

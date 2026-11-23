@@ -35,6 +35,7 @@
           "key": "nominal_voltage",
           "label": "Nennspannung",
           "carry": true,
+          "hint": "Danach richtet sich der Mindestwert der Isolation je Volt nach Tabelle 11 der DGUV Information 203-072; ohne Angabe gelten 230 V.",
           "unit": "volt",
           "decimals": 0
         }

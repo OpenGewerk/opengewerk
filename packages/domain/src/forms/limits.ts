@@ -31,9 +31,9 @@ const workedOutMinimums: ReadonlySet<string> = new Set([
 
 /**
  * The conditions a circuit was measured in as its block and its protocol say
- * them (#1022): the environment in the block and the earthing system in the
- * head, where they are given and known. A form that asks for neither gives
- * none, and its limits judge as before.
+ * them (#1022): the environment in the block, the earthing system and the
+ * nominal voltage in the head, where they are given and known. A form that
+ * asks for none of them gives none, and its limits judge as before.
  */
 export function measuringConditions(
   block: Readonly<Record<string, unknown>> | null | undefined,
@@ -41,10 +41,16 @@ export function measuringConditions(
 ): MeasuringConditions {
   const environment = block?.['environment']
   const earthingSystem = form?.['earthing_system']
+  const nominalVoltageMilli = form?.['nominal_voltage']
 
   return {
     ...(environment === 'dry' || environment === 'damp' ? { environment } : {}),
     ...(typeof earthingSystem === 'string' ? { earthingSystem } : {}),
+    ...(typeof nominalVoltageMilli === 'number' &&
+    Number.isInteger(nominalVoltageMilli) &&
+    nominalVoltageMilli > 0
+      ? { nominalVoltageMilli }
+      : {}),
   }
 }
 
