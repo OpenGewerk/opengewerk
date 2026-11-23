@@ -228,8 +228,9 @@ export function nextReportFieldKey(used: readonly string[]): string {
 /**
  * A number of a report rounded to the places of its field, as it was always
  * written (#1089): an issued report keeps the text its customer signed and its
- * paper prints, whatever more places were typed. Only a value judged against
- * a limit shows every place it has, and a report judges none.
+ * paper prints, whatever more places were typed. A protocol shows every place
+ * a value has, so that its verdict and its figures agree; a report judges
+ * nothing and keeps the places of its field.
  */
 function roundedTo(milli: number, decimals: number): number {
   const step = 10 ** Math.max(0, 3 - decimals)
