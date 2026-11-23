@@ -551,6 +551,53 @@ describe('the figures of a circuit', () => {
     ).toMatchObject({ rcdType: null, rcdSelective: false })
   })
 
+  /**
+   * The same the other way round (#1021): a technician takes the type away,
+   * and the office, still on the circuit from before, makes the RCD
+   * selective. That is a conflict about this circuit for a person to look at,
+   * and the rest of the transmission lands.
+   */
+  it('make a selective RCD sent while the type went a conflict, and land the rest', async () => {
+    const { boardId } = await board(north.id, northInstallation.id)
+    const circuitId = newId<'circuit'>()
+    const other = newId<'circuit'>()
+
+    await push(as(north.id, 'office'), [
+      created('circuits', circuitId, {
+        distributionBoardId: boardId,
+        designation: 'F1',
+        rcdType: 'a',
+        position: 0,
+      }),
+    ])
+    await push(as(north.id, 'technician'), [
+      { ...changed('circuits', circuitId, { rcdType: { from: 'a', to: null } }), baseVersion: 1 },
+    ])
+
+    const answer = await push(as(north.id, 'office'), [
+      {
+        ...changed('circuits', circuitId, { rcdSelective: { from: false, to: true } }),
+        baseVersion: 1,
+      },
+      created('circuits', other, { distributionBoardId: boardId, designation: 'F2', position: 1 }),
+    ])
+
+    expect(
+      answer.receipts.map((receipt) => [receipt.outcome, receipt.reason, receipt.fields]),
+    ).toEqual([
+      ['conflict', 'changed_elsewhere', ['rcdType', 'rcdSelective']],
+      ['applied', null, []],
+    ])
+
+    const pulled = rowsOf(await pull(as(north.id, 'office')), 'circuits')
+
+    expect(pulled.find((row) => row['id'] === circuitId)).toMatchObject({
+      rcdType: null,
+      rcdSelective: false,
+    })
+    expect(pulled.find((row) => row['id'] === other)).toBeDefined()
+  })
+
   it('refuse a kind of board nobody knows before the database would', async () => {
     const answer = await push(
       as(north.id, 'office'),

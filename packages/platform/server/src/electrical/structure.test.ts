@@ -1,7 +1,7 @@
 import type { RecordState } from '@opengewerk/platform-domain'
 import { describe, expect, it } from 'vitest'
 
-import { circuitAlong, structureProblem, valueAfter } from './structure.js'
+import { circuitAlong, selectiveRefusal, structureProblem, valueAfter } from './structure.js'
 
 // What a device may not send of the structure at all (ADR 0014), asked
 // without a database. Whether a section belongs to the board of its circuit
@@ -95,5 +95,31 @@ describe('what a circuit takes along', () => {
     )
     expect(circuitAlong('circuits', { rcdType: null }, null)).toEqual({ rcdType: null })
     expect(circuitAlong('equipment', { rcdType: null }, stored)).toEqual({ rcdType: null })
+  })
+})
+
+/**
+ * A selective RCD sent for a circuit whose type went since the device saw it
+ * (#1021) is two people disagreeing, and only that.
+ */
+describe('a selective RCD sent for a circuit without a type', () => {
+  const now = { id: 'k-1', rcdType: null, rcdSelective: false, version: 2 } as RecordState
+
+  it('is a conflict when the circuit changed since the device saw it', () => {
+    expect(selectiveRefusal('circuits', { rcdSelective: true }, now, 1)).toEqual({
+      reason: 'changed_elsewhere',
+      fields: ['rcdType', 'rcdSelective'],
+    })
+  })
+
+  it('is no conflict without a version, with the version the device saw, or with a type', () => {
+    expect(selectiveRefusal('circuits', { rcdSelective: true }, now, null)).toBeNull()
+    expect(selectiveRefusal('circuits', { rcdSelective: true }, now, 2)).toBeNull()
+    expect(selectiveRefusal('circuits', { rcdSelective: true, rcdType: 'a' }, now, 1)).toBeNull()
+    expect(
+      selectiveRefusal('circuits', { rcdSelective: true }, { ...now, rcdType: 'a' }, 1),
+    ).toBeNull()
+    expect(selectiveRefusal('circuits', { rcdSelective: false }, now, 1)).toBeNull()
+    expect(selectiveRefusal('circuits', { rcdSelective: true }, null, 1)).toBeNull()
   })
 })
