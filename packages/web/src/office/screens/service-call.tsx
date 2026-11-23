@@ -73,6 +73,24 @@ function minuteOf(clock: string): number {
  * (#1080), under the moment of the call: section 312e BGB lets a business
  * charge it only after it told them, and the job keeps what was named.
  */
+/** Whether day and time of a call are typed in whole: a field being typed into is not. */
+function isWholeCall(calledOn: string, calledAt: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(calledOn) && /^\d{2}:\d{2}$/.test(calledAt)
+}
+
+/**
+ * The moment of a call as the form has it, only of today up to a year back
+ * (#1085): a year like 0026 makes none. Saving asks it anew, since a form left
+ * open over midnight moves the year.
+ */
+function calledMomentOf(calledOn: string, calledAt: string): Date | null {
+  return isWholeCall(calledOn, calledAt) &&
+    calledOn >= addDays(today(), -366) &&
+    calledOn <= today()
+    ? berlinInstant(calledOn, minuteOf(calledAt))
+    : null
+}
+
 function SurchargeNote({
   asking,
   failed,
@@ -253,13 +271,7 @@ export function NewServiceCallScreen() {
   // Only a consumer is owed the surcharge before the order (#1080, section
   // 312e BGB), and a new caller is one unless the office says otherwise.
   const consumer = customer ? customer['isBusiness'] !== true : fresh.kind === 'private'
-  // Only a whole day and time make a moment, and only a call of today up to a
-  // year back (#1085): a field being typed into, or a year like 0026, makes none.
-  const calledWhole = /^\d{4}-\d{2}-\d{2}$/.test(calledOn) && /^\d{2}:\d{2}$/.test(calledAt)
-  const calledMoment =
-    calledWhole && calledOn >= addDays(today(), -366) && calledOn <= today()
-      ? berlinInstant(calledOn, minuteOf(calledAt))
-      : null
+  const calledMoment = calledMomentOf(calledOn, calledAt)
   const tariffs = useQuery({
     queryKey: ['emergency-tariffs', calledOn],
     queryFn: ({ signal }) => emergencyTariffs(signal, calledOn),
@@ -325,9 +337,9 @@ export function NewServiceCallScreen() {
     }
 
     // A call of 01.01.1900 out of an emptied day is no call (#1084), nor one of
-    // a year typed in half (#1085).
-    if (emergency && calledMoment === null) {
-      found['calledOn'] = calledWhole
+    // a year typed in half or of more than a year back by now (#1085).
+    if (emergency && calledMomentOf(calledOn, calledAt) === null) {
+      found['calledOn'] = isWholeCall(calledOn, calledAt)
         ? 'Der Anruf liegt höchstens ein Jahr zurück und nicht nach heute.'
         : 'Der Notdiensteinsatz braucht Tag und Uhrzeit des Anrufs.'
     }

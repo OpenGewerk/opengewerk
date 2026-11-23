@@ -638,6 +638,70 @@ describe('the surcharge named before the order (#1081)', () => {
     })
   })
 
+  it('takes the percentage of the day where an hour is given free at 0,00 €', async () => {
+    const hour = async (number: string, unitPriceCents: number) =>
+      (
+        await post('/articles', {
+          number,
+          designation: `Arbeitsstunde ${number}`,
+          unit: 'hour',
+          price: { unitPriceCents, validFrom: '2026-01-01' },
+        })
+      ).id
+    const paid = await hour('AS-1081-1', 1000)
+    const free = await hour('AS-1081-2', 0)
+    // Saturday 24.10.2026 at 10:00: the settings charge 50 % on the working time.
+    const named = {
+      emergencyAt: '2026-10-24T08:00:00.000Z',
+      emergencyNamedFlatCents: 3000,
+      emergencyNamedBasisPoints: 0,
+    }
+    const single = aCall(named)
+    const collected = aCall(named)
+    const lines = [
+      {
+        designation: 'Arbeitszeit',
+        quantityMilli: 1000,
+        unit: 'hour',
+        unitPriceCents: 0,
+        articleId: paid,
+      },
+      {
+        designation: 'Kulanzstunde',
+        quantityMilli: 1000,
+        unit: 'hour',
+        unitPriceCents: 0,
+        articleId: free,
+      },
+    ]
+
+    await push(app, office(), [single.operation, collected.operation])
+
+    const report = await aSignedReport(single.id, lines)
+
+    await post(`/documents/${await aSignedReport(collected.id, lines)}/issue`, {})
+
+    const invoices = [
+      (await post(`/documents/${report}/successors`, { kind: 'final_invoice' })).id,
+      (await post(`/jobs/${collected.id}/collective-invoice`, {})).id,
+    ]
+    const last = []
+
+    for (const invoice of invoices) {
+      const { rows } = await admin.query<{ description: string | null; net_cents: number }>(
+        'select description, net_cents from document_lines where document_id = $1 order by position',
+        [invoice],
+      )
+
+      last.push(rows.at(-1))
+    }
+
+    expect(last).toEqual([
+      { description: '50 % auf die Arbeitszeit', net_cents: 500 },
+      { description: '50 % auf die Arbeitszeit', net_cents: 500 },
+    ])
+  })
+
   it('comes from the device that took the call on call, with the job', async () => {
     // Max is on call now (see above); the call came an hour ago.
     const call = aCall({

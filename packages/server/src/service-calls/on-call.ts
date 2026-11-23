@@ -25,6 +25,7 @@ import { isUuid, type TenantTransaction } from '@opengewerk/platform-server'
 import { and, eq, gt, isNull, lte } from 'drizzle-orm'
 
 import { holidaySettingOf } from '../absences/absences.js'
+import { hasPriceOfDay, type PriceOfDay } from '../documents/article-prices.js'
 import { parameterAt, parameterHistory } from '../database/parameters.js'
 import { jobs, onCallShifts } from '../database/schema/index.js'
 
@@ -120,7 +121,13 @@ const hourUnits: readonly LineUnit[] = ['hour']
 export async function surchargeLineFor(
   tx: TenantTransaction,
   jobId: string | null,
-  lines: readonly { readonly unit: LineUnit; readonly netCents: number }[],
+  lines: readonly {
+    readonly kind: string
+    readonly articleId: string | null
+    readonly unit: LineUnit
+    readonly netCents: number
+  }[],
+  prices: ReadonlyMap<string, PriceOfDay>,
 ): Promise<SurchargeLine | null> {
   if (jobId === null || !isUuid(jobId)) {
     return null
@@ -153,8 +160,9 @@ export async function surchargeLineFor(
   const hours = lines.filter((line) => hourUnits.includes(line.unit))
   const hourNetCents = hours.reduce((sum, line) => sum + line.netCents, 0)
   // Hours without a price yet, as a report has them, decide nothing between a
-  // flat amount and a percentage (#1081); no hours at all cost nothing.
-  const priced = hours.every((line) => line.netCents > 0)
+  // flat amount and a percentage (#1081); no hours at all cost nothing. An
+  // hour given free at 0,00 € has its price.
+  const priced = hours.every((line) => hasPriceOfDay(line, prices))
 
   return emergencySurchargeLine(
     kind,

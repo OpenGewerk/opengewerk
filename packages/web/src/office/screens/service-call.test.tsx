@@ -378,6 +378,33 @@ describe('a call taken on the phone (#292)', () => {
     expect(server.all('jobs')).toHaveLength(0)
   })
 
+  it('asks the year of the call anew when saving, after midnight (#1085)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+
+    try {
+      vi.setSystemTime(new Date())
+      await mount('/auftraege/service')
+
+      await type('Kunde suchen', 'Berg')
+      await userEvent.click(await screen.findByRole('button', { name: /Familie Berg/ }))
+      await userEvent.click(screen.getByRole('radio', { name: /Einfamilienhaus Lindenweg/ }))
+      await type('Anliegen', 'Heizung ohne Strom')
+      await userEvent.click(screen.getByLabelText('Notdiensteinsatz', { exact: false }))
+      await type('Anruf am', addDays(today(), -366))
+      await type('um', '02:14')
+      // The form stays open over midnight: the day is then more than a year back.
+      vi.setSystemTime(new Date(Date.now() + 86_400_000))
+      await userEvent.click(screen.getByRole('button', { name: 'Serviceeinsatz anlegen' }))
+
+      expect(
+        await screen.findByText('Der Anruf liegt höchstens ein Jahr zurück und nicht nach heute.'),
+      ).toBeTruthy()
+      expect(server.all('jobs')).toHaveLength(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('names nothing to a business, and keeps nothing named (#1080)', async () => {
     answers.set(`/on-call-shifts/tariffs?from=${callDay}`, fromTheCall)
     await mount('/auftraege/service')

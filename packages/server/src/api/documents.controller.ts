@@ -725,7 +725,7 @@ export class DocumentsController {
       // The invoice out of the report of an emergency call carries the
       // surcharge the business set for its kind (#293), as the last line.
       if (predecessor.kind === 'time_and_material_report') {
-        const surcharge = await surchargeLineFor(tx, predecessor.jobId, priced)
+        const surcharge = await surchargeLineFor(tx, predecessor.jobId, priced, prices)
 
         if (surcharge) {
           await tx.insert(documentLines).values({
