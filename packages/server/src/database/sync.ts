@@ -45,6 +45,7 @@ import type { FoundIdentity } from '../api/identity.js'
 import { signatureRefusal } from '../documents/signing.js'
 import { earlyStartArrival } from '../service-calls/instructions.js'
 import {
+  lockSurchargeDrafts,
   onCallRefusal,
   refreshSurchargeLine,
   refreshSurchargeLines,
@@ -692,6 +693,25 @@ function withSurchargeTakenOver(
 }
 
 /**
+ * The drafts of a call whose moment or named surcharge a device changes,
+ * locked before the job is written (#1087): issuing locks its document before
+ * it writes, and the other order would wait in a circle.
+ */
+async function lockDraftsOfCall(
+  tx: TenantTransaction,
+  operation: Operation,
+  values: Record<string, unknown>,
+): Promise<void> {
+  if (
+    operation.entity === 'jobs' &&
+    operation.kind === 'update' &&
+    surchargeFieldsOfJob.some((field) => values[field] !== undefined)
+  ) {
+    await lockSurchargeDrafts(tx, operation.recordId)
+  }
+}
+
+/**
  * What follows a write on a device for the line of the surcharge of a draft
  * (#1087): a line of the draft, the job of the draft, the call or the
  * surcharge named for it changed, so the line is worked out again.
@@ -838,8 +858,10 @@ export const sync = serverSync<FoundIdentity>({
     cancellation,
     draftDeletion,
   ],
-  complete: async ({ tx, tenantId, operation, values, current, sender }) =>
-    withEarlyStartWording(
+  complete: async ({ tx, tenantId, operation, values, current, sender }) => {
+    await lockDraftsOfCall(tx, operation, values)
+
+    return withEarlyStartWording(
       operation,
       await withJobNumber(
         tx,
@@ -864,7 +886,8 @@ export const sync = serverSync<FoundIdentity>({
           ),
         ),
       ),
-    ),
+    )
+  },
   afterWrite: async ({ tx, operation, values, current }) =>
     await afterSurchargeWrite(tx, operation, values, current),
 })

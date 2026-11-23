@@ -6,13 +6,14 @@ import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import { addDays, berlinClock, type EmergencyTariff, type TenantId } from '@opengewerk/domain'
 import { Database, FileStore, newId, type Renderer } from '@opengewerk/platform-server'
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { refreshSurchargeLine } from '../service-calls/on-call.js'
 import { ApiModule } from './api.module.js'
+import { holdQuery, waitingFor } from './test-hold.js'
 import { fingerprintAsHeld } from './test-signing.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { invoiceable, readyToInvoice } from './test-invoice.js'
@@ -54,6 +55,24 @@ async function post(path: string, body: Record<string, unknown>, who = office(),
 
   return answer.body as { id: string; message?: string }
 }
+
+/**
+ * A transaction of the business that has locked a draft the way issuing
+ * does, before it writes anything the log records.
+ */
+async function lockedForIssuing(invoice: string): Promise<PoolClient> {
+  const client = await admin.connect()
+
+  await client.query('begin')
+  await client.query("select set_config('app.tenant_id', $1, true)", [north.id])
+  await client.query("select set_config('app.user_id', 'lena', true)")
+  await client.query('select id from documents where id = $1 for update', [invoice])
+
+  return client
+}
+
+const deviceOf = (who: string) =>
+  (JSON.parse(who) as { deviceId?: string }).deviceId ?? 'geraet-im-keller'
 
 function aCall(fields: Record<string, unknown> = {}) {
   const id = newId<'job'>()
@@ -1133,11 +1152,63 @@ describe('the line of the surcharge on a draft (#1087)', () => {
 
     expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000, deleted: false })
 
-    // Picked as a draft just before another transaction issued it, the
-    // invoice is found fixed once it is locked, and left as it is.
+    // Asked for directly, an issued invoice is found fixed and left as it is.
     await database.forTenant({ tenantId: north.id }, (tx) => refreshSurchargeLine(tx, invoice))
 
     expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000, deleted: false })
+  })
+  it('waits for issuing that has read the lines, and leaves the issued line as it was frozen', async () => {
+    const { invoice, hour } = await draftOf()
+
+    await price(invoice, hour, 10_000)
+
+    // A line the server would work out anew: 50 % of 100,00 € is 50,00 €.
+    const stale = await lockedForIssuing(invoice)
+
+    await stale.query(
+      'update document_lines set unit_price_cents = 4000, net_cents = 4000 where document_id = $1 and emergency_surcharge',
+      [invoice],
+    )
+    await stale.query('commit')
+    stale.release()
+
+    // Issuing has locked the draft and read its lines, and is about to write.
+    const held = holdQuery((text) => text.startsWith('update "documents" set "status"'))
+    const issuing = http()
+      .post(`/documents/${invoice}/issue`)
+      .set('x-test-identity', office())
+      .send({})
+      .then((answer) => answer.status)
+
+    await held.reached
+
+    const refreshing = database.forTenant({ tenantId: north.id }, (tx) =>
+      refreshSurchargeLine(tx, invoice),
+    )
+
+    // Until the refresh waits for issuing, or is through without waiting.
+    for (let tries = 0; tries < 100; tries += 1) {
+      const { rows } = await admin.query<{ waiting: number }>(
+        'select count(*)::int as waiting from pg_stat_activity where $1 = any(pg_blocking_pids(pid))',
+        [held.holder()],
+      )
+      const through = await Promise.race([
+        refreshing.then(() => true),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), 50)),
+      ])
+
+      if ((rows[0]?.waiting ?? 0) > 0 || through) {
+        break
+      }
+    }
+
+    held.release()
+
+    expect(await issuing).toBe(201)
+
+    await refreshing
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 4000, deleted: false })
   })
 })
 
@@ -1298,4 +1369,86 @@ describe('the line of the surcharge on a draft, after the settings (#1087)', () 
       { designation: 'Notdienstzuschlag Feiertag', net_cents: 2000 },
     ])
   })
+
+  /** A draft out of the signed report of a call on Saturday 24.10.2026 at 10:00. */
+  async function aDraft() {
+    const call = aCall({ emergencyAt: '2026-10-24T08:00:00.000Z' })
+
+    await push(app, office(), [call.operation])
+
+    const invoice = (
+      await post(`/documents/${await aSignedReport(call.id)}/successors`, {
+        kind: 'final_invoice',
+      })
+    ).id
+
+    return { job: call.id, invoice }
+  }
+
+  it.each([
+    [
+      'the office changes the call',
+      (job: string) =>
+        http()
+          .patch(`/jobs/${job}`)
+          .set('x-test-identity', office())
+          .send({ emergencyNamedFlatCents: 2000, emergencyNamedBasisPoints: 0 }),
+      200,
+    ],
+    [
+      'a device changes the call',
+      (job: string) =>
+        http()
+          .post('/sync')
+          .set('x-test-identity', office())
+          .send({
+            deviceId: deviceOf(office()),
+            operations: [
+              changed('jobs', job, {
+                emergencyAt: { from: '2026-10-24T08:00:00.000Z', to: atNight },
+              }),
+            ],
+          }),
+      201,
+    ],
+    [
+      'a setting of the surcharges',
+      () =>
+        http().post('/settings/parameters').set('x-test-identity', owner()).send({
+          key: 'emergency.weekend_basis_points',
+          from: '2026-11-02',
+          value: 3000,
+          note: null,
+        }),
+      201,
+    ],
+    [
+      'the public holidays',
+      () =>
+        http().put('/holidays').set('x-test-identity', owner()).send({ state: 'DE-NI', local: [] }),
+      200,
+    ],
+  ] as const)(
+    '%s waits for a draft that is being issued, and does not deadlock',
+    async (_, change, status) => {
+      const { job, invoice } = await aDraft()
+      const issuing = await lockedForIssuing(invoice)
+      const changing = change(job).then((answer) => answer.status)
+
+      try {
+        await waitingFor(admin, issuing, changing)
+        // Issuing writes now, as it does after its lock.
+        await issuing.query(
+          "update documents set subject = coalesce(subject, 'Rechnung') where id = $1",
+          [invoice],
+        )
+        await issuing.query('commit')
+      } finally {
+        await issuing.query('rollback').catch(() => undefined)
+        issuing.release()
+      }
+
+      expect(await changing).toBe(status)
+    },
+  )
 })

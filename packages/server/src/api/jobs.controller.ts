@@ -32,7 +32,11 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { assignNumber } from '../database/number-ranges.js'
 import { jobAssignments, jobs, memberships } from '../database/schema/index.js'
 import { followUpRefusal } from '../jobs/follow-up.js'
-import { refreshSurchargeLines, surchargeFieldsOfJob } from '../service-calls/on-call.js'
+import {
+  lockSurchargeDrafts,
+  refreshSurchargeLines,
+  surchargeFieldsOfJob,
+} from '../service-calls/on-call.js'
 import { RequiresPermission } from './authorization.js'
 import { requireReferences } from './references.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
@@ -201,14 +205,21 @@ export class JobsController {
         await requireFollowUp(tx, id, values, current)
       }
 
+      // The drafts of the call follow its moment and its named surcharge
+      // (#1087), locked before the job is written, as issuing locks first.
+      const surchargeFollows = surchargeFieldsOfJob.some((field) => field in values)
+
+      if (surchargeFollows) {
+        await lockSurchargeDrafts(tx, id)
+      }
+
       const written = await tx
         .update(jobs)
         .set(asWritten(values) as Partial<typeof jobs.$inferInsert>)
         .where(and(eq(jobs.id, id as JobId), isNull(jobs.deletedAt)))
         .returning()
 
-      // The drafts of the call follow its moment and its named surcharge (#1087).
-      if (written.length > 0 && surchargeFieldsOfJob.some((field) => field in values)) {
+      if (written.length > 0 && surchargeFollows) {
         await refreshSurchargeLines(tx, id)
       }
 

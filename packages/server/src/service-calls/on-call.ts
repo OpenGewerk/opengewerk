@@ -25,7 +25,7 @@ import {
   whyFixed,
 } from '@opengewerk/domain'
 import { isUuid, type TenantTransaction } from '@opengewerk/platform-server'
-import { and, desc, eq, gt, isNotNull, isNull, lte } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lte } from 'drizzle-orm'
 
 import { holidaySettingOf } from '../absences/absences.js'
 import { parameterAt, parameterHistory } from '../database/parameters.js'
@@ -351,42 +351,60 @@ async function restoreSurchargeLine(
 }
 
 /**
+ * The drafts that have a line of the surcharge, of one job or of all of them
+ * (#1087), locked in the order of their ids. A marked line that is gone
+ * counts: its draft may get the surcharge back.
+ *
+ * Taken before the first write of a transaction that works them out again
+ * afterwards. Issuing locks its document before it writes anything the log
+ * records; a transaction that wrote first and locked the draft afterwards
+ * would wait for it in a circle, and PostgreSQL would end one of the two.
+ */
+export async function lockSurchargeDrafts(
+  tx: TenantTransaction,
+  jobId: string | null = null,
+): Promise<readonly string[]> {
+  if (jobId !== null && !isUuid(jobId)) {
+    return []
+  }
+
+  const drafts = await tx
+    .select({ id: documents.id })
+    .from(documents)
+    .where(
+      and(
+        eq(documents.status, 'draft'),
+        isNull(documents.deletedAt),
+        ...(jobId === null ? [] : [eq(documents.jobId, jobId as JobId)]),
+        inArray(
+          documents.id,
+          tx
+            .select({ id: documentLines.documentId })
+            .from(documentLines)
+            .where(eq(documentLines.emergencySurcharge, true)),
+        ),
+      ),
+    )
+    .orderBy(documents.id)
+    .for('no key update')
+
+  return drafts.map((draft) => draft.id)
+}
+
+/**
  * The lines of the surcharge of every draft that has one, worked out again
  * (#1087): of the drafts of one job, after its call or the surcharge named
  * for it changed, or of all of them, after a setting of the surcharges or the
- * public holidays changed.
+ * public holidays changed. The caller locked them with `lockSurchargeDrafts`
+ * before it wrote.
  */
 export async function refreshSurchargeLines(
   tx: TenantTransaction,
   jobId: string | null = null,
 ): Promise<void> {
-  if (jobId !== null && !isUuid(jobId)) {
-    return
-  }
-
-  const drafts = await tx
-    .selectDistinct({ id: documentLines.documentId })
-    .from(documentLines)
-    .innerJoin(
-      documents,
-      and(
-        eq(documents.tenantId, documentLines.tenantId),
-        eq(documents.id, documentLines.documentId),
-      ),
-    )
-    .where(
-      // A marked line that is gone counts: its draft may get the surcharge back.
-      and(
-        eq(documentLines.emergencySurcharge, true),
-        eq(documents.status, 'draft'),
-        isNull(documents.deletedAt),
-        ...(jobId === null ? [] : [eq(documents.jobId, jobId as JobId)]),
-      ),
-    )
-
   // One after the other: a transaction is one connection.
-  for (const draft of drafts) {
-    await refreshSurchargeLine(tx, draft.id)
+  for (const draft of await lockSurchargeDrafts(tx, jobId)) {
+    await refreshSurchargeLine(tx, draft)
   }
 }
 
