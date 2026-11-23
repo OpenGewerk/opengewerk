@@ -121,8 +121,9 @@ export const rcdTripCurrentRange: LimitCalculator = (_field, { rules, on, item }
  * for SELV and PELV, in an IT system 50 Ω per volt, and otherwise per volt by
  * the environment, dry or damp. Per volt is of the nominal voltage the
  * protocol names, and without one of U0 = 230 V, rounded up to whole kiloohms
- * so that it is never looser. The table has no row for a circuit above 500 V,
- * and the protocol says so rather than judge it by another.
+ * so that it is never looser. A circuit above 500 V counts per volt of its own
+ * nominal voltage, which the chart does not name, and the protocol says so
+ * rather than judge it by another.
  */
 function recurringInsulation(loads: 'with_loads' | 'without_loads'): LimitCalculator {
   return (_field, { rules, on, item }) => {
@@ -131,7 +132,7 @@ function recurringInsulation(loads: 'with_loads' | 'without_loads'): LimitCalcul
 
     if (voltageClass === 'above_500') {
       return {
-        none: 'Für einen Stromkreis über 500 V nennt Tabelle 11 der DGUV Information 203-072 keinen Mindestwert.',
+        none: 'Über 500 V gilt der Mindestwert je Volt der Nennspannung des Stromkreises, und die nennt das Stromkreisverzeichnis nicht.',
       }
     }
 

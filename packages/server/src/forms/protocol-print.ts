@@ -382,7 +382,7 @@ function circuitLimitLegend(kind: string | undefined, protocol: PrintedProtocol)
       return dry && damp && it && low
         ? `nach Umgebung und Netzform des Stromkreises mindestens ${dry} trocken, ${damp} feucht, ${it} im IT-System, je Volt der Nennspannung des Protokolls, ohne Angabe 230 V, und ${text(
             low,
-          )} bei SELV und PELV; über 500 V nennt die Tabelle keinen Mindestwert; ${sources(
+          )} bei SELV und PELV; einen Stromkreis über 500 V beurteilt das Protokoll nicht, weil es seine Nennspannung nicht kennt; ${sources(
             `elektro.insulation.recurring_per_volt_${loads}_dry`,
             'elektro.insulation.recurring_selv_pelv',
           )}`

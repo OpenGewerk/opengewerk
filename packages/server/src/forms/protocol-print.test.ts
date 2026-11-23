@@ -139,7 +139,7 @@ describe('a printed recurring inspection in version 2 (#1022)', () => {
     // 50 Ω per volt in an IT system: 0,020 MΩ holds, 0,011 MΩ does not.
     expect(html.match(/<td class="figure outside">/g)).toHaveLength(1)
     expect(html).toContain(
-      'nach Umgebung und Netzform des Stromkreises mindestens 300 Ω/V trocken, 150 Ω/V feucht, 50 Ω/V im IT-System, je Volt der Nennspannung des Protokolls, ohne Angabe 230 V, und 0,25 MΩ bei SELV und PELV; über 500 V nennt die Tabelle keinen Mindestwert',
+      'nach Umgebung und Netzform des Stromkreises mindestens 300 Ω/V trocken, 150 Ω/V feucht, 50 Ω/V im IT-System, je Volt der Nennspannung des Protokolls, ohne Angabe 230 V, und 0,25 MΩ bei SELV und PELV; einen Stromkreis über 500 V beurteilt das Protokoll nicht, weil es seine Nennspannung nicht kennt',
     )
   })
 })

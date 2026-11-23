@@ -203,7 +203,7 @@ describe('version 2 of the recurring inspection (#1022)', () => {
     }
   })
 
-  it('judges SELV and PELV at 0,25 MΩ in every column, and says it has no row above 500 V', () => {
+  it('judges SELV and PELV at 0,25 MΩ in every column, and says what it lacks above 500 V', () => {
     const selv = { ...ordinary, voltageClass: 'selv_pelv' as const }
 
     for (const key of ['insulation_without_loads', 'insulation_with_loads']) {
@@ -211,7 +211,7 @@ describe('version 2 of the recurring inspection (#1022)', () => {
       expect(recurring(key, 250, damp, selv).within).toBe(true)
       expect(recurring(key, 900, {}, { ...ordinary, voltageClass: 'above_500' })).toMatchObject({
         within: null,
-        text: 'Für einen Stromkreis über 500 V nennt Tabelle 11 der DGUV Information 203-072 keinen Mindestwert.',
+        text: 'Über 500 V gilt der Mindestwert je Volt der Nennspannung des Stromkreises, und die nennt das Stromkreisverzeichnis nicht.',
       })
     }
   })
