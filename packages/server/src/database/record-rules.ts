@@ -23,6 +23,7 @@ import {
   jobTermsProblem,
   urgentRepairProblem,
   emergencyAtProblem,
+  emergencyNamedProblem,
   pvSystemLinkProblem,
   ratingProblem,
   servicePeriodProblem,
@@ -155,6 +156,16 @@ const rules: RecordRules = {
     },
     { fields: ['urgentRepair'], problem: (at) => urgentRepairProblem(at('urgentRepair')) },
     { fields: ['emergencyAt'], problem: (at) => emergencyAtProblem(at('emergencyAt')) },
+    // The surcharge named before the order (#1081), only on an emergency call.
+    {
+      fields: ['emergencyNamedFlatCents', 'emergencyNamedBasisPoints', 'emergencyAt'],
+      problem: (at) =>
+        emergencyNamedProblem(
+          at('emergencyNamedFlatCents'),
+          at('emergencyNamedBasisPoints'),
+          at('emergencyAt'),
+        ),
+    },
   ],
   installations: [
     {

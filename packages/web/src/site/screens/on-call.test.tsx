@@ -379,6 +379,66 @@ describe('the surcharge named before the order (#1024)', () => {
     expect(await screen.findByText(named, {}, { timeout: tariffWaitMs + 3_000 })).toBeTruthy()
   }, 20_000)
 
+  it('is kept with the call as named, so that the invoice charges no more (#1081)', async () => {
+    answers.set('/on-call-shifts/tariffs', tariffs)
+    const { client } = await mount('/einsatz/neu')
+
+    expect(await screen.findByText(named)).toBeTruthy()
+    await userEvent.type(screen.getByLabelText('Name'), 'Familie Arslan')
+    await userEvent.type(screen.getByLabelText('Anliegen'), 'Heizung ohne Strom')
+    await userEvent.click(screen.getByRole('button', { name: 'Einsatz anlegen' }))
+
+    await waitFor(() => {
+      expect(client.list('jobs')).toHaveLength(1)
+    })
+    expect(client.list('jobs')[0]).toMatchObject({
+      emergencyNamedFlatCents: 6000,
+      emergencyNamedBasisPoints: 0,
+    })
+  })
+
+  it('is kept as nothing named where the device knew no surcharge (#1081)', async () => {
+    const { client } = await mount('/einsatz/neu', {
+      customers: [
+        { id: 'c-2', kind: 'business', name: 'Schreinerei Lutz', isBusiness: true, phone: null },
+      ],
+    })
+
+    expect(
+      await screen.findByText(/^Dieses Gerät kennt den Notdienstzuschlag noch nicht/),
+    ).toBeTruthy()
+    await userEvent.type(screen.getByLabelText('Name'), 'Familie Arslan')
+    await userEvent.type(screen.getByLabelText('Anliegen'), 'Heizung ohne Strom')
+    await userEvent.click(screen.getByRole('button', { name: 'Einsatz anlegen' }))
+
+    await waitFor(() => {
+      expect(client.list('jobs')).toHaveLength(1)
+    })
+    expect(client.list('jobs')[0]).toMatchObject({
+      emergencyNamedFlatCents: 0,
+      emergencyNamedBasisPoints: 0,
+    })
+  })
+
+  it('is not kept for a call of a business', async () => {
+    answers.set('/on-call-shifts/tariffs', tariffs)
+    const { client } = await mount('/einsatz/neu', {
+      customers: [
+        { id: 'c-2', kind: 'business', name: 'Schreinerei Lutz', isBusiness: true, phone: null },
+      ],
+    })
+
+    await userEvent.type(await screen.findByLabelText('Kunde suchen'), 'Lutz')
+    await userEvent.click(await screen.findByRole('button', { name: 'Schreinerei Lutz' }))
+    await userEvent.type(screen.getByLabelText('Anliegen'), 'Maschine ohne Strom')
+    await userEvent.click(screen.getByRole('button', { name: 'Einsatz anlegen' }))
+
+    await waitFor(() => {
+      expect(client.list('jobs')).toHaveLength(1)
+    })
+    expect(client.list('jobs')[0]?.['emergencyNamedFlatCents']).toBeUndefined()
+  })
+
   it('is not named to a business, which is owed it on no such ground', async () => {
     answers.set('/on-call-shifts/tariffs', tariffs)
     await mount('/einsatz/neu', {

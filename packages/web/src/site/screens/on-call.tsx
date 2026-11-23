@@ -2,6 +2,7 @@ import {
   berlinWall,
   type EmergencyTariff,
   emergencyTariffText,
+  namedSurcharge,
   type RecordState,
   tariffOn,
   urgentRepairNote,
@@ -189,6 +190,9 @@ export function SiteNewCallScreen() {
   // consumer is owed the surcharge before the order (section 312e BGB).
   const consumer = customer ? customer['isBusiness'] !== true : true
   const surcharge = tariff ? emergencyTariffText(tariff, new Date(calledAt)) : null
+  // What the screen names before the order, kept with the call (#1081): the
+  // invoice charges no more, and nothing where it named nothing.
+  const named = consumer ? namedSurcharge(asking ? null : tariff, new Date(calledAt)) : null
 
   if (!may || !shift) {
     return (
@@ -260,6 +264,12 @@ export function SiteNewCallScreen() {
         description: description.trim() || null,
         urgentRepair: urgent,
         emergencyAt: calledAt,
+        ...(named
+          ? {
+              emergencyNamedFlatCents: named.flatCents,
+              emergencyNamedBasisPoints: named.basisPoints,
+            }
+          : {}),
       })
 
       if (job.outcome === 'refused') {

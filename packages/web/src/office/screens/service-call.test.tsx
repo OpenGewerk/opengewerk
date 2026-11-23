@@ -267,6 +267,70 @@ describe('a call taken on the phone (#292)', () => {
     expect(server.all('jobs')[0]?.['emergencyAt']).toBe('2026-10-28T01:14:00.000Z')
   })
 
+  // The tariffs from the day of the call: 45,00 € at night (#1080).
+  const fromTheCall = [
+    {
+      on: '2026-10-28',
+      until: '2026-11-25',
+      night: { fromMinute: 20 * 60, untilMinute: 6 * 60 },
+      surcharges: {
+        night: { flatCents: 4500, basisPoints: 0 },
+        weekend: { flatCents: 0, basisPoints: 5000 },
+        holiday: { flatCents: 0, basisPoints: 0 },
+      },
+      vatBasisPoints: 1900,
+      holidays: [],
+    },
+  ]
+
+  it('names the surcharge to a consumer before the order and keeps it with the job (#1080, #1081)', async () => {
+    answers.set('/on-call-shifts/tariffs?from=2026-10-28', fromTheCall)
+    await mount('/auftraege/service')
+
+    await type('Kunde suchen', 'Berg')
+    await userEvent.click(await screen.findByRole('button', { name: /Familie Berg/ }))
+    await userEvent.click(screen.getByRole('radio', { name: /Einfamilienhaus Lindenweg/ }))
+    await type('Anliegen', 'Heizung ohne Strom')
+    await userEvent.click(screen.getByLabelText('Notdiensteinsatz', { exact: false }))
+    await type('Anruf am', '2026-10-28')
+    await type('um', '02:14')
+
+    expect(
+      await screen.findByText(/^Vor dem Auftrag nennen: Notdienstzuschlag Nacht: 53,55/),
+    ).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Serviceeinsatz anlegen' }))
+
+    await waitFor(() => {
+      expect(server.all('jobs')).toHaveLength(1)
+    })
+    expect(server.all('jobs')[0]).toMatchObject({
+      emergencyNamedFlatCents: 4500,
+      emergencyNamedBasisPoints: 0,
+    })
+  })
+
+  it('names nothing to a business, and keeps nothing named (#1080)', async () => {
+    answers.set('/on-call-shifts/tariffs?from=2026-10-28', fromTheCall)
+    await mount('/auftraege/service')
+
+    await type('Kunde suchen', 'Lutz')
+    await type('Name', 'Schreinerei Lutz')
+    await userEvent.selectOptions(screen.getByLabelText('Art'), 'business')
+    await type('Ort', 'Ladenburg')
+    await type('Anliegen', 'Maschine ohne Strom')
+    await userEvent.click(screen.getByLabelText('Notdiensteinsatz', { exact: false }))
+    await type('Anruf am', '2026-10-28')
+    await type('um', '02:14')
+
+    expect(screen.queryByText(/^Vor dem Auftrag nennen/)).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Serviceeinsatz anlegen' }))
+
+    await waitFor(() => {
+      expect(server.all('jobs')).toHaveLength(1)
+    })
+    expect(server.all('jobs')[0]?.['emergencyNamedFlatCents']).toBeUndefined()
+  })
+
   it('marks whoever is away that day', async () => {
     await mount('/auftraege/service')
 

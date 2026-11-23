@@ -9,6 +9,8 @@ import {
   emergencySurchargeText,
   type EmergencyTariff,
   emergencyTariffText,
+  chargeableSurcharge,
+  namedSurcharge,
   onCallShiftProblem,
   shiftCovers,
   tariffOn,
@@ -219,5 +221,75 @@ describe('a call taken on call and the rest period (#293)', () => {
     expect(
       workingTimeWarnings(entries, '2026-10-28', shippedRules).map((warning) => warning.kind),
     ).toContain('rest')
+  })
+})
+
+describe('the surcharge named before the order and the one charged (#1081)', () => {
+  const tariff: EmergencyTariff = {
+    on: '2026-10-26',
+    until: '2026-11-22',
+    night: { fromMinute: 20 * 60, untilMinute: 6 * 60 },
+    surcharges: {
+      night: { flatCents: 4500, basisPoints: 0 },
+      weekend: { flatCents: 0, basisPoints: 5000 },
+      holiday: { flatCents: 0, basisPoints: 0 },
+    },
+    vatBasisPoints: 1900,
+    holidays: [],
+  }
+
+  it('is the surcharge of the kind of the call by the tariff named from', () => {
+    expect(namedSurcharge(tariff, wednesday('02:14'))).toEqual({ flatCents: 4500, basisPoints: 0 })
+    expect(namedSurcharge(tariff, new Date('2026-10-31T11:00:00+01:00'))).toEqual({
+      flatCents: 0,
+      basisPoints: 5000,
+    })
+  })
+
+  it('is nothing without a tariff, and in ordinary hours', () => {
+    expect(namedSurcharge(null, wednesday('02:14'))).toEqual({ flatCents: 0, basisPoints: 0 })
+    expect(namedSurcharge(tariff, wednesday('10:00'))).toEqual({ flatCents: 0, basisPoints: 0 })
+  })
+
+  it('charges the one of the day where nothing was recorded, or where it comes to less', () => {
+    const day = { flatCents: 6000, basisPoints: 0 }
+
+    expect(chargeableSurcharge(day, null, 10_000)).toBe(day)
+    expect(chargeableSurcharge(day, { flatCents: 4500, basisPoints: 0 }, 10_000)).toEqual({
+      flatCents: 4500,
+      basisPoints: 0,
+    })
+    expect(
+      chargeableSurcharge(
+        { flatCents: 3000, basisPoints: 0 },
+        { flatCents: 4500, basisPoints: 0 },
+        0,
+      ),
+    ).toEqual({
+      flatCents: 3000,
+      basisPoints: 0,
+    })
+  })
+
+  it('compares a flat amount with a percentage on the hours of the invoice', () => {
+    const percent = { flatCents: 0, basisPoints: 5000 }
+    const flat = { flatCents: 4500, basisPoints: 0 }
+
+    // 50 % of 60,00 € is 30,00 €, less than 45,00 €; of 120,00 € it is more.
+    expect(chargeableSurcharge(flat, percent, 6000)).toBe(percent)
+    expect(chargeableSurcharge(flat, percent, 12_000)).toBe(flat)
+  })
+
+  it('charges nothing where nothing was named', () => {
+    expect(
+      chargeableSurcharge(
+        { flatCents: 4500, basisPoints: 0 },
+        { flatCents: 0, basisPoints: 0 },
+        6800,
+      ),
+    ).toEqual({
+      flatCents: 0,
+      basisPoints: 0,
+    })
   })
 })

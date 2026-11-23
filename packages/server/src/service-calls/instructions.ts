@@ -31,6 +31,9 @@ export interface CallForInstructions {
   readonly urgentRepair: boolean
   /** When the customer called, for an emergency call (#293); null otherwise. */
   readonly emergencyAt: Date | null
+  /** The surcharge named before the order (#1081); null where nobody recorded one. */
+  readonly emergencyNamedFlatCents: number | null
+  readonly emergencyNamedBasisPoints: number | null
   readonly customerId: CustomerId
   readonly customerName: string
   readonly customerEmail: string | null
@@ -74,6 +77,8 @@ export async function callOf(
       designation: jobs.designation,
       urgentRepair: jobs.urgentRepair,
       emergencyAt: jobs.emergencyAt,
+      emergencyNamedFlatCents: jobs.emergencyNamedFlatCents,
+      emergencyNamedBasisPoints: jobs.emergencyNamedBasisPoints,
       customerId: jobs.customerId,
       customerName: customers.name,
       customerEmail: customers.email,

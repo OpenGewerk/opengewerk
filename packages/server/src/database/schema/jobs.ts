@@ -14,6 +14,7 @@ import {
   date,
   foreignKey,
   index,
+  integer,
   pgEnum,
   pgTable,
   text,
@@ -64,6 +65,12 @@ export const jobs = pgTable(
     urgentRepair: boolean('urgent_repair').notNull().default(false),
     // When the customer called for an emergency (#293), null for any other call.
     emergencyAt: timestamp('emergency_at', { withTimezone: true }),
+    // The surcharge named to a consumer before the order (#1081): a flat amount
+    // in cents or a percentage on the working time, as the tariff of the device
+    // had it; both zero where none could be named. Null for a call nobody
+    // recorded it for, which is billed by the settings of the day as before.
+    emergencyNamedFlatCents: integer('emergency_named_flat_cents'),
+    emergencyNamedBasisPoints: integer('emergency_named_basis_points'),
     // The maintenance contract whose deadline made this service job, and the day
     // that maintenance is due (#294); written by the deadline engine, one job per
     // contract and day, and kept when the job is deleted so the day is not made again.
@@ -110,6 +117,13 @@ export const jobs = pgTable(
       'jobs_maintenance_visit',
       sql`(${table.maintenanceContractId} is null) = (${table.maintenanceDueOn} is null)
         and (${table.maintenanceContractId} is null or ${table.kind} = 'service')`,
+    ),
+    check(
+      'jobs_emergency_named',
+      sql`(${table.emergencyNamedFlatCents} is null) = (${table.emergencyNamedBasisPoints} is null)
+        and (${table.emergencyNamedFlatCents} is null or (${table.emergencyAt} is not null
+          and ${table.emergencyNamedFlatCents} between 0 and 100000000
+          and ${table.emergencyNamedBasisPoints} between 0 and 100000))`,
     ),
     unique('jobs_maintenance_visit_key').on(table.maintenanceContractId, table.maintenanceDueOn),
     index('jobs_customer_idx').on(table.tenantId, table.customerId),

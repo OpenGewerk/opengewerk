@@ -1079,6 +1079,13 @@
       "when": 1795400127498,
       "tag": "0153_circuit_voltage_class",
       "breakpoints": true
+    },
+    {
+      "idx": 154,
+      "version": "7",
+      "when": 1795425538468,
+      "tag": "0154_emergency_named",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,7 @@
 import {
   addDays,
   berlinClock,
+  chargeableSurcharge,
   type ConflictReason,
   defaultNight,
   emergencyKindAt,
@@ -8,6 +9,7 @@ import {
   emergencyKinds,
   type EmergencySurcharge,
   emergencySurchargeLine,
+  emergencySurchargeText,
   type EmergencyTariff,
   emergencyTariffText,
   holidaysIn,
@@ -125,7 +127,11 @@ export async function surchargeLineFor(
   }
 
   const [job] = await tx
-    .select({ emergencyAt: jobs.emergencyAt })
+    .select({
+      emergencyAt: jobs.emergencyAt,
+      namedFlatCents: jobs.emergencyNamedFlatCents,
+      namedBasisPoints: jobs.emergencyNamedBasisPoints,
+    })
     .from(jobs)
     .where(eq(jobs.id, jobId as JobId))
 
@@ -148,7 +154,21 @@ export async function surchargeLineFor(
     .filter((line) => hourUnits.includes(line.unit))
     .reduce((sum, line) => sum + line.netCents, 0)
 
-  return emergencySurchargeLine(kind, tariff.surcharges[kind], hourNetCents)
+  return emergencySurchargeLine(
+    kind,
+    chargeableSurcharge(tariff.surcharges[kind], namedOf(job), hourNetCents),
+    hourNetCents,
+  )
+}
+
+/** The surcharge named before the order of a call (#1081), or null where nobody recorded one. */
+function namedOf(job: {
+  readonly namedFlatCents: number | null
+  readonly namedBasisPoints: number | null
+}): EmergencySurcharge | null {
+  return job.namedFlatCents === null || job.namedBasisPoints === null
+    ? null
+    : { flatCents: job.namedFlatCents, basisPoints: job.namedBasisPoints }
 }
 
 /**
@@ -253,14 +273,30 @@ export async function emergencyTariffsFrom(
  */
 export async function callSurchargeText(
   tx: TenantTransaction,
-  call: { readonly emergencyAt: Date | null; readonly isBusiness: boolean },
+  call: {
+    readonly emergencyAt: Date | null
+    readonly isBusiness: boolean
+    readonly emergencyNamedFlatCents: number | null
+    readonly emergencyNamedBasisPoints: number | null
+  },
 ): Promise<string | null> {
   if (call.emergencyAt === null || call.isBusiness) {
     return null
   }
 
-  return emergencyTariffText(
-    await emergencyTariffOn(tx, berlinClock(call.emergencyAt).day),
-    call.emergencyAt,
-  )
+  const tariff = await emergencyTariffOn(tx, berlinClock(call.emergencyAt).day)
+  const named = namedOf({
+    namedFlatCents: call.emergencyNamedFlatCents,
+    namedBasisPoints: call.emergencyNamedBasisPoints,
+  })
+
+  if (named === null) {
+    return emergencyTariffText(tariff, call.emergencyAt)
+  }
+
+  // What was named is what the customer heard (#1081), and the invoice charges
+  // no more; where nothing was named, the mail names nothing either.
+  const kind = emergencyKindAt(call.emergencyAt, new Set(tariff.holidays), tariff.night)
+
+  return kind === null ? null : emergencySurchargeText(kind, named, tariff.vatBasisPoints)
 }

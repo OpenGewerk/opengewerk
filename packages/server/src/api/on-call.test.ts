@@ -552,6 +552,105 @@ describe('the surcharge of an emergency call', () => {
   })
 })
 
+describe('the surcharge named before the order (#1081)', () => {
+  async function invoiceOf(jobId: string) {
+    return (
+      await post(`/documents/${await aSignedReport(jobId)}/successors`, { kind: 'final_invoice' })
+    ).id
+  }
+
+  it('is the most an invoice charges, and nothing named is nothing charged', async () => {
+    // The settings charge 45,00 € at night.
+    const lower = aCall({ emergencyNamedFlatCents: 3000, emergencyNamedBasisPoints: 0 })
+    const higher = aCall({ emergencyNamedFlatCents: 9000, emergencyNamedBasisPoints: 0 })
+    const none = aCall({ emergencyNamedFlatCents: 0, emergencyNamedBasisPoints: 0 })
+
+    await push(app, office(), [lower.operation, higher.operation, none.operation])
+
+    expect((await linesOf(await invoiceOf(lower.id))).at(-1)).toEqual({
+      designation: 'Notdienstzuschlag Nacht',
+      unit_price_cents: 3000,
+      unit: 'flat_rate',
+    })
+    expect((await linesOf(await invoiceOf(higher.id))).at(-1)).toMatchObject({
+      unit_price_cents: 4500,
+    })
+    expect((await linesOf(await invoiceOf(none.id))).map((line) => line.designation)).toEqual([
+      'Arbeitszeit',
+    ])
+  })
+
+  it('comes from the device that took the call on call, with the job', async () => {
+    // Max is on call now (see above); the call came an hour ago.
+    const call = aCall({
+      emergencyAt: new Date(Date.now() - 3_600_000).toISOString(),
+      emergencyNamedFlatCents: 4500,
+      emergencyNamedBasisPoints: 0,
+    })
+    const answer = await push(app, max(), [call.operation])
+
+    expect(answer.receipts.map((receipt) => receipt.outcome)).toEqual(['applied'])
+    expect(
+      (
+        await admin.query(
+          'select emergency_named_flat_cents, emergency_named_basis_points from jobs where id = $1',
+          [call.id],
+        )
+      ).rows,
+    ).toEqual([{ emergency_named_flat_cents: 4500, emergency_named_basis_points: 0 }])
+  })
+
+  it('is refused in one part, out of bounds, or on a job that is no emergency', async () => {
+    const half = aCall({ emergencyNamedFlatCents: 3000 })
+    const negative = aCall({ emergencyNamedFlatCents: -1, emergencyNamedBasisPoints: 0 })
+    const ordinary = aCall({
+      emergencyAt: null,
+      emergencyNamedFlatCents: 3000,
+      emergencyNamedBasisPoints: 0,
+    })
+    // A transfer with a record against the rules is refused as a whole, with the sentence.
+    const messages = []
+
+    for (const call of [half, negative, ordinary]) {
+      messages.push((await push(app, office(), [call.operation], 400)).message)
+    }
+
+    expect(messages).toEqual([
+      expect.stringMatching(/beide oder keinen/),
+      expect.stringMatching(/ganze Zahl/),
+      expect.stringMatching(/nur ein Notdiensteinsatz/),
+    ])
+
+    await post(
+      '/jobs',
+      {
+        customerId: customer,
+        kind: 'service',
+        designation: 'Steckdose',
+        emergencyNamedFlatCents: 3000,
+        emergencyNamedBasisPoints: 0,
+      },
+      office(),
+      422,
+    )
+  })
+
+  it('is taken by the office at its route, with the moment of the call', async () => {
+    const job = await post('/jobs', {
+      customerId: customer,
+      kind: 'service',
+      designation: 'Sicherung fliegt',
+      emergencyAt: atNight,
+      emergencyNamedFlatCents: 2500,
+      emergencyNamedBasisPoints: 0,
+    })
+
+    expect((await linesOf(await invoiceOf(job.id))).at(-1)).toMatchObject({
+      unit_price_cents: 2500,
+    })
+  })
+})
+
 describe('the tariffs of an emergency call (#1024)', () => {
   const today = berlinClock(new Date()).day
 
@@ -604,6 +703,25 @@ describe('the tariffs of an emergency call (#1024)', () => {
 
     expect(holidays).toContain(`${String(year)}-12-25`)
     expect(holidays).toContain(`${String(year + 1)}-01-01`)
+  })
+
+  it('begin on another day where the office notes a call down afterwards (#1080)', async () => {
+    const answer = (
+      await http()
+        .get('/on-call-shifts/tariffs?from=2026-10-28')
+        .set('x-test-identity', office())
+        .expect(200)
+    ).body as EmergencyTariff[]
+
+    expect(answer[0]).toMatchObject({
+      on: '2026-10-28',
+      until: '2026-11-25',
+      surcharges: { night: { flatCents: 4500, basisPoints: 0 } },
+    })
+    await http()
+      .get('/on-call-shifts/tariffs?from=2026-02-30')
+      .set('x-test-identity', office())
+      .expect(400)
   })
 
   it('name no tax for a business that claims section 19 UStG', async () => {

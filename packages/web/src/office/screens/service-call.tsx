@@ -3,8 +3,11 @@ import {
   berlinInstant,
   type CustomerKind,
   customerKinds,
+  emergencyTariffText,
   type IsoDate,
+  namedSurcharge,
   type RecordState,
+  tariffOn,
   urgentRepairNote,
 } from '@opengewerk/domain'
 import { Button, Field, Panel, SelectField, TextArea } from '@opengewerk/platform-web'
@@ -31,6 +34,7 @@ import { useMay } from '../../app/queries.js'
 import { urgentRepairTitle } from '../../app/service-calls.js'
 import { usePeople } from '../../app/tasks.js'
 import { boardFacts, boardKey, createAppointment } from '../../session/appointments.js'
+import { emergencyTariffs } from '../../session/on-call.js'
 
 /**
  * A call taken on the phone (#292, Feature-Gliederung 4.1): who calls, where,
@@ -62,6 +66,37 @@ function minuteOf(clock: string): number {
   const [hours, minutes] = clock.split(':').map(Number)
 
   return (hours ?? 0) * 60 + (minutes ?? 0)
+}
+
+/**
+ * The surcharge to name to a consumer before the order of an emergency call
+ * (#1080), under the moment of the call: section 312e BGB lets a business
+ * charge it only after it told them, and the job keeps what was named.
+ */
+function SurchargeNote({
+  asking,
+  failed,
+  known,
+  text: named,
+}: {
+  readonly asking: boolean
+  readonly failed: boolean
+  readonly known: boolean
+  readonly text: string | null
+}) {
+  const sentence = asking
+    ? 'Der Notdienstzuschlag wird gerade vom Server geholt.'
+    : named
+      ? `Vor dem Auftrag nennen: ${named}. Nur dann darf der Betrieb ihn berechnen.`
+      : known
+        ? 'Zu diesem Zeitpunkt fällt kein Notdienstzuschlag an.'
+        : failed
+          ? 'Der Notdienstzuschlag ließ sich nicht holen. Ohne ihn vor dem Auftrag zu nennen, darf der Betrieb ihn nicht berechnen.'
+          : null
+
+  return sentence ? (
+    <p className="w-full text-[13px] leading-[1.4] text-ink-muted">{sentence}</p>
+  ) : null
 }
 
 /** A customer as the search finds it: by name, telephone number or place. */
@@ -215,6 +250,22 @@ export function NewServiceCallScreen() {
     [customers, search],
   )
   const customer = customerId ? customers.find((record) => record['id'] === customerId) : undefined
+  // Only a consumer is owed the surcharge before the order (#1080, section
+  // 312e BGB), and a new caller is one unless the office says otherwise.
+  const consumer = customer ? customer['isBusiness'] !== true : fresh.kind === 'private'
+  const calledMoment = /^\d{2}:\d{2}$/.test(calledAt)
+    ? berlinInstant(calledOn, minuteOf(calledAt))
+    : null
+  const tariffs = useQuery({
+    queryKey: ['emergency-tariffs', calledOn],
+    queryFn: ({ signal }) => emergencyTariffs(signal, calledOn),
+    enabled: emergency && consumer,
+    retry: false,
+  })
+  const asking = tariffs.fetchStatus === 'fetching'
+  const tariff =
+    tariffs.data && calledMoment && !asking ? tariffOn(tariffs.data, calledMoment) : null
+  const surcharge = tariff && calledMoment ? emergencyTariffText(tariff, calledMoment) : null
   const theirSites = useMemo(
     () =>
       customerId
@@ -344,6 +395,13 @@ export function NewServiceCallScreen() {
         description: description.trim() || null,
         urgentRepair: urgent,
         emergencyAt: emergency ? berlinInstant(calledOn, minuteOf(calledAt)).toISOString() : null,
+        // What the office named before the order (#1081): the invoice charges no more.
+        ...(emergency && consumer
+          ? (({ flatCents, basisPoints }) => ({
+              emergencyNamedFlatCents: flatCents,
+              emergencyNamedBasisPoints: basisPoints,
+            }))(namedSurcharge(tariff, berlinInstant(calledOn, minuteOf(calledAt))))
+          : {}),
       })
 
       if (job.outcome === 'refused') {
@@ -631,7 +689,7 @@ export function NewServiceCallScreen() {
       />
       <Box
         label="Notdiensteinsatz"
-        hint="Mit dem Zeitpunkt des Anrufs. Nachts, am Wochenende oder am Feiertag bekommt die Rechnung den Notdienstzuschlag aus den Einstellungen."
+        hint="Mit dem Zeitpunkt des Anrufs. Nachts, am Wochenende oder am Feiertag bekommt die Rechnung den Notdienstzuschlag aus den Einstellungen, einem Verbraucher höchstens den, der ihm vor dem Auftrag genannt wurde."
         checked={emergency}
         onChange={setEmergency}
       />
@@ -657,6 +715,14 @@ export function NewServiceCallScreen() {
               }}
             />
           </div>
+          {consumer ? (
+            <SurchargeNote
+              asking={asking}
+              failed={tariffs.isError}
+              text={surcharge}
+              known={tariff !== null}
+            />
+          ) : null}
         </div>
       ) : null}
     </Step>

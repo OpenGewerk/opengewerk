@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { type Permission, permissionsOfRoles, type RoleKey } from './authorization.js'
-import { followUpProblem, isJobProgress } from './job.js'
+import { emergencyNamedProblem, followUpProblem, isJobProgress } from './job.js'
 
 describe('the progress of a job', () => {
   it('is finishing it and taking it up', () => {
@@ -91,5 +91,27 @@ describe('a follow-up job (#170)', () => {
     expect(followUpProblem({ id: 'j-1', customerId: 'c-1' }, finished)).toBe(
       'Ein Auftrag ist nicht sein eigener Vorgänger.',
     )
+  })
+})
+
+describe('the surcharge named before the order (#1081)', () => {
+  const at = '2026-10-28T01:14:00.000Z'
+
+  it('is both parts or neither, on an emergency call', () => {
+    expect(emergencyNamedProblem(undefined, undefined, null)).toBeNull()
+    expect(emergencyNamedProblem(null, null, at)).toBeNull()
+    expect(emergencyNamedProblem(4500, 0, at)).toBeNull()
+    expect(emergencyNamedProblem(0, 0, at)).toBeNull()
+    expect(emergencyNamedProblem(4500, null, at)).toMatch(/beide oder keinen/)
+    expect(emergencyNamedProblem(null, 0, at)).toMatch(/beide oder keinen/)
+    expect(emergencyNamedProblem(4500, 0, null)).toMatch(/nur ein Notdiensteinsatz/)
+  })
+
+  it('is whole numbers within the bounds of a setting', () => {
+    expect(emergencyNamedProblem(-1, 0, at)).toMatch(/ganze Zahl/)
+    expect(emergencyNamedProblem(45.5, 0, at)).toMatch(/ganze Zahl/)
+    expect(emergencyNamedProblem(0, 100_001, at)).toMatch(/ganze Zahl/)
+    expect(emergencyNamedProblem(100_000_001, 0, at)).toMatch(/ganze Zahl/)
+    expect(emergencyNamedProblem('4500', 0, at)).toMatch(/ganze Zahl/)
   })
 })

@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common'
 import {
   emergencyAtProblem,
+  emergencyNamedProblem,
   type JobId,
   jobTermsProblem,
   urgentRepairProblem,
@@ -56,14 +57,30 @@ const writableFields = [
   'urgentRepair',
   // When the customer called for an emergency (#293).
   'emergencyAt',
+  // The surcharge the office named before the order (#1081).
+  'emergencyNamedFlatCents',
+  'emergencyNamedBasisPoints',
 ] as const
 
-/** Refuses terms of a job that are no yes or no (#310), with the sentence of `jobTermsProblem`. */
-function requireTerms(values: Readonly<Record<string, unknown>>): void {
+/**
+ * Refuses terms of a job that are no yes or no (#310), with the sentence of
+ * `jobTermsProblem`, and a named surcharge (#1081) that does not fit the job
+ * as it stands after the change: `current` is the job before a change.
+ */
+function requireTerms(
+  values: Readonly<Record<string, unknown>>,
+  current?: Readonly<Record<string, unknown>>,
+): void {
+  const after = (field: string) => (field in values ? values[field] : (current?.[field] ?? null))
   const problem =
     jobTermsProblem(values['vobAgreed'], values['buildingWork']) ??
     urgentRepairProblem(values['urgentRepair']) ??
-    emergencyAtProblem(values['emergencyAt'])
+    emergencyAtProblem(values['emergencyAt']) ??
+    emergencyNamedProblem(
+      after('emergencyNamedFlatCents'),
+      after('emergencyNamedBasisPoints'),
+      after('emergencyAt'),
+    )
 
   if (problem !== null) {
     throw new UnprocessableEntityException(problem)
@@ -168,7 +185,6 @@ export class JobsController {
   ) {
     const values = pick(body, writableFields)
     requireSomething(values)
-    requireTerms(values)
 
     const [updated] = await this.database.forTenant(identity, async (tx) => {
       await requireReferences(tx, jobs, values, false)
@@ -177,6 +193,8 @@ export class JobsController {
         .select()
         .from(jobs)
         .where(and(eq(jobs.id, id as JobId), isNull(jobs.deletedAt)))
+
+      requireTerms(values, current)
 
       if (current) {
         await requireFollowUp(tx, id, values, current)

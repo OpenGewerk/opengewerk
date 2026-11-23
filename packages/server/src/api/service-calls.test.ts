@@ -168,6 +168,7 @@ async function aCall(
     tenant?: TenantId
     urgentRepair?: boolean
     emergencyAt?: string
+    named?: readonly [number, number]
   } = {},
 ) {
   const who = office(options.tenant)
@@ -190,6 +191,12 @@ async function aCall(
       designation: 'Sicherung Küche löst aus',
       urgentRepair: options.urgentRepair ?? false,
       ...(options.emergencyAt ? { emergencyAt: options.emergencyAt } : {}),
+      ...(options.named
+        ? {
+            emergencyNamedFlatCents: options.named[0],
+            emergencyNamedBasisPoints: options.named[1],
+          }
+        : {}),
     },
     who,
   )
@@ -704,6 +711,35 @@ describe('the instructions by mail', () => {
     )
     expect(bodyOf(atNoon)).toContain('im Anhang erhalten Sie zu')
     expect(bodyOf(atNoon)).not.toContain('Notdienst')
+  })
+
+  it('name the surcharge named before the order, and none where none was (#1081)', async () => {
+    // At night, where the settings charge 45,00 € (see above).
+    const { job: lower } = await aCall({
+      emergencyAt: '2026-10-28T01:14:00.000Z',
+      named: [3000, 0],
+    })
+    const { job: none } = await aCall({ emergencyAt: '2026-10-28T01:14:00.000Z', named: [0, 0] })
+
+    for (const job of [lower, none]) {
+      await http()
+        .post(`/jobs/${job}/instructions/mail`)
+        .set('x-test-identity', office())
+        .send({})
+        .expect(202)
+    }
+
+    const { rows } = await admin.query<{ job_id: string; body: string }>(
+      "select job_id, body from mail_outbox where kind = 'job_instructions' and job_id = any($1)",
+      [[lower, none]],
+    )
+    const bodyOf = (job: string) => rows.find((row) => row.job_id === job)?.body ?? ''
+
+    expect(bodyOf(lower)).toContain(
+      'Notdienstzuschlag Nacht: 35,70\u00a0€ einschließlich 19 % Umsatzsteuer',
+    )
+    expect(bodyOf(none)).toContain('im Anhang erhalten Sie zu')
+    expect(bodyOf(none)).not.toContain('Notdienst')
   })
 
   it('are not written for a job given to another customer while they were asked for', async () => {

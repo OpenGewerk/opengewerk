@@ -310,3 +310,39 @@ export function tariffStarts(
 
   return [...starts].sort()
 }
+
+/**
+ * What a device records as named for a call to a consumer (#1081): the
+ * surcharge of the kind of the call by the tariff it named it from, nothing
+ * (both zero) where it knew no tariff for the day, was still asking, or the
+ * call falls in ordinary hours. The invoice charges no more than this.
+ */
+export function namedSurcharge(tariff: EmergencyTariff | null, moment: Date): EmergencySurcharge {
+  const kind = tariff ? emergencyKindAt(moment, new Set(tariff.holidays), tariff.night) : null
+
+  return tariff && kind ? tariff.surcharges[kind] : { flatCents: 0, basisPoints: 0 }
+}
+
+/**
+ * The surcharge an invoice may charge for a call (#1081): the one of the day,
+ * or what was named to the customer before the order where that comes to
+ * less on these hours. Section 312e BGB lets a business charge a consumer
+ * other costs only after it told them, so a named surcharge is the most; with
+ * nothing recorded, the one of the day.
+ */
+export function chargeableSurcharge(
+  day: EmergencySurcharge,
+  named: EmergencySurcharge | null,
+  hourNetCents: number,
+): EmergencySurcharge {
+  if (named === null) {
+    return day
+  }
+
+  const cost = (surcharge: EmergencySurcharge) =>
+    surcharge.flatCents > 0
+      ? surcharge.flatCents
+      : Math.round((hourNetCents * surcharge.basisPoints) / 10_000)
+
+  return cost(named) < cost(day) ? named : day
+}

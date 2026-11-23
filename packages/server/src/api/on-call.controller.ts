@@ -16,6 +16,7 @@ import {
   berlinClock,
   type EmergencyTariff,
   isAllowed,
+  type IsoDate,
   type OnCallShiftId,
   onCallShiftProblem,
 } from '@opengewerk/domain'
@@ -33,6 +34,15 @@ import { onCallShifts } from '../database/schema/index.js'
 import { emergencyTariffsFrom } from '../service-calls/on-call.js'
 import { RequiresPermission } from './authorization.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
+
+/** Whether a value is a day of the calendar written as 2026-11-23, and one that exists. */
+function isCalendarDay(value: unknown): value is IsoDate {
+  return (
+    typeof value === 'string' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+    new Date(`${value}T12:00:00Z`).toISOString().slice(0, 10) === value
+  )
+}
 
 /** A time of the on-call plan as the office shows it. */
 export interface OnCallShiftView {
@@ -130,13 +140,21 @@ export class OnCallController {
    * The surcharges of an emergency call from today on, as far as a time on
    * call reaches (#1024), for whoever takes calls: a device keeps them and
    * names the surcharge of the day of a call to the caller before the order,
-   * with a network or without.
+   * with a network or without. From another day where `from` names one: the
+   * office takes a call it notes down afterwards (#1080).
    */
   @Get('tariffs')
   @RequiresPermission('job.on_call')
-  tariffs(@CurrentIdentity() identity: RequestIdentity): Promise<readonly EmergencyTariff[]> {
+  tariffs(
+    @CurrentIdentity() identity: RequestIdentity,
+    @Query('from') from: unknown,
+  ): Promise<readonly EmergencyTariff[]> {
+    if (from !== undefined && !isCalendarDay(from)) {
+      throw new BadRequestException('Der erste Tag ist ein Datum, etwa 2026-11-23.')
+    }
+
     return this.database.forTenant(identity, (tx) =>
-      emergencyTariffsFrom(tx, berlinClock(new Date()).day),
+      emergencyTariffsFrom(tx, from ?? berlinClock(new Date()).day),
     )
   }
 
