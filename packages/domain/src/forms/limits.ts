@@ -6,7 +6,12 @@ import type { MeasurementField, MeasurementUnit } from './definition.js'
 import { tradeForms } from './engine.js'
 import { isRuleLimit } from '@opengewerk/platform-domain'
 
-export { type CircuitFacts, type LimitVerdict, measuredNumber } from '@opengewerk/platform-domain'
+export {
+  type CircuitFacts,
+  type LimitVerdict,
+  lowerEnd,
+  measuredNumber,
+} from '@opengewerk/platform-domain'
 export type { MeasuringConditions } from './circuit-limits.js'
 
 /** A value in thousandths, as it is written: `0,85 Ω`. */

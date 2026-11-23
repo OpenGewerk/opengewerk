@@ -9,7 +9,7 @@ import {
   formRegistry,
   type MeasurementField,
 } from './definition.js'
-import { formEngine, type RepeatList } from './engine.js'
+import { formEngine, lowerEnd, measuredNumber, type RepeatList } from './engine.js'
 import { formValuesText, type FormValues, type GroupBlock } from './values.js'
 
 /**
@@ -534,6 +534,32 @@ describe('the verdict on a measured value', () => {
     })
     // A limit a value may reach takes the same value as within.
     expect(engine.limitVerdict(temperature, 25_000, { rules, on: '2026-10-04' }).within).toBe(true)
+  })
+
+  it('shows a value with every place it has, at least those of its field (#1089)', () => {
+    expect(measuredNumber(15_010, 1)).toBe('15,01')
+    expect(measuredNumber(30_000, 1)).toBe('30,0')
+    expect(measuredNumber(2_875, 2)).toBe('2,875')
+    expect(measuredNumber(-15_050, 1)).toBe('-15,05')
+    expect(measuredNumber(130_000, 0)).toBe('130')
+    expect(measuredNumber(130_500, 0)).toBe('130,5')
+  })
+
+  it('says where a range begins: above a shown value, or from its least value (#1089)', () => {
+    expect(lowerEnd(15_001, 1)).toEqual({ above: true, milli: 15_000 })
+    expect(lowerEnd(5_001, 1)).toEqual({ above: true, milli: 5_000 })
+    expect(lowerEnd(130_000, 0)).toEqual({ above: false, milli: 130_000 })
+    expect(lowerEnd(15_123, 1)).toEqual({ above: false, milli: 15_123 })
+    expect(lowerEnd(-14_999, 1)).toEqual({ above: true, milli: -15_000 })
+  })
+
+  it('judges the value as measured and says the limit as exactly as it holds (#1089)', () => {
+    // 25,04 °C is above 25,0 and stands with its two places beside the limit.
+    expect(engine.limitVerdict(temperature, 25_040, { rules, on: '2026-10-04' })).toMatchObject({
+      within: false,
+      text: 'Außerhalb des Grenzwerts, höchstens 25,0 °C.',
+    })
+    expect(engine.formatMeasured(25_040, 'degree_celsius', 1)).toBe('25,04 °C')
   })
 
   it('works out a limit from what the block is about, and says so when it is about nothing', () => {

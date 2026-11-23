@@ -442,7 +442,7 @@ describe('a test protocol in the office (#79)', () => {
 
       // 8 mA lie between half and all of 10 mA, and under half of 30 mA.
       expect(
-        await screen.findByText(/^Innerhalb des Grenzwerts, zwischen 5,1 und 10,0 mA\./),
+        await screen.findByText(/^Innerhalb des Grenzwerts, über 5,0 bis 10,0 mA\./),
       ).toBeTruthy()
     },
   )
@@ -607,7 +607,7 @@ describe('a test protocol in the office (#79)', () => {
     expect(within(measured).getByText('noch nichts eingetragen')).toBeTruthy()
     expect(
       screen.getByText(
-        'F1, Schleifenimpedanz Zs 3,41 Ω: Außerhalb des Grenzwerts, höchstens 2,87 Ω.',
+        'F1, Schleifenimpedanz Zs 3,41 Ω: Außerhalb des Grenzwerts, höchstens 2,875 Ω.',
       ),
     ).toBeTruthy()
 

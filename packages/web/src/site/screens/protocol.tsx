@@ -9,6 +9,7 @@ import {
   type FieldValue,
   fieldsOf,
   formatMeasured,
+  lowerEnd,
   measuredNumber,
   type FormDefinition,
   type FormSection,
@@ -1015,8 +1016,8 @@ const limitSigns: Readonly<Record<RuleLimitKind, string>> = {
 }
 
 /**
- * "≤ 2,87 Ω": the limit beside the label, as the board writes it, or nothing;
- * a range as "15,0 bis 30,0 mA" (#1021).
+ * "≤ 2,875 Ω": the limit beside the label, as exactly as it holds (#1089), or
+ * nothing; a range as "über 15,0 bis 30,0 mA" (#1021).
  */
 export function shortLimit(
   field: MeasurementField,
@@ -1028,11 +1029,11 @@ export function shortLimit(
   }
 
   if (fromMilli !== undefined) {
-    // Each end rounded towards the inside, as the sentence under the value is.
-    const step = 10 ** Math.max(0, 3 - field.decimals)
+    // Said as the sentence under the value says it.
+    const start = lowerEnd(fromMilli, field.decimals)
 
-    return `${measuredNumber(Math.ceil(fromMilli / step) * step, field.decimals)} bis ${formatMeasured(
-      Math.floor(limitMilli / step) * step,
+    return `${start.above ? 'über ' : ''}${measuredNumber(start.milli, field.decimals)} bis ${formatMeasured(
+      limitMilli,
       field.unit,
       field.decimals,
     )}`
@@ -1045,13 +1046,7 @@ export function shortLimit(
     : limitIsMinimum(field)
       ? 'at_least'
       : 'at_most'
-  // Rounded towards the strict side, as the sentence under the value is: down
-  // for "höchstens", up for "mindestens" and "unter".
-  const step = 10 ** Math.max(0, 3 - field.decimals)
-  const shown =
-    kind === 'at_most' ? Math.floor(limitMilli / step) * step : Math.ceil(limitMilli / step) * step
-
-  return `${limitSigns[kind]} ${formatMeasured(shown, field.unit, field.decimals)}`
+  return `${limitSigns[kind]} ${formatMeasured(limitMilli, field.unit, field.decimals)}`
 }
 
 /**

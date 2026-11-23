@@ -473,12 +473,12 @@ describe('a measured value against its limit (#79)', () => {
       ratedResidualCurrentMilli: null,
     } as const
 
-    // 230 V over five times 16 A: 2,875 Ω, and written as 2,87 Ω, not 2,88:
-    // a measured 2,88 Ω is outside, and the limit it is told must say so.
+    // 230 V over five times 16 A: 2,875 Ω, written as exactly as it holds
+    // (#1089): a measured 2,88 Ω is outside, and the limit it is told says so.
     expect(limitVerdict(loop, 2_880, { rules, on, circuit: b16 })).toMatchObject({
       within: false,
       limitMilli: 2_875,
-      text: 'Außerhalb des Grenzwerts, höchstens 2,87 Ω.',
+      text: 'Außerhalb des Grenzwerts, höchstens 2,875 Ω.',
     })
     expect(limitVerdict(loop, 850, { rules, on, circuit: b16 }).within).toBe(true)
     // Behind a fuse there is no factor, and no limit to show.

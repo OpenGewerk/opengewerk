@@ -175,10 +175,10 @@ describe('a printed protocol of a wallbox in version 2 (#1075)', () => {
       }).html
 
     expect(legend({})).toContain(
-      '<li><strong>Auslösestrom IΔ:</strong> zwischen 15,1 und 30,0 mA; DIN VDE 0100-722 (VDE 0100-722):2019-06, 722.531.3.101; DIN EN 61008-1',
+      '<li><strong>Auslösestrom IΔ:</strong> über 15,0 bis 30,0 mA; DIN VDE 0100-722 (VDE 0100-722):2019-06, 722.531.3.101; DIN EN 61008-1',
     )
     expect(legend({ rcd_rated_residual_current: '10' })).toContain(
-      '<li><strong>Auslösestrom IΔ:</strong> zwischen 5,1 und 10,0 mA; DIN EN 61008-1',
+      '<li><strong>Auslösestrom IΔ:</strong> über 5,0 bis 10,0 mA; DIN EN 61008-1',
     )
   })
 })
@@ -344,13 +344,13 @@ describe('the test of an appliance on paper (#303)', () => {
     expect(printed({ ...heater, heatingPowerWatts: 2_000 }, {}, third)).toContain(
       '<strong>Isolationswiderstand Riso:</strong> mindestens 0,30 MΩ; DGUV Information 203-070',
     )
-    // 50 m of 2,5 mm²: 50 / (56 · 2,5) Ω and 0,1 Ω, 0,457 Ω, written to the hundredth a value
-    // is measured in: 0,45 Ω is within, 0,46 Ω is not.
+    // 50 m of 2,5 mm²: 50 / (56 · 2,5) Ω and 0,1 Ω, 0,457 Ω, written as exactly as it holds
+    // (#1089): 0,45 Ω is within, 0,46 Ω is not.
     expect(printed(drum, { protective_conductor: 460 }, third)).toContain(
       '0,46 Ω <span class="outside">außerhalb des Grenzwerts</span>',
     )
     expect(printed(drum, {}, third)).toContain(
-      '<strong>Schutzleiterwiderstand RPE:</strong> höchstens 0,45 Ω; DGUV Information 203-070',
+      '<strong>Schutzleiterwiderstand RPE:</strong> höchstens 0,457 Ω; DGUV Information 203-070',
     )
   })
 })

@@ -111,6 +111,9 @@ describe('the fields a business gives its reports', () => {
 
     expect(valuesProblem(definition, values)).toBeNull()
     expect(fieldText(distance, 25_000)).toBe('25 km')
+    // With the places of the field, as an issued report keeps it (#1089).
+    expect(fieldText(distance, 25_500)).toBe('26 km')
+    expect(fieldText(distance, 25_400)).toBe('25 km')
     expect(reportFieldLines(definition, values)).toEqual([
       { label: 'Wetter', text: 'Regen' },
       { label: 'Anfahrt', text: '25 km' },

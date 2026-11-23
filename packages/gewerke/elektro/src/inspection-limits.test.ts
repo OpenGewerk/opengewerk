@@ -78,7 +78,7 @@ describe('version 4 of the first inspection (#1021)', () => {
       within: false,
       limitMilli: 1_916,
       text:
-        'Außerhalb des Grenzwerts, höchstens 1,91 Ω. ' +
+        'Außerhalb des Grenzwerts, höchstens 1,916 Ω. ' +
         'Eine genauere Bewertung nach Anhang D der DIN VDE 0100-600 ist nötig.',
       source: expect.stringMatching(
         /^DIN VDE 0100-600 \(VDE 0100-600\):2017-06, Anhang D; DIN VDE 0100-410/,
@@ -86,7 +86,7 @@ describe('version 4 of the first inspection (#1021)', () => {
     })
     expect(judge('loop_impedance', 1_900)).toMatchObject({
       within: true,
-      text: 'Innerhalb des Grenzwerts, höchstens 1,91 Ω.',
+      text: 'Innerhalb des Grenzwerts, höchstens 1,916 Ω.',
     })
     // B 6 A: 230 V over 30 A is 7,666 Ω, two thirds of it 5,111 Ω, never 5,10 Ω.
     expect(judge('loop_impedance', 5_110, { ...ordinary, ratedCurrentMilli: 6_000 })).toMatchObject(
@@ -105,7 +105,7 @@ describe('version 4 of the first inspection (#1021)', () => {
       within: false,
       fromMilli: 15_001,
       limitMilli: 30_000,
-      text: 'Außerhalb des Grenzwerts, zwischen 15,1 und 30,0 mA.',
+      text: 'Außerhalb des Grenzwerts, über 15,0 bis 30,0 mA.',
       source:
         'DIN EN 61008-1 (VDE 0664-10):2018-03, 5.3.4 und 8.5, Auslösung zwischen 0,5 IΔn und IΔn',
     })
@@ -243,7 +243,7 @@ describe('version 2 of the recurring inspection (#1022)', () => {
       within: false,
       limitMilli: 1_916,
       text:
-        'Außerhalb des Grenzwerts, höchstens 1,91 Ω. ' +
+        'Außerhalb des Grenzwerts, höchstens 1,916 Ω. ' +
         'Eine genauere Bewertung nach Anhang D der DIN VDE 0100-600 ist nötig.',
     })
     expect(recurring('rcd_trip_current', 15_000).within).toBe(false)
@@ -313,7 +313,7 @@ describe('version 2 of the commissioning protocol of a wallbox (#1075)', () => {
     expect(judged(15_100)).toMatchObject({ within: true })
     expect(judged(30_000)).toMatchObject({ within: true })
     expect(judged(30_100)).toMatchObject({ within: false })
-    expect(judged(12_000)?.text).toBe('Außerhalb des Grenzwerts, zwischen 15,1 und 30,0 mA.')
+    expect(judged(12_000)?.text).toBe('Außerhalb des Grenzwerts, über 15,0 bis 30,0 mA.')
     // The 30 mA per connection point and the range of DIN EN 61008-1.
     expect(judged(12_000)?.source).toContain('722.531.3.101')
     expect(judged(12_000)?.source).toContain('61008-1')
