@@ -22,6 +22,7 @@ import dguvV3v4 from '../formulare/dguv-v3.v4.json' with { type: 'json' }
 import vdeArN4105v1 from '../formulare/vde-ar-n-4105.v1.json' with { type: 'json' }
 import iec624461v1 from '../formulare/iec-62446-1.v1.json' with { type: 'json' }
 import vde0100722v1 from '../formulare/vde-0100-722.v1.json' with { type: 'json' }
+import vde0100722v2 from '../formulare/vde-0100-722.v2.json' with { type: 'json' }
 import batteryCommissioningV1 from '../formulare/battery-commissioning.v1.json' with { type: 'json' }
 import vde0105100Deadlines from '../fristen/vde-0105-100.json' with { type: 'json' }
 import dguvV3Deadlines from '../fristen/dguv-v3.json' with { type: 'json' }
@@ -83,7 +84,9 @@ export const elektroManifest: TradeManifest = manifest
  * the DC side of a PV system, string by string out of its structure (#305).
  * The sixth puts a wallbox into operation with its first inspection after DIN
  * VDE 0100-600 and DIN VDE 0100-722, and names the interval to the first
- * recurring one; the seventh a battery, as its manufacturer asks (#307).
+ * recurring one; its version 2 judges the tripping current of the RCD between
+ * half and all of its 30 mA as the first inspection does (#1075). The seventh
+ * puts a battery into operation, as its manufacturer asks (#307).
  */
 export const elektroForms: readonly FormDefinition[] = [
   vde0100600v1 as FormDefinition,
@@ -99,6 +102,7 @@ export const elektroForms: readonly FormDefinition[] = [
   vdeArN4105v1 as FormDefinition,
   iec624461v1 as FormDefinition,
   vde0100722v1 as FormDefinition,
+  vde0100722v2 as FormDefinition,
   batteryCommissioningV1 as FormDefinition,
 ]
 

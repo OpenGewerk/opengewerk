@@ -13,6 +13,7 @@ import {
 } from './appliance-limits.js'
 import {
   circuitInsulation,
+  chargingRcdTripCurrentRange,
   loopImpedanceMeasured,
   rcdTripCurrentRange,
   rcdTripTime,
@@ -61,6 +62,7 @@ export const tradeForms = formEngine<TradeFormTerms>({
     circuit_insulation: circuitInsulation,
     loop_impedance_measured: loopImpedanceMeasured,
     rcd_trip_current_range: rcdTripCurrentRange,
+    charging_rcd_trip_current_range: chargingRcdTripCurrentRange,
     rcd_trip_time: rcdTripTime,
     recurring_insulation_without_loads: recurringInsulationWithoutLoads,
     recurring_insulation_with_loads: recurringInsulationWithLoads,

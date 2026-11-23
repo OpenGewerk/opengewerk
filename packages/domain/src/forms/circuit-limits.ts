@@ -116,6 +116,31 @@ export const rcdTripCurrentRange: LimitCalculator = (_field, { rules, on, item }
 }
 
 /**
+ * The tripping current of the RCD before a charging point between half and all
+ * of its rated residual current (#1075), as version 4 of the first inspection
+ * judges a circuit's (#1021). The protocol of a wallbox names no circuit: its
+ * rated residual current is the 30 mA DIN VDE 0100-722 asks for each
+ * connection point, a rule of the package as every other limit.
+ */
+export const chargingRcdTripCurrentRange: LimitCalculator = (_field, { rules, on }) => {
+  const rated = rules.at('elektro.charging.rcd_rated_residual_current', on)
+  const least = rules.at('elektro.rcd.trip_current_minimum', on)
+  const most = rules.at('elektro.rcd.trip_current_maximum', on)
+
+  if (!rated || !least || !most) {
+    return { none: 'Für diesen Tag ist kein Grenzwert hinterlegt.' }
+  }
+
+  // Microamperes are thousandths of the field's milliamperes, the shares basis points.
+  return {
+    limitMilli: Math.floor((rated.value * most.value) / 10_000),
+    fromMilli: Math.floor((rated.value * least.value) / 10_000) + 1,
+    atLeast: false,
+    source: sourcesOf(rated.source, sourcesOf(least.source, most.source)),
+  }
+}
+
+/**
  * The least insulation resistance of the recurring inspection after table 11
  * of the DGUV Information 203-072 (#1022), with or without the loads: 0,25 MΩ
  * for SELV and PELV, in an IT system 50 Ω per volt, and otherwise per volt by

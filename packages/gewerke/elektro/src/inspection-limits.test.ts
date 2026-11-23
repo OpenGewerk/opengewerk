@@ -285,3 +285,41 @@ describe('version 2 of the recurring inspection (#1022)', () => {
     expect(measuringConditions(undefined, null)).toEqual({})
   })
 })
+
+describe('version 2 of the commissioning protocol of a wallbox (#1075)', () => {
+  function chargingMeasurement(version: number, key: string): MeasurementField {
+    const definition = elektroRegistry.definitionFor('vde-0100-722', version) as FormDefinition
+    const found = fieldsOf(definition).find((field) => field.key === key)
+
+    if (found?.kind !== 'measurement') {
+      throw new Error(`No measurement ${key} in version ${String(version)} of vde-0100-722`)
+    }
+
+    return found
+  }
+
+  function judged(milli: number, version = 2) {
+    return limitVerdict(chargingMeasurement(version, 'rcd_trip_current'), milli, {
+      rules: elektroRules,
+      on,
+      circuit: null,
+    })
+  }
+
+  it('judges the tripping current above half up to all of the 30 mA of the charging point', () => {
+    // Milliamperes in thousandths: 15 mA is 15 000.
+    expect(judged(15_000)).toMatchObject({ within: false, fromMilli: 15_001, limitMilli: 30_000 })
+    expect(judged(15_100)).toMatchObject({ within: true })
+    expect(judged(30_000)).toMatchObject({ within: true })
+    expect(judged(30_100)).toMatchObject({ within: false })
+    expect(judged(12_000)?.text).toBe('Außerhalb des Grenzwerts, zwischen 15,1 und 30,0 mA.')
+    // The 30 mA per connection point and the range of DIN EN 61008-1.
+    expect(judged(12_000)?.source).toContain('722.531.3.101')
+    expect(judged(12_000)?.source).toContain('61008-1')
+  })
+
+  it('leaves version 1 as it was for the protocols filled in it', () => {
+    expect(judged(12_000, 1)).toMatchObject({ within: true, limitMilli: 30_000 })
+    expect(judged(12_000, 1)).not.toHaveProperty('fromMilli')
+  })
+})
