@@ -72,8 +72,8 @@ function useEmergencyTariffs(onCall: boolean): {
   const kept = useSyncExternalStore(client.subscribe, read, read)
   const answer = useQuery({
     queryKey: ['emergency-tariffs'],
-    queryFn: async () => {
-      const tariffs = await emergencyTariffs()
+    queryFn: async ({ signal }) => {
+      const tariffs = await emergencyTariffs(signal)
 
       try {
         await client.keep(tariffsName, JSON.stringify(tariffs))
@@ -90,8 +90,9 @@ function useEmergencyTariffs(onCall: boolean): {
     refetchOnMount: 'always',
   })
 
-  // Without a network the question pauses and is not asking: then what the
-  // device kept is the surcharge to name.
+  // Without a network the question pauses and is not asking, and one that
+  // gets no answer gives up after `tariffWaitMs`: then what the device kept is
+  // the surcharge to name.
   return { tariffs: answer.data ?? keptTariffs(kept), asking: answer.fetchStatus === 'fetching' }
 }
 

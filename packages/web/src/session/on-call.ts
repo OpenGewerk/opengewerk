@@ -58,9 +58,31 @@ export function swapOnCallShifts(id: string, other: string): Promise<unknown> {
  * names the surcharge before the order, and calls come in where there is no
  * network, so the device keeps the last answer.
  */
-export function emergencyTariffs(): Promise<readonly EmergencyTariff[]> {
-  return request<readonly EmergencyTariff[]>('/on-call-shifts/tariffs')
+export function emergencyTariffs(signal?: AbortSignal): Promise<readonly EmergencyTariff[]> {
+  const waiting = new AbortController()
+  const stop = () => {
+    waiting.abort()
+  }
+  const timer = setTimeout(stop, tariffWaitMs)
+
+  signal?.addEventListener('abort', stop, { once: true })
+
+  return request<readonly EmergencyTariff[]>('/on-call-shifts/tariffs', {
+    signal: waiting.signal,
+  }).finally(() => {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', stop)
+  })
 }
+
+/**
+ * How long the question for the tariffs waits for the server (#1024). In a
+ * cellar a phone may show a network that gets nothing through, and no
+ * `offline` ever comes; after this the question gives up, and the screen
+ * names what the device kept instead of waiting while the customer is on the
+ * phone.
+ */
+export const tariffWaitMs = 5_000
 
 function isCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0

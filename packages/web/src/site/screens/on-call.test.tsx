@@ -22,6 +22,7 @@ import { userEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { aTenantChoice } from '../../session/test-tenants.js'
+import { tariffWaitMs } from '../../session/on-call.js'
 import { SyncClient, tariffsName } from '../../sync/client.js'
 import { SiteJobList } from './jobs.js'
 import { SiteNewCallScreen } from './on-call.js'
@@ -143,9 +144,17 @@ beforeEach(() => {
   answers.set('/tasks/assignees', [{ userId: 'u-1', name: 'Jonas Brandt', active: true }])
 
   tariffsHeld = null
-  vi.stubGlobal('fetch', async (path: string) => {
-    if (path === '/on-call-shifts/tariffs' && tariffsHeld) {
-      await tariffsHeld
+  vi.stubGlobal('fetch', async (path: string, init?: RequestInit) => {
+    const held = tariffsHeld
+
+    if (path === '/on-call-shifts/tariffs' && held) {
+      // Held, as a slow network holds it, until opened or given up on.
+      await new Promise<void>((resolve, reject) => {
+        void held.then(resolve)
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('Die Anfrage wurde abgebrochen.', 'AbortError'))
+        })
+      })
     }
 
     return new Response(JSON.stringify(answers.get(path) ?? {}), {
@@ -356,6 +365,19 @@ describe('the surcharge named before the order (#1024)', () => {
 
     expect(await screen.findByText(named)).toBeTruthy()
   })
+
+  it('is named from what the device kept where the server does not answer in time', async () => {
+    keptBefore = JSON.stringify(tariffs)
+    answers.set('/on-call-shifts/tariffs', tariffs)
+    // An answer that never comes, as in a cellar where the phone shows a network.
+    tariffsHeld = new Promise(() => {})
+    await mount('/einsatz/neu')
+
+    expect(
+      await screen.findByText(/^Der Notdienstzuschlag wird gerade vom Server geholt/),
+    ).toBeTruthy()
+    expect(await screen.findByText(named, {}, { timeout: tariffWaitMs + 3_000 })).toBeTruthy()
+  }, 20_000)
 
   it('is not named to a business, which is owed it on no such ground', async () => {
     answers.set('/on-call-shifts/tariffs', tariffs)
