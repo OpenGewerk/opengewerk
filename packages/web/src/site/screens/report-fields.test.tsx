@@ -158,6 +158,36 @@ beforeEach(() => {
 })
 
 describe('the fields of a report on site (#78)', () => {
+  it('take no more places than their field shows (#1090)', async () => {
+    const user = userEvent.setup()
+    const { client, router } = await mount('/auftraege/j-1')
+
+    server.offline = true
+
+    await user.click(await screen.findByRole('button', { name: 'Regiebericht schreiben' }))
+    await screen.findByText('Noch nicht übertragen.')
+
+    const reportId = router.state.location.pathname.split('/').at(-1) ?? ''
+    const distance = () =>
+      readFormValues(client.get('documents', reportId)?.['fieldValues'])?.['field_2']
+
+    // The distance has no places: 25,5 km would read 26 km before the signature.
+    await user.type(screen.getByLabelText('Anfahrt in km'), '25,5')
+    expect(screen.getByText('Eine ganze Zahl, ohne Nachkommastellen.')).toBeTruthy()
+    await user.tab()
+    // Not written: the draft keeps the last figure that read, 25 out of "25,".
+    expect(distance()).toBe(25_000)
+
+    await user.clear(screen.getByLabelText('Anfahrt in km'))
+    await user.type(screen.getByLabelText('Anfahrt in km'), '26')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(distance()).toBe(26_000)
+    })
+    expect(screen.queryByText('Eine ganze Zahl, ohne Nachkommastellen.')).toBeNull()
+  })
+
   it('are filled in without a network, read before signing and signed with the report', async () => {
     const user = userEvent.setup()
     const { client, router } = await mount('/auftraege/j-1')
