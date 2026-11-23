@@ -210,6 +210,17 @@ export interface FormEngine<T extends FormTerms = FormTerms> {
    * to see to; a form whose values leave a block out is otherwise signed with
    * the check points of that item unanswered.
    */
+  /**
+   * Whether a field needs an answer before the form is signed, with the values
+   * and what the form hangs on as they are: `required`, a check point, or a
+   * condition that holds (`requiredWhen`). What `sealProblems` asks of it, for
+   * a screen that says how far a section is.
+   */
+  readonly fieldAsked: (
+    field: FormField<T> | BlockField<T>,
+    values: FormValues,
+    options?: Pick<SealOptions<T>, 'subject'>,
+  ) => boolean
   readonly sealProblems: (
     definition: FormDefinition<T>,
     values: FormValues,
@@ -490,6 +501,10 @@ export function formEngine<T extends FormTerms>(setup: FormEngineSetup<T>): Form
 
     if (!isObject(when)) {
       return 'nennt eine Bedingung, die kein Objekt ist.'
+    }
+
+    if ((field as { readonly kind?: unknown }).kind === 'signature') {
+      return 'ist eine Unterschrift, die beim Unterschreiben gegeben wird und an keiner Bedingung hängt.'
     }
 
     const { answer, subject } = when as { readonly answer?: unknown; readonly subject?: unknown }
@@ -996,6 +1011,14 @@ export function formEngine<T extends FormTerms>(setup: FormEngineSetup<T>): Form
     return field.kind === 'group' ? Array.isArray(value) && value.length > 0 : true
   }
 
+  function fieldAsked(
+    field: FormField<E> | BlockField<E>,
+    values: FormValues,
+    { subject }: Pick<SealOptions<E>, 'subject'> = {},
+  ): boolean {
+    return needed(field) || conditionHolds(field, values, subject)
+  }
+
   function sealProblems(
     definition: FormDefinition<E>,
     values: FormValues,
@@ -1288,6 +1311,7 @@ export function formEngine<T extends FormTerms>(setup: FormEngineSetup<T>): Form
     definitionProblems,
     valueProblem,
     valuesProblem,
+    fieldAsked,
     sealProblems,
     sealingField,
     listBlocks,

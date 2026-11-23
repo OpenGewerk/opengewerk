@@ -545,6 +545,13 @@ describe('the facts a test of an appliance is signed with', () => {
 })
 
 describe('the protective conductor current after a repair (#1023)', () => {
+  /** The row "Messen" of the overview. */
+  function measuring(): HTMLElement {
+    return within(screen.getByRole('list', { name: 'Abschnitte' })).getByRole('button', {
+      name: /^Messen /,
+    })
+  }
+
   /** A test after a repair, in version 4, with everything but the protective conductor current. */
   function afterRepair(id: string, applianceId: string): RecordState {
     const { tester_signature: _signature, ...unsigned } = lastYear
@@ -568,6 +575,8 @@ describe('the protective conductor current after a repair (#1023)', () => {
     })
 
     expect(await screen.findByText('Schutzleiterstrom IPE fehlt.')).toBeTruthy()
+    // The section says so as well, rather than complete above the missing value.
+    expect(measuring().textContent).toContain('1 fehlt')
   })
 
   it('is not asked for at an appliance of protection class II, which has no protective conductor', async () => {
@@ -580,6 +589,7 @@ describe('the protective conductor current after a repair (#1023)', () => {
       false,
     )
     expect(screen.queryByText('Schutzleiterstrom IPE fehlt.')).toBeNull()
+    expect(measuring().textContent).toContain('vollständig')
   })
 })
 

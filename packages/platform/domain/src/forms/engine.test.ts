@@ -687,6 +687,17 @@ describe('a field required under a condition', () => {
     ).toEqual([])
   })
 
+  it('says of a field whether it is asked, as signing asks it', () => {
+    const overview = conditioned.sections[0]?.fields.find((field) => field.key === 'overview')
+
+    expect(overview).toBeDefined()
+    expect(engine.fieldAsked(overview as never, worn, { subject: wood })).toBe(true)
+    expect(engine.fieldAsked(overview as never, worn, { subject: { material: 'steel' } })).toBe(
+      false,
+    )
+    expect(engine.fieldAsked(overview as never, filled, { subject: wood })).toBe(false)
+  })
+
   it('is asked for where what the form hangs on is not known', () => {
     expect(engine.sealProblems(conditioned, worn, { subject: null })).toEqual(['Übersicht fehlt.'])
     expect(engine.sealProblems(conditioned, worn)).toEqual(['Übersicht fehlt.'])
@@ -755,6 +766,21 @@ describe('a field required under a condition', () => {
     ])
     expect(engine.definitionProblems(withCondition({}))).toEqual([
       'shelf-inspection: labelled nennt eine Bedingung ohne Antwort und ohne Gegenstand.',
+    ])
+    expect(
+      engine.definitionProblems({
+        ...inspection,
+        sections: inspection.sections.map((section) => ({
+          ...section,
+          fields: section.fields.map((field) =>
+            field.kind === 'signature'
+              ? { ...field, requiredWhen: { answer: { field: 'condition', is: 'worn' } } }
+              : field,
+          ),
+        })),
+      } as FormDefinition<ProbeTerms>),
+    ).toEqual([
+      'shelf-inspection: signature ist eine Unterschrift, die beim Unterschreiben gegeben wird und an keiner Bedingung hängt.',
     ])
     expect(engine.definitionProblems(withCondition('worn'))).toEqual([
       'shelf-inspection: labelled nennt eine Bedingung, die kein Objekt ist.',
