@@ -283,11 +283,11 @@ describe('the surcharge named before the order and the one charged (#1081)', () 
   it('never charges more than was named on hours without a price yet', () => {
     const weekend = { flatCents: 0, basisPoints: 5000 }
 
-    expect(chargeableSurcharge(weekend, { flatCents: 0, basisPoints: 0 }, 0)).toEqual({
+    expect(chargeableSurcharge(weekend, { flatCents: 0, basisPoints: 0 }, null)).toEqual({
       flatCents: 0,
       basisPoints: 0,
     })
-    expect(chargeableSurcharge(weekend, { flatCents: 0, basisPoints: 3000 }, 0)).toEqual({
+    expect(chargeableSurcharge(weekend, { flatCents: 0, basisPoints: 3000 }, null)).toEqual({
       flatCents: 0,
       basisPoints: 3000,
     })
@@ -295,17 +295,28 @@ describe('the surcharge named before the order and the one charged (#1081)', () 
       chargeableSurcharge(
         { flatCents: 0, basisPoints: 2000 },
         { flatCents: 0, basisPoints: 3000 },
-        0,
+        null,
       ),
     ).toEqual({
       flatCents: 0,
       basisPoints: 2000,
     })
-    // A flat amount against a percentage: without hours what was named.
-    expect(chargeableSurcharge(weekend, { flatCents: 4500, basisPoints: 0 }, 0)).toEqual({
+    // A flat amount against a percentage: without a price of the hours what was named.
+    expect(chargeableSurcharge(weekend, { flatCents: 4500, basisPoints: 0 }, null)).toEqual({
       flatCents: 4500,
       basisPoints: 0,
     })
+  })
+
+  it('takes a percentage on no working time at all for what it costs, nothing', () => {
+    // A report of flat amounts alone: 50 % of no hours is less than 45,00 €.
+    expect(
+      chargeableSurcharge(
+        { flatCents: 0, basisPoints: 5000 },
+        { flatCents: 4500, basisPoints: 0 },
+        0,
+      ),
+    ).toEqual({ flatCents: 0, basisPoints: 5000 })
   })
 
   it('charges nothing where the settings charge nothing, whatever was named', () => {
@@ -314,7 +325,7 @@ describe('the surcharge named before the order and the one charged (#1081)', () 
         { flatCents: 0, basisPoints: 0 },
         { flatCents: 4500, basisPoints: 0 },
         // On hours without a price yet as well.
-        0,
+        null,
       ),
     ).toEqual({
       flatCents: 0,

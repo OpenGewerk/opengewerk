@@ -608,6 +608,22 @@ describe('the surcharge named before the order (#1081)', () => {
     expect(await describedOn(less.id)).toEqual(['Arbeitszeit', '30 % auf die Arbeitszeit'])
   })
 
+  it('takes a named flat amount against a percentage of the day while the hours have no price', async () => {
+    const flat = aCall({
+      emergencyAt: '2026-10-24T08:00:00.000Z',
+      emergencyNamedFlatCents: 3000,
+      emergencyNamedBasisPoints: 0,
+    })
+
+    await push(app, office(), [flat.operation])
+
+    expect((await linesOf(await invoiceOf(flat.id))).at(-1)).toEqual({
+      designation: 'Notdienstzuschlag Wochenende',
+      unit_price_cents: 3000,
+      unit: 'flat_rate',
+    })
+  })
+
   it('comes from the device that took the call on call, with the job', async () => {
     // Max is on call now (see above); the call came an hour ago.
     const call = aCall({

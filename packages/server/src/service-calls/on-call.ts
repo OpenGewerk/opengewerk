@@ -150,13 +150,15 @@ export async function surchargeLineFor(
     return null
   }
 
-  const hourNetCents = lines
-    .filter((line) => hourUnits.includes(line.unit))
-    .reduce((sum, line) => sum + line.netCents, 0)
+  const hours = lines.filter((line) => hourUnits.includes(line.unit))
+  const hourNetCents = hours.reduce((sum, line) => sum + line.netCents, 0)
+  // Hours without a price yet, as a report has them, decide nothing between a
+  // flat amount and a percentage (#1081); no hours at all cost nothing.
+  const priced = hours.every((line) => line.netCents > 0)
 
   return emergencySurchargeLine(
     kind,
-    chargeableSurcharge(tariff.surcharges[kind], namedOf(job), hourNetCents),
+    chargeableSurcharge(tariff.surcharges[kind], namedOf(job), priced ? hourNetCents : null),
     hourNetCents,
   )
 }

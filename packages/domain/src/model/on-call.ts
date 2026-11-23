@@ -333,15 +333,16 @@ function isNothing(surcharge: EmergencySurcharge): boolean {
  * what was named before the order is the most: nothing named, nothing
  * charged. Below that, the one of the day where it is less: two flat amounts
  * or two percentages compared as they are, a flat amount against a
- * percentage on the hours of the invoice. Hours without a price yet decide
- * nothing, and an equal amount goes to what was named, so that the invoice
- * never shows more than the customer heard. With nothing recorded, the one
- * of the day.
+ * percentage on the hours of the invoice. Hours without a price yet
+ * (`hourNetCents` null) decide nothing, where a report with no hours at all
+ * (zero) makes a percentage cost nothing; an equal amount goes to what was
+ * named, so that the invoice never shows more than the customer heard. With
+ * nothing recorded, the one of the day.
  */
 export function chargeableSurcharge(
   day: EmergencySurcharge,
   named: EmergencySurcharge | null,
-  hourNetCents: number,
+  hourNetCents: number | null,
 ): EmergencySurcharge {
   if (named === null || isNothing(day)) {
     return day
@@ -357,7 +358,7 @@ export function chargeableSurcharge(
     return day.basisPoints < named.basisPoints ? day : named
   }
 
-  if (hourNetCents <= 0) {
+  if (hourNetCents === null) {
     return named
   }
 
