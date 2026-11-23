@@ -1,8 +1,9 @@
 import type { RecordState } from '@opengewerk/domain'
 import { signedContentFingerprint } from '@opengewerk/domain'
+import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { signedContentOf } from './signing.js'
+import { signedContentOf, useSignatureFor } from './signing.js'
 
 /**
  * What the device signs, worked out from the records it holds.
@@ -101,5 +102,95 @@ describe('what the customer signs', () => {
     )
 
     expect(more).not.toBe(seen)
+  })
+})
+
+/**
+ * A signature is held to the page the pad was first touched under (#1063): it
+ * goes when the page changes, and it stays gone when the page changes back,
+ * since the pad was mounted again empty by then.
+ */
+describe('the signature on the pad', () => {
+  const area = () => document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  const first = 'fnv1a32:00000001:1'
+  const second = 'fnv1a32:00000002:1'
+
+  function mounted() {
+    return renderHook(({ fingerprint }: { fingerprint: string }) => useSignatureFor(fingerprint), {
+      initialProps: { fingerprint: first },
+    })
+  }
+
+  it('goes when the page changes, also when it changes back', () => {
+    const { result, rerender } = mounted()
+
+    act(() => {
+      result.current.onPointerDown({ target: area() })
+      result.current.onChange('M10,10L20,20')
+    })
+
+    expect(result.current).toMatchObject({ path: 'M10,10L20,20', pad: 0, pageChanged: false })
+
+    rerender({ fingerprint: second })
+
+    expect(result.current).toMatchObject({ path: null, pad: 1, pageChanged: true })
+
+    rerender({ fingerprint: first })
+
+    expect(result.current).toMatchObject({ path: null, pad: 1, pageChanged: true })
+
+    act(() => {
+      result.current.onPointerDown({ target: area() })
+      result.current.onChange('M30,30L40,40')
+    })
+
+    expect(result.current).toMatchObject({ path: 'M30,30L40,40', pad: 1, pageChanged: false })
+  })
+
+  it('goes when the page changes while its first stroke is still being drawn', () => {
+    const { result, rerender } = mounted()
+
+    // The finger touches the pad, and the page changes before the stroke ends:
+    // the pad is mounted again at once, and a second finger or the page
+    // changing back brings nothing back.
+    act(() => {
+      result.current.onPointerDown({ target: area() })
+    })
+    rerender({ fingerprint: second })
+
+    expect(result.current).toMatchObject({ path: null, pad: 1, pageChanged: true })
+
+    rerender({ fingerprint: first })
+
+    expect(result.current).toMatchObject({ path: null, pad: 1, pageChanged: true })
+  })
+
+  it('is gone once the pad is cleared, and a page change after that says nothing', () => {
+    const { result, rerender } = mounted()
+
+    act(() => {
+      result.current.onPointerDown({ target: area() })
+      result.current.onChange('M10,10L20,20')
+    })
+    act(() => {
+      result.current.onChange(null)
+    })
+
+    expect(result.current.path).toBeNull()
+
+    rerender({ fingerprint: second })
+
+    expect(result.current).toMatchObject({ path: null, pad: 0, pageChanged: false })
+  })
+
+  it('takes no note of a touch beside the drawing area', () => {
+    const { result, rerender } = mounted()
+
+    act(() => {
+      result.current.onPointerDown({ target: document.createElement('button') })
+    })
+    rerender({ fingerprint: second })
+
+    expect(result.current).toMatchObject({ path: null, pad: 0, pageChanged: false })
   })
 })
