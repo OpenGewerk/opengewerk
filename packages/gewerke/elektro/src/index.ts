@@ -12,6 +12,7 @@ import manifest from '../manifest.json' with { type: 'json' }
 import vde0100600v1 from '../formulare/vde-0100-600.v1.json' with { type: 'json' }
 import vde0100600v2 from '../formulare/vde-0100-600.v2.json' with { type: 'json' }
 import vde0100600v3 from '../formulare/vde-0100-600.v3.json' with { type: 'json' }
+import vde0100600v4 from '../formulare/vde-0100-600.v4.json' with { type: 'json' }
 import vde0105100v1 from '../formulare/vde-0105-100.v1.json' with { type: 'json' }
 import dguvV3v1 from '../formulare/dguv-v3.v1.json' with { type: 'json' }
 import dguvV3v2 from '../formulare/dguv-v3.v2.json' with { type: 'json' }
@@ -62,7 +63,10 @@ export const elektroManifest: TradeManifest = manifest
  * forms filled in it. Version 2 of the protocol differs from version 1 in one
  * thing: the remark on a circuit takes more than a line (#256); version 3 names
  * the interval to the first recurring inspection of a new installation
- * (#814). The recurring inspection after DIN VDE 0105-100 is the second form
+ * (#814); version 4 judges the insulation by the nominal voltage of the
+ * circuit, the loop impedance against two thirds of U0 / Ia after Annex D,
+ * the tripping current between half and all of IΔn and the tripping time of
+ * a selective RCD by its own range (#1021). The recurring inspection after DIN VDE 0105-100 is the second form
  * (#301), the test of a appliance after DGUV Vorschrift 3 the third, the first
  * that hangs on an appliance of the register and not on an installation (#303);
  * its version 2 adds a photo from the files of the appliance (#817).
@@ -77,6 +81,7 @@ export const elektroForms: readonly FormDefinition[] = [
   vde0100600v1 as FormDefinition,
   vde0100600v2 as FormDefinition,
   vde0100600v3 as FormDefinition,
+  vde0100600v4 as FormDefinition,
   vde0105100v1 as FormDefinition,
   dguvV3v1 as FormDefinition,
   dguvV3v2 as FormDefinition,

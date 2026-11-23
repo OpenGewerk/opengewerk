@@ -9,6 +9,7 @@ import {
   type FieldValue,
   fieldsOf,
   formatMeasured,
+  measuredNumber,
   type FormDefinition,
   type FormSection,
   type FormValues,
@@ -1000,10 +1001,28 @@ const limitSigns: Readonly<Record<RuleLimitKind, string>> = {
   below: '<',
 }
 
-/** "≤ 2,87 Ω": the limit beside the label, as the board writes it, or nothing. */
-export function shortLimit(field: MeasurementField, limitMilli: number | null): string | null {
+/**
+ * "≤ 2,87 Ω": the limit beside the label, as the board writes it, or nothing;
+ * a range as "15,0 bis 30,0 mA" (#1021).
+ */
+export function shortLimit(
+  field: MeasurementField,
+  limitMilli: number | null,
+  fromMilli?: number,
+): string | null {
   if (!field.limit || limitMilli === null) {
     return null
+  }
+
+  if (fromMilli !== undefined) {
+    // Each end rounded towards the inside, as the sentence under the value is.
+    const step = 10 ** Math.max(0, 3 - field.decimals)
+
+    return `${measuredNumber(Math.ceil(fromMilli / step) * step, field.decimals)} bis ${formatMeasured(
+      Math.floor(limitMilli / step) * step,
+      field.unit,
+      field.decimals,
+    )}`
   }
 
   // A limit worked out of the circuit is one a value may reach at most; the
@@ -1055,7 +1074,7 @@ function MeasureCard({
   })
   const state = verdict.within === false ? 'bad' : verdict.within === true ? 'ok' : 'muted'
   const wrong = state === 'bad' || problem !== undefined
-  const limit = shortLimit(field, verdict.limitMilli)
+  const limit = shortLimit(field, verdict.limitMilli, verdict.fromMilli)
   const unit = measurementUnitSign[field.unit]
   const said =
     problem ??

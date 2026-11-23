@@ -54,7 +54,8 @@ export {
  * repeats over, the two limits worked out of a circuit, the loop impedance
  * from its protective device and the tripping current from its residual
  * current appliance, the two worked out of an appliance (#303), its insulation by
- * the protection class and its protective conductor by the lead, and the
+ * the protection class and its protective conductor by the lead, the four of
+ * version 4 of the first inspection worked out of a circuit (#1021), and the
  * kinds of field it shows.
  */
 export interface TradeFormTerms {
@@ -63,6 +64,10 @@ export interface TradeFormTerms {
   readonly limit:
     | 'loop_impedance'
     | 'rcd_trip_current'
+    | 'circuit_insulation'
+    | 'loop_impedance_measured'
+    | 'rcd_trip_current_range'
+    | 'rcd_trip_time'
     | 'appliance_insulation'
     | 'appliance_protective_conductor'
     | 'appliance_protective_conductor_current'

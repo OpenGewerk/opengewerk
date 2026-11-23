@@ -483,6 +483,9 @@ describe('a test protocol in the office (#79)', () => {
 
     // The day of the test as it is written, whatever the zone of the device.
     expect(await screen.findByText('25.09.2026')).toBeTruthy()
+    // Its circuits are the chart's as it is, and a block from before the chart
+    // knew the nominal voltage and the selective RCD is no change (#1021).
+    expect(screen.queryByRole('button', { name: 'Stromkreise übernehmen' })).toBeNull()
 
     // A test point, its three answers, the one given pressed.
     const point = screen.getByRole('group', { name: 'Basisschutz, Schutz gegen direktes Berühren' })

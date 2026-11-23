@@ -294,6 +294,95 @@ function groupTable(
   ${limitLegend(field.fields, protocol)}`
 }
 
+/**
+ * The limits of version 4 of the first inspection, worked out of a circuit
+ * (#1021), as the legend under its table says them: the rule behind each, by
+ * what it differs from circuit to circuit, and the sources once each. Null
+ * for any other limit.
+ */
+function circuitLimitLegend(kind: string | undefined, protocol: PrintedProtocol): string | null {
+  const at = (key: string) => protocol.rules.at(key, protocol.performedOn)
+  const sources = (...keys: string[]) =>
+    text([...new Set(keys.map((key) => at(key)?.source).filter(present))].join('; '))
+  const ohms = (key: string) => {
+    const rule = at(key)
+
+    return rule ? formatMeasured(rule.value, 'megaohm', 2) : null
+  }
+  const seconds = (key: string) => {
+    const rule = at(key)
+
+    return rule ? formatMeasured(rule.value * 1000, 'millisecond', 0) : null
+  }
+  // A share in basis points as the factor it is, 6666 as "0,6666": the value the
+  // limit was worked out with, not a fraction the legend would round to.
+  const factor = (key: string) => {
+    const rule = at(key)
+
+    return rule ? String(rule.value / 10_000).replace('.', ',') : null
+  }
+  const missing = 'für diesen Tag kein Grenzwert hinterlegt'
+
+  switch (kind) {
+    case 'circuit_insulation': {
+      const ordinary = ohms('elektro.insulation.minimum_up_to_500v')
+      const low = ohms('elektro.insulation.minimum_selv_pelv')
+      const high = ohms('elektro.insulation.minimum_above_500v')
+
+      return ordinary && low && high
+        ? `nach der Nennspannung des Stromkreises mindestens ${text(ordinary)} bis 500 V, ${text(
+            low,
+          )} bei SELV und PELV, ${text(high)} über 500 V; ${sources(
+            'elektro.insulation.minimum_up_to_500v',
+            'elektro.insulation.minimum_selv_pelv',
+            'elektro.insulation.minimum_above_500v',
+          )}`
+        : missing
+    }
+    case 'loop_impedance_measured': {
+      const share = factor('elektro.loop.measured_share')
+
+      return share
+        ? `höchstens ${share} × U0 / Ia aus der Schutzeinrichtung des Stromkreises, darüber eine genauere Bewertung nach Anhang D; ${sources(
+            'elektro.loop.measured_share',
+            'elektro.loop.nominal_voltage',
+            'elektro.loop.factor_b',
+            'elektro.loop.factor_c',
+            'elektro.loop.factor_d',
+          )}`
+        : missing
+    }
+    case 'rcd_trip_current_range': {
+      const least = factor('elektro.rcd.trip_current_minimum')
+      const most = factor('elektro.rcd.trip_current_maximum')
+
+      return least && most
+        ? `über ${least} × IΔn bis ${most} × IΔn des Stromkreises; ${sources(
+            'elektro.rcd.trip_current_minimum',
+            'elektro.rcd.trip_current_maximum',
+          )}`
+        : missing
+    }
+    case 'rcd_trip_time': {
+      const general = seconds('elektro.rcd.trip_time_maximum')
+      const least = seconds('elektro.rcd.selective_trip_time_minimum')
+      const most = seconds('elektro.rcd.selective_trip_time_maximum')
+
+      return general && least && most
+        ? `höchstens ${text(general)}, bei einer selektiven RCD zwischen ${text(least)} und ${text(
+            most,
+          )}; ${sources(
+            'elektro.rcd.trip_time_maximum',
+            'elektro.rcd.selective_trip_time_minimum',
+            'elektro.rcd.selective_trip_time_maximum',
+          )}`
+        : missing
+    }
+    default:
+      return null
+  }
+}
+
 /** The limits a table was judged against, each with its source, under the table. */
 function limitLegend(fields: readonly BlockField[], protocol: PrintedProtocol): string {
   const entries = fields
@@ -319,35 +408,37 @@ function limitLegend(fields: readonly BlockField[], protocol: PrintedProtocol): 
               appliance: protocol.appliance,
             })
           : null
-      const said = worked
-        ? worked.limitMilli === null
-          ? text(worked.text)
-          : `${text(worked.text.replace(/^Grenzwert: (.*)\.$/, '$1'))}; ${text(worked.source ?? '')}`
-        : limit?.kind === 'loop_impedance'
-          ? `höchstens U0 / Ia aus der Schutzeinrichtung des Stromkreises; ${text(
-              ['nominal_voltage', 'factor_b', 'factor_c', 'factor_d']
-                .map(
-                  (key) => protocol.rules.at(`elektro.loop.${key}`, protocol.performedOn)?.source,
-                )
-                .filter(present)
-                .join('; '),
-            )}`
-          : limit?.kind === 'rcd_trip_current'
-            ? `höchstens IΔn des Stromkreises; ${text(
-                protocol.rules.at('elektro.rcd.trip_current_maximum', protocol.performedOn)
-                  ?.source ?? '',
+      const said =
+        circuitLimitLegend(limit?.kind, protocol) ??
+        (worked
+          ? worked.limitMilli === null
+            ? text(worked.text)
+            : `${text(worked.text.replace(/^Grenzwert: (.*)\.$/, '$1'))}; ${text(worked.source ?? '')}`
+          : limit?.kind === 'loop_impedance'
+            ? `höchstens U0 / Ia aus der Schutzeinrichtung des Stromkreises; ${text(
+                ['nominal_voltage', 'factor_b', 'factor_c', 'factor_d']
+                  .map(
+                    (key) => protocol.rules.at(`elektro.loop.${key}`, protocol.performedOn)?.source,
+                  )
+                  .filter(present)
+                  .join('; '),
               )}`
-            : rule
-              ? // The limit in the words and the rounding of the engine: before a
-                // value is measured, its sentence is "Grenzwert: unter 100 je 100 ml."
-                `${text(
-                  limitVerdict(field, null, {
-                    rules: protocol.rules,
-                    on: protocol.performedOn,
-                    circuit: null,
-                  }).text.replace(/^Grenzwert: (.*)\.$/, '$1'),
-                )}; ${text(rule.source)}`
-              : 'für diesen Tag kein Grenzwert hinterlegt'
+            : limit?.kind === 'rcd_trip_current'
+              ? `höchstens IΔn des Stromkreises; ${text(
+                  protocol.rules.at('elektro.rcd.trip_current_maximum', protocol.performedOn)
+                    ?.source ?? '',
+                )}`
+              : rule
+                ? // The limit in the words and the rounding of the engine: before a
+                  // value is measured, its sentence is "Grenzwert: unter 100 je 100 ml."
+                  `${text(
+                    limitVerdict(field, null, {
+                      rules: protocol.rules,
+                      on: protocol.performedOn,
+                      circuit: null,
+                    }).text.replace(/^Grenzwert: (.*)\.$/, '$1'),
+                  )}; ${text(rule.source)}`
+                : 'für diesen Tag kein Grenzwert hinterlegt')
 
       return `<li><strong>${text(field.label)}:</strong> ${said}</li>`
     })

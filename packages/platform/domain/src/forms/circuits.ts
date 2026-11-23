@@ -1,4 +1,9 @@
-import { type TripCharacteristic, tripCharacteristics } from '../model/electrical.js'
+import {
+  type CircuitVoltageClass,
+  circuitVoltageClasses,
+  type TripCharacteristic,
+  tripCharacteristics,
+} from '../model/electrical.js'
 import type { LimitCalculator, RepeatList } from './engine.js'
 
 /**
@@ -19,6 +24,13 @@ export interface CircuitFacts {
   readonly ratedCurrentMilli: number | null
   /** IΔn, in milliamperes. */
   readonly ratedResidualCurrentMilli: number | null
+  /**
+   * The nominal voltage after Table 6.1 of DIN VDE 0100-600 and whether the
+   * RCD is selective (#1021). A block filled before has neither, and its
+   * circuit is up to 500 V with a general RCD.
+   */
+  readonly voltageClass?: CircuitVoltageClass
+  readonly rcdSelective?: boolean
 }
 
 /**
@@ -50,7 +62,10 @@ export function isBlockCircuit(value: unknown): boolean {
     (circuit['tripCharacteristic'] === null ||
       tripCharacteristics.some((entry) => entry === circuit['tripCharacteristic'])) &&
     count(circuit['ratedCurrentMilli']) &&
-    count(circuit['ratedResidualCurrentMilli'])
+    count(circuit['ratedResidualCurrentMilli']) &&
+    (circuit['voltageClass'] === undefined ||
+      circuitVoltageClasses.some((entry) => entry === circuit['voltageClass'])) &&
+    (circuit['rcdSelective'] === undefined || typeof circuit['rcdSelective'] === 'boolean')
   )
 }
 

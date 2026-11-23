@@ -15,10 +15,14 @@ export function formatMeasured(milli: number, unit: MeasurementUnit, decimals: n
 /**
  * The limits a measured value has to reach rather than stay under. A rule
  * says so itself (`at_least`); of the limits worked out, only the insulation
- * of an appliance does (#303), the loop impedance, the tripping current and
- * the protective conductor of an appliance are limits to stay under.
+ * of an appliance does (#303), and the insulation of a circuit after its
+ * nominal voltage (#1021); the loop impedance, the tripping current and time
+ * and the protective conductor of an appliance are limits to stay under.
  */
-const workedOutMinimums: ReadonlySet<string> = new Set(['appliance_insulation'])
+const workedOutMinimums: ReadonlySet<string> = new Set([
+  'appliance_insulation',
+  'circuit_insulation',
+])
 
 /** Whether the limit of a field is one to reach, "mindestens", rather than one to stay under. */
 export function limitIsMinimum(field: MeasurementField): boolean {

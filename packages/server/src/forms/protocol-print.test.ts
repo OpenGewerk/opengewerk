@@ -173,6 +173,42 @@ describe('the next inspection on a printed protocol (#301)', () => {
     )
     expect(printed('change')).not.toContain('nächste Prüfung bis')
   })
+
+  it('names the limits of version 4 under the table of the circuits, each with what it hangs on (#1021)', () => {
+    const fourth = elektroRegistry.definitionFor('vde-0100-600', 4) as FormDefinition
+    const html = protocolPrintJob({
+      ...protocol,
+      definition: fourth,
+      values: {
+        circuits: [
+          {
+            circuitId: 'k-1',
+            circuit: {
+              designation: 'F1',
+              consumer: null,
+              tripCharacteristic: 'b',
+              ratedCurrentMilli: 16_000,
+              ratedResidualCurrentMilli: 30,
+              voltageClass: 'selv_pelv',
+              rcdSelective: true,
+            },
+            values: { insulation_resistance: 600, rcd_trip_time: 400_000 },
+          },
+        ],
+      },
+      performedOn: '2026-11-20',
+      rules: elektroRules,
+    }).html
+
+    expect(html).toContain(
+      'nach der Nennspannung des Stromkreises mindestens 1,00 MΩ bis 500 V, 0,50 MΩ bei SELV und PELV, 1,00 MΩ über 500 V',
+    )
+    expect(html).toContain(
+      'höchstens 0,6666 × U0 / Ia aus der Schutzeinrichtung des Stromkreises, darüber eine genauere Bewertung nach Anhang D',
+    )
+    expect(html).toContain('über 0,5 × IΔn bis 1 × IΔn des Stromkreises')
+    expect(html).toContain('höchstens 300 ms, bei einer selektiven RCD zwischen 130 ms und 500 ms')
+  })
 })
 
 describe('the test of an appliance on paper (#303)', () => {

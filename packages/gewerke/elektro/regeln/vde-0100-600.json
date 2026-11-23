@@ -18,7 +18,7 @@
       "unit": "milliseconds",
       "value": 300,
       "source": "DIN EN 61008-1 (VDE 0664-10) und DIN EN 61009-1 (VDE 0664-20), Höchstwert der Abschaltzeit bei IΔn",
-      "note": "Für Fehlerstromschutzeinrichtungen ohne Verzögerung. Eine selektive (S) darf länger brauchen; das Protokoll unterscheidet sie in dieser Fassung noch nicht."
+      "note": "Für Fehlerstromschutzeinrichtungen ohne Verzögerung. Für eine selektive (S) gelten ab Fassung 4 des Protokolls `elektro.rcd.selective_trip_time_minimum` und `_maximum` (#1021)."
     },
     {
       "key": "elektro.rcd.trip_time_maximum",
@@ -27,7 +27,7 @@
       "unit": "milliseconds",
       "value": 300,
       "source": "DIN EN 61008-1 (VDE 0664-10):2018-03, 5.3.12 mit Tabelle 1; DIN EN 61009-1 (VDE 0664-20):2023-08, 5.3.8 mit Tabelle 2",
-      "note": "Für Fehlerstromschutzeinrichtungen ohne Verzögerung. Eine selektive (S) darf länger brauchen; das Protokoll unterscheidet sie in dieser Fassung noch nicht."
+      "note": "Für Fehlerstromschutzeinrichtungen ohne Verzögerung. Für eine selektive (S) gelten ab Fassung 4 des Protokolls `elektro.rcd.selective_trip_time_minimum` und `_maximum` (#1021)."
     },
     {
       "key": "elektro.rcd.trip_current_maximum",
@@ -54,7 +54,7 @@
       "unit": "volts",
       "value": 230,
       "source": "DIN VDE 0100-410 (VDE 0100-410), 411.4.4, Zs × Ia ≤ U0 mit U0 = 230 V nach DIN EN 60038",
-      "note": "Die Schleifenimpedanz, bei der der Leitungsschutzschalter noch unverzögert auslöst, aus der Nennspannung gegen Erde und dem Auslösestrom Ia. Das ist der ungeminderte Grenzwert. Der informative Anhang D der DIN VDE 0100-600:2017-06 setzt für den gemessenen Wert zwei Drittel davon an, weil die Leiter im Betrieb wärmer sind als bei der Messung, und im Hauptteil nennen die Anmerkungen 4 und 5 zu 6.4.3.7.3 eine Messunsicherheit von ± 30 % und einen Faktor 1,24 zur Umrechnung von 20 °C auf 80 °C. Beides ist nur aus zweiter Hand belegt, aus einer Leserfrage bei elektro.net vom 24.11.2023, und nicht am Normtext geprüft. Nach welchem Wert das Protokoll urteilt, ist offen in #31."
+      "note": "Die Schleifenimpedanz, bei der der Leitungsschutzschalter noch unverzögert auslöst, aus der Nennspannung gegen Erde und dem Auslösestrom Ia. Das ist der ungeminderte Grenzwert. Der informative Anhang D der DIN VDE 0100-600:2017-06 setzt für den gemessenen Wert zwei Drittel davon an, weil die Leiter im Betrieb wärmer sind als bei der Messung, und im Hauptteil nennen die Anmerkungen 4 und 5 zu 6.4.3.7.3 eine Messunsicherheit von ± 30 % und einen Faktor 1,24 zur Umrechnung von 20 °C auf 80 °C. Beides ist nur aus zweiter Hand belegt, aus einer Leserfrage bei elektro.net vom 24.11.2023, und nicht am Normtext geprüft. Entschieden mit der fachlichen Abnahme am 20.11.2026 (#31): Ab Fassung 4 des Protokolls urteilt es gegen zwei Drittel dieses Werts, `elektro.loop.measured_share` (#1021)."
     },
     {
       "key": "elektro.loop.nominal_voltage",
@@ -63,7 +63,7 @@
       "unit": "volts",
       "value": 230,
       "source": "DIN VDE 0100-410 (VDE 0100-410):2018-10, 411.4.4, Zs × Ia ≤ U0 mit U0 = 230 V nach DIN EN 60038",
-      "note": "Die Schleifenimpedanz, bei der der Leitungsschutzschalter noch unverzögert auslöst, aus der Nennspannung gegen Erde und dem Auslösestrom Ia. Das ist der ungeminderte Grenzwert. Der informative Anhang D der DIN VDE 0100-600:2017-06 setzt für den gemessenen Wert zwei Drittel davon an, weil die Leiter im Betrieb wärmer sind als bei der Messung, und im Hauptteil nennen die Anmerkungen 4 und 5 zu 6.4.3.7.3 eine Messunsicherheit von ± 30 % und einen Faktor 1,24 zur Umrechnung von 20 °C auf 80 °C. Beides ist nur aus zweiter Hand belegt, aus einer Leserfrage bei elektro.net vom 24.11.2023, und nicht am Normtext geprüft. Nach welchem Wert das Protokoll urteilt, ist offen in #31."
+      "note": "Die Schleifenimpedanz, bei der der Leitungsschutzschalter noch unverzögert auslöst, aus der Nennspannung gegen Erde und dem Auslösestrom Ia. Das ist der ungeminderte Grenzwert. Der informative Anhang D der DIN VDE 0100-600:2017-06 setzt für den gemessenen Wert zwei Drittel davon an, weil die Leiter im Betrieb wärmer sind als bei der Messung, und im Hauptteil nennen die Anmerkungen 4 und 5 zu 6.4.3.7.3 eine Messunsicherheit von ± 30 % und einen Faktor 1,24 zur Umrechnung von 20 °C auf 80 °C. Beides ist nur aus zweiter Hand belegt, aus einer Leserfrage bei elektro.net vom 24.11.2023, und nicht am Normtext geprüft. Entschieden mit der fachlichen Abnahme am 20.11.2026 (#31): Ab Fassung 4 des Protokolls urteilt es gegen zwei Drittel dieses Werts, `elektro.loop.measured_share` (#1021)."
     },
     {
       "key": "elektro.loop.factor_b",
@@ -114,6 +114,87 @@
       "unit": "factor",
       "value": 20,
       "source": "DIN EN 60898-1 (VDE 0641-11):2025-08, 5.3.5 mit Tabelle 2, unverzögerte Auslösung Typ D über 10 bis 20 In"
+    },
+    {
+      "key": "elektro.insulation.minimum_selv_pelv",
+      "validFrom": "2017-06-01",
+      "validUntil": null,
+      "unit": "kiloohms",
+      "value": 500,
+      "source": "DIN VDE 0100-600 (VDE 0100-600):2017-06, Tabelle 6.1",
+      "note": "SELV und PELV: Prüfspannung 250 V Gleichspannung, Isolationswiderstand mindestens 0,5 MΩ. Ab Fassung 4 des Protokolls, nach der Nennspannung, die das Stromkreisverzeichnis für den Stromkreis nennt (#1021)."
+    },
+    {
+      "key": "elektro.insulation.minimum_above_500v",
+      "validFrom": "2017-06-01",
+      "validUntil": null,
+      "unit": "kiloohms",
+      "value": 1000,
+      "source": "DIN VDE 0100-600 (VDE 0100-600):2017-06, Tabelle 6.1",
+      "note": "Stromkreise über 500 V: Prüfspannung 1000 V Gleichspannung, Isolationswiderstand mindestens 1,0 MΩ. Ab Fassung 4 des Protokolls (#1021)."
+    },
+    {
+      "key": "elektro.rcd.trip_current_minimum",
+      "validFrom": "2017-06-01",
+      "validUntil": "2018-02-28",
+      "unit": "basis_points",
+      "value": 5000,
+      "source": "DIN EN 61008-1 (VDE 0664-10), Auslösung zwischen 0,5 IΔn und IΔn",
+      "note": "Bei 0,5 IΔn darf die Fehlerstromschutzeinrichtung nicht auslösen; ein Auslösestrom darunter zeigt eine zu empfindliche RCD oder Ableitströme im Stromkreis. Ab Fassung 4 des Protokolls (#1021)."
+    },
+    {
+      "key": "elektro.rcd.trip_current_minimum",
+      "validFrom": "2018-03-01",
+      "validUntil": null,
+      "unit": "basis_points",
+      "value": 5000,
+      "source": "DIN EN 61008-1 (VDE 0664-10):2018-03, 5.3.4 und 8.5, Auslösung zwischen 0,5 IΔn und IΔn",
+      "note": "Bei 0,5 IΔn darf die Fehlerstromschutzeinrichtung nicht auslösen; ein Auslösestrom darunter zeigt eine zu empfindliche RCD oder Ableitströme im Stromkreis. Ab Fassung 4 des Protokolls (#1021)."
+    },
+    {
+      "key": "elektro.rcd.selective_trip_time_minimum",
+      "validFrom": "2017-06-01",
+      "validUntil": "2023-07-31",
+      "unit": "milliseconds",
+      "value": 130,
+      "source": "DIN EN 61008-1 (VDE 0664-10) und DIN EN 61009-1 (VDE 0664-20), Abschaltzeit einer selektiven Fehlerstromschutzeinrichtung (S) bei IΔn",
+      "note": "Eine selektive (S) schaltet bei IΔn frühestens nach 130 ms ab, damit eine ohne Verzögerung nach ihr zuerst auslöst. Ab Fassung 4 des Protokolls (#1021)."
+    },
+    {
+      "key": "elektro.rcd.selective_trip_time_minimum",
+      "validFrom": "2023-08-01",
+      "validUntil": null,
+      "unit": "milliseconds",
+      "value": 130,
+      "source": "DIN EN 61008-1 (VDE 0664-10):2018-03, 5.3.12 mit Tabelle 1; DIN EN 61009-1 (VDE 0664-20):2023-08, 5.3.8 mit Tabelle 2, Abschaltzeit einer selektiven Fehlerstromschutzeinrichtung (S) bei IΔn",
+      "note": "Eine selektive (S) schaltet bei IΔn frühestens nach 130 ms ab, damit eine ohne Verzögerung nach ihr zuerst auslöst. Ab Fassung 4 des Protokolls (#1021)."
+    },
+    {
+      "key": "elektro.rcd.selective_trip_time_maximum",
+      "validFrom": "2017-06-01",
+      "validUntil": "2023-07-31",
+      "unit": "milliseconds",
+      "value": 500,
+      "source": "DIN EN 61008-1 (VDE 0664-10) und DIN EN 61009-1 (VDE 0664-20), Abschaltzeit einer selektiven Fehlerstromschutzeinrichtung (S) bei IΔn",
+      "note": "Eine selektive (S) schaltet bei IΔn spätestens nach 500 ms ab. Ab Fassung 4 des Protokolls (#1021)."
+    },
+    {
+      "key": "elektro.rcd.selective_trip_time_maximum",
+      "validFrom": "2023-08-01",
+      "validUntil": null,
+      "unit": "milliseconds",
+      "value": 500,
+      "source": "DIN EN 61008-1 (VDE 0664-10):2018-03, 5.3.12 mit Tabelle 1; DIN EN 61009-1 (VDE 0664-20):2023-08, 5.3.8 mit Tabelle 2, Abschaltzeit einer selektiven Fehlerstromschutzeinrichtung (S) bei IΔn",
+      "note": "Eine selektive (S) schaltet bei IΔn spätestens nach 500 ms ab. Ab Fassung 4 des Protokolls (#1021)."
+    },
+    {
+      "key": "elektro.loop.measured_share",
+      "validFrom": "2017-06-01",
+      "validUntil": null,
+      "unit": "basis_points",
+      "value": 6666,
+      "source": "DIN VDE 0100-600 (VDE 0100-600):2017-06, Anhang D",
+      "note": "Der gemessene Wert der Schleifenimpedanz ist höchstens zwei Drittel von U0 / Ia, weil die Leiter im Fehlerfall wärmer sind als bei der Messung; darüber braucht es eine genauere Bewertung nach Anhang D. 6666 Basispunkte statt zwei Drittel, damit der Grenzwert nie milder ist als der Anhang. Entschieden mit der fachlichen Abnahme am 20.11.2026 (#31), ab Fassung 4 des Protokolls (#1021)."
     }
   ]
 }

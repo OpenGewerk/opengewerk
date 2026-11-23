@@ -66,6 +66,14 @@ export interface WorkedOutValue {
   readonly limitMilli: number
   readonly atLeast: boolean
   readonly under?: boolean
+  /**
+   * A second limit a value has to reach, which makes the first the top of a
+   * range: the tripping current of an RCD between half and all of its rated
+   * residual current. Only with `atLeast` false.
+   */
+  readonly fromMilli?: number
+  /** What to do about a value outside, said after the verdict: a closer look the standard asks for. */
+  readonly outside?: string
   readonly source: string
 }
 
@@ -90,6 +98,8 @@ export interface LimitVerdict {
   readonly within: boolean | null
   /** The limit in thousandths of the field's unit, null when there is none. */
   readonly limitMilli: number | null
+  /** The lower end of a range in thousandths, for a limit that is one; the top is `limitMilli`. */
+  readonly fromMilli?: number
   readonly text: string
   readonly source: string | null
 }
@@ -1082,36 +1092,41 @@ export function formEngine<T extends FormTerms>(setup: FormEngineSetup<T>): Form
     }
 
     const { limitMilli, atLeast, source } = worked
+    // A range from a lower end to the limit (#1021), both ends inside.
+    const from = !atLeast && !under && worked.fromMilli !== undefined ? worked.fromMilli : null
 
     // Written with the places of the field and rounded towards the strict
     // side: 2,875 as "höchstens 2,87", never 2,88, or a measured 2,88 would be
     // outside a limit that reads like it. A limit a value has to stay under
-    // rounds up instead: a value of two places under 2,875 is under 2,88.
+    // rounds up instead: a value of two places under 2,875 is under 2,88. The
+    // lower end of a range rounds up like a limit to reach.
     const step = 10 ** Math.max(0, 3 - field.decimals)
     const shownLimit =
       atLeast || under ? Math.ceil(limitMilli / step) * step : Math.floor(limitMilli / step) * step
-    const stated = `${atLeast ? 'mindestens' : under ? 'unter' : 'höchstens'} ${formatMeasured(
-      shownLimit,
-      field.unit,
-      field.decimals,
-    )}`
+    const written = (milli: number) => formatMeasured(milli, field.unit, field.decimals)
+    const stated =
+      from === null
+        ? `${atLeast ? 'mindestens' : under ? 'unter' : 'höchstens'} ${written(shownLimit)}`
+        : `zwischen ${measuredNumber(Math.ceil(from / step) * step, field.decimals)} und ${written(shownLimit)}`
+    const range = from === null ? {} : { fromMilli: from }
 
     if (measuredMilli === null) {
-      return { within: null, limitMilli, text: `Grenzwert: ${stated}.`, source }
+      return { within: null, limitMilli, ...range, text: `Grenzwert: ${stated}.`, source }
     }
 
     const within = atLeast
       ? measuredMilli >= limitMilli
       : under
         ? measuredMilli < limitMilli
-        : measuredMilli <= limitMilli
+        : measuredMilli <= limitMilli && (from === null || measuredMilli >= from)
 
     return {
       within,
       limitMilli,
+      ...range,
       text: within
         ? `Innerhalb des Grenzwerts, ${stated}.`
-        : `Außerhalb des Grenzwerts, ${stated}.`,
+        : `Außerhalb des Grenzwerts, ${stated}.${worked.outside ? ` ${worked.outside}` : ''}`,
       source,
     }
   }
