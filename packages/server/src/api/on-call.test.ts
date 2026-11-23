@@ -580,6 +580,34 @@ describe('the surcharge named before the order (#1081)', () => {
     ])
   })
 
+  it('charges no more than was named on hours without a price yet, a percentage included', async () => {
+    // Saturday 24.10.2026 at 10:00, where the settings charge 50 % on the working time.
+    const saturday = '2026-10-24T08:00:00.000Z'
+    const none = aCall({
+      emergencyAt: saturday,
+      emergencyNamedFlatCents: 0,
+      emergencyNamedBasisPoints: 0,
+    })
+    const less = aCall({
+      emergencyAt: saturday,
+      emergencyNamedFlatCents: 0,
+      emergencyNamedBasisPoints: 3000,
+    })
+
+    await push(app, office(), [none.operation, less.operation])
+
+    const describedOn = async (jobId: string) =>
+      (
+        await admin.query<{ designation: string; description: string | null }>(
+          'select designation, description from document_lines where document_id = $1 order by position',
+          [await invoiceOf(jobId)],
+        )
+      ).rows.map((line) => line.description ?? line.designation)
+
+    expect(await describedOn(none.id)).toEqual(['Arbeitszeit'])
+    expect(await describedOn(less.id)).toEqual(['Arbeitszeit', '30 % auf die Arbeitszeit'])
+  })
+
   it('comes from the device that took the call on call, with the job', async () => {
     // Max is on call now (see above); the call came an hour ago.
     const call = aCall({
@@ -728,19 +756,31 @@ describe('the tariffs of an emergency call (#1024)', () => {
   })
 
   it('begin on another day where the office notes a call down afterwards (#1080)', async () => {
+    const from = addDays(today, -26)
     const answer = (
       await http()
-        .get('/on-call-shifts/tariffs?from=2026-10-28')
+        .get(`/on-call-shifts/tariffs?from=${from}`)
         .set('x-test-identity', office())
         .expect(200)
     ).body as EmergencyTariff[]
 
     expect(answer[0]).toMatchObject({
-      on: '2026-10-28',
-      until: '2026-11-25',
+      on: from,
+      until: addDays(from, 28),
       surcharges: { night: { flatCents: 4500, basisPoints: 0 } },
     })
-    for (const day of ['2026-02-30', '2026-13-01', '28.10.2026']) {
+
+    const year = Number(today.slice(0, 4))
+
+    for (const day of [
+      '2026-02-30',
+      '2026-13-01',
+      '28.10.2026',
+      `${String(year - 2)}-01-01`,
+      `${String(year + 2)}-01-01`,
+      '0001-01-01',
+      '9999-12-31',
+    ]) {
       await http()
         .get(`/on-call-shifts/tariffs?from=${day}`)
         .set('x-test-identity', office())

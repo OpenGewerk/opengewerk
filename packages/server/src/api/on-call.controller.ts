@@ -13,6 +13,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common'
 import {
+  addDays,
   berlinClock,
   type EmergencyTariff,
   isAllowed,
@@ -152,13 +153,19 @@ export class OnCallController {
     @CurrentIdentity() identity: RequestIdentity,
     @Query('from') from: unknown,
   ): Promise<readonly EmergencyTariff[]> {
+    const today = berlinClock(new Date()).day
+
     if (from !== undefined && !isCalendarDay(from)) {
       throw new BadRequestException('Der erste Tag ist ein Datum, etwa 2026-11-23.')
     }
 
-    return this.database.forTenant(identity, (tx) =>
-      emergencyTariffsFrom(tx, from ?? berlinClock(new Date()).day),
-    )
+    // A year either way: a call noted down afterwards, or planned ahead. The
+    // rules of tax do not reach every day there is.
+    if (from !== undefined && (from < addDays(today, -366) || from > addDays(today, 366))) {
+      throw new BadRequestException('Der erste Tag liegt höchstens ein Jahr vor oder nach heute.')
+    }
+
+    return this.database.forTenant(identity, (tx) => emergencyTariffsFrom(tx, from ?? today))
   }
 
   /**

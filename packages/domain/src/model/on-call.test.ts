@@ -280,6 +280,48 @@ describe('the surcharge named before the order and the one charged (#1081)', () 
     expect(chargeableSurcharge(flat, percent, 12_000)).toBe(flat)
   })
 
+  it('never charges more than was named on hours without a price yet', () => {
+    const weekend = { flatCents: 0, basisPoints: 5000 }
+
+    expect(chargeableSurcharge(weekend, { flatCents: 0, basisPoints: 0 }, 0)).toEqual({
+      flatCents: 0,
+      basisPoints: 0,
+    })
+    expect(chargeableSurcharge(weekend, { flatCents: 0, basisPoints: 3000 }, 0)).toEqual({
+      flatCents: 0,
+      basisPoints: 3000,
+    })
+    expect(
+      chargeableSurcharge(
+        { flatCents: 0, basisPoints: 2000 },
+        { flatCents: 0, basisPoints: 3000 },
+        0,
+      ),
+    ).toEqual({
+      flatCents: 0,
+      basisPoints: 2000,
+    })
+    // A flat amount against a percentage: without hours what was named.
+    expect(chargeableSurcharge(weekend, { flatCents: 4500, basisPoints: 0 }, 0)).toEqual({
+      flatCents: 4500,
+      basisPoints: 0,
+    })
+  })
+
+  it('charges nothing where the settings charge nothing, whatever was named', () => {
+    expect(
+      chargeableSurcharge(
+        { flatCents: 0, basisPoints: 0 },
+        { flatCents: 4500, basisPoints: 0 },
+        // On hours without a price yet as well.
+        0,
+      ),
+    ).toEqual({
+      flatCents: 0,
+      basisPoints: 0,
+    })
+  })
+
   it('charges nothing where nothing was named', () => {
     expect(
       chargeableSurcharge(
