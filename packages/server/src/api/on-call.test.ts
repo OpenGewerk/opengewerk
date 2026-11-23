@@ -635,6 +635,28 @@ describe('the surcharge named before the order (#1081)', () => {
     )
   })
 
+  it('stays when the office changes something else of the job', async () => {
+    const job = await post('/jobs', {
+      customerId: customer,
+      kind: 'service',
+      designation: 'Licht im Flur',
+      emergencyAt: atNight,
+      emergencyNamedFlatCents: 3000,
+      emergencyNamedBasisPoints: 0,
+    })
+
+    await http()
+      .patch(`/jobs/${job.id}`)
+      .set('x-test-identity', office())
+      .send({ designation: 'Licht im Flur und Bad' })
+      .expect(200)
+    await http()
+      .patch(`/jobs/${job.id}`)
+      .set('x-test-identity', office())
+      .send({ emergencyAt: null })
+      .expect(422)
+  })
+
   it('is taken by the office at its route, with the moment of the call', async () => {
     const job = await post('/jobs', {
       customerId: customer,
@@ -718,10 +740,12 @@ describe('the tariffs of an emergency call (#1024)', () => {
       until: '2026-11-25',
       surcharges: { night: { flatCents: 4500, basisPoints: 0 } },
     })
-    await http()
-      .get('/on-call-shifts/tariffs?from=2026-02-30')
-      .set('x-test-identity', office())
-      .expect(400)
+    for (const day of ['2026-02-30', '2026-13-01', '28.10.2026']) {
+      await http()
+        .get(`/on-call-shifts/tariffs?from=${day}`)
+        .set('x-test-identity', office())
+        .expect(400)
+    }
   })
 
   it('name no tax for a business that claims section 19 UStG', async () => {

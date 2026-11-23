@@ -253,18 +253,21 @@ export function NewServiceCallScreen() {
   // Only a consumer is owed the surcharge before the order (#1080, section
   // 312e BGB), and a new caller is one unless the office says otherwise.
   const consumer = customer ? customer['isBusiness'] !== true : fresh.kind === 'private'
-  const calledMoment = /^\d{2}:\d{2}$/.test(calledAt)
-    ? berlinInstant(calledOn, minuteOf(calledAt))
-    : null
+  // Only a whole day and time make a moment: a field being typed into makes none.
+  const calledMoment =
+    /^\d{4}-\d{2}-\d{2}$/.test(calledOn) && /^\d{2}:\d{2}$/.test(calledAt)
+      ? berlinInstant(calledOn, minuteOf(calledAt))
+      : null
   const tariffs = useQuery({
     queryKey: ['emergency-tariffs', calledOn],
     queryFn: ({ signal }) => emergencyTariffs(signal, calledOn),
     enabled: emergency && consumer,
     retry: false,
   })
-  const asking = tariffs.fetchStatus === 'fetching'
-  const tariff =
-    tariffs.data && calledMoment && !asking ? tariffOn(tariffs.data, calledMoment) : null
+  // Asked anew in the background, as when the window comes back into focus,
+  // the answer of the same day stays what the form names and keeps.
+  const asking = tariffs.data === undefined && tariffs.fetchStatus === 'fetching'
+  const tariff = tariffs.data && calledMoment ? tariffOn(tariffs.data, calledMoment) : null
   const surcharge = tariff && calledMoment ? emergencyTariffText(tariff, calledMoment) : null
   const theirSites = useMemo(
     () =>

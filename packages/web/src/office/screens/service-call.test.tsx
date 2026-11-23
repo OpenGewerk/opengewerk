@@ -309,6 +309,19 @@ describe('a call taken on the phone (#292)', () => {
     })
   })
 
+  it('takes an emptied day of the call without breaking (#1080)', async () => {
+    answers.set('/on-call-shifts/tariffs?from=2026-10-28', fromTheCall)
+    await mount('/auftraege/service')
+
+    await type('Kunde suchen', 'Berg')
+    await userEvent.click(await screen.findByRole('button', { name: /Familie Berg/ }))
+    await userEvent.click(screen.getByLabelText('Notdiensteinsatz', { exact: false }))
+    await userEvent.clear(screen.getByLabelText('Anruf am'))
+
+    expect(screen.getByRole('button', { name: 'Serviceeinsatz anlegen' })).toBeTruthy()
+    expect(screen.queryByText(/^Vor dem Auftrag nennen/)).toBeNull()
+  })
+
   it('names nothing to a business, and keeps nothing named (#1080)', async () => {
     answers.set('/on-call-shifts/tariffs?from=2026-10-28', fromTheCall)
     await mount('/auftraege/service')

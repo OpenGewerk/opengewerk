@@ -37,11 +37,14 @@ import { CurrentIdentity, type RequestIdentity } from './identity.js'
 
 /** Whether a value is a day of the calendar written as 2026-11-23, and one that exists. */
 function isCalendarDay(value: unknown): value is IsoDate {
-  return (
-    typeof value === 'string' &&
-    /^\d{4}-\d{2}-\d{2}$/.test(value) &&
-    new Date(`${value}T12:00:00Z`).toISOString().slice(0, 10) === value
-  )
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false
+  }
+
+  // A month 13 makes no date at all, and `toISOString` would throw for it.
+  const noon = new Date(`${value}T12:00:00Z`)
+
+  return Number.isFinite(noon.getTime()) && noon.toISOString().slice(0, 10) === value
 }
 
 /** A time of the on-call plan as the office shows it. */
