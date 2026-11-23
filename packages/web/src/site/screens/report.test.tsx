@@ -640,13 +640,8 @@ describe('a report on site', () => {
   })
 
   /**
-   * A change the sync brings in after the customer drew empties the field
-   * (#1063): nothing goes out over the page they saw before, and they sign
-   * again over the page as it now is.
-   */
-  /**
    * The pad tells of a stroke only once it ends; a stroke begun before the
-   * change and ended after it goes as well (#1063).
+   * change goes all the same, as the change comes in (#1063).
    */
   it('empties the field when the report changes while the first stroke is drawn', async () => {
     const user = userEvent.setup()
@@ -696,6 +691,11 @@ describe('a report on site', () => {
     expect(client.list('document_signatures')).toEqual([])
   })
 
+  /**
+   * A change the sync brings in after the customer drew empties the field
+   * (#1063): nothing goes out over the page they saw before, and they sign
+   * again over the page as it now is.
+   */
   it('empties the field when the report changes after the customer drew in it', async () => {
     const user = userEvent.setup()
     const report = { ...draftReport, introText: 'Leuchte im Treppenhaus getauscht.' }
