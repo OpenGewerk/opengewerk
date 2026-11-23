@@ -158,6 +158,91 @@ beforeEach(() => {
 })
 
 describe('the fields of a report on site (#78)', () => {
+  it('take no more places than their field shows (#1090)', async () => {
+    const user = userEvent.setup()
+    const { client, router } = await mount('/auftraege/j-1')
+
+    server.offline = true
+
+    await user.click(await screen.findByRole('button', { name: 'Regiebericht schreiben' }))
+    await screen.findByText('Noch nicht übertragen.')
+
+    const reportId = router.state.location.pathname.split('/').at(-1) ?? ''
+    const distance = () =>
+      readFormValues(client.get('documents', reportId)?.['fieldValues'])?.['field_2']
+
+    // The distance has no places: 25,5 km would read 26 km before the signature.
+    await user.type(screen.getByLabelText('Anfahrt in km'), '25,5')
+    expect(screen.getByText('Eine ganze Zahl, ohne Nachkommastellen.')).toBeTruthy()
+    await user.tab()
+    // Not written: the draft keeps the last figure that read, 25 out of "25,".
+    expect(distance()).toBe(25_000)
+
+    await user.clear(screen.getByLabelText('Anfahrt in km'))
+    await user.type(screen.getByLabelText('Anfahrt in km'), '26')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(distance()).toBe(26_000)
+    })
+    expect(screen.queryByText('Eine ganze Zahl, ohne Nachkommastellen.')).toBeNull()
+
+    // Three million km read as a whole number, but in thousandths they are
+    // above the largest figure an input takes: not written, the draft keeps the 26.
+    await user.tripleClick(screen.getByLabelText('Anfahrt in km'))
+    await user.paste('3000000')
+    expect(screen.getByText('Eine Zahl, etwa 0,85.')).toBeTruthy()
+    await user.tab()
+    expect(distance()).toBe(26_000)
+
+    // A device of an earlier version wrote 25,5 km: the field says so on opening.
+    await client.update('documents', reportId, { fieldValues: JSON.stringify({ field_2: 25_500 }) })
+    await router.navigate({ to: '/auftraege/j-1' })
+    await router.navigate({
+      to: '/auftraege/$jobId/berichte/$documentId',
+      params: { jobId: 'j-1', documentId: reportId },
+    })
+
+    expect(await screen.findByText('Eine ganze Zahl, ohne Nachkommastellen.')).toBeTruthy()
+  })
+
+  it('keep the places of their field where it names the next inspection (#1090)', async () => {
+    // Only a client that sends what the screen never would gives a report
+    // this key, but the input still keeps to the places it shows.
+    const next: ReportField = {
+      kind: 'number',
+      key: 'next_inspection_months',
+      label: 'Nächste Prüfung',
+      unit: 'month',
+      decimals: 0,
+    }
+    server.put('form_definitions', {
+      id: 'fd-2',
+      key: 'report',
+      definitionVersion: 2,
+      definition: JSON.stringify(reportDefinition(2, [weather, next])),
+    })
+
+    const user = userEvent.setup()
+    const { client, router } = await mount('/auftraege/j-1')
+
+    server.offline = true
+
+    await user.click(await screen.findByRole('button', { name: 'Regiebericht schreiben' }))
+    await screen.findByText('Noch nicht übertragen.')
+
+    const reportId = router.state.location.pathname.split('/').at(-1) ?? ''
+
+    await user.type(screen.getByLabelText(/^Nächste Prüfung in/), '1,5')
+    expect(screen.getByText('Eine ganze Zahl, ohne Nachkommastellen.')).toBeTruthy()
+    await user.tab()
+    expect(
+      readFormValues(client.get('documents', reportId)?.['fieldValues'])?.[
+        'next_inspection_months'
+      ],
+    ).toBe(1_000)
+  })
+
   it('are filled in without a network, read before signing and signed with the report', async () => {
     const user = userEvent.setup()
     const { client, router } = await mount('/auftraege/j-1')

@@ -61,7 +61,7 @@ import {
   statusIcons,
   useEntry,
 } from '@opengewerk/platform-web'
-import { amount, date, scaledNumber, today } from '@opengewerk/platform-web/format'
+import { amount, date, largestStored, scaledNumber, today } from '@opengewerk/platform-web/format'
 import { useHoldUpdates } from '@opengewerk/platform-web/shell'
 import { NotSent, SiteRow, SiteRows } from '@opengewerk/platform-web/site'
 import {
@@ -626,14 +626,29 @@ export function Verdict({
 function FigureInput({
   field,
   value,
+  placesOfField = false,
   onChange,
 }: {
   readonly field: NumberField | MeasurementField
   readonly value: FieldValue | undefined
+  /**
+   * Takes no more places than the field shows (#1090): a report keeps the
+   * places of its field, and "25,5" in a field of none would read "26 km"
+   * before the signature. A protocol takes every place that was measured.
+   */
+  readonly placesOfField?: boolean
   readonly onChange: (value: number | undefined) => void
 }) {
+  const places = placesOfField ? field.decimals : 3
+
   const [typed, setTyped] = useState(typeof value === 'number' ? amount(value) : '')
-  const [problem, setProblem] = useState<string | undefined>(undefined)
+  // A value with more places than the field, as a device of an earlier
+  // version may have written it, says so from the start as typing it would.
+  const [problem, setProblem] = useState<string | undefined>(
+    typeof value === 'number' && value % 10 ** (3 - places) !== 0
+      ? tooManyPlaces(places)
+      : undefined,
+  )
 
   return (
     <Field
@@ -646,22 +661,37 @@ function FigureInput({
       problem={problem}
       onChange={(event) => {
         const input = event.target.value
-        const read = scaledNumber(input, 3)
+        const read = scaledNumber(input, places)
+        // Read in the places of its field, a figure is still kept in
+        // thousandths, and there "3000000" km is above the largest figure
+        // any input takes (`largestStored`), as it was before #1090.
+        const stored = read === null ? null : read * 10 ** (3 - places)
 
         setTyped(input)
 
         if (input.trim() === '') {
           setProblem(undefined)
           onChange(undefined)
-        } else if (read === null) {
-          setProblem('Eine Zahl, etwa 0,85.')
+        } else if (stored === null || Math.abs(stored) > largestStored) {
+          setProblem(
+            read === null && places < 3 && scaledNumber(input, 3) !== null
+              ? tooManyPlaces(places)
+              : 'Eine Zahl, etwa 0,85.',
+          )
         } else {
           setProblem(undefined)
-          onChange(read)
+          onChange(stored)
         }
       }}
     />
   )
+}
+
+/** What a field of a report says when more places are typed than it shows (#1090). */
+function tooManyPlaces(places: number): string {
+  return places === 0
+    ? 'Eine ganze Zahl, ohne Nachkommastellen.'
+    : `Höchstens ${places === 1 ? 'eine Nachkommastelle' : `${String(places)} Nachkommastellen`}.`
 }
 
 const unanswered = { value: '', label: 'nicht angegeben' } as const
@@ -680,6 +710,7 @@ export function FieldInput({
   performedOn,
   partOnly = false,
   photos,
+  placesOfField = false,
   onChange,
 }: {
   readonly field: BlockField
@@ -691,6 +722,8 @@ export function FieldInput({
   /** The protocol tests only a part of the installation, whose day counts only where it is the sooner (#814, #822). */
   readonly partOnly?: boolean
   readonly photos: readonly PhotoOption[]
+  /** A figure takes no more places than its field shows, as a report keeps them (#1090). */
+  readonly placesOfField?: boolean
   readonly onChange: (value: FieldValue | undefined) => void
 }) {
   switch (field.kind) {
@@ -718,11 +751,21 @@ export function FieldInput({
     case 'number':
       return isNextInspection(field) ? (
         <div className="flex flex-col gap-1">
-          <FigureInput field={field} value={value} onChange={onChange} />
+          <FigureInput
+            field={field}
+            value={value}
+            placesOfField={placesOfField}
+            onChange={onChange}
+          />
           <NextInspection performedOn={performedOn} value={value} partOnly={partOnly} />
         </div>
       ) : (
-        <FigureInput field={field} value={value} onChange={onChange} />
+        <FigureInput
+          field={field}
+          value={value}
+          placesOfField={placesOfField}
+          onChange={onChange}
+        />
       )
     case 'measurement':
       return (

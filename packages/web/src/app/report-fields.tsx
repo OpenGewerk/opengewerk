@@ -186,6 +186,7 @@ export function ReportFieldsForm({ report }: { readonly report: RecordState }) {
             circuit={null}
             performedOn=""
             photos={[]}
+            placesOfField
             onChange={(value) => {
               const next: Record<string, FieldValue> = { ...(draft as Record<string, FieldValue>) }
 
