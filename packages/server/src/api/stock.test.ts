@@ -11,6 +11,7 @@ import { storesBelowMinimum } from '../deadlines/sources.js'
 import { ApiModule } from './api.module.js'
 import { fingerprintAsHeld } from './test-signing.js'
 import { as, testIdentities as identities } from './test-identity.js'
+import { readyToInvoice } from './test-invoice.js'
 import { changed, created, push } from './test-structure.js'
 
 /**
@@ -91,6 +92,9 @@ beforeAll(async () => {
     south.id,
     south.name,
   ])
+  // A letterhead with all an instruction names: an order confirmation to a
+  // consumer with nothing before it gets the instructions of a quote (#1024).
+  await readyToInvoice(admin, north.id, south.id)
   // Who books is a person of the business.
   await admin.query(
     `insert into auth_users (id, name, email) values ('test', 'Britta Kohm', 'britta@example.de')`,
