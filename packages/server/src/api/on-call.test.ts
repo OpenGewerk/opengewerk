@@ -1681,4 +1681,54 @@ describe('the line of the surcharge on a draft, after the settings (#1087)', () 
       expect(answer.receipts.filter((receipt) => receipt.outcome !== 'applied')).toEqual([])
     },
   )
+
+  it('signs a report after another write while the report is being issued, without a deadlock', async () => {
+    const call = aCall({ emergencyAt: '2026-10-24T08:00:00.000Z' })
+
+    await push(app, office(), [call.operation])
+
+    const report = (
+      await post('/documents', {
+        customerId: customer,
+        jobId: call.id,
+        kind: 'time_and_material_report',
+        documentDate: '2026-10-28',
+      })
+    ).id
+
+    await post(`/documents/${report}/lines`, {
+      designation: 'Arbeitszeit',
+      quantityMilli: 1000,
+      unit: 'hour',
+      unitPriceCents: 0,
+    })
+
+    // Made first, so that it comes first in the outbox: it writes, and the
+    // transmission holds the log from then on.
+    const write = aCall().operation
+    const signature = created('document_signatures', newId<'document-signature'>(), {
+      documentId: report,
+      signerName: 'Ayse Arslan',
+      signedAt: new Date().toISOString(),
+      deviceInfo: null,
+      path: scribble,
+      contentFingerprint: await fingerprintAsHeld(admin, report),
+    })
+    const issuing = await lockedForIssuing(report)
+    const signing = transmitted([write, signature]).then((answer) => answer.status)
+
+    try {
+      await waitingFor(admin, issuing, signing)
+      await issuing.query(
+        "update documents set subject = coalesce(subject, 'Bericht') where id = $1",
+        [report],
+      )
+      await issuing.query('commit')
+    } finally {
+      await issuing.query('rollback').catch(() => undefined)
+      issuing.release()
+    }
+
+    expect(await signing).toBe(201)
+  })
 })

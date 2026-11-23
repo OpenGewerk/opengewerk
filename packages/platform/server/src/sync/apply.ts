@@ -145,9 +145,16 @@ export interface SyncApplication<Sender> {
    * the two. Locked in the order of their ids.
    */
   readonly beforeOperations?: (context: SyncTransmissionContext<Sender>) => Promise<void> | void
+  /**
+   * What the application does once every operation of a transmission is
+   * written, in the same transaction (opengewerk#1087): work that follows
+   * many operations alike, done once for all of them instead of after each.
+   * What it throws refuses the transmission like any other error.
+   */
+  readonly afterOperations?: (context: SyncTransmissionContext<Sender>) => Promise<void> | void
 }
 
-/** A transmission as a whole, before its first operation. */
+/** A transmission as a whole, before its first operation or after its last. */
 export interface SyncTransmissionContext<Sender> {
   readonly tx: TenantTransaction
   readonly tenantId: TenantId
@@ -623,6 +630,10 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
           // one it was travels with it, so that the answer can say.
           throw new OperationRefused(operation.id, error)
         }
+      }
+
+      if (application.afterOperations) {
+        await application.afterOperations({ tx, tenantId, operations: ordered, sender })
       }
 
       return receipts

@@ -624,6 +624,7 @@ describe('applying what a device queued up', () => {
     const first = newId<'note'>()
     const second = newId<'note'>()
     const seen: { readonly records: string[]; readonly written: number }[] = []
+    const after: number[] = []
     const locking = serverSync<Courier>({
       rules: probeSyncRules,
       tables: syncTables({ shelves, notes, letters, letterLines }),
@@ -637,6 +638,16 @@ describe('applying what a device queued up', () => {
               .where(inArray(notes.id, [first, second]))
           ).length,
         })
+      },
+      afterOperations: async ({ tx }) => {
+        after.push(
+          (
+            await tx
+              .select()
+              .from(notes)
+              .where(inArray(notes.id, [first, second]))
+          ).length,
+        )
       },
     })
 
@@ -661,6 +672,8 @@ describe('applying what a device queued up', () => {
     )
 
     expect(seen).toEqual([{ records: [first, second].sort(), written: 0 }])
+    // And once more after the last one wrote (opengewerk#1087).
+    expect(after).toEqual([2])
   })
 
   it('marks a deleted record instead of removing it, so that a device that was away hears of it', async () => {
