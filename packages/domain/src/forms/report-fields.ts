@@ -225,6 +225,18 @@ export function nextReportFieldKey(used: readonly string[]): string {
   return `field_${String(highest + 1)}`
 }
 
+/**
+ * A number of a report rounded to the places of its field, as it was always
+ * written (#1089): an issued report keeps the text its customer signed and its
+ * paper prints, whatever more places were typed. Only a value judged against
+ * a limit shows every place it has, and a report judges none.
+ */
+function roundedTo(milli: number, decimals: number): number {
+  const step = 10 ** Math.max(0, 3 - decimals)
+
+  return Math.sign(milli) * Math.round(Math.abs(milli) / step) * step
+}
+
 /** A value the way the report shows it and the paper prints it: "25 km", "ja", "Regen". */
 export function fieldText(field: BlockField, value: FieldValue | undefined): string | null {
   if (value === undefined) {
@@ -236,7 +248,9 @@ export function fieldText(field: BlockField, value: FieldValue | undefined): str
       return typeof value === 'string' && value.trim() !== '' ? value : null
     case 'number':
     case 'measurement':
-      return typeof value === 'number' ? formatMeasured(value, field.unit, field.decimals) : null
+      return typeof value === 'number'
+        ? formatMeasured(roundedTo(value, field.decimals), field.unit, field.decimals)
+        : null
     case 'choice':
       return field.options.find((option) => option.value === value)?.label ?? null
     case 'yes_no':
