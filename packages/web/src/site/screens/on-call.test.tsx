@@ -39,6 +39,8 @@ let counter = 0
 let keptBefore: string | null = null
 // Whether keeping in the store of the tenant fails, as on a device whose storage is full.
 let keepFails = false
+// Holds the answer for the tariffs back until it is opened, as a slow network does.
+let tariffsHeld: Promise<void> | null = null
 
 function shift(over: Partial<RecordState> = {}): RecordState {
   return {
@@ -140,14 +142,17 @@ beforeEach(() => {
   globalThis.localStorage.clear()
   answers.set('/tasks/assignees', [{ userId: 'u-1', name: 'Jonas Brandt', active: true }])
 
-  vi.stubGlobal('fetch', (path: string) =>
-    Promise.resolve(
-      new Response(JSON.stringify(answers.get(path) ?? {}), {
-        status: answers.has(path) ? 200 : 404,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    ),
-  )
+  tariffsHeld = null
+  vi.stubGlobal('fetch', async (path: string) => {
+    if (path === '/on-call-shifts/tariffs' && tariffsHeld) {
+      await tariffsHeld
+    }
+
+    return new Response(JSON.stringify(answers.get(path) ?? {}), {
+      status: answers.has(path) ? 200 : 404,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  })
 })
 
 afterEach(() => {
@@ -327,6 +332,27 @@ describe('the surcharge named before the order (#1024)', () => {
     // The office raised the surcharge since.
     answers.set('/on-call-shifts/tariffs', tariffs)
     await userEvent.click(await screen.findByRole('link', { name: 'Einsatz anlegen' }))
+
+    expect(await screen.findByText(named)).toBeTruthy()
+  })
+
+  it('is not named from what the device kept while the server is being asked', async () => {
+    keptBefore = JSON.stringify([tariff(today, addDays(today, 28), 4500)])
+    answers.set('/on-call-shifts/tariffs', tariffs)
+
+    let open = () => {}
+
+    tariffsHeld = new Promise((resolve) => {
+      open = resolve
+    })
+    await mount('/einsatz/neu')
+
+    expect(
+      await screen.findByText(/^Der Notdienstzuschlag wird gerade vom Server geholt/),
+    ).toBeTruthy()
+    expect(screen.queryByText(/^Notdienstzuschlag (Nacht|Wochenende): 53,55/)).toBeNull()
+
+    open()
 
     expect(await screen.findByText(named)).toBeTruthy()
   })

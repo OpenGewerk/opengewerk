@@ -62,7 +62,11 @@ function useCurrentShift(): RecordState | undefined {
  * Asked while on call only, and asked again each time a screen that shows
  * them opens: a surcharge the office changed a minute ago is the one to name.
  */
-function useEmergencyTariffs(onCall: boolean): readonly EmergencyTariff[] | null {
+function useEmergencyTariffs(onCall: boolean): {
+  readonly tariffs: readonly EmergencyTariff[] | null
+  /** Whether the server is being asked right now: what is held may be older than its answer. */
+  readonly asking: boolean
+} {
   const client = useSync()
   const read = useCallback(() => client.kept(tariffsName), [client])
   const kept = useSyncExternalStore(client.subscribe, read, read)
@@ -86,7 +90,9 @@ function useEmergencyTariffs(onCall: boolean): readonly EmergencyTariff[] | null
     refetchOnMount: 'always',
   })
 
-  return answer.data ?? keptTariffs(kept)
+  // Without a network the question pauses and is not asking: then what the
+  // device kept is the surcharge to name.
+  return { tariffs: answer.data ?? keptTariffs(kept), asking: answer.fetchStatus === 'fetching' }
 }
 
 /** On top of the open jobs while on call: until when, and the way to a new call. */
@@ -166,7 +172,7 @@ export function SiteNewCallScreen() {
   const [working, setWorking] = useState(false)
   // The moment the call came in: when this screen opened.
   const [calledAt] = useState(() => new Date().toISOString())
-  const tariffs = useEmergencyTariffs(may && shift !== undefined)
+  const { tariffs, asking } = useEmergencyTariffs(may && shift !== undefined)
   // The one of the day of the call; none where the kept ones do not reach it.
   const tariff = tariffs ? tariffOn(tariffs, new Date(calledAt)) : null
 
@@ -378,9 +384,13 @@ export function SiteNewCallScreen() {
           </div>
         </Panel>
 
-        {consumer && (surcharge !== null || tariff === null) ? (
+        {consumer && (asking || surcharge !== null || tariff === null) ? (
           <Panel title="Vor dem Auftrag nennen">
-            {surcharge ? (
+            {asking ? (
+              <SiteText muted size={15}>
+                Der Notdienstzuschlag wird gerade vom Server geholt.
+              </SiteText>
+            ) : surcharge ? (
               <div className="flex flex-col gap-1.5">
                 <SiteText size={16}>
                   <b className="font-semibold">{surcharge}</b>
