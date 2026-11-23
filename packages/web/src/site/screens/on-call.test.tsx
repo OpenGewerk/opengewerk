@@ -22,7 +22,7 @@ import { userEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { aTenantChoice } from '../../session/test-tenants.js'
-import { SyncClient } from '../../sync/client.js'
+import { SyncClient, tariffsName } from '../../sync/client.js'
 import { SiteJobList } from './jobs.js'
 import { SiteNewCallScreen } from './on-call.js'
 
@@ -35,6 +35,8 @@ import { SiteNewCallScreen } from './on-call.js'
 let server: TestServer
 let answers: Map<string, unknown>
 let counter = 0
+// What the store of the tenant keeps of the tariffs before the screen opens (#1024).
+let keptBefore: string | null = null
 
 function shift(over: Partial<RecordState> = {}): RecordState {
   return {
@@ -93,6 +95,10 @@ async function mount(
 
   await client.synchronise()
 
+  if (keptBefore !== null) {
+    await client.keep(tariffsName, keptBefore)
+  }
+
   const root = createRootRoute()
   const router = createRouter({
     routeTree: root.addChildren([
@@ -123,6 +129,7 @@ async function mount(
 beforeEach(() => {
   server = new TestServer()
   answers = new Map()
+  keptBefore = null
   globalThis.localStorage.clear()
   answers.set('/tasks/assignees', [{ userId: 'u-1', name: 'Jonas Brandt', active: true }])
 
@@ -253,32 +260,29 @@ describe('the surcharge named before the order (#1024)', () => {
     tariff(today, addDays(today, 28), 6000),
   ]
   const named = /^Notdienstzuschlag (Nacht|Wochenende): 71,40/
-  const kept = 'opengewerk.emergency-tariffs.t-1'
 
-  it('is the one of the business on the day of the call, asked from the server and kept on the device', async () => {
+  it('is the one of the business on the day of the call, asked from the server and kept in the store of the tenant', async () => {
     answers.set('/on-call-shifts/tariffs', tariffs)
-    await mount('/einsatz/neu')
+    const { client } = await mount('/einsatz/neu')
 
     expect(await screen.findByText(named)).toBeTruthy()
     expect(screen.getByText(/^Nenne den Zuschlag, bevor der Kunde den Auftrag gibt/)).toBeTruthy()
     await waitFor(() => {
-      expect(JSON.parse(globalThis.localStorage.getItem(kept) ?? 'null')).toEqual(tariffs)
+      expect(JSON.parse(client.kept(tariffsName) ?? 'null')).toEqual(tariffs)
     })
+    // Not in the storage of the browser, which a sign out leaves behind.
+    expect(Object.keys(globalThis.localStorage).filter((key) => key.includes('tariff'))).toEqual([])
   })
 
   it('comes from what the device kept where the server does not answer', async () => {
-    globalThis.localStorage.setItem(kept, JSON.stringify(tariffs))
-    globalThis.localStorage.setItem(
-      'opengewerk.emergency-tariffs.t-2',
-      JSON.stringify([{ ...tariffs[1], vatBasisPoints: null }]),
-    )
+    keptBefore = JSON.stringify(tariffs)
     await mount('/einsatz/neu')
 
     expect(await screen.findByText(named)).toBeTruthy()
   })
 
   it('is said to be missing where the device kept none, none it can read, or none for the day', async () => {
-    globalThis.localStorage.setItem(kept, JSON.stringify([{ ...tariffs[1], holidays: 'keine' }]))
+    keptBefore = JSON.stringify([{ ...tariffs[1], holidays: 'keine' }])
     await mount('/einsatz/neu')
 
     expect(
@@ -287,7 +291,7 @@ describe('the surcharge named before the order (#1024)', () => {
   })
 
   it('is said to be missing where what the device kept ended before the day of the call', async () => {
-    globalThis.localStorage.setItem(kept, JSON.stringify([tariffs[0]]))
+    keptBefore = JSON.stringify([tariffs[0]])
     await mount('/einsatz/neu')
 
     expect(

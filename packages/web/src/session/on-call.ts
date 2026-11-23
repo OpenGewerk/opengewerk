@@ -62,11 +62,6 @@ export function emergencyTariffs(): Promise<readonly EmergencyTariff[]> {
   return request<readonly EmergencyTariff[]>('/on-call-shifts/tariffs')
 }
 
-/** Per tenant, so that a device signed in to another business never names this one's surcharge. */
-function tariffKey(tenantId: string): string {
-  return `opengewerk.emergency-tariffs.${tenantId}`
-}
-
 function isCount(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0
 }
@@ -99,19 +94,12 @@ function isTariff(value: unknown): value is EmergencyTariff {
   )
 }
 
-/** Keeps the tariffs on the device; a browser that refuses to keep them asks again with a network. */
-export function rememberTariffs(tenantId: string, tariffs: readonly EmergencyTariff[]): void {
+/**
+ * The tariffs as the device keeps them (`tariffsName` in the store of the
+ * tenant), or null where it keeps none it can read.
+ */
+export function keptTariffs(raw: string | null): readonly EmergencyTariff[] | null {
   try {
-    globalThis.localStorage.setItem(tariffKey(tenantId), JSON.stringify(tariffs))
-  } catch {
-    // Not kept. Without a network the screen then says that it lacks them.
-  }
-}
-
-/** The tariffs this device kept for a tenant, or null where it kept none it can read. */
-export function rememberedTariffs(tenantId: string): readonly EmergencyTariff[] | null {
-  try {
-    const raw = globalThis.localStorage.getItem(tariffKey(tenantId))
     const kept: unknown = raw ? JSON.parse(raw) : null
 
     return Array.isArray(kept) && kept.every(isTariff) ? (kept as EmergencyTariff[]) : null

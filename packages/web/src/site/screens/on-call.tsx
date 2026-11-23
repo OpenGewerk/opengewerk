@@ -7,19 +7,19 @@ import {
   urgentRepairNote,
 } from '@opengewerk/domain'
 import { Button, Field, Panel } from '@opengewerk/platform-web'
-import { accountQuery } from '@opengewerk/platform-web/session'
 import { SiteActionBar, SiteScreen, SiteText, SiteTrouble } from '@opengewerk/platform-web/site'
 import { maybeText, refusalFor, text, useRecords, useSync } from '@opengewerk/platform-web/sync'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { BellRing, Check, Plus } from 'lucide-react'
-import { useId, useMemo, useState } from 'react'
+import { useCallback, useId, useMemo, useState, useSyncExternalStore } from 'react'
 import type { FormEvent } from 'react'
 
 import { berlinMoment, clockOf, dayMonth, longDays, weekdayIndex } from '../../app/appointments.js'
 import { useMay } from '../../app/queries.js'
 import { urgentRepairTitle } from '../../app/service-calls.js'
-import { emergencyTariffs, rememberTariffs, rememberedTariffs } from '../../session/on-call.js'
+import { emergencyTariffs, keptTariffs } from '../../session/on-call.js'
+import { tariffsName } from '../../sync/client.js'
 import { SiteHeader } from '../header.js'
 
 /**
@@ -57,29 +57,29 @@ function useCurrentShift(): RecordState | undefined {
 
 /**
  * The tariffs of an emergency call (#1024): asked from the server where there
- * is a network and kept on the device, so that the surcharge is there when a
- * call comes in where there is none. Asked while on call only.
+ * is a network and kept in the store of the tenant, so that the surcharge is
+ * there when a call comes in where there is none, and goes with a sign out.
+ * Asked while on call only.
  */
 function useEmergencyTariffs(onCall: boolean): readonly EmergencyTariff[] | null {
-  const account = useQuery(accountQuery)
-  const tenantId = account.data?.tenantId ?? null
+  const client = useSync()
+  const read = useCallback(() => client.kept(tariffsName), [client])
+  const kept = useSyncExternalStore(client.subscribe, read, read)
   const answer = useQuery({
-    queryKey: ['emergency-tariffs', tenantId],
+    queryKey: ['emergency-tariffs'],
     queryFn: async () => {
       const tariffs = await emergencyTariffs()
 
-      if (tenantId !== null) {
-        rememberTariffs(tenantId, tariffs)
-      }
+      await client.keep(tariffsName, JSON.stringify(tariffs))
 
       return tariffs
     },
-    enabled: onCall && tenantId !== null,
+    enabled: onCall,
     retry: false,
     staleTime: 60 * 60_000,
   })
 
-  return answer.data ?? (tenantId === null ? null : rememberedTariffs(tenantId))
+  return answer.data ?? keptTariffs(kept)
 }
 
 /** On top of the open jobs while on call: until when, and the way to a new call. */
