@@ -520,7 +520,7 @@ describe('the invoice out of the report of a maintenance (#294)', () => {
       unit: string
       unit_price_cents: number | null
     }>(
-      'select designation, unit, unit_price_cents from document_lines where document_id = $1 order by position',
+      'select designation, unit, unit_price_cents from document_lines where document_id = $1 and deleted_at is null order by position',
       [(invoice.body as { id: string }).id],
     )
 

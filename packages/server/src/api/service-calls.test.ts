@@ -1082,7 +1082,7 @@ describe('the invoice made on site out of a signed report', () => {
     )
 
     await admin.query(
-      'update document_lines set unit_price_cents = 6800, net_cents = 10200 where document_id = $1',
+      'update document_lines set unit_price_cents = 6800, net_cents = 10200 where document_id = $1 and deleted_at is null',
       [invoice],
     )
 

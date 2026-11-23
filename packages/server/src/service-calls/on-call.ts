@@ -315,45 +315,42 @@ export async function refreshSurchargeLine(
  * while this transaction waited for the draft lost it and stays removed. And
  * only where the draft has room: on a full one the line waits, marked, until
  * the office removes another, instead of refusing the change that brought it.
+ * Not next to a surcharge the office typed in meanwhile: that one is the
+ * draft's surcharge, and the line that went loses its mark for good.
  */
 async function restoreSurchargeLine(
   tx: TenantTransaction,
   tenantId: TenantId,
   documentId: DocumentId,
-  lines: readonly { readonly position: number }[],
+  lines: readonly { readonly position: number; readonly designation: string }[],
   surcharge: SurchargeLine,
 ): Promise<void> {
   if (lines.length >= lineLimits.lines) {
     return
   }
 
-  const [gone] = await tx
+  const gone = and(
+    eq(documentLines.documentId, documentId),
+    eq(documentLines.emergencySurcharge, true),
+    isNotNull(documentLines.deletedAt),
+  )
+  const [last] = await tx
     .select({ vatRate: documentLines.vatRate })
     .from(documentLines)
-    .where(
-      and(
-        eq(documentLines.documentId, documentId),
-        eq(documentLines.emergencySurcharge, true),
-        isNotNull(documentLines.deletedAt),
-      ),
-    )
+    .where(gone)
     .orderBy(desc(documentLines.deletedAt))
     .limit(1)
 
-  if (!gone) {
+  if (!last) {
     return
   }
 
-  await tx
-    .update(documentLines)
-    .set({ emergencySurcharge: false })
-    .where(
-      and(
-        eq(documentLines.documentId, documentId),
-        eq(documentLines.emergencySurcharge, true),
-        isNotNull(documentLines.deletedAt),
-      ),
-    )
+  await tx.update(documentLines).set({ emergencySurcharge: false }).where(gone)
+
+  if (lines.some((line) => line.designation.startsWith(`${surchargeDesignation} `))) {
+    return
+  }
+
   await tx.insert(documentLines).values({
     tenantId,
     documentId,
@@ -364,9 +361,43 @@ async function restoreSurchargeLine(
     quantityMilli: surcharge.quantityMilli,
     unit: surcharge.unit,
     unitPriceCents: surcharge.unitPriceCents,
-    vatRate: gone.vatRate,
+    vatRate: last.vatRate,
     netCents: surcharge.netCents,
     emergencySurcharge: true,
+  })
+}
+
+/** The word every line of a surcharge begins with (`emergencySurchargeLine`). */
+const surchargeDesignation = 'Notdienstzuschlag'
+
+/**
+ * The line of the surcharge of an invoice made out of the reports of a job
+ * (#293), marked as the server's (#1087), as its last line. Where the call
+ * has no surcharge now, the line is made and taken away at once, marked: the
+ * draft follows its call all the same and gets the surcharge once there is
+ * one, as a draft does whose line the server took away.
+ */
+export async function insertSurchargeLine(
+  tx: TenantTransaction,
+  tenantId: TenantId,
+  documentId: string,
+  position: number,
+  surcharge: SurchargeLine | null,
+): Promise<void> {
+  await tx.insert(documentLines).values({
+    tenantId,
+    documentId: documentId as DocumentId,
+    kind: 'item',
+    position,
+    designation: surcharge?.designation ?? surchargeDesignation,
+    description: surcharge?.description ?? null,
+    quantityMilli: surcharge?.quantityMilli ?? 1000,
+    unit: surcharge?.unit ?? 'flat_rate',
+    unitPriceCents: surcharge?.unitPriceCents ?? 0,
+    vatRate: 'standard',
+    netCents: surcharge?.netCents ?? 0,
+    emergencySurcharge: true,
+    ...(surcharge === null ? { deletedAt: new Date() } : {}),
   })
 }
 

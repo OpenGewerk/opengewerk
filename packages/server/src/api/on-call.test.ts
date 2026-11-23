@@ -194,13 +194,14 @@ async function aSignedReport(
   return report
 }
 
+/** The lines a document shows, a line taken away not among them. */
 async function linesOf(documentId: string) {
   const { rows } = await admin.query<{
     designation: string
     unit_price_cents: number
     unit: string
   }>(
-    'select designation, unit_price_cents, unit from document_lines where document_id = $1 order by position',
+    'select designation, unit_price_cents, unit from document_lines where document_id = $1 and deleted_at is null order by position',
     [documentId],
   )
 
@@ -702,7 +703,7 @@ describe('the surcharge named before the order (#1081)', () => {
     const describedOn = async (jobId: string) =>
       (
         await admin.query<{ designation: string; description: string | null }>(
-          'select designation, description from document_lines where document_id = $1 order by position',
+          'select designation, description from document_lines where document_id = $1 and deleted_at is null order by position',
           [await invoiceOf(jobId)],
         )
       ).rows.map((line) => line.description ?? line.designation)
@@ -1226,6 +1227,49 @@ describe('the line of the surcharge on a draft (#1087)', () => {
 
     expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000, deleted: false })
   })
+  /** The lines of a surcharge a draft shows. */
+  async function shownSurchargesOf(invoice: string) {
+    const { rows } = await admin.query<{ designation: string; emergency_surcharge: boolean }>(
+      `select designation, emergency_surcharge from document_lines
+       where document_id = $1 and designation like 'Notdienstzuschlag %' and deleted_at is null`,
+      [invoice],
+    )
+
+    return rows
+  }
+
+  it('comes on a draft whose invoice had none, once the call has one', async () => {
+    // Wednesday 28.10.2026 at 10:00: no surcharge when the invoice is made.
+    const { job, invoice } = await draftOf({ emergencyAt: inTheDay })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([])
+
+    // The office learns the call came in the night before.
+    await patch(`/jobs/${job}`, { emergencyAt: atNight })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Nacht', emergency_surcharge: true },
+    ])
+  })
+
+  it('does not come back next to a surcharge the office typed in', async () => {
+    const { job, invoice } = await draftOf()
+
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+    await post(`/documents/${invoice}/lines`, {
+      designation: 'Notdienstzuschlag Nacht',
+      quantityMilli: 1000,
+      unit: 'flat_rate',
+      unitPriceCents: 4500,
+    })
+    await sent(changed('jobs', job, { emergencyAt: { from: inTheDay, to: atNight } }))
+
+    expect(await shownSurchargesOf(invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Nacht', emergency_surcharge: false },
+    ])
+    expect(await marksOf(invoice)).toBe(0)
+  })
+
   it('follows an hour a device moves from one draft to another, on both', async () => {
     const from = await draftOf()
     const to = await draftOf()

@@ -71,7 +71,11 @@ import {
 import { articlePricesOn, type PriceOfDay, pricedFromArticle } from '../documents/article-prices.js'
 import { contentAndGapsOf, issuerOf, withStoredLogo } from '../documents/content.js'
 import { contractFlatLineFor } from '../contracts/invoice.js'
-import { refreshSurchargeLine, surchargeLineFor } from '../service-calls/on-call.js'
+import {
+  insertSurchargeLine,
+  refreshSurchargeLine,
+  surchargeLineFor,
+} from '../service-calls/on-call.js'
 import { deductionsFor, paymentsOfADraft, showsReceivedPayments } from '../documents/deductions.js'
 import { choicesOf } from '../documents/instructions.js'
 import { proposedTreatment } from '../documents/treatment.js'
@@ -776,25 +780,13 @@ export class DocumentsController {
       // The invoice out of the report of an emergency call carries the
       // surcharge the business set for its kind (#293), as the last line.
       if (predecessor.kind === 'time_and_material_report') {
-        const surcharge = await surchargeLineFor(tx, predecessor.jobId, priced)
-
-        if (surcharge) {
-          await tx.insert(documentLines).values({
-            tenantId: identity.tenantId,
-            documentId: created.id,
-            kind: 'item',
-            position: priced.reduce((last, line) => Math.max(last, line.position), 0) + 1,
-            designation: surcharge.designation,
-            description: surcharge.description,
-            quantityMilli: surcharge.quantityMilli,
-            unit: surcharge.unit,
-            unitPriceCents: surcharge.unitPriceCents,
-            vatRate: 'standard',
-            netCents: surcharge.netCents,
-            // Worked out again from the hours of the draft (#1087).
-            emergencySurcharge: true,
-          })
-        }
+        await insertSurchargeLine(
+          tx,
+          identity.tenantId,
+          created.id,
+          priced.reduce((last, line) => Math.max(last, line.position), 0) + 1,
+          await surchargeLineFor(tx, predecessor.jobId, priced),
+        )
       }
 
       return created
