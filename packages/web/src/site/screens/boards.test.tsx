@@ -64,10 +64,12 @@ const rows: Readonly<Record<string, RecordState[]>> = {
       boardSectionId: 'f-1',
       designation: 'F10',
       consumer: 'Geschirrspüler',
+      voltageClass: 'up_to_500',
       overcurrentDevice: null,
       tripCharacteristic: null,
       ratedCurrentMilli: null,
       rcdType: null,
+      rcdSelective: false,
       ratedResidualCurrentMilli: null,
       cableType: null,
       cableCores: null,
@@ -82,10 +84,12 @@ const rows: Readonly<Record<string, RecordState[]>> = {
       boardSectionId: 'f-1',
       designation: 'F2',
       consumer: 'Steckdosen Küche',
+      voltageClass: 'up_to_500',
       overcurrentDevice: 'circuit_breaker',
       tripCharacteristic: 'b',
       ratedCurrentMilli: 16_000,
       rcdType: 'a',
+      rcdSelective: false,
       ratedResidualCurrentMilli: 30,
       cableType: 'NYM-J',
       cableCores: 3,
@@ -240,6 +244,8 @@ describe('a board on site', () => {
       designation: 'F3',
       consumer: 'Außensteckdose',
       boardSectionId: 'f-1',
+      voltageClass: 'up_to_500',
+      rcdSelective: false,
       overcurrentDevice: 'circuit_breaker',
       tripCharacteristic: 'b',
       ratedCurrentMilli: 16_000,
@@ -334,6 +340,66 @@ describe('a circuit on site', () => {
     ).toEqual([
       { field: 'cableInstallationMethod', from: null, to: 'c' },
       { field: 'cableLengthMilli', from: null, to: 18_000 },
+    ])
+  })
+
+  /**
+   * The nominal voltage and the selective RCD (#1021), as the board
+   * "Stromkreis, Angaben ergänzen" has them: selective only with a type, and
+   * a type taken away takes the selective with it.
+   */
+  it('takes the nominal voltage and a selective RCD, and a selective one only with its type', async () => {
+    await mount('/auftraege/j-1/verteiler/b-1/stromkreise/k-2')
+    const user = userEvent.setup()
+
+    await user.click(await screen.findByRole('button', { name: 'Angaben ergänzen' }))
+    await user.selectOptions(screen.getByLabelText('Nennspannung'), 'SELV oder PELV')
+
+    const rcd = screen.getByRole('group', { name: 'RCD' })
+    await user.selectOptions(within(rcd).getByLabelText('Ausführung'), 'selektiv (S)')
+    await user.click(screen.getByRole('button', { name: 'Angaben sichern' }))
+
+    await waitFor(() => {
+      expect(server.operations()).toHaveLength(1)
+    })
+    expect(
+      [...(server.operations()[0]?.patches ?? [])].sort((left, right) =>
+        left.field.localeCompare(right.field),
+      ),
+    ).toEqual([
+      { field: 'rcdSelective', from: false, to: true },
+      { field: 'voltageClass', from: 'up_to_500', to: 'selv_pelv' },
+    ])
+
+    // The screen says both, since neither is what a circuit is by itself.
+    const known = await screen.findByRole('region', { name: 'Was bekannt ist' })
+    expect(within(known).getByText('SELV oder PELV')).toBeDefined()
+    expect(within(known).getByText('Typ A selektiv 30 mA')).toBeDefined()
+
+    await user.click(screen.getByRole('button', { name: 'Angaben ergänzen' }))
+
+    const again = screen.getByRole('group', { name: 'RCD' })
+    const selective = within(again).getByLabelText<HTMLSelectElement>('Ausführung')
+
+    expect(selective.value).toBe('selective')
+
+    await user.selectOptions(within(again).getByLabelText('Typ'), 'nicht angegeben')
+
+    expect(selective.disabled).toBe(true)
+    expect(selective.value).toBe('general')
+
+    await user.click(screen.getByRole('button', { name: 'Angaben sichern' }))
+
+    await waitFor(() => {
+      expect(server.operations()).toHaveLength(2)
+    })
+    expect(
+      [...(server.operations()[1]?.patches ?? [])].sort((left, right) =>
+        left.field.localeCompare(right.field),
+      ),
+    ).toEqual([
+      { field: 'rcdSelective', from: true, to: false },
+      { field: 'rcdType', from: 'a', to: null },
     ])
   })
 

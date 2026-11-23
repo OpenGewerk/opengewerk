@@ -13,6 +13,7 @@ const nothing: ChartCircuit = {
   tripCharacteristic: null,
   ratedCurrentMilli: null,
   rcdType: null,
+  rcdSelective: false,
   ratedResidualCurrentMilli: null,
   cableType: null,
   cableCores: null,
@@ -73,6 +74,21 @@ describe('the circuit chart', () => {
     expect(job.html).not.toContain('<b>Herd</b>')
     const dashes = ['-', String.fromCharCode(0x2013), String.fromCharCode(0x2014)]
     expect(dashes.some((dash) => job.html.includes(`>${dash}</td>`))).toBe(false)
+  })
+
+  it('says of a selective RCD that it is one (#1021)', () => {
+    const job = chart([
+      board([
+        {
+          section: null,
+          circuits: [
+            { ...nothing, rcdType: 'a', rcdSelective: true, ratedResidualCurrentMilli: 300 },
+          ],
+        },
+      ]),
+    ])
+
+    expect(job.html).toContain('Typ A selektiv 300 mA')
   })
 
   it('says a board without circuits has none, and an installation without boards has none', () => {

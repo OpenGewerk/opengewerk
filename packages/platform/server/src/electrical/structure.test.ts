@@ -34,6 +34,18 @@ describe('what a device may not send of the structure', () => {
     expect(structureProblem('circuits', { designation: 'F4' }, wrongAlready)).toBeNull()
   })
 
+  it('is not a nominal voltage a new circuit left out, but one sent as nothing (#1021)', () => {
+    expect(
+      structureProblem('circuits', { designation: 'F1', ratedCurrentMilli: 16_000 }, null),
+    ).toBeNull()
+    expect(structureProblem('circuits', { designation: 'F1', voltageClass: null }, null)).toBe(
+      'Diese Nennspannung ist unbekannt.',
+    )
+    expect(structureProblem('circuits', { rcdSelective: true }, null)).toBe(
+      'Selektiv ist nur ein RCD mit Typ. Bitte zuerst den Typ wählen.',
+    )
+  })
+
   it('is a figure of the PV structure out of its range', () => {
     expect(structureProblem('inverters', { ratedPowerW: 0 }, null)).not.toBeNull()
     expect(structureProblem('pv_strings', { tiltDeg: 91 }, null)).not.toBeNull()

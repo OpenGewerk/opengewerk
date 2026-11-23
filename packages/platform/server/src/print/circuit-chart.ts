@@ -53,6 +53,7 @@ export type ChartCircuit = Pick<
   | 'tripCharacteristic'
   | 'ratedCurrentMilli'
   | 'rcdType'
+  | 'rcdSelective'
   | 'ratedResidualCurrentMilli'
   | 'cableType'
   | 'cableCores'

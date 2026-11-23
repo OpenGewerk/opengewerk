@@ -90,8 +90,15 @@ export function structureProblem(
     return null
   }
 
+  // A field neither sent nor stored stays out: a new circuit sent without its
+  // nominal voltage is up to 500 V by the default of the column, and is not
+  // one whose voltage was set to nothing (#1021).
   const standing = Object.fromEntries(
-    circuitFigureFields.map((field) => [field, valueAfter(field, values, current)]),
+    circuitFigureFields.flatMap((field) =>
+      field in values || (current !== null && field in current)
+        ? [[field, valueAfter(field, values, current)]]
+        : [],
+    ),
   )
 
   return Object.values(circuitProblems(standing))[0] ?? null

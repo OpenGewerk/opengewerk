@@ -280,6 +280,7 @@ export async function emptySite(tx: TenantTransaction, siteId: string): Promise<
     'circuits',
     sql`update circuits set designation = 'Gelöscht', consumer = null, overcurrent_device = null,
            trip_characteristic = null, rated_current_milli = null, rcd_type = null,
+           rcd_selective = false, voltage_class = 'up_to_500',
            rated_residual_current_milli = null, cable_type = null, cable_cores = null,
            cable_cross_section_milli = null, cable_length_milli = null, cable_installation_method = null,
            deleted_at = coalesce(deleted_at, now())

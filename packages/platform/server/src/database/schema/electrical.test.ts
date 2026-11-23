@@ -120,6 +120,7 @@ describe('the electrical structure', () => {
 
     expect(getTableConfig(made.circuits).checks.map((check) => check.name)).toEqual([
       'circuits_rated_current',
+      'circuits_selective_rcd_has_type',
       'circuits_rated_residual_current',
       'circuits_cable_cores',
       'circuits_cable_cross_section',
@@ -132,6 +133,7 @@ describe('the electrical structure', () => {
     ).toEqual(['distribution_boards', 'board_sections', 'circuits', 'equipment'])
     expect(made.distributionBoardKind.enumName).toBe('distribution_board_kind')
     expect(made.cableInstallationMethod.enumValues).toContain('c')
+    expect(made.circuitVoltageClass.enumName).toBe('circuit_voltage_class')
   })
 })
 

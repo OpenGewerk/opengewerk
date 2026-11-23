@@ -9,6 +9,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Hinzugefügt
 
+- Ein Stromkreis nennt seine Nennspannung, wie Tabelle 6.1 der DIN VDE 0100-600 sie unterscheidet, bis 500 V, SELV oder PELV oder über 500 V, und ob sein RCD selektiv ist (Teil von #1021). Beides steht im Formular des Stromkreises im Büro und auf der Baustelle; die Anzeige nennt es, wenn es vom Normalfall abweicht, und das Stromkreisverzeichnis den selektiven RCD. Selektiv ist nur ein RCD mit Typ, und ein Stromkreis von vorher ist einer bis 500 V mit einem RCD ohne Verzögerung. Warum: Das Prüfprotokoll der Erstprüfung urteilt künftig danach, denn SELV und PELV haben einen eigenen Mindestwert der Isolation, und ein selektiver RCD darf später abschalten als einer ohne Verzögerung.
 - Die Hilfe im Büro und auf der Baustelle (#269), nach Abschnitt 8 der Feature-Gliederung v2.81 und den Tafeln aus Version
   168 des Canvas: Das Fragezeichen in der Kopfleiste öffnet neben jeder Seite des Büros ihren Text: wofür sie da ist
   und, wo sie einen Ablauf hat, seine Schritte; auf einem schmalen Bildschirm steht „Hilfe zu dieser Seite“ im Menü. Unter „Hilfe“ stehen

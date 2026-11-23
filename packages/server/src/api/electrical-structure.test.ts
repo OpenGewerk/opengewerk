@@ -2,6 +2,7 @@ import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import type { InstallationId, TenantId } from '@opengewerk/domain'
 import { Database, newId } from '@opengewerk/platform-server'
+import { eq } from 'drizzle-orm'
 import type { Pool } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -9,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import * as schema from '../database/schema/index.js'
 import {
   applicationDatabaseUrl,
+  checkViolation,
   connect,
   foreignKeyViolation,
   refusedBy,
@@ -438,6 +440,61 @@ describe('the figures of a circuit', () => {
     )
 
     expect(answer.message).toMatch(/passt nicht zur gewählten Schutzeinrichtung/)
+  })
+
+  /**
+   * The nominal voltage and the selective RCD a test record judges a circuit
+   * by (#1021): both arrive, a circuit sent without them is up to 500 V with
+   * a general RCD, and a selective RCD keeps its type, judged as the circuit
+   * stands afterwards and held by the database for every other way in.
+   */
+  it('take the nominal voltage and a selective RCD, which keeps its type', async () => {
+    const { boardId } = await board(north.id, northInstallation.id)
+    const selective = newId<'circuit'>()
+    const plain = newId<'circuit'>()
+
+    await push(as(north.id, 'office'), [
+      created('circuits', selective, {
+        distributionBoardId: boardId,
+        designation: 'F1',
+        voltageClass: 'selv_pelv',
+        rcdType: 'a',
+        rcdSelective: true,
+        position: 0,
+      }),
+      created('circuits', plain, { distributionBoardId: boardId, designation: 'F2', position: 1 }),
+    ])
+
+    const pulled = rowsOf(await pull(as(north.id, 'office')), 'circuits')
+
+    expect(pulled.find((row) => row['id'] === selective)).toMatchObject({
+      voltageClass: 'selv_pelv',
+      rcdType: 'a',
+      rcdSelective: true,
+    })
+    expect(pulled.find((row) => row['id'] === plain)).toMatchObject({
+      voltageClass: 'up_to_500',
+      rcdType: null,
+      rcdSelective: false,
+    })
+
+    const answer = await push(
+      as(north.id, 'office'),
+      [changed('circuits', selective, { rcdType: { from: 'a', to: null } })],
+      400,
+    )
+
+    expect(answer.message).toBe('Selektiv ist nur ein RCD mit Typ. Bitte zuerst den Typ wählen.')
+    expect(
+      await refusedBy(
+        database.forTenant({ tenantId: north.id }, (tx) =>
+          tx
+            .update(schema.circuits)
+            .set({ rcdType: null })
+            .where(eq(schema.circuits.id, selective)),
+        ),
+      ),
+    ).toEqual({ code: checkViolation, constraint: 'circuits_selective_rcd_has_type' })
   })
 
   it('refuse a kind of board nobody knows before the database would', async () => {

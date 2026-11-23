@@ -17,6 +17,7 @@ export const {
   tripCharacteristic,
   rcdType,
   cableInstallationMethod,
+  circuitVoltageClass,
   distributionBoards,
   boardSections,
   circuits,

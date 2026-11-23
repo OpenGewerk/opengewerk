@@ -1,5 +1,6 @@
 import {
   cableInstallationMethods,
+  circuitVoltageClasses,
   distributionBoardKinds,
   overcurrentDevices,
   rcdTypes,
@@ -7,6 +8,7 @@ import {
 } from '@opengewerk/platform-domain'
 import { sql } from 'drizzle-orm'
 import {
+  boolean,
   check,
   foreignKey,
   index,
@@ -33,6 +35,7 @@ export const overcurrentDevice = pgEnum('overcurrent_device', overcurrentDevices
 export const tripCharacteristic = pgEnum('trip_characteristic', tripCharacteristics)
 export const rcdType = pgEnum('rcd_type', rcdTypes)
 export const cableInstallationMethod = pgEnum('cable_installation_method', cableInstallationMethods)
+export const circuitVoltageClass = pgEnum('circuit_voltage_class', circuitVoltageClasses)
 
 function boardParts() {
   return {
@@ -67,10 +70,12 @@ function circuitParts() {
     boardSectionId: reference<'board-section'>('board_section_id'),
     designation: text('designation').notNull(),
     consumer: text('consumer'),
+    voltageClass: circuitVoltageClass('voltage_class').notNull().default('up_to_500'),
     overcurrentDevice: overcurrentDevice('overcurrent_device'),
     tripCharacteristic: tripCharacteristic('trip_characteristic'),
     ratedCurrentMilli: integer('rated_current_milli'),
     rcdType: rcdType('rcd_type'),
+    rcdSelective: boolean('rcd_selective').notNull().default(false),
     ratedResidualCurrentMilli: integer('rated_residual_current_milli'),
     cableType: text('cable_type'),
     cableCores: integer('cable_cores'),
@@ -117,6 +122,7 @@ export interface ElectricalTables<
   readonly tripCharacteristic: typeof tripCharacteristic
   readonly rcdType: typeof rcdType
   readonly cableInstallationMethod: typeof cableInstallationMethod
+  readonly circuitVoltageClass: typeof circuitVoltageClass
   readonly distributionBoards: TableWithOwn<'distribution_boards', BoardColumns, OwnBoard>
   readonly boardSections: TableWithOwn<'board_sections', SectionColumns, OwnSection>
   readonly circuits: TableWithOwn<'circuits', CircuitColumns, OwnCircuit>
@@ -237,6 +243,11 @@ export function electricalSchema<
         'circuits_rated_current',
         sql`${table.ratedCurrentMilli} is null or ${table.ratedCurrentMilli} between 1 and 6300000`,
       ),
+      // Selective is a kind of RCD, and without its type there is none.
+      check(
+        'circuits_selective_rcd_has_type',
+        sql`not ${table.rcdSelective} or ${table.rcdType} is not null`,
+      ),
       check(
         'circuits_rated_residual_current',
         sql`${table.ratedResidualCurrentMilli} is null or ${table.ratedResidualCurrentMilli} between 1 and 30000`,
@@ -282,6 +293,7 @@ export function electricalSchema<
     tripCharacteristic,
     rcdType,
     cableInstallationMethod,
+    circuitVoltageClass,
     distributionBoards,
     boardSections,
     circuits,

@@ -3,6 +3,7 @@ import {
   distributionBoardKindLabel,
   overcurrentDeviceLabel,
   rcdTypeLabel,
+  circuitVoltageClassLabel,
   type TaskStatus,
   tripCharacteristicLabel,
 } from '@opengewerk/platform-domain'
@@ -156,6 +157,7 @@ export const valueWords: Readonly<Record<string, Readonly<Record<string, Words>>
     overcurrent_device: overcurrentDeviceLabel,
     trip_characteristic: tripCharacteristicLabel,
     rcd_type: rcdTypeLabel,
+    voltage_class: circuitVoltageClassLabel,
     cable_installation_method: cableInstallationMethodLabel,
   },
   time_entries: { kind: timeEntryKindLabel },
