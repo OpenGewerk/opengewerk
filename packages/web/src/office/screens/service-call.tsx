@@ -322,6 +322,11 @@ export function NewServiceCallScreen() {
       found['designation'] = 'Worum es geht, steht als Bezeichnung am Auftrag.'
     }
 
+    // A call of 01.01.1900 out of an emptied day is no call (#1084).
+    if (emergency && calledMoment === null) {
+      found['calledOn'] = 'Der Notdiensteinsatz braucht Tag und Uhrzeit des Anrufs.'
+    }
+
     const where = newPlace ? place : customerId ? null : fresh
 
     if (where && newPlace && where.street.trim() === '' && where.city.trim() === '') {
@@ -703,6 +708,7 @@ export function NewServiceCallScreen() {
               label="Anruf am"
               type="date"
               value={calledOn}
+              problem={problems['calledOn']}
               onChange={(event) => {
                 setCalledOn(event.target.value as IsoDate)
               }}

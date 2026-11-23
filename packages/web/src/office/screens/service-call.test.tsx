@@ -309,7 +309,7 @@ describe('a call taken on the phone (#292)', () => {
     })
   })
 
-  it('takes an emptied day of the call without breaking (#1080)', async () => {
+  it('takes an emptied day of the call without breaking, and makes no job of it (#1080, #1084)', async () => {
     answers.set('/on-call-shifts/tariffs?from=2026-10-28', fromTheCall)
     await mount('/auftraege/service')
 
@@ -318,8 +318,17 @@ describe('a call taken on the phone (#292)', () => {
     await userEvent.click(screen.getByLabelText('Notdiensteinsatz', { exact: false }))
     await userEvent.clear(screen.getByLabelText('Anruf am'))
 
-    expect(screen.getByRole('button', { name: 'Serviceeinsatz anlegen' })).toBeTruthy()
     expect(screen.queryByText(/^Vor dem Auftrag nennen/)).toBeNull()
+
+    // Nor is a job made with a call of 01.01.1900 (#1084).
+    await type('Anliegen', 'Heizung ohne Strom')
+    await userEvent.click(screen.getByRole('radio', { name: /Einfamilienhaus Lindenweg/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Serviceeinsatz anlegen' }))
+
+    expect(
+      await screen.findByText('Der Notdiensteinsatz braucht Tag und Uhrzeit des Anrufs.'),
+    ).toBeTruthy()
+    expect(server.all('jobs')).toHaveLength(0)
   })
 
   it('names nothing to a business, and keeps nothing named (#1080)', async () => {
