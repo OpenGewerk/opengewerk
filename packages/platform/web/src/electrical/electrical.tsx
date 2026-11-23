@@ -160,7 +160,8 @@ export function blockCircuits(
       ratedResidualCurrentMilli: figure(circuit, 'ratedResidualCurrentMilli'),
       // What the test record of version 4 judges by (#1021).
       voltageClass: voltageClassOf(circuit),
-      rcdSelective: circuit['rcdSelective'] === true && typeof circuit['rcdType'] === 'string',
+      rcdSelective:
+        circuit['rcdSelective'] === true && known(circuit, 'rcdType', rcdTypes) !== null,
     }))
   })
 }

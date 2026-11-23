@@ -204,9 +204,9 @@ describe('the next inspection on a printed protocol (#301)', () => {
       'nach der Nennspannung des Stromkreises mindestens 1,00 MΩ bis 500 V, 0,50 MΩ bei SELV und PELV, 1,00 MΩ über 500 V',
     )
     expect(html).toContain(
-      'höchstens zwei Drittel von U0 / Ia aus der Schutzeinrichtung des Stromkreises, darüber eine genauere Bewertung nach Anhang D',
+      'höchstens 0,6666 × U0 / Ia aus der Schutzeinrichtung des Stromkreises, darüber eine genauere Bewertung nach Anhang D',
     )
-    expect(html).toContain('zwischen 0,5 IΔn und IΔn des Stromkreises')
+    expect(html).toContain('über 0,5 × IΔn bis 1 × IΔn des Stromkreises')
     expect(html).toContain('höchstens 300 ms, bei einer selektiven RCD zwischen 130 ms und 500 ms')
   })
 })

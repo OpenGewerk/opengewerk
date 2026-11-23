@@ -354,7 +354,7 @@ describe('a test protocol on site (#79)', () => {
     // thirds of 230 V over five times 16 A after Annex D (#1021), and the
     // tripping current between half and all of 30 mA.
     expect(screen.getByText('≤ 1,91 Ω')).toBeTruthy()
-    expect(screen.getByText('15,0 bis 30,0 mA')).toBeTruthy()
+    expect(screen.getByText('15,1 bis 30,0 mA')).toBeTruthy()
     expect(await screen.findByRole('button', { name: 'Foto zum Mangel' })).toBeTruthy()
 
     // 0,85 MΩ is below the 1 MΩ of the standard. It is shown, with where the

@@ -86,19 +86,29 @@ describe('version 4 of the first inspection (#1021)', () => {
       within: true,
       text: 'Innerhalb des Grenzwerts, höchstens 1,91 Ω.',
     })
+    // B 6 A: 230 V over 30 A is 7,666 Ω, two thirds of it 5,111 Ω, never 5,10 Ω.
+    expect(judge('loop_impedance', 5_110, { ...ordinary, ratedCurrentMilli: 6_000 })).toMatchObject(
+      {
+        within: true,
+        limitMilli: 5_110,
+        text: 'Innerhalb des Grenzwerts, höchstens 5,11 Ω.',
+      },
+    )
   })
 
-  it('takes the tripping current between half and all of IΔn', () => {
-    // An RCD that trips below half of IΔn is too sensitive, or the circuit leaks.
+  it('takes the tripping current above half of IΔn up to all of it', () => {
+    // An RCD that trips below half of IΔn is too sensitive, or the circuit leaks;
+    // at half of it, the rated non-operating current, it must not trip at all.
     expect(judge('rcd_trip_current', 14_000)).toMatchObject({
       within: false,
-      fromMilli: 15_000,
+      fromMilli: 15_001,
       limitMilli: 30_000,
-      text: 'Außerhalb des Grenzwerts, zwischen 15,0 und 30,0 mA.',
+      text: 'Außerhalb des Grenzwerts, zwischen 15,1 und 30,0 mA.',
       source:
         'DIN EN 61008-1 (VDE 0664-10):2018-03, 5.3.4 und 8.5, Auslösung zwischen 0,5 IΔn und IΔn',
     })
-    expect(judge('rcd_trip_current', 15_000).within).toBe(true)
+    expect(judge('rcd_trip_current', 15_000).within).toBe(false)
+    expect(judge('rcd_trip_current', 15_100).within).toBe(true)
     expect(judge('rcd_trip_current', 30_000).within).toBe(true)
     expect(judge('rcd_trip_current', 30_100).within).toBe(false)
   })

@@ -76,7 +76,9 @@ export const loopImpedanceMeasured: LimitCalculator = (field, context) => {
 
 /**
  * The tripping current between half and all of the rated residual current: an
- * RCD that trips below half of it is too sensitive or the circuit leaks.
+ * RCD that trips below half of it is too sensitive or the circuit leaks. Half
+ * of it is the rated non-operating current, at which it must not trip, so the
+ * least value within is the next thousandth above it.
  */
 export const rcdTripCurrentRange: LimitCalculator = (_field, { rules, on, item }) => {
   const rated = circuitOf(item)?.ratedResidualCurrentMilli
@@ -90,7 +92,7 @@ export const rcdTripCurrentRange: LimitCalculator = (_field, { rules, on, item }
   // Milliamperes as thousandths of the field's milliamperes, the shares in basis points.
   return {
     limitMilli: Math.floor((rated * 1000 * most.value) / 10_000),
-    fromMilli: Math.ceil((rated * 1000 * least.value) / 10_000),
+    fromMilli: Math.floor((rated * 1000 * least.value) / 10_000) + 1,
     atLeast: false,
     source: sourcesOf(least.source, most.source),
   }

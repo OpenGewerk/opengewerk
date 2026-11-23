@@ -92,8 +92,9 @@ describe('the parts of one level', () => {
         rcdSelective: true,
       }),
       // On the board directly, and one whose section is gone counts the same.
-      // A selective without a type, as a record from before might hold it, is none (#1021).
-      on(part('c2', 'F2', 0), 'hv', null, { rcdSelective: true }),
+      // A selective without a type, as a record from before might hold it, is none (#1021),
+      // an empty type no more than a missing one.
+      on(part('c2', 'F2', 0), 'hv', null, { rcdSelective: true, rcdType: '' }),
       on(part('c1', 'F1', 0), 'hv', 'gone'),
       on(part('x1', 'F1', 0), 'uv', null),
     ]

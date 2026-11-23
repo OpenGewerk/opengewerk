@@ -611,7 +611,7 @@ Die ersten beiden Zeilen und die letzte sind keine Einzelentscheidungen, sondern
 
 ## Änderungsprotokoll v2.90 → v2.91
 
-- Präzisiert: Das Prüfprotokoll der Erstprüfung nach DIN VDE 0100-600 (5.1) beurteilt nach der fachlichen Abnahme vom 20.11.2026 (#31): die Schleifenimpedanz gegen zwei Drittel von U0 / Ia nach Anhang D, weil die Leiter im Fehlerfall wärmer sind als bei der Messung, und darüber sagt es, dass es eine genauere Bewertung nach Anhang D braucht; den Auslösestrom zwischen 0,5 IΔn und IΔn; die Auslösezeit einer selektiven RCD zwischen 130 und 500 ms, einer ohne Verzögerung höchstens 300 ms; den Isolationswiderstand nach der Nennspannung des Stromkreises aus Tabelle 6.1, 0,5 MΩ bei SELV und PELV, sonst 1 MΩ (#1021). Das gilt ab Fassung 4 des Protokolls; ein schon ausgefülltes urteilt weiter nach seiner Fassung.
+- Präzisiert: Das Prüfprotokoll der Erstprüfung nach DIN VDE 0100-600 (5.1) beurteilt nach der fachlichen Abnahme vom 20.11.2026 (#31): die Schleifenimpedanz gegen zwei Drittel von U0 / Ia nach Anhang D, weil die Leiter im Fehlerfall wärmer sind als bei der Messung, und darüber sagt es, dass es eine genauere Bewertung nach Anhang D braucht; den Auslösestrom über 0,5 IΔn, bei dem eine RCD nicht auslösen darf, bis IΔn; die Auslösezeit einer selektiven RCD zwischen 130 und 500 ms, einer ohne Verzögerung höchstens 300 ms; den Isolationswiderstand nach der Nennspannung des Stromkreises aus Tabelle 6.1, 0,5 MΩ bei SELV und PELV, sonst 1 MΩ (#1021). Das gilt ab Fassung 4 des Protokolls; ein schon ausgefülltes urteilt weiter nach seiner Fassung.
 
 ## Änderungsprotokoll v2.89 → v2.90
 

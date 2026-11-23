@@ -314,6 +314,13 @@ function circuitLimitLegend(kind: string | undefined, protocol: PrintedProtocol)
 
     return rule ? formatMeasured(rule.value * 1000, 'millisecond', 0) : null
   }
+  // A share in basis points as the factor it is, 6666 as "0,6666": the value the
+  // limit was worked out with, not a fraction the legend would round to.
+  const factor = (key: string) => {
+    const rule = at(key)
+
+    return rule ? String(rule.value / 10_000).replace('.', ',') : null
+  }
   const missing = 'für diesen Tag kein Grenzwert hinterlegt'
 
   switch (kind) {
@@ -332,19 +339,30 @@ function circuitLimitLegend(kind: string | undefined, protocol: PrintedProtocol)
           )}`
         : missing
     }
-    case 'loop_impedance_measured':
-      return `höchstens zwei Drittel von U0 / Ia aus der Schutzeinrichtung des Stromkreises, darüber eine genauere Bewertung nach Anhang D; ${sources(
-        'elektro.loop.measured_share',
-        'elektro.loop.nominal_voltage',
-        'elektro.loop.factor_b',
-        'elektro.loop.factor_c',
-        'elektro.loop.factor_d',
-      )}`
-    case 'rcd_trip_current_range':
-      return `zwischen 0,5 IΔn und IΔn des Stromkreises; ${sources(
-        'elektro.rcd.trip_current_minimum',
-        'elektro.rcd.trip_current_maximum',
-      )}`
+    case 'loop_impedance_measured': {
+      const share = factor('elektro.loop.measured_share')
+
+      return share
+        ? `höchstens ${share} × U0 / Ia aus der Schutzeinrichtung des Stromkreises, darüber eine genauere Bewertung nach Anhang D; ${sources(
+            'elektro.loop.measured_share',
+            'elektro.loop.nominal_voltage',
+            'elektro.loop.factor_b',
+            'elektro.loop.factor_c',
+            'elektro.loop.factor_d',
+          )}`
+        : missing
+    }
+    case 'rcd_trip_current_range': {
+      const least = factor('elektro.rcd.trip_current_minimum')
+      const most = factor('elektro.rcd.trip_current_maximum')
+
+      return least && most
+        ? `über ${least} × IΔn bis ${most} × IΔn des Stromkreises; ${sources(
+            'elektro.rcd.trip_current_minimum',
+            'elektro.rcd.trip_current_maximum',
+          )}`
+        : missing
+    }
     case 'rcd_trip_time': {
       const general = seconds('elektro.rcd.trip_time_maximum')
       const least = seconds('elektro.rcd.selective_trip_time_minimum')
