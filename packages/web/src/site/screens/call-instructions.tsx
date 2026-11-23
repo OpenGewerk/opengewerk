@@ -31,6 +31,7 @@ import {
 } from '../../app/service-calls.js'
 import { callInstructions, callInstructionsKey } from '../../session/service-calls.js'
 import { SiteHeader } from '../header.js'
+import { useSignatureFor } from '../signing.js'
 
 /**
  * The instructions of a service call at the door (#292, Feature-Gliederung
@@ -138,7 +139,9 @@ export function SiteInstructionsScreen() {
     staleTime: 5 * 60_000,
   })
   const [signerName, setSignerName] = useState('')
-  const [path, setPath] = useState<string | null>(null)
+  // The sheets come from the server and can change while the customer reads
+  // them; a signature drawn under others goes (#1063).
+  const signature = useSignatureFor(facts.data?.fingerprint ?? '')
   const [problem, setProblem] = useState<string | undefined>(undefined)
   const [trouble, setTrouble] = useState<string | null>(null)
   const [working, setWorking] = useState(false)
@@ -201,7 +204,7 @@ export function SiteInstructionsScreen() {
       return
     }
 
-    if (!path || !jobId) {
+    if (!signature.path || !jobId) {
       setTrouble('Bitte im Feld unterschreiben.')
 
       return
@@ -217,7 +220,7 @@ export function SiteInstructionsScreen() {
         signerName: signerName.trim(),
         signedAt: new Date().toISOString(),
         deviceInfo: globalThis.navigator.userAgent.slice(0, longestDeviceInfo),
-        path,
+        path: signature.path,
         contentFingerprint: data?.fingerprint ?? '',
       })
 
@@ -271,7 +274,17 @@ export function SiteInstructionsScreen() {
                 setSignerName(event.target.value)
               }}
             />
-            <SignaturePad label="Unterschriftsfeld" onChange={setPath} />
+            {signature.pageChanged ? (
+              <SiteTrouble>
+                Die Belehrung hat sich geändert, nachdem Sie im Feld unterschrieben haben. Bitte
+                lesen Sie sie noch einmal und unterschreiben Sie neu.
+              </SiteTrouble>
+            ) : null}
+            <SignaturePad
+              key={signature.pad}
+              label="Unterschriftsfeld"
+              onChange={signature.onChange}
+            />
           </div>
         </Panel>
       </form>

@@ -11,7 +11,7 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -185,17 +185,17 @@ async function mount(
     history: createMemoryHistory({ initialEntries: [path] }),
   })
 
+  const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
   render(
-    <QueryClientProvider
-      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
-    >
+    <QueryClientProvider client={queries}>
       <SyncProvider client={client}>
         <RouterProvider router={router} />
       </SyncProvider>
     </QueryClientProvider>,
   )
 
-  return { client, router }
+  return { client, router, queries }
 }
 
 beforeEach(() => {
@@ -304,6 +304,52 @@ describe('the instructions at the door (#292)', () => {
     })
     await waitFor(() => {
       expect(router.state.location.pathname).toBe('/auftraege/j-1')
+    })
+  })
+
+  /**
+   * The sheets come from the server; should they change after the customer
+   * drew, the field is empty again (#1063), and the request goes out under
+   * the sheets the customer signed under the second time.
+   */
+  it('empty the field when the sheets change after the customer drew in it', async () => {
+    const { client, queries } = await mount('/auftraege/j-1/belehrung')
+
+    expect(await screen.findByText('Widerrufsbelehrung')).toBeTruthy()
+
+    await userEvent.type(screen.getByLabelText('Name'), 'Klaus Lehmann')
+    signOn(screen.getByLabelText('Unterschriftsfeld'))
+
+    expect(screen.getByRole('button', { name: 'Feld leeren' })).toHaveProperty('disabled', false)
+
+    // The office changes the request while the customer reads it.
+    answers.set('/jobs/j-1/instructions', {
+      ...instructions,
+      request: 'Ich verlange ausdrücklich, dass Elektro Nord GmbH sofort beginnt.',
+      fingerprint: 'fnv1a32:0ddba110:121',
+    })
+    await act(() => queries.invalidateQueries())
+
+    expect(
+      await screen.findByText('Ich verlange ausdrücklich, dass Elektro Nord GmbH sofort beginnt.'),
+    ).toBeTruthy()
+    expect(screen.getByText(/^Die Belehrung hat sich geändert/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Feld leeren' })).toHaveProperty('disabled', true)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Unterschreiben' }))
+
+    expect(await screen.findByText('Bitte im Feld unterschreiben.')).toBeTruthy()
+    expect(client.list('early_start_requests')).toEqual([])
+
+    signOn(screen.getByLabelText('Unterschriftsfeld'))
+    await userEvent.click(screen.getByRole('button', { name: 'Unterschreiben' }))
+
+    await waitFor(() => {
+      expect(client.list('early_start_requests')).toHaveLength(1)
+    })
+    expect(client.list('early_start_requests')[0]).toMatchObject({
+      signerName: 'Klaus Lehmann',
+      contentFingerprint: 'fnv1a32:0ddba110:121',
     })
   })
 

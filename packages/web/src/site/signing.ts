@@ -1,5 +1,6 @@
 import type { RecordState, SignedContent } from '@opengewerk/domain'
 import { count } from '@opengewerk/platform-web/sync'
+import { useState } from 'react'
 
 import { lineKindOf, lineUnitOf } from '../app/labels.js'
 
@@ -58,5 +59,53 @@ export function signedContentOf(
         unit: lineUnitOf(line),
       }
     }),
+  }
+}
+
+/** A signature on the pad and the fingerprint of the page it was drawn under. */
+interface Drawn {
+  readonly path: string
+  readonly fingerprint: string
+}
+
+/**
+ * The signature on a pad, held to the page the customer read while drawing it
+ * (#1063). Should the page change after that, through the sync or a new answer
+ * of the server, the drawing goes: `pad` is the key that mounts the pad again,
+ * empty, and `pageChanged` says why it is empty, until the customer draws
+ * again. A signature only ever goes out over the page they saw while signing.
+ */
+export function useSignatureFor(fingerprint: string): {
+  readonly path: string | null
+  readonly pad: number
+  readonly pageChanged: boolean
+  readonly onChange: (path: string | null) => void
+} {
+  const [drawn, setDrawn] = useState<Drawn | null>(null)
+  const [pad, setPad] = useState(0)
+  const [pageChanged, setPageChanged] = useState(false)
+
+  // Put right while rendering, as React has it for state that follows a
+  // value, and not in an effect.
+  if (drawn !== null && drawn.fingerprint !== fingerprint) {
+    setDrawn(null)
+    setPageChanged(true)
+    setPad((count) => count + 1)
+  }
+
+  return {
+    path: drawn?.path ?? null,
+    pad,
+    pageChanged,
+    onChange: (path) => {
+      if (path === null) {
+        setDrawn(null)
+
+        return
+      }
+
+      setDrawn({ path, fingerprint })
+      setPageChanged(false)
+    },
   }
 }

@@ -65,7 +65,7 @@ import { ArticleChoice, type StockOf } from '../article-choice.js'
 import { SiteHeader } from '../header.js'
 import { InvoiceOnSite } from './invoice.js'
 import { MaterialScan, type ScannedArticle } from '../material-scan.js'
-import { signedContentOf } from '../signing.js'
+import { signedContentOf, useSignatureFor } from '../signing.js'
 
 /** The lines in the order they stand. The id breaks a tie, as on the server. */
 function inOrder(records: readonly RecordState[]): readonly RecordState[] {
@@ -1201,7 +1201,6 @@ function SigningStep({
 }) {
   const client = useSync()
   const [signerName, setSignerName] = useState('')
-  const [path, setPath] = useState<string | null>(null)
   const [problem, setProblem] = useState<string | undefined>(undefined)
   const [trouble, setTrouble] = useState<string | null>(null)
   const [working, setWorking] = useState(false)
@@ -1217,6 +1216,8 @@ function SigningStep({
   )
   const fingerprint = signedContentFingerprint(signedContentOf(report, lines, declaration))
   const delivery = documentKindOf(report) === 'delivery_note'
+  const signature = useSignatureFor(fingerprint)
+  const path = signature.path
 
   async function sign(event: FormEvent) {
     event.preventDefault()
@@ -1299,7 +1300,18 @@ function SigningStep({
                 setSignerName(event.target.value)
               }}
             />
-            <SignaturePad label="Unterschriftsfeld" onChange={setPath} />
+            {signature.pageChanged ? (
+              <SiteTrouble>
+                {delivery
+                  ? 'Der Lieferschein hat sich geändert, nachdem Sie im Feld unterschrieben haben. Bitte prüfen Sie ihn noch einmal und unterschreiben Sie neu.'
+                  : 'Der Bericht hat sich geändert, nachdem Sie im Feld unterschrieben haben. Bitte lesen Sie ihn noch einmal und unterschreiben Sie neu.'}
+              </SiteTrouble>
+            ) : null}
+            <SignaturePad
+              key={signature.pad}
+              label="Unterschriftsfeld"
+              onChange={signature.onChange}
+            />
           </div>
         </Panel>
       </form>

@@ -639,6 +639,74 @@ describe('a report on site', () => {
     expect(screen.getByText(reportZeroRateDeclaration)).toBeTruthy()
   })
 
+  /**
+   * A change the sync brings in after the customer drew empties the field
+   * (#1063): nothing goes out over the page they saw before, and they sign
+   * again over the page as it now is.
+   */
+  it('empties the field when the report changes after the customer drew in it', async () => {
+    const user = userEvent.setup()
+    const report = { ...draftReport, introText: 'Leuchte im Treppenhaus getauscht.' }
+    const { client } = await mount('/auftraege/j-1/berichte/d-1', { documents: [report] })
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Vom Kunden unterschreiben lassen' }),
+    )
+    await user.type(await screen.findByLabelText('Name'), 'Erika Berg')
+    signOn(screen.getByRole('img', { name: 'Unterschriftsfeld' }))
+
+    expect(screen.getByRole('button', { name: 'Feld leeren' })).toHaveProperty('disabled', false)
+
+    // The office adds to the report while the customer holds the device.
+    server.put('documents', {
+      ...report,
+      introText: 'Leuchte im Treppenhaus getauscht, Bewegungsmelder ersetzt.',
+      version: 2,
+    })
+    await act(() => client.synchronise())
+
+    expect(
+      await screen.findByText('Leuchte im Treppenhaus getauscht, Bewegungsmelder ersetzt.'),
+    ).toBeTruthy()
+    expect(
+      screen.getByText(
+        /^Der Bericht hat sich geändert, nachdem Sie im Feld unterschrieben haben\./,
+      ),
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Feld leeren' })).toHaveProperty('disabled', true)
+    expect(screen.getByLabelText('Name')).toHaveProperty('value', 'Erika Berg')
+
+    await user.click(screen.getByRole('button', { name: 'Unterschreiben' }))
+
+    expect(await screen.findByText('Bitte im Feld unterschreiben.')).toBeTruthy()
+    expect(client.list('document_signatures')).toEqual([])
+
+    // Signed again, over the page as it now is.
+    signOn(screen.getByRole('img', { name: 'Unterschriftsfeld' }))
+
+    expect(screen.queryByText(/^Der Bericht hat sich geändert/)).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'Unterschreiben' }))
+    await screen.findByRole('img', { name: 'Unterschrift von Erika Berg' })
+    await client.synchronise()
+
+    const operation = server.operations().find((entry) => entry.entity === 'document_signatures')
+    const signature = Object.fromEntries(
+      (operation?.patches ?? []).map((patch) => [patch.field, patch.to]),
+    )
+
+    expect(signature['contentFingerprint']).toBe(
+      signedContentFingerprint({
+        subject: null,
+        documentDate: '2026-09-21',
+        customerId: 'c-1',
+        jobId: 'j-1',
+        introText: 'Leuchte im Treppenhaus getauscht, Bewegungsmelder ersetzt.',
+        lines: [],
+      }),
+    )
+  })
+
   /** Without a PV system or a storage at its job, the page shows none and sends none. */
   it('shows no declaration for the zero rate of a job on anything else', async () => {
     const user = userEvent.setup()
