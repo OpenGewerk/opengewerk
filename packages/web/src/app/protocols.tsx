@@ -642,7 +642,13 @@ function FigureInput({
   const places = placesOfField ? field.decimals : 3
 
   const [typed, setTyped] = useState(typeof value === 'number' ? amount(value) : '')
-  const [problem, setProblem] = useState<string | undefined>(undefined)
+  // A value with more places than the field, as a device of an earlier
+  // version may have written it, says so from the start as typing it would.
+  const [problem, setProblem] = useState<string | undefined>(
+    typeof value === 'number' && value % 10 ** (3 - places) !== 0
+      ? tooManyPlaces(places)
+      : undefined,
+  )
 
   return (
     <Field

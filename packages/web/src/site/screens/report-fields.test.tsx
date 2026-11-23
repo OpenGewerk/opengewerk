@@ -186,6 +186,16 @@ describe('the fields of a report on site (#78)', () => {
       expect(distance()).toBe(26_000)
     })
     expect(screen.queryByText('Eine ganze Zahl, ohne Nachkommastellen.')).toBeNull()
+
+    // A device of an earlier version wrote 25,5 km: the field says so on opening.
+    await client.update('documents', reportId, { fieldValues: JSON.stringify({ field_2: 25_500 }) })
+    await router.navigate({ to: '/auftraege/j-1' })
+    await router.navigate({
+      to: '/auftraege/$jobId/berichte/$documentId',
+      params: { jobId: 'j-1', documentId: reportId },
+    })
+
+    expect(await screen.findByText('Eine ganze Zahl, ohne Nachkommastellen.')).toBeTruthy()
   })
 
   it('are filled in without a network, read before signing and signed with the report', async () => {
