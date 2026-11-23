@@ -334,6 +334,22 @@ describe('version 2 of the commissioning protocol of a wallbox (#1075)', () => {
     expect(judged(8000, 2, { rcd_rated_residual_current: '30' })).toMatchObject({ within: false })
   })
 
+  it('judges nothing before DIN VDE 0100-722 asked for the RCD, named or not', () => {
+    const before = (form: Record<string, unknown>) =>
+      limitVerdict(chargingMeasurement(2, 'rcd_trip_current'), 12_000, {
+        rules: elektroRules,
+        on: '2019-05-31',
+        circuit: null,
+        conditions: measuringConditions(null, form),
+      })
+
+    expect(before({})).toMatchObject({ within: null, limitMilli: null })
+    expect(before({ rcd_rated_residual_current: '30' })).toMatchObject({
+      within: null,
+      limitMilli: null,
+    })
+  })
+
   it('reads the rated residual current of the protocol in whole milliamperes up to 30', () => {
     expect(measuringConditions(null, { rcd_rated_residual_current: '10' })).toEqual({
       rcdRatedResidualMicro: 10_000,

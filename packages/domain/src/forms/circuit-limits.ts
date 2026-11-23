@@ -131,11 +131,14 @@ export const chargingRcdTripCurrentRange: LimitCalculator = (_field, { rules, on
   const rule = rules.at('elektro.charging.rcd_rated_residual_current', on)
   const least = rules.at('elektro.rcd.trip_current_minimum', on)
   const most = rules.at('elektro.rcd.trip_current_maximum', on)
-  const rated = named ?? rule?.value
 
-  if (rated === undefined || !least || !most) {
+  // Before DIN VDE 0100-722 asked for the RCD of a charging point there is no
+  // limit, whether the protocol names a rated residual current or not.
+  if (!rule || !least || !most) {
     return { none: 'Für diesen Tag ist kein Grenzwert hinterlegt.' }
   }
+
+  const rated = named ?? rule.value
 
   const shares = sourcesOf(least.source, most.source)
 
@@ -144,7 +147,7 @@ export const chargingRcdTripCurrentRange: LimitCalculator = (_field, { rules, on
     limitMilli: Math.floor((rated * most.value) / 10_000),
     fromMilli: Math.floor((rated * least.value) / 10_000) + 1,
     atLeast: false,
-    source: named === undefined && rule ? sourcesOf(rule.source, shares) : shares,
+    source: named === undefined ? sourcesOf(rule.source, shares) : shares,
   }
 }
 
