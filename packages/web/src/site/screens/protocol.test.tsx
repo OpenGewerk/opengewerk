@@ -561,6 +561,8 @@ describe('a test protocol on site (#79)', () => {
     await user.click(row('Prüfung'))
     await user.selectOptions(await screen.findByLabelText('Netzform'), 'IT')
     await user.click(screen.getByRole('button', { name: 'Zur Übersicht' }))
+    // The step is saved when it is left, and the overview comes after (#1079).
+    await screen.findByRole('list', { name: 'Abschnitte' })
 
     // 0,020 MΩ is far under the 0,230 MΩ of a TN system and holds in an IT system.
     await user.click(row('Messen'))
@@ -573,6 +575,7 @@ describe('a test protocol on site (#79)', () => {
 
     await user.click(screen.getByRole('button', { name: 'Weiter zu F2' }))
     await user.click(await screen.findByRole('button', { name: 'Zur Übersicht' }))
+    await screen.findByRole('list', { name: 'Abschnitte' })
     expect(row('Messen').textContent).not.toContain('außerhalb')
   })
 

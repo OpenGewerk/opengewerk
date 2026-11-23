@@ -53,6 +53,7 @@ describe('the package Elektro und PV', () => {
       'formulare/dguv-v3.v1.json',
       'formulare/dguv-v3.v2.json',
       'formulare/dguv-v3.v3.json',
+      'formulare/dguv-v3.v4.json',
       'formulare/vde-ar-n-4105.v1.json',
       'formulare/iec-62446-1.v1.json',
       'formulare/vde-0100-722.v1.json',
@@ -131,7 +132,7 @@ describe('the package Elektro und PV', () => {
     ).toEqual([
       ['vde-0100-600', 4],
       ['vde-0105-100', 2],
-      ['dguv-v3', 3],
+      ['dguv-v3', 4],
       ['vde-ar-n-4105', 1],
       ['iec-62446-1', 1],
       ['vde-0100-722', 1],

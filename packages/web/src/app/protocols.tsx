@@ -1613,7 +1613,10 @@ export function UnknownVersion() {
  * What is still missing before the tester signs, the signature itself left
  * out: the sentences to show, empty when it can be signed.
  */
-export function missingBeforeSigning(record: RecordState): readonly string[] {
+export function missingBeforeSigning(
+  record: RecordState,
+  appliance: ApplianceFacts | null = null,
+): readonly string[] {
   const definition = definitionOf(record)
 
   if (!definition) {
@@ -1632,7 +1635,11 @@ export function missingBeforeSigning(record: RecordState): readonly string[] {
     })),
   }
 
-  return sealProblems(beforeSigning, valuesOf(record), { seal: false })
+  // What a field asks of the appliance (#1023) is asked of the one it is signed with.
+  return sealProblems(beforeSigning, valuesOf(record), {
+    seal: false,
+    subject: appliance as Readonly<Record<string, unknown>> | null,
+  })
 }
 
 /** The address of a protocol on paper. */

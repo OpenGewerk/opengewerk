@@ -18,6 +18,7 @@ import vde0105100v2 from '../formulare/vde-0105-100.v2.json' with { type: 'json'
 import dguvV3v1 from '../formulare/dguv-v3.v1.json' with { type: 'json' }
 import dguvV3v2 from '../formulare/dguv-v3.v2.json' with { type: 'json' }
 import dguvV3v3 from '../formulare/dguv-v3.v3.json' with { type: 'json' }
+import dguvV3v4 from '../formulare/dguv-v3.v4.json' with { type: 'json' }
 import vdeArN4105v1 from '../formulare/vde-ar-n-4105.v1.json' with { type: 'json' }
 import iec624461v1 from '../formulare/iec-62446-1.v1.json' with { type: 'json' }
 import vde0100722v1 from '../formulare/vde-0100-722.v1.json' with { type: 'json' }
@@ -73,7 +74,10 @@ export const elektroManifest: TradeManifest = manifest
  * circuit, and judges the insulation after the whole of table 11 and the loop
  * impedance and tripping current as version 4 of the first inspection (#1022). The test of a appliance after DGUV Vorschrift 3 the third, the first
  * that hangs on an appliance of the register and not on an installation (#303);
- * its version 2 adds a photo from the files of the appliance (#817).
+ * its version 2 adds a photo from the files of the appliance (#817), version 3
+ * works out the protective conductor current (#816), and version 4 asks for it
+ * after a repair of an appliance of protection class I and measures the
+ * separation of a safely separated output (#1023).
  * The fourth is no test: the commissioning protocol after VDE-AR-N 4105 of a
  * PV system or a battery, started from its structure (#304). The fifth tests
  * the DC side of a PV system, string by string out of its structure (#305).
@@ -91,6 +95,7 @@ export const elektroForms: readonly FormDefinition[] = [
   dguvV3v1 as FormDefinition,
   dguvV3v2 as FormDefinition,
   dguvV3v3 as FormDefinition,
+  dguvV3v4 as FormDefinition,
   vdeArN4105v1 as FormDefinition,
   iec624461v1 as FormDefinition,
   vde0100722v1 as FormDefinition,

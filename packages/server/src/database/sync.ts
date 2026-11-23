@@ -219,6 +219,7 @@ const formRecord: Check = ({ operation, values, current }) => {
       definitionVersion: at('definitionVersion'),
       status: at('status') ?? 'draft',
       values: at('values') ?? '{}',
+      applianceFacts: at('applianceFacts'),
     }) ??
     formSubjectProblem(definitionOf(at('definitionKey'), at('definitionVersion')), {
       installationId: at('installationId'),

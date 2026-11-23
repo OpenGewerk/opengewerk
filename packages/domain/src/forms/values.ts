@@ -5,7 +5,7 @@ import {
   type GroupBlock as GeneralGroupBlock,
 } from '@opengewerk/platform-domain'
 
-import type { BlockField, FormDefinition, SignatureField } from './definition.js'
+import type { BlockField, FormDefinition, FormField, SignatureField } from './definition.js'
 import { tradeForms } from './engine.js'
 import { nextInspectionMissing } from './next-inspection.js'
 
@@ -72,17 +72,35 @@ export function valuesProblem(definition: FormDefinition, values: unknown): stri
  * (#814). As sentences, empty when nothing is.
  *
  * Without the seal (`seal: false`) it is the question the form asks before it
- * offers the signature at all: whether everything else is there.
+ * offers the signature at all: whether everything else is there. A field that
+ * is required under a condition on what the protocol hangs on (#1023) is asked
+ * with `subject`, the appliance of a test after DGUV Vorschrift 3.
  */
 export function sealProblems(
   definition: FormDefinition,
   values: FormValues,
-  options: { readonly seal?: boolean } = {},
+  options: {
+    readonly seal?: boolean
+    readonly subject?: Readonly<Record<string, unknown>> | null
+  } = {},
 ): readonly string[] {
   const interval = nextInspectionMissing(definition, values)
   const missing = tradeForms.sealProblems(definition, values, options)
 
   return interval === null ? missing : [...missing, interval]
+}
+
+/**
+ * Whether a field needs an answer before the form is signed, as `sealProblems`
+ * asks it: required, or required under a condition that holds with the values
+ * and what the protocol hangs on (#1023). For the state of a section.
+ */
+export function fieldAsked(
+  field: FormField | BlockField,
+  values: FormValues,
+  subject: Readonly<Record<string, unknown>> | null = null,
+): boolean {
+  return tradeForms.fieldAsked(field, values, { subject })
 }
 
 /** The sealing signature of a definition, if it has one. */

@@ -17,6 +17,7 @@ import {
   type GroupField,
   isRuleLimit,
   limitIsMinimum,
+  fieldAsked,
   limitVerdict,
   measuringConditions,
   type MeasuringConditions,
@@ -263,8 +264,14 @@ function stateOf(
 
   const fields = plainFields(section)
   const filled = fields.filter((field) => protocol.draft[field.key] !== undefined).length
+  // Asked as before signing, a field required under a condition included (#1023).
   const missing = fields.filter(
-    (field) => field.required === true && protocol.draft[field.key] === undefined,
+    (field) =>
+      fieldAsked(
+        field,
+        protocol.draft,
+        protocol.appliance as Readonly<Record<string, unknown>> | null,
+      ) && protocol.draft[field.key] === undefined,
   ).length
 
   if (filled === 0) {
@@ -541,7 +548,7 @@ function Overview({
   }
 
   const resultSection = definition.sections.find(isResult)
-  const missing = protocol.unsaved ? [] : missingBeforeSigning(record)
+  const missing = protocol.unsaved ? [] : missingBeforeSigning(record, protocol.appliance)
   const seal = sealingField(definition)
   // A commissioning protocol is signed by the operator and the business (#304).
   const signedBy = signatureFields(definition).length

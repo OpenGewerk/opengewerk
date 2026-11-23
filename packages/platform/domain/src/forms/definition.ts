@@ -96,6 +96,20 @@ export interface RecordPointer {
   readonly id: string
 }
 
+/**
+ * When a field has to be filled before the form is signed, beyond `required`:
+ * when a choice of the form has the answer named, when what the form hangs on
+ * has the property named, or when both hold. What the form hangs on is the
+ * application's to give; where it does not, a condition on it holds, so that
+ * nothing is signed that may lack an answer.
+ */
+export interface RequiredWhen {
+  /** A choice of the form outside any group, by its key, and the answer that asks for the field. */
+  readonly answer?: { readonly field: string; readonly is: string }
+  /** A property of what the form hangs on, by its name, and the value that asks for the field. */
+  readonly subject?: { readonly key: string; readonly is: string }
+}
+
 interface FieldBase {
   /** How the value is found in the filled form. Latin letters, digits and underscores. */
   readonly key: string
@@ -104,6 +118,8 @@ interface FieldBase {
   readonly hint?: string
   /** Has to be filled before the form can be signed. */
   readonly required?: boolean
+  /** Has to be filled before the form can be signed where the condition holds. */
+  readonly requiredWhen?: RequiredWhen
   /**
    * Taken over from the last form when it is the template of the next one:
    * what describes the subject and the way it is checked. What the last one
