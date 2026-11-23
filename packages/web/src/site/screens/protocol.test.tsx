@@ -631,9 +631,7 @@ describe('a test protocol on site (#79)', () => {
     await user.click(row('Messen'))
 
     // 8 mA lie between half and all of 10 mA, and under half of 30 mA.
-    expect(
-      await screen.findByText('Innerhalb des Grenzwerts, über 5,0 bis 10,0 mA.'),
-    ).toBeTruthy()
+    expect(await screen.findByText('Innerhalb des Grenzwerts, über 5,0 bis 10,0 mA.')).toBeTruthy()
   })
 
   it('shows a signed protocol of a wallbox judged by the rated residual current it names (#1075)', async () => {
