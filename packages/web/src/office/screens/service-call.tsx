@@ -68,11 +68,6 @@ function minuteOf(clock: string): number {
   return (hours ?? 0) * 60 + (minutes ?? 0)
 }
 
-/**
- * The surcharge to name to a consumer before the order of an emergency call
- * (#1080), under the moment of the call: section 312e BGB lets a business
- * charge it only after it told them, and the job keeps what was named.
- */
 /** Whether day and time of a call are typed in whole: a field being typed into is not. */
 function isWholeCall(calledOn: string, calledAt: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(calledOn) && /^\d{2}:\d{2}$/.test(calledAt)
@@ -91,6 +86,11 @@ function calledMomentOf(calledOn: string, calledAt: string): Date | null {
     : null
 }
 
+/**
+ * The surcharge to name to a consumer before the order of an emergency call
+ * (#1080), under the moment of the call: section 312e BGB lets a business
+ * charge it only after it told them, and the job keeps what was named.
+ */
 function SurchargeNote({
   asking,
   failed,
