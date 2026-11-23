@@ -46,7 +46,6 @@ import type { FoundIdentity } from '../api/identity.js'
 import { signatureRefusal } from '../documents/signing.js'
 import { earlyStartArrival } from '../service-calls/instructions.js'
 import {
-  lockSurchargeDrafts,
   onCallRefusal,
   refreshSurchargeLine,
   refreshSurchargeLines,
@@ -695,6 +694,14 @@ function withSurchargeTakenOver(
 }
 
 /**
+ * The drafts of each operation on a job whose call changes, by the id of the
+ * operation, locked by `lockDocumentsOf` before the transmission began, for
+ * `afterWrite` to work out. Kept with the transaction, which both are shown
+ * and which takes the notes with it when it ends.
+ */
+const draftsOfCall = new WeakMap<TenantTransaction, ReadonlyMap<string, readonly string[]>>()
+
+/**
  * The documents a transmission comes to, locked before its first operation
  * writes (opengewerk#1094). Issuing locks its document and writes after; a
  * transmission that wrote first and came to the document later would wait
@@ -709,7 +716,7 @@ async function lockDocumentsOf(
 ): Promise<void> {
   const ids = new Set<string>()
   const lines: string[] = []
-  const calls: string[] = []
+  const calls: Operation[] = []
 
   for (const operation of operations) {
     if (operation.entity === 'documents') {
@@ -727,7 +734,7 @@ async function lockDocumentsOf(
       operation.kind === 'update' &&
       operation.patches.some((patch) => surchargeFieldsOfJob.includes(patch.field))
     ) {
-      calls.push(operation.recordId)
+      calls.push(operation)
     }
   }
 
@@ -744,9 +751,26 @@ async function lockDocumentsOf(
     }
   }
 
-  for (const draft of await surchargeDraftsOf(tx, calls)) {
-    ids.add(draft)
+  const drafts = await surchargeDraftsOf(
+    tx,
+    calls.map((call) => call.recordId),
+  )
+
+  for (const draft of drafts) {
+    ids.add(draft.id)
   }
+
+  // What `afterWrite` works out for each of them: these drafts and no other,
+  // since a draft found after the first write would be locked after it.
+  draftsOfCall.set(
+    tx,
+    new Map(
+      calls.map((call) => [
+        call.id,
+        drafts.filter((draft) => draft.jobId === call.recordId).map((draft) => draft.id),
+      ]),
+    ),
+  )
 
   const locked = [...ids].filter((id) => isUuid(id))
 
@@ -757,33 +781,6 @@ async function lockDocumentsOf(
       .where(inArray(schema.documents.id, locked as DocumentId[]))
       .orderBy(schema.documents.id)
       .for('no key update')
-  }
-}
-
-/**
- * The drafts locked for an operation on a job, from `complete` before the job
- * is written until `afterWrite` works them out: the same operation object
- * passes through both.
- */
-const draftsOfCall = new WeakMap<Operation, readonly string[]>()
-
-/**
- * The drafts of a call whose moment or named surcharge a device changes,
- * noted before the job is written for `afterWrite` to work out (#1087).
- * `lockDocumentsOf` locked them before the transmission began; the lock here
- * holds the ones it found and takes none it did not, in the same order.
- */
-async function lockDraftsOfCall(
-  tx: TenantTransaction,
-  operation: Operation,
-  values: Record<string, unknown>,
-): Promise<void> {
-  if (
-    operation.entity === 'jobs' &&
-    operation.kind === 'update' &&
-    surchargeFieldsOfJob.some((field) => values[field] !== undefined)
-  ) {
-    draftsOfCall.set(operation, await lockSurchargeDrafts(tx, operation.recordId))
   }
 }
 
@@ -819,7 +816,7 @@ async function afterSurchargeWrite(
   } else if (operation.entity === 'documents' && values['jobId'] !== undefined) {
     await refreshSurchargeLine(tx, operation.recordId)
   } else if (operation.entity === 'jobs') {
-    await refreshSurchargeLines(tx, draftsOfCall.get(operation) ?? [])
+    await refreshSurchargeLines(tx, draftsOfCall.get(tx)?.get(operation.id) ?? [])
   }
 }
 
@@ -931,10 +928,8 @@ export const sync = serverSync<FoundIdentity>({
     cancellation,
     draftDeletion,
   ],
-  complete: async ({ tx, tenantId, operation, values, current, sender }) => {
-    await lockDraftsOfCall(tx, operation, values)
-
-    return withEarlyStartWording(
+  complete: async ({ tx, tenantId, operation, values, current, sender }) =>
+    withEarlyStartWording(
       operation,
       await withJobNumber(
         tx,
@@ -959,8 +954,7 @@ export const sync = serverSync<FoundIdentity>({
           ),
         ),
       ),
-    )
-  },
+    ),
   afterWrite: async ({ tx, operation, values, current }) =>
     await afterSurchargeWrite(tx, operation, values, current),
   beforeOperations: async ({ tx, operations }) => await lockDocumentsOf(tx, operations),

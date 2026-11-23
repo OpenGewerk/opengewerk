@@ -168,8 +168,14 @@ export async function surchargeLineFor(
   )
 }
 
-/** What of the line of the surcharge the server works out, and a change of which by hand takes it over (#1087). */
+/**
+ * What of the line of the surcharge the server works out, and a change of
+ * which by hand takes it over (#1087), with the document it is on: a line a
+ * device moves to another draft is no surcharge of that draft's call, and
+ * that draft may have its own.
+ */
 const surchargeFields = [
+  'documentId',
   'kind',
   'designation',
   'description',
@@ -182,9 +188,9 @@ const surchargeFields = [
 
 /**
  * Whether a change takes the line of the surcharge over from the server
- * (#1087): one of its text, quantity, unit, price or article set to something
- * else than it holds. Its place among the lines and its rate of tax are no
- * change of the surcharge.
+ * (#1087): its document, text, quantity, unit, price or article set to
+ * something else than it holds. Its place among the lines and its rate of
+ * tax are no change of the surcharge.
  */
 export function takesOverSurcharge(
   values: Readonly<Record<string, unknown>>,
@@ -395,20 +401,20 @@ export async function lockSurchargeDrafts(
 export async function surchargeDraftsOf(
   tx: TenantTransaction,
   jobIds: readonly string[],
-): Promise<readonly string[]> {
+): Promise<readonly { readonly id: string; readonly jobId: string | null }[]> {
   const valid = jobIds.filter((jobId) => isUuid(jobId))
 
   if (valid.length === 0) {
     return []
   }
 
-  return (await surchargeDrafts(tx, valid)).map((draft) => draft.id)
+  return await surchargeDrafts(tx, valid)
 }
 
 /** The drafts with a line of the surcharge, a line gone included, of these jobs or of all. */
 function surchargeDrafts(tx: TenantTransaction, jobIds: readonly string[] | null) {
   return tx
-    .select({ id: documents.id })
+    .select({ id: documents.id, jobId: documents.jobId })
     .from(documents)
     .where(
       and(

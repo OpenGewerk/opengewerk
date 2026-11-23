@@ -430,6 +430,28 @@ export class DocumentsController {
     @Body() body: unknown,
   ) {
     return this.database.forTenant(identity, async (tx) => {
+      // The document and its predecessor, locked together in the order of
+      // their ids, the order a transmission from a device locks the
+      // documents it comes to (opengewerk#1094); one after the other, the
+      // two could each hold the one the other waits for. The link to the
+      // predecessor is made with the document and never changes (#129).
+      const [chain] = await tx
+        .select({ predecessorDocumentId: documents.predecessorDocumentId })
+        .from(documents)
+        .where(eq(documents.id, id as DocumentId))
+
+      await tx
+        .select({ id: documents.id })
+        .from(documents)
+        .where(
+          inArray(documents.id, [
+            id as DocumentId,
+            ...(chain?.predecessorDocumentId ? [chain.predecessorDocumentId] : []),
+          ]),
+        )
+        .orderBy(documents.id)
+        .for('update')
+
       // Locked before anything is read that the snapshot freezes: a line
       // route, a change to the head and the trigger on the lines wait for
       // this row, so the snapshot holds what the document says when it is

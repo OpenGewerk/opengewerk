@@ -1226,6 +1226,62 @@ describe('the line of the surcharge on a draft (#1087)', () => {
 
     expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000, deleted: false })
   })
+  it('is no surcharge of a draft a device moves it to', async () => {
+    const from = await draftOf()
+    const to = await draftOf()
+    const moved = (await surchargeOf(from.invoice)).id
+
+    await sent(
+      changed('document_lines', moved, { documentId: { from: from.invoice, to: to.invoice } }),
+    )
+
+    const { rows } = await admin.query<{ id: string; emergency_surcharge: boolean }>(
+      `select id, emergency_surcharge from document_lines
+       where document_id = $1 and designation like 'Notdienstzuschlag %' and deleted_at is null
+       order by emergency_surcharge`,
+      [to.invoice],
+    )
+
+    expect(rows).toEqual([
+      { id: moved, emergency_surcharge: false },
+      { id: expect.any(String) as string, emergency_surcharge: true },
+    ])
+  })
+
+  it('locks an invoice with its report in the order of their ids, as a transmission does', async () => {
+    const { invoice } = await draftOf()
+    const { rows } = await admin.query<{ report: string }>(
+      'select predecessor_document_id as report from documents where id = $1',
+      [invoice],
+    )
+    const report = rows[0]?.report ?? ''
+
+    expect(report < invoice).toBe(true)
+
+    // A transmission that comes to the report first and to the invoice next.
+    const transmission = await begun()
+    let issuing: Promise<number> | undefined
+
+    try {
+      await transmission.query('select id from documents where id = $1 for no key update', [report])
+      issuing = http()
+        .post(`/documents/${invoice}/issue`)
+        .set('x-test-identity', office())
+        .send({})
+        .then((answer) => answer.status)
+      await waitingFor(admin, transmission, issuing)
+      await transmission.query('select id from documents where id = $1 for no key update', [
+        invoice,
+      ])
+      await transmission.query('commit')
+    } finally {
+      await transmission.query('rollback').catch(() => undefined)
+      transmission.release()
+    }
+
+    expect(await issuing).toBe(201)
+  })
+
   it('stays removed when the office removes it while a refresh waits for the draft', async () => {
     const { invoice, hour } = await draftOf()
 
@@ -1600,7 +1656,10 @@ describe('the line of the surcharge on a draft, after the settings (#1087)', () 
     async (_, change, status) => {
       const draft = await aDraft()
       const issuing = await lockedForIssuing(draft.invoice)
-      const changing = change(draft).then((answer) => answer.status)
+      const changing = change(draft).then((answer) => ({
+        status: answer.status,
+        receipts: (answer.body as { receipts?: { outcome: string }[] }).receipts ?? [],
+      }))
 
       try {
         await waitingFor(admin, issuing, changing)
@@ -1615,7 +1674,11 @@ describe('the line of the surcharge on a draft, after the settings (#1087)', () 
         issuing.release()
       }
 
-      expect(await changing).toBe(status)
+      const answer = await changing
+
+      expect(answer.status).toBe(status)
+      // A transmission gets every operation applied, none kept as a conflict.
+      expect(answer.receipts.filter((receipt) => receipt.outcome !== 'applied')).toEqual([])
     },
   )
 })
