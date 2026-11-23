@@ -58,7 +58,10 @@ export function swapOnCallShifts(id: string, other: string): Promise<unknown> {
  * names the surcharge before the order, and calls come in where there is no
  * network, so the device keeps the last answer.
  */
-export function emergencyTariffs(signal?: AbortSignal): Promise<readonly EmergencyTariff[]> {
+export function emergencyTariffs(
+  signal?: AbortSignal,
+  from?: string,
+): Promise<readonly EmergencyTariff[]> {
   const waiting = new AbortController()
   const stop = () => {
     waiting.abort()
@@ -67,7 +70,9 @@ export function emergencyTariffs(signal?: AbortSignal): Promise<readonly Emergen
 
   signal?.addEventListener('abort', stop, { once: true })
 
-  return request<readonly EmergencyTariff[]>('/on-call-shifts/tariffs', {
+  const path = `/on-call-shifts/tariffs${from ? `?from=${encodeURIComponent(from)}` : ''}`
+
+  return request<readonly EmergencyTariff[]>(path, {
     signal: waiting.signal,
   }).finally(() => {
     clearTimeout(timer)

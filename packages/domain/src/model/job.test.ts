@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { type Permission, permissionsOfRoles, type RoleKey } from './authorization.js'
-import { followUpProblem, isJobProgress } from './job.js'
+import { emergencyAtProblem, emergencyNamedProblem, followUpProblem, isJobProgress } from './job.js'
 
 describe('the progress of a job', () => {
   it('is finishing it and taking it up', () => {
@@ -91,5 +91,37 @@ describe('a follow-up job (#170)', () => {
     expect(followUpProblem({ id: 'j-1', customerId: 'c-1' }, finished)).toBe(
       'Ein Auftrag ist nicht sein eigener Vorgänger.',
     )
+  })
+})
+
+describe('the surcharge named before the order (#1081)', () => {
+  const at = '2026-10-28T01:14:00.000Z'
+
+  it('is both parts or neither, on an emergency call', () => {
+    expect(emergencyNamedProblem(undefined, undefined, null)).toBeNull()
+    expect(emergencyNamedProblem(null, null, at)).toBeNull()
+    expect(emergencyNamedProblem(4500, 0, at)).toBeNull()
+    expect(emergencyNamedProblem(0, 0, at)).toBeNull()
+    expect(emergencyNamedProblem(4500, null, at)).toMatch(/beide oder keinen/)
+    expect(emergencyNamedProblem(null, 0, at)).toMatch(/beide oder keinen/)
+    expect(emergencyNamedProblem(4500, 0, null)).toMatch(/nur ein Notdiensteinsatz/)
+  })
+
+  it('is whole numbers within the bounds of a setting', () => {
+    expect(emergencyNamedProblem(-1, 0, at)).toMatch(/ganze Zahl/)
+    expect(emergencyNamedProblem(45.5, 0, at)).toMatch(/ganze Zahl/)
+    expect(emergencyNamedProblem(0, 100_001, at)).toMatch(/ganze Zahl/)
+    expect(emergencyNamedProblem(100_000_001, 0, at)).toMatch(/ganze Zahl/)
+    expect(emergencyNamedProblem('4500', 0, at)).toMatch(/ganze Zahl/)
+  })
+})
+
+describe('the moment of an emergency call (#293, #1085)', () => {
+  it('is a moment from 2007 on, when the rules of tax begin', () => {
+    expect(emergencyAtProblem('2026-10-28T01:14:00.000Z')).toBeNull()
+    expect(emergencyAtProblem('2007-01-01T00:00:00+01:00')).toBeNull()
+    expect(emergencyAtProblem('2006-12-31T23:59:00+01:00')).toMatch(/vor 2007/)
+    expect(emergencyAtProblem('0026-10-28T01:14:00.000Z')).toMatch(/vor 2007/)
+    expect(emergencyAtProblem('nie')).toMatch(/Tag und Uhrzeit/)
   })
 })

@@ -488,6 +488,8 @@ export const auditTables: Readonly<Record<string, AuditTableWords>> = {
       building_work: 'Bauwerk',
       urgent_repair: 'Dringende Reparatur',
       emergency_at: 'Notdiensteinsatz am',
+      emergency_named_flat_cents: 'Genannter Notdienstzuschlag, Betrag',
+      emergency_named_basis_points: 'Genannter Notdienstzuschlag, Prozent',
       maintenance_contract_id: 'Wartungsvertrag',
       maintenance_due_on: 'Wartung fällig am',
     },

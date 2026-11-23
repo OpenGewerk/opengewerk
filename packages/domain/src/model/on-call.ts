@@ -310,3 +310,62 @@ export function tariffStarts(
 
   return [...starts].sort()
 }
+
+/**
+ * What a device records as named for a call to a consumer (#1081): the
+ * surcharge of the kind of the call by the tariff it named it from, nothing
+ * (both zero) where it knew no tariff for the day, was still asking, or the
+ * call falls in ordinary hours. The invoice charges no more than this.
+ */
+export function namedSurcharge(tariff: EmergencyTariff | null, moment: Date): EmergencySurcharge {
+  const kind = tariff ? emergencyKindAt(moment, new Set(tariff.holidays), tariff.night) : null
+
+  return tariff && kind ? tariff.surcharges[kind] : { flatCents: 0, basisPoints: 0 }
+}
+
+function isNothing(surcharge: EmergencySurcharge): boolean {
+  return surcharge.flatCents === 0 && surcharge.basisPoints === 0
+}
+
+/**
+ * The surcharge an invoice may charge for a call (#1081). Section 312e BGB
+ * lets a business charge a consumer other costs only after it told them, so
+ * what was named before the order is the most: nothing named, nothing
+ * charged. Below that, the one of the day where it is less: two flat amounts
+ * or two percentages compared as they are, a flat amount against a
+ * percentage on the hours of the invoice. Hours without a price yet
+ * (`hourNetCents` null) decide nothing, where a report with no hours at all
+ * (zero) makes a percentage cost nothing; an equal amount goes to what was
+ * named, so that the invoice never shows more than the customer heard. With
+ * nothing recorded, the one of the day.
+ */
+export function chargeableSurcharge(
+  day: EmergencySurcharge,
+  named: EmergencySurcharge | null,
+  hourNetCents: number | null,
+): EmergencySurcharge {
+  if (named === null || isNothing(day)) {
+    return day
+  }
+
+  const flat = (surcharge: EmergencySurcharge) => surcharge.flatCents > 0
+
+  if (flat(named) && flat(day)) {
+    return day.flatCents < named.flatCents ? day : named
+  }
+
+  if (!flat(named) && !flat(day)) {
+    return day.basisPoints < named.basisPoints ? day : named
+  }
+
+  if (hourNetCents === null) {
+    return named
+  }
+
+  const cost = (surcharge: EmergencySurcharge) =>
+    flat(surcharge)
+      ? surcharge.flatCents
+      : Math.round((hourNetCents * surcharge.basisPoints) / 10_000)
+
+  return cost(day) < cost(named) ? day : named
+}

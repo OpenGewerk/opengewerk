@@ -83,6 +83,15 @@ export interface Job extends Synced {
    */
   readonly emergencyAt: Date | null
   /**
+   * The surcharge named to a consumer before the order of an emergency call
+   * (#1081), as the tariff of whoever took the call had it: a flat amount in
+   * cents or a percentage on the working time, both zero where none could be
+   * named. The invoice charges no more than this. Null for a call nobody
+   * recorded it for, which is billed by the settings of the day.
+   */
+  readonly emergencyNamedFlatCents: number | null
+  readonly emergencyNamedBasisPoints: number | null
+  /**
    * The maintenance contract whose deadline made this service job (#294), and
    * the day that maintenance is due: the proposal on the planning board. Set
    * by the server and only there, never by a device.
@@ -210,9 +219,48 @@ export function emergencyAtProblem(emergencyAt: unknown): string | null {
 
   const moment = emergencyAt instanceof Date ? emergencyAt : new Date(String(emergencyAt))
 
-  return Number.isNaN(moment.getTime())
-    ? 'Der Notdiensteinsatz braucht Tag und Uhrzeit des Anrufs.'
+  if (Number.isNaN(moment.getTime())) {
+    return 'Der Notdiensteinsatz braucht Tag und Uhrzeit des Anrufs.'
+  }
+
+  // The rules of tax begin in 2007, and an invoice finds no surcharge before
+  // (#1085): a year like 0026 is a day typed in half.
+  return moment.getTime() < firstCallDay
+    ? 'Der Tag des Anrufs liegt vor 2007 und ist wohl vertippt.'
     : null
+}
+
+/** The first moment a call can be billed at: the rules of tax begin on 01.01.2007 (#1085). */
+const firstCallDay = Date.parse('2007-01-01T00:00:00+01:00')
+
+/**
+ * What is wrong with the surcharge named before the order (#1081): both
+ * parts or neither, whole numbers in the bounds of a setting, and only on an
+ * emergency call.
+ */
+export function emergencyNamedProblem(
+  flatCents: unknown,
+  basisPoints: unknown,
+  emergencyAt: unknown,
+): string | null {
+  const absent = (value: unknown) => value === undefined || value === null
+
+  if (absent(flatCents) && absent(basisPoints)) {
+    return null
+  }
+
+  if (absent(flatCents) || absent(basisPoints)) {
+    return 'Ein genannter Notdienstzuschlag hat einen Betrag und einen Prozentsatz, beide oder keinen.'
+  }
+
+  const whole = (value: unknown, most: number) =>
+    typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= most
+
+  if (!whole(flatCents, 100_000_000) || !whole(basisPoints, 100_000)) {
+    return 'Ein genannter Notdienstzuschlag ist eine ganze Zahl, nicht negativ, und liegt in den Grenzen der Einstellungen.'
+  }
+
+  return absent(emergencyAt) ? 'Einen Notdienstzuschlag nennt nur ein Notdiensteinsatz.' : null
 }
 
 /** What is wrong with the mark of an urgent repair (#292): it is yes or no. */

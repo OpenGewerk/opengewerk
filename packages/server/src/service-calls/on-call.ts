@@ -1,6 +1,7 @@
 import {
   addDays,
   berlinClock,
+  chargeableSurcharge,
   type ConflictReason,
   defaultNight,
   emergencyKindAt,
@@ -8,6 +9,7 @@ import {
   emergencyKinds,
   type EmergencySurcharge,
   emergencySurchargeLine,
+  emergencySurchargeText,
   type EmergencyTariff,
   emergencyTariffText,
   holidaysIn,
@@ -23,6 +25,7 @@ import { isUuid, type TenantTransaction } from '@opengewerk/platform-server'
 import { and, eq, gt, isNull, lte } from 'drizzle-orm'
 
 import { holidaySettingOf } from '../absences/absences.js'
+import { hasPriceOfDay, type PriceOfDay } from '../documents/article-prices.js'
 import { parameterAt, parameterHistory } from '../database/parameters.js'
 import { jobs, onCallShifts } from '../database/schema/index.js'
 
@@ -118,14 +121,25 @@ const hourUnits: readonly LineUnit[] = ['hour']
 export async function surchargeLineFor(
   tx: TenantTransaction,
   jobId: string | null,
-  lines: readonly { readonly unit: LineUnit; readonly netCents: number }[],
+  lines: readonly {
+    readonly kind: string
+    readonly articleId: string | null
+    readonly unit: LineUnit
+    readonly unitPriceCents: number
+    readonly netCents: number
+  }[],
+  prices: ReadonlyMap<string, PriceOfDay>,
 ): Promise<SurchargeLine | null> {
   if (jobId === null || !isUuid(jobId)) {
     return null
   }
 
   const [job] = await tx
-    .select({ emergencyAt: jobs.emergencyAt })
+    .select({
+      emergencyAt: jobs.emergencyAt,
+      namedFlatCents: jobs.emergencyNamedFlatCents,
+      namedBasisPoints: jobs.emergencyNamedBasisPoints,
+    })
     .from(jobs)
     .where(eq(jobs.id, jobId as JobId))
 
@@ -144,11 +158,28 @@ export async function surchargeLineFor(
     return null
   }
 
-  const hourNetCents = lines
-    .filter((line) => hourUnits.includes(line.unit))
-    .reduce((sum, line) => sum + line.netCents, 0)
+  const hours = lines.filter((line) => hourUnits.includes(line.unit))
+  const hourNetCents = hours.reduce((sum, line) => sum + line.netCents, 0)
+  // Hours without a price yet, as a report has them, decide nothing between a
+  // flat amount and a percentage (#1081); no hours at all cost nothing. An
+  // hour given free at 0,00 € has its price, and so has one priced by hand.
+  const priced = hours.every((line) => line.unitPriceCents > 0 || hasPriceOfDay(line, prices))
 
-  return emergencySurchargeLine(kind, tariff.surcharges[kind], hourNetCents)
+  return emergencySurchargeLine(
+    kind,
+    chargeableSurcharge(tariff.surcharges[kind], namedOf(job), priced ? hourNetCents : null),
+    hourNetCents,
+  )
+}
+
+/** The surcharge named before the order of a call (#1081), or null where nobody recorded one. */
+function namedOf(job: {
+  readonly namedFlatCents: number | null
+  readonly namedBasisPoints: number | null
+}): EmergencySurcharge | null {
+  return job.namedFlatCents === null || job.namedBasisPoints === null
+    ? null
+    : { flatCents: job.namedFlatCents, basisPoints: job.namedBasisPoints }
 }
 
 /**
@@ -253,14 +284,30 @@ export async function emergencyTariffsFrom(
  */
 export async function callSurchargeText(
   tx: TenantTransaction,
-  call: { readonly emergencyAt: Date | null; readonly isBusiness: boolean },
+  call: {
+    readonly emergencyAt: Date | null
+    readonly isBusiness: boolean
+    readonly emergencyNamedFlatCents: number | null
+    readonly emergencyNamedBasisPoints: number | null
+  },
 ): Promise<string | null> {
   if (call.emergencyAt === null || call.isBusiness) {
     return null
   }
 
-  return emergencyTariffText(
-    await emergencyTariffOn(tx, berlinClock(call.emergencyAt).day),
-    call.emergencyAt,
-  )
+  const tariff = await emergencyTariffOn(tx, berlinClock(call.emergencyAt).day)
+  const named = namedOf({
+    namedFlatCents: call.emergencyNamedFlatCents,
+    namedBasisPoints: call.emergencyNamedBasisPoints,
+  })
+
+  if (named === null) {
+    return emergencyTariffText(tariff, call.emergencyAt)
+  }
+
+  // What was named is what the customer heard (#1081), and the invoice charges
+  // no more; where nothing was named, the mail names nothing either.
+  const kind = emergencyKindAt(call.emergencyAt, new Set(tariff.holidays), tariff.night)
+
+  return kind === null ? null : emergencySurchargeText(kind, named, tariff.vatBasisPoints)
 }

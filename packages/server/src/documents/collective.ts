@@ -283,7 +283,7 @@ export async function makeCollectiveInvoice(
 
   // An emergency call billed over its reports carries its surcharge once,
   // as the last line (#293).
-  const surcharge = await surchargeLineFor(tx, jobId, copied)
+  const surcharge = await surchargeLineFor(tx, jobId, copied, prices)
 
   if (surcharge) {
     await tx.insert(documentLines).values({

@@ -3,8 +3,11 @@ import {
   berlinInstant,
   type CustomerKind,
   customerKinds,
+  emergencyTariffText,
   type IsoDate,
+  namedSurcharge,
   type RecordState,
+  tariffOn,
   urgentRepairNote,
 } from '@opengewerk/domain'
 import { Button, Field, Panel, SelectField, TextArea } from '@opengewerk/platform-web'
@@ -20,10 +23,10 @@ import {
   useSyncStatus,
 } from '@opengewerk/platform-web/sync'
 import { useNavigate } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { Check } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 
 import { customerKindLabel } from '../../app/labels.js'
@@ -31,6 +34,7 @@ import { useMay } from '../../app/queries.js'
 import { urgentRepairTitle } from '../../app/service-calls.js'
 import { usePeople } from '../../app/tasks.js'
 import { boardFacts, boardKey, createAppointment } from '../../session/appointments.js'
+import { emergencyTariffs } from '../../session/on-call.js'
 
 /**
  * A call taken on the phone (#292, Feature-Gliederung 4.1): who calls, where,
@@ -62,6 +66,58 @@ function minuteOf(clock: string): number {
   const [hours, minutes] = clock.split(':').map(Number)
 
   return (hours ?? 0) * 60 + (minutes ?? 0)
+}
+
+/** The forms opened so far: each keeps the tariffs it asked for under its own number (#1081). */
+let formsOpened = 0
+
+/** Whether day and time of a call are typed in whole: a field being typed into is not. */
+function isWholeCall(calledOn: string, calledAt: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(calledOn) && /^\d{2}:\d{2}$/.test(calledAt)
+}
+
+/**
+ * The moment of a call as the form has it, only of today up to a year back
+ * (#1085): a year like 0026 makes none. Saving asks it anew, since a form left
+ * open over midnight moves the year.
+ */
+function calledMomentOf(calledOn: string, calledAt: string): Date | null {
+  return isWholeCall(calledOn, calledAt) &&
+    calledOn >= addDays(today(), -366) &&
+    calledOn <= today()
+    ? berlinInstant(calledOn, minuteOf(calledAt))
+    : null
+}
+
+/**
+ * The surcharge to name to a consumer before the order of an emergency call
+ * (#1080), under the moment of the call: section 312e BGB lets a business
+ * charge it only after it told them, and the job keeps what was named.
+ */
+function SurchargeNote({
+  asking,
+  failed,
+  known,
+  text: named,
+}: {
+  readonly asking: boolean
+  readonly failed: boolean
+  readonly known: boolean
+  readonly text: string | null
+}) {
+  const sentence = asking
+    ? 'Der Notdienstzuschlag wird gerade vom Server geholt.'
+    : named
+      ? `Vor dem Auftrag nennen: ${named}. Nur dann darf der Betrieb ihn berechnen.`
+      : known
+        ? 'Zu diesem Zeitpunkt fällt kein Notdienstzuschlag an.'
+        : failed
+          ? 'Der Notdienstzuschlag ließ sich nicht holen. Ohne ihn vor dem Auftrag zu nennen, darf der Betrieb ihn nicht berechnen.'
+          : null
+
+  return sentence ? (
+    <p className="w-full text-[13px] leading-[1.4] text-ink-muted">{sentence}</p>
+  ) : null
 }
 
 /** A customer as the search finds it: by name, telephone number or place. */
@@ -215,6 +271,35 @@ export function NewServiceCallScreen() {
     [customers, search],
   )
   const customer = customerId ? customers.find((record) => record['id'] === customerId) : undefined
+  // Only a consumer is owed the surcharge before the order (#1080, section
+  // 312e BGB), and a new caller is one unless the office says otherwise.
+  const consumer = customer ? customer['isBusiness'] !== true : fresh.kind === 'private'
+  const calledMoment = calledMomentOf(calledOn, calledAt)
+  const queries = useQueryClient()
+  const [form] = useState(() => (formsOpened += 1))
+
+  // What the form showed for a day is what it names and keeps (#1081): the
+  // tariffs of a day are asked once while the form is open, kept when another
+  // day is typed and the first one again, not asked anew in the background
+  // when the window comes back into focus, and forgotten with the form.
+  useEffect(
+    () => () => {
+      queries.removeQueries({ queryKey: ['emergency-tariffs', form] })
+    },
+    [queries, form],
+  )
+
+  const tariffs = useQuery({
+    queryKey: ['emergency-tariffs', form, calledOn],
+    queryFn: ({ signal }) => emergencyTariffs(signal, calledOn),
+    enabled: emergency && consumer,
+    retry: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  })
+  const asking = tariffs.data === undefined && tariffs.fetchStatus === 'fetching'
+  const tariff = tariffs.data && calledMoment ? tariffOn(tariffs.data, calledMoment) : null
+  const surcharge = tariff && calledMoment ? emergencyTariffText(tariff, calledMoment) : null
   const theirSites = useMemo(
     () =>
       customerId
@@ -266,6 +351,14 @@ export function NewServiceCallScreen() {
 
     if (designation.trim() === '') {
       found['designation'] = 'Worum es geht, steht als Bezeichnung am Auftrag.'
+    }
+
+    // A call of 01.01.1900 out of an emptied day is no call (#1084), nor one of
+    // a year typed in half or of more than a year back by now (#1085).
+    if (emergency && calledMomentOf(calledOn, calledAt) === null) {
+      found['calledOn'] = isWholeCall(calledOn, calledAt)
+        ? 'Der Anruf liegt höchstens ein Jahr zurück und nicht nach heute.'
+        : 'Der Notdiensteinsatz braucht Tag und Uhrzeit des Anrufs.'
     }
 
     const where = newPlace ? place : customerId ? null : fresh
@@ -344,6 +437,13 @@ export function NewServiceCallScreen() {
         description: description.trim() || null,
         urgentRepair: urgent,
         emergencyAt: emergency ? berlinInstant(calledOn, minuteOf(calledAt)).toISOString() : null,
+        // What the office named before the order (#1081): the invoice charges no more.
+        ...(emergency && consumer
+          ? (({ flatCents, basisPoints }) => ({
+              emergencyNamedFlatCents: flatCents,
+              emergencyNamedBasisPoints: basisPoints,
+            }))(namedSurcharge(tariff, berlinInstant(calledOn, minuteOf(calledAt))))
+          : {}),
       })
 
       if (job.outcome === 'refused') {
@@ -631,7 +731,7 @@ export function NewServiceCallScreen() {
       />
       <Box
         label="Notdiensteinsatz"
-        hint="Mit dem Zeitpunkt des Anrufs. Nachts, am Wochenende oder am Feiertag bekommt die Rechnung den Notdienstzuschlag aus den Einstellungen."
+        hint="Mit dem Zeitpunkt des Anrufs. Nachts, am Wochenende oder am Feiertag bekommt die Rechnung den Notdienstzuschlag aus den Einstellungen, einem Verbraucher höchstens den, der ihm vor dem Auftrag genannt wurde."
         checked={emergency}
         onChange={setEmergency}
       />
@@ -642,6 +742,7 @@ export function NewServiceCallScreen() {
               label="Anruf am"
               type="date"
               value={calledOn}
+              problem={problems['calledOn']}
               onChange={(event) => {
                 setCalledOn(event.target.value as IsoDate)
               }}
@@ -657,6 +758,14 @@ export function NewServiceCallScreen() {
               }}
             />
           </div>
+          {consumer ? (
+            <SurchargeNote
+              asking={asking}
+              failed={tariffs.isError}
+              text={surcharge}
+              known={tariff !== null}
+            />
+          ) : null}
         </div>
       ) : null}
     </Step>
