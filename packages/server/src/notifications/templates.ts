@@ -742,11 +742,12 @@ export function mailServerChangedMessage(facts: {
  * The message with the instructions of a service call (#292). Sent from the
  * office for a call taken on the phone, with the sheet for an early start to
  * fill in; sent by itself after a request was signed at the door, with that
- * request.
+ * request. For an emergency call it names the surcharge as well (#1024).
  */
 export function callInstructionsMessage(facts: {
   readonly call: { readonly number: string | null; readonly designation: string }
   readonly signed: { readonly signerName: string; readonly signedOn: string } | null
+  readonly surcharge: string | null
   readonly issuer: IssuerContent
   readonly signature: string
 }): MessageText {
@@ -763,6 +764,9 @@ export function callInstructionsMessage(facts: {
       : 'Soll die Arbeit vor Ablauf der Widerrufsfrist beginnen, finden Sie im Anhang auch den ' +
         'Vordruck für das Verlangen auf vorzeitigen Leistungsbeginn.',
     '',
+    ...(facts.surcharge
+      ? ['Für den Einsatz im Notdienst kommt dieser Zuschlag dazu:', facts.surcharge, '']
+      : []),
     'Mit freundlichen Grüßen',
     '',
     '-- ',

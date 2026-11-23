@@ -43,7 +43,10 @@ export interface InstructionView {
   readonly graphic: string | null
   /** Words the law prescribes whole, which nothing on the screen changes. */
   readonly fixedWording: boolean
-  /** Only for a contract about goods, "Lieferung von Waren mit Montage". */
+  /**
+   * Only for a contract about goods: "Lieferung von Waren mit Montage", or a
+   * position that delivers goods (#1024).
+   */
   readonly onlyForGoods: boolean
   /** The day the law asks for it from, where that came after its first documents. */
   readonly requiredFrom: IsoDate | null
@@ -132,6 +135,8 @@ export interface DocumentInstructions {
   readonly printed: readonly PrintedInstruction[]
   /** What stands in the way of issuing with these instructions. */
   readonly gaps: readonly string[]
+  /** A draft of an order confirmation to a consumer that no instruction on withdrawal went before (#1024). */
+  readonly noInstructionBefore: boolean
 }
 
 function ofDocument(documentId: string): string {

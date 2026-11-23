@@ -324,11 +324,7 @@ export interface InstructionGap {
 export function documentInstructions(
   instructions: readonly InstructionForDocument[],
   choices: InstructionChoices,
-  document: {
-    readonly kind: DocumentKind
-    readonly documentDate: IsoDate
-    readonly recipientIsBusiness: boolean
-  },
+  document: Omit<DocumentFacts, 'variant'>,
   issuer: IssuerContent,
   wordings: readonly ShippedWording[] = shippedWordings,
 ): { readonly contents: readonly InstructionContent[]; readonly gaps: readonly InstructionGap[] } {

@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 
-import type { RecordState, RoleKey } from '@opengewerk/domain'
+import type { EmergencyTariff, RecordState, RoleKey } from '@opengewerk/domain'
 import { SyncProvider, openLocalStore } from '@opengewerk/platform-web/sync'
 import { TestServer } from '@opengewerk/platform-web/testing'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -117,6 +117,7 @@ async function mount(
 beforeEach(() => {
   server = new TestServer()
   answers = new Map()
+  globalThis.localStorage.clear()
   answers.set('/tasks/assignees', [{ userId: 'u-1', name: 'Jonas Brandt', active: true }])
 
   vi.stubGlobal('fetch', (path: string) =>
@@ -222,5 +223,71 @@ describe('on call on site (#293)', () => {
 
     expect(await screen.findByText(/wer laut Plan gerade Bereitschaft hat/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Einsatz anlegen' })).toBeNull()
+  })
+})
+
+describe('the surcharge named before the order (#1024)', () => {
+  // A night around the clock, so that a call at any hour of a weekday is one.
+  const tariff: EmergencyTariff = {
+    on: '2026-11-23',
+    night: { fromMinute: 0, untilMinute: 24 * 60 },
+    surcharges: {
+      night: { flatCents: 4500, basisPoints: 0 },
+      weekend: { flatCents: 4500, basisPoints: 0 },
+      holiday: { flatCents: 4500, basisPoints: 0 },
+    },
+    vatBasisPoints: 1900,
+    holidays: [],
+  }
+  const named = /^Notdienstzuschlag (Nacht|Wochenende): 53,55/
+  const kept = 'opengewerk.emergency-tariff.t-1'
+
+  it('is the one of the business, asked from the server and kept on the device', async () => {
+    answers.set('/on-call-shifts/tariff', tariff)
+    await mount('/einsatz/neu')
+
+    expect(await screen.findByText(named)).toBeTruthy()
+    expect(screen.getByText(/^Nenne den Zuschlag, bevor der Kunde den Auftrag gibt/)).toBeTruthy()
+    await waitFor(() => {
+      expect(JSON.parse(globalThis.localStorage.getItem(kept) ?? 'null')).toEqual(tariff)
+    })
+  })
+
+  it('comes from what the device kept where the server does not answer', async () => {
+    globalThis.localStorage.setItem(kept, JSON.stringify(tariff))
+    globalThis.localStorage.setItem(
+      'opengewerk.emergency-tariff.t-2',
+      JSON.stringify({ ...tariff, vatBasisPoints: null }),
+    )
+    await mount('/einsatz/neu')
+
+    expect(await screen.findByText(named)).toBeTruthy()
+  })
+
+  it('is said to be missing where the device kept none, or none it can read', async () => {
+    globalThis.localStorage.setItem(kept, JSON.stringify({ ...tariff, holidays: 'keine' }))
+    await mount('/einsatz/neu')
+
+    expect(
+      await screen.findByText(/^Dieses Gerät kennt den Notdienstzuschlag noch nicht/),
+    ).toBeTruthy()
+  })
+
+  it('is not named to a business, which is owed it on no such ground', async () => {
+    answers.set('/on-call-shifts/tariff', tariff)
+    await mount('/einsatz/neu', {
+      customers: [
+        { id: 'c-2', kind: 'business', name: 'Schreinerei Lutz', isBusiness: true, phone: null },
+      ],
+    })
+
+    expect(await screen.findByText(named)).toBeTruthy()
+    await userEvent.type(screen.getByLabelText('Kunde suchen'), 'Lutz')
+    await userEvent.click(await screen.findByRole('button', { name: 'Schreinerei Lutz' }))
+
+    await waitFor(() => {
+      expect(screen.queryByText(named)).toBeNull()
+    })
+    expect(screen.queryByText(/kennt den Notdienstzuschlag noch nicht/)).toBeNull()
   })
 })

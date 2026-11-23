@@ -1,7 +1,15 @@
-import { berlinWall, type RecordState, urgentRepairNote } from '@opengewerk/domain'
+import {
+  berlinWall,
+  type EmergencyTariff,
+  emergencyTariffText,
+  type RecordState,
+  urgentRepairNote,
+} from '@opengewerk/domain'
 import { Button, Field, Panel } from '@opengewerk/platform-web'
+import { accountQuery } from '@opengewerk/platform-web/session'
 import { SiteActionBar, SiteScreen, SiteText, SiteTrouble } from '@opengewerk/platform-web/site'
 import { maybeText, refusalFor, text, useRecords, useSync } from '@opengewerk/platform-web/sync'
+import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { BellRing, Check, Plus } from 'lucide-react'
 import { useId, useMemo, useState } from 'react'
@@ -10,6 +18,7 @@ import type { FormEvent } from 'react'
 import { berlinMoment, clockOf, dayMonth, longDays, weekdayIndex } from '../../app/appointments.js'
 import { useMay } from '../../app/queries.js'
 import { urgentRepairTitle } from '../../app/service-calls.js'
+import { emergencyTariff, rememberTariff, rememberedTariff } from '../../session/on-call.js'
 import { SiteHeader } from '../header.js'
 
 /**
@@ -45,10 +54,40 @@ function useCurrentShift(): RecordState | undefined {
   )
 }
 
+/**
+ * The tariff of an emergency call (#1024): asked from the server where there
+ * is a network and kept on the device, so that the surcharge is there when a
+ * call comes in where there is none. Asked while on call only.
+ */
+function useEmergencyTariff(onCall: boolean): EmergencyTariff | null {
+  const account = useQuery(accountQuery)
+  const tenantId = account.data?.tenantId ?? null
+  const answer = useQuery({
+    queryKey: ['emergency-tariff', tenantId],
+    queryFn: async () => {
+      const tariff = await emergencyTariff()
+
+      if (tenantId !== null) {
+        rememberTariff(tenantId, tariff)
+      }
+
+      return tariff
+    },
+    enabled: onCall && tenantId !== null,
+    retry: false,
+    staleTime: 60 * 60_000,
+  })
+
+  return answer.data ?? (tenantId === null ? null : rememberedTariff(tenantId))
+}
+
 /** On top of the open jobs while on call: until when, and the way to a new call. */
 export function OnCallCard() {
   const shift = useCurrentShift()
   const may = useMay('job.on_call')
+
+  // Asked here already, so that a device on call has the surcharge before the first call.
+  useEmergencyTariff(may && shift !== undefined)
 
   if (!shift || !may) {
     return null
@@ -119,6 +158,7 @@ export function SiteNewCallScreen() {
   const [working, setWorking] = useState(false)
   // The moment the call came in: when this screen opened.
   const [calledAt] = useState(() => new Date().toISOString())
+  const tariff = useEmergencyTariff(may && shift !== undefined)
 
   const found = useMemo(
     () =>
@@ -128,6 +168,10 @@ export function SiteNewCallScreen() {
     [customers, search],
   )
   const customer = chosen ? customers.find((record) => record['id'] === chosen) : undefined
+  // A new caller is made a private customer, so a consumer, and only a
+  // consumer is owed the surcharge before the order (section 312e BGB).
+  const consumer = customer ? customer['isBusiness'] !== true : true
+  const surcharge = tariff ? emergencyTariffText(tariff, new Date(calledAt)) : null
 
   if (!may || !shift) {
     return (
@@ -323,6 +367,27 @@ export function SiteNewCallScreen() {
             </label>
           </div>
         </Panel>
+
+        {consumer && (surcharge !== null || tariff === null) ? (
+          <Panel title="Vor dem Auftrag nennen">
+            {surcharge ? (
+              <div className="flex flex-col gap-1.5">
+                <SiteText size={16}>
+                  <b className="font-semibold">{surcharge}</b>
+                </SiteText>
+                <SiteText muted size={15}>
+                  Nenne den Zuschlag, bevor der Kunde den Auftrag gibt. Nur dann darf der Betrieb
+                  ihn berechnen.
+                </SiteText>
+              </div>
+            ) : (
+              <SiteText muted size={15}>
+                Dieses Gerät kennt den Notdienstzuschlag noch nicht, es holt ihn, sobald es Netz
+                hat. Berechnen darf der Betrieb ihn nur, wenn der Kunde ihn vor dem Auftrag erfährt.
+              </SiteText>
+            )}
+          </Panel>
+        ) : null}
       </form>
 
       <SiteText muted size={15}>

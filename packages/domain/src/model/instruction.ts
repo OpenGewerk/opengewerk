@@ -386,23 +386,51 @@ export const requiredWith: Readonly<Partial<Record<InstructionTemplate, readonly
 
 /**
  * What decides whether an instruction goes with a document: its kind, whether
- * the customer is a business, the kind of contract chosen on it, and its date.
+ * the customer is a business, the kind of contract chosen on it, and its date;
+ * whether one of its positions delivers goods (#1024), and whether an
+ * instruction on withdrawal went out with a document before it in its chain
+ * (#1024). The last two are false where nobody worked them out.
  */
 export interface DocumentFacts {
   readonly kind: DocumentKind
   readonly recipientIsBusiness: boolean
   readonly variant: WithdrawalVariant
   readonly documentDate: IsoDate
+  readonly deliversGoods?: boolean
+  readonly instructedBefore?: boolean
+}
+
+/**
+ * The units of a position that is work and nothing else: hours and days. A
+ * position in any other unit, a flat rate included, or one taken from an
+ * article delivers goods, so that the notice on the guarantee rather stands
+ * on a quote once too often than lacks where the law asks for it (#1024).
+ */
+export const workUnits: readonly string[] = ['hour', 'day']
+
+/** Whether the lines of a document deliver goods: a position from an article, or in a unit that is not time. */
+export function deliversGoods(
+  lines: readonly {
+    readonly kind: string
+    readonly unit: string
+    readonly articleId: string | null
+  }[],
+): boolean {
+  return lines.some(
+    (line) => line.kind !== 'title' && (line.articleId !== null || !workUnits.includes(line.unit)),
+  )
 }
 
 /**
  * The shipped instructions that belong only to a contract about goods.
  *
  * The notice on the legal guarantee speaks of goods, and a contract for work
- * alone has none to speak of. Whether a quote is about goods is what the
- * office chooses on it as "Lieferung von Waren mit Montage", the choice that
- * already decides the sentences of the instruction on withdrawal. Decided by
- * Moritz on 26.09.2026 in #431.
+ * alone has none to speak of. A quote is about goods where the office chooses
+ * "Lieferung von Waren mit Montage" on it (#431), and since the expert review
+ * in #31 also where one of its positions delivers goods, work with material
+ * included: Art. 246 and 246a EGBGB ask for the notice "for goods", and
+ * whether a contract for work with material falls under it is decided nowhere
+ * (#1024).
  */
 export const onlyForGoods: readonly InstructionTemplate[] = ['guarantee_notice']
 
@@ -438,13 +466,17 @@ export function wordingIsFixed(template: InstructionTemplate | null): boolean {
  */
 export function appliesTo(
   template: InstructionTemplate | null,
-  document: Pick<DocumentFacts, 'variant' | 'documentDate'>,
+  document: Pick<DocumentFacts, 'variant' | 'documentDate' | 'deliversGoods'>,
 ): boolean {
   if (template === null) {
     return true
   }
 
-  if (onlyForGoods.includes(template) && document.variant !== 'goods') {
+  if (
+    onlyForGoods.includes(template) &&
+    document.variant !== 'goods' &&
+    document.deliversGoods !== true
+  ) {
     return false
   }
 
@@ -478,9 +510,30 @@ export function requiredFor(
 }
 
 /**
+ * Whether an order confirmation to a consumer gets the instructions a quote
+ * must carry proposed (#1024): where no instruction on withdrawal went out
+ * before it in its chain, as when it follows an estimate. The period of
+ * withdrawal starts only with the instruction (section 356 (3) BGB), and
+ * compensation for work already done is owed only after a proper one
+ * (section 357a (2) BGB).
+ */
+function proposedAtConfirmation(
+  instruction: Pick<Instruction, 'template'>,
+  document: DocumentFacts,
+): boolean {
+  return (
+    document.kind === 'order_confirmation' &&
+    !document.recipientIsBusiness &&
+    document.instructedBefore === false &&
+    requiredKinds(instruction.template).includes('quote')
+  )
+}
+
+/**
  * Whether an instruction is proposed for a document: its kind is among the
  * instruction's, and a customer who is a business is left out where the
- * instruction is only for consumers.
+ * instruction is only for consumers; or it is one a quote must carry, on an
+ * order confirmation to a consumer that no instruction went before (#1024).
  *
  * A proposal, which the office switches on or off per document, because
  * whether a contract is concluded away from the business premises or at a
@@ -494,7 +547,7 @@ export function proposedFor(
   document: DocumentFacts,
 ): boolean {
   return (
-    instruction.kinds.includes(document.kind) &&
+    (instruction.kinds.includes(document.kind) || proposedAtConfirmation(instruction, document)) &&
     !(instruction.consumersOnly && document.recipientIsBusiness) &&
     appliesTo(instruction.template, document)
   )

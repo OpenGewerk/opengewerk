@@ -7,8 +7,8 @@ davon abweicht.
 
 ## Harmonisierte Mitteilung zur gesetzlichen Gewährleistung
 
-Seit dem 27.09.2026 gehört sie zu jedem Angebot an einen Verbraucher, das eine Lieferung von Waren
-betrifft (Art. 246 Abs. 1 Nr. 5 und Art. 246a § 1 Abs. 1 Satz 1 Nr. 11 EGBGB in der Fassung von
+Seit dem 27.09.2026 gehört sie zu jedem Angebot an einen Verbraucher, das Waren liefert, auch mit
+Material zu Arbeiten (#1024) (Art. 246 Abs. 1 Nr. 5 und Art. 246a § 1 Abs. 1 Satz 1 Nr. 11 EGBGB in der Fassung von
 Art. 3 des Gesetzes vom 03.02.2026, BGBl. 2026 I Nr. 28, in Kraft nach dessen Art. 10 Abs. 3).
 Gestaltung und Inhalt legt Anhang I der Durchführungsverordnung (EU) 2025/1960 in der Fassung vom
 25.09.2025 fest; keines ihrer Elemente darf verändert oder ergänzt werden (Anhang I, Erläuterung 1),

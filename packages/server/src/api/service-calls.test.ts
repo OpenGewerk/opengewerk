@@ -167,6 +167,7 @@ async function aCall(
     email?: string | null
     tenant?: TenantId
     urgentRepair?: boolean
+    emergencyAt?: string
   } = {},
 ) {
   const who = office(options.tenant)
@@ -188,6 +189,7 @@ async function aCall(
       kind: options.kind ?? 'service',
       designation: 'Sicherung Küche löst aus',
       urgentRepair: options.urgentRepair ?? false,
+      ...(options.emergencyAt ? { emergencyAt: options.emergencyAt } : {}),
     },
     who,
   )
@@ -669,6 +671,39 @@ describe('the instructions by mail', () => {
         )
       ).rows,
     ).toEqual([{ theirs: true }])
+  })
+
+  it('name the surcharge of an emergency call, by the tariff of its day (#1024)', async () => {
+    await http()
+      .post('/settings/parameters')
+      .set('x-test-identity', as(north.id, 'owner'))
+      .send({ key: 'emergency.night_flat_cents', from: '2026-01-01', value: 4500, note: null })
+      .expect(201)
+
+    // Wednesday 28.10.2026 at 02:14 in Germany, and the same day at noon.
+    const { job: atNight } = await aCall({ emergencyAt: '2026-10-28T01:14:00.000Z' })
+    const { job: atNoon } = await aCall({ emergencyAt: '2026-10-28T11:00:00.000Z' })
+
+    for (const job of [atNight, atNoon]) {
+      await http()
+        .post(`/jobs/${job}/instructions/mail`)
+        .set('x-test-identity', office())
+        .send({})
+        .expect(202)
+    }
+
+    const { rows } = await admin.query<{ job_id: string; body: string }>(
+      "select job_id, body from mail_outbox where kind = 'job_instructions' and job_id = any($1)",
+      [[atNight, atNoon]],
+    )
+    const bodyOf = (job: string) => rows.find((row) => row.job_id === job)?.body ?? ''
+
+    expect(bodyOf(atNight)).toContain(
+      'Für den Einsatz im Notdienst kommt dieser Zuschlag dazu:\n' +
+        'Notdienstzuschlag Nacht: 53,55\u00a0€ einschließlich 19 % Umsatzsteuer\n',
+    )
+    expect(bodyOf(atNoon)).toContain('im Anhang erhalten Sie zu')
+    expect(bodyOf(atNoon)).not.toContain('Notdienst')
   })
 
   it('are not written for a job given to another customer while they were asked for', async () => {

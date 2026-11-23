@@ -1,7 +1,7 @@
-import type { RecordState, WithdrawalVariant } from '@opengewerk/domain'
+import { deliversGoods, type RecordState, type WithdrawalVariant } from '@opengewerk/domain'
 import { Panel, SelectField } from '@opengewerk/platform-web'
 import { NoteBox } from '@opengewerk/platform-web/office'
-import { RequestRefused, maybeText } from '@opengewerk/platform-web/sync'
+import { RequestRefused, maybeText, useRelated, useSyncStatus } from '@opengewerk/platform-web/sync'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { TriangleAlert } from 'lucide-react'
 import { useId } from 'react'
@@ -133,7 +133,7 @@ function Choice({
         <>
           {choice.required
             ? choice.onlyForGoods
-              ? 'Pflicht an jedem Angebot an einen Verbraucher über eine Lieferung von Waren. '
+              ? 'Pflicht an jedem Angebot an einen Verbraucher, das Waren liefert. '
               : 'Pflicht an jedem Angebot an einen Verbraucher. '
             : ''}
           {whereItGoes(choice.withDocument, false, choice.page)}
@@ -170,8 +170,12 @@ export function InstructionsCard({ document }: { readonly document: RecordState 
   const documentId = String(document['id'])
   const queries = useQueryClient()
   const mayWrite = useMay('document.write')
-  // The proposal hangs on the customer, the kind and the date, and what goes
-  // out is frozen by issuing: asked again when any of them changes.
+  const lines = useRelated('document_lines', 'documentId', documentId)
+  const { pending } = useSyncStatus()
+  // The proposal hangs on the customer, the kind, the date and whether a
+  // position delivers goods (#1024), and what goes out is frozen by issuing:
+  // asked again when any of them changes, and once more when the outbox is
+  // empty, since the server answers from what has reached it.
   const queryKey = [
     'document-instructions',
     documentId,
@@ -179,6 +183,14 @@ export function InstructionsCard({ document }: { readonly document: RecordState 
     maybeText(document, 'customerId'),
     maybeText(document, 'kind'),
     maybeText(document, 'documentDate'),
+    deliversGoods(
+      lines.map((line) => ({
+        kind: maybeText(line, 'kind') ?? 'item',
+        unit: maybeText(line, 'unit') ?? '',
+        articleId: maybeText(line, 'articleId'),
+      })),
+    ),
+    pending === 0,
   ]
   const view = useQuery({ queryKey, queryFn: () => documentInstructions(documentId) })
   const choose = useMutation({
@@ -205,7 +217,7 @@ export function InstructionsCard({ document }: { readonly document: RecordState 
     )
   }
 
-  const { fixed, variant, choices, printed, gaps } = view.data
+  const { fixed, variant, choices, printed, gaps, noInstructionBefore } = view.data
 
   if (fixed && printed.length === 0) {
     return null
@@ -242,6 +254,13 @@ export function InstructionsCard({ document }: { readonly document: RecordState 
           </ul>
         ) : (
           <>
+            {noInstructionBefore ? (
+              <p className="text-[13px] leading-[1.4] text-ink-muted">
+                Vor dieser Auftragsbestätigung ging keine Widerrufsbelehrung hinaus, etwa weil ein
+                Kostenvoranschlag voranging. Die Widerrufsfrist beginnt erst mit ihr, deshalb sind
+                die Belehrungen eines Angebots vorgeschlagen.
+              </p>
+            ) : null}
             {included.length === 0 ? (
               <p className="text-[13px] leading-[1.4] text-ink-muted">
                 Zu diesem Beleg ist keine Belehrung vorgeschlagen.
@@ -271,7 +290,7 @@ export function InstructionsCard({ document }: { readonly document: RecordState 
                   value={variant}
                   options={variantOptions}
                   disabled={!editable || choose.isPending}
-                  hint="Davon hängt ab, wann die Widerrufsfrist beginnt, was bei einem Widerruf mit Arbeit oder Waren geschieht und ob die Mitteilung zur Gewährleistung dazugehört."
+                  hint="Davon hängt ab, wann die Widerrufsfrist beginnt und was bei einem Widerruf mit Arbeit oder Waren geschieht. Die Mitteilung zur Gewährleistung kommt bei Waren dazu und bei Arbeiten, sobald eine Position aus einem Artikel stammt oder nicht nach Stunden oder Tagen abgerechnet wird."
                   onChange={(value) => {
                     choose.mutate({ variant: value as WithdrawalVariant })
                   }}

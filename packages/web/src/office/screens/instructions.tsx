@@ -115,7 +115,7 @@ function Summary({ instruction }: { readonly instruction: InstructionView }) {
   const kinds = documentKinds.filter((kind) => instruction.kinds.includes(kind))
   const whom = instruction.consumersOnly ? ', nur an Kunden, die kein Unternehmen sind' : ''
   const goods = instruction.onlyForGoods
-    ? ', wenn der Vertrag eine Lieferung von Waren mit Montage betrifft'
+    ? ', wenn der Vertrag Waren liefert, auch bei Arbeiten mit Material'
     : ''
 
   return (
@@ -309,8 +309,8 @@ function InstructionForm({
         {required.length > 0 ? (
           <p className="text-table text-ink-muted">
             Pflicht an jedem Angebot an einen Verbraucher
-            {instruction?.onlyForGoods ? ' über eine Lieferung von Waren' : ''}, deshalb bleiben
-            „Angebot“ und „Geht mit dem Beleg hinaus“ angehakt.
+            {instruction?.onlyForGoods ? ', das Waren liefert' : ''}, deshalb bleiben „Angebot“ und
+            „Geht mit dem Beleg hinaus“ angehakt.
           </p>
         ) : null}
       </fieldset>

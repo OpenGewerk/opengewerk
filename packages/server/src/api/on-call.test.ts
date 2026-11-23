@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
-import type { TenantId } from '@opengewerk/domain'
+import { berlinClock, type EmergencyTariff, type TenantId } from '@opengewerk/domain'
 import { Database, FileStore, newId, type Renderer } from '@opengewerk/platform-server'
 import type { Pool } from 'pg'
 import request from 'supertest'
@@ -549,5 +549,46 @@ describe('the surcharge of an emergency call', () => {
     expect(designations.filter((one) => one === 'Arbeitszeit')).toHaveLength(2)
     expect(designations.filter((one) => one === 'Notdienstzuschlag Nacht')).toHaveLength(1)
     expect(designations.at(-1)).toBe('Notdienstzuschlag Nacht')
+  })
+})
+
+describe('the tariff of an emergency call (#1024)', () => {
+  async function tariff(who = jonas()) {
+    return (await http().get('/on-call-shifts/tariff').set('x-test-identity', who).expect(200))
+      .body as EmergencyTariff
+  }
+
+  it('says what the business charges today, with the tax on a flat amount', async () => {
+    expect(await tariff()).toEqual({
+      on: berlinClock(new Date()).day,
+      night: { fromMinute: 20 * 60, untilMinute: 6 * 60 },
+      surcharges: {
+        night: { flatCents: 4500, basisPoints: 0 },
+        weekend: { flatCents: 0, basisPoints: 5000 },
+        holiday: { flatCents: 0, basisPoints: 0 },
+      },
+      vatBasisPoints: 1900,
+      holidays: [],
+    })
+  })
+
+  it('takes the public holidays of the business of this year and the next', async () => {
+    await http()
+      .put('/holidays')
+      .set('x-test-identity', owner())
+      .send({ state: 'DE-BW', local: [] })
+      .expect(200)
+
+    const { holidays } = await tariff(office())
+    const year = Number(berlinClock(new Date()).day.slice(0, 4))
+
+    expect(holidays).toContain(`${String(year)}-12-25`)
+    expect(holidays).toContain(`${String(year + 1)}-01-01`)
+  })
+
+  it('names no tax for a business that claims section 19 UStG', async () => {
+    await setting('small_business.claimed', 1)
+
+    expect((await tariff()).vatBasisPoints).toBeNull()
   })
 })

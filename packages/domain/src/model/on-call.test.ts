@@ -6,6 +6,9 @@ import { workingTimeWarnings } from '../rules/working-time.js'
 import {
   emergencyKindAt,
   emergencySurchargeLine,
+  emergencySurchargeText,
+  type EmergencyTariff,
+  emergencyTariffText,
   onCallShiftProblem,
   shiftCovers,
 } from './on-call.js'
@@ -74,6 +77,53 @@ describe('the surcharge line', () => {
 
   it('is none where the business set nothing for the kind', () => {
     expect(emergencySurchargeLine('holiday', { flatCents: 0, basisPoints: 0 }, 6800)).toBeNull()
+  })
+})
+
+describe('the surcharge the customer hears before the order (#1024)', () => {
+  it('is a flat amount with the tax, for a consumer is owed the total price', () => {
+    expect(emergencySurchargeText('night', { flatCents: 4500, basisPoints: 0 }, 1900)).toBe(
+      'Notdienstzuschlag Nacht: 53,55 € einschließlich 19 % Umsatzsteuer',
+    )
+  })
+
+  it('is the flat amount alone for a business that charges no tax', () => {
+    expect(emergencySurchargeText('holiday', { flatCents: 4500, basisPoints: 0 }, null)).toBe(
+      'Notdienstzuschlag Feiertag: 45,00 €',
+    )
+  })
+
+  it('is the percentage on the working time, and none where nothing is set', () => {
+    expect(emergencySurchargeText('weekend', { flatCents: 0, basisPoints: 2550 }, 1900)).toBe(
+      'Notdienstzuschlag Wochenende: 25,5 % auf die Arbeitszeit',
+    )
+    expect(emergencySurchargeText('weekend', { flatCents: 0, basisPoints: 0 }, 1900)).toBeNull()
+  })
+
+  it('is read from the tariff a device keeps, by the kind of the moment', () => {
+    const tariff: EmergencyTariff = {
+      on: '2026-10-28',
+      night: { fromMinute: 22 * 60, untilMinute: 6 * 60 },
+      surcharges: {
+        night: { flatCents: 4500, basisPoints: 0 },
+        weekend: { flatCents: 0, basisPoints: 5000 },
+        holiday: { flatCents: 9000, basisPoints: 0 },
+      },
+      vatBasisPoints: 1900,
+      holidays: ['2026-11-01'],
+    }
+
+    expect(emergencyTariffText(tariff, wednesday('02:14'))).toMatch(
+      /^Notdienstzuschlag Nacht: 53,55/,
+    )
+    // Before the night the business set, and after the default one began.
+    expect(emergencyTariffText(tariff, wednesday('21:00'))).toBeNull()
+    expect(emergencyTariffText(tariff, new Date('2026-10-31T11:00:00+01:00'))).toBe(
+      'Notdienstzuschlag Wochenende: 50 % auf die Arbeitszeit',
+    )
+    expect(emergencyTariffText(tariff, new Date('2026-11-01T11:00:00+01:00'))).toMatch(
+      /^Notdienstzuschlag Feiertag: 107,10/,
+    )
   })
 })
 

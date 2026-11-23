@@ -1,4 +1,4 @@
-import { berlinClock, type IsoDate, type Synced } from '@opengewerk/platform-domain'
+import { applyRate, berlinClock, type IsoDate, type Synced } from '@opengewerk/platform-domain'
 
 import type { OnCallShiftId } from './identifier.js'
 
@@ -193,4 +193,70 @@ export function emergencyParameterProblem(unit: string, value: number): string |
   }
 
   return null
+}
+
+/**
+ * What a device keeps to name the surcharge of a call where it has no network
+ * (#1024): the night, the surcharge of each kind, the tax on a flat amount and
+ * the public holidays, as they stood on the day it asked.
+ */
+export interface EmergencyTariff {
+  readonly on: IsoDate
+  readonly night: { readonly fromMinute: number; readonly untilMinute: number }
+  readonly surcharges: Readonly<Record<EmergencyKind, EmergencySurcharge>>
+  /**
+   * The tax on a flat amount in basis points; null for a business under
+   * section 19 UStG, which charges none.
+   */
+  readonly vatBasisPoints: number | null
+  readonly holidays: readonly IsoDate[]
+}
+
+const euros = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' })
+
+function percentOf(basisPoints: number): string {
+  return (basisPoints / 100).toLocaleString('de-DE', { maximumFractionDigits: 2 })
+}
+
+/**
+ * The surcharge of a kind as the customer hears it before giving the order
+ * (#1024): section 312e BGB lets a business charge a consumer other costs
+ * only after it told them. A flat amount with the tax, since a consumer is
+ * owed the total price, or the percentage on the working time. Null where the
+ * business set none for the kind.
+ */
+export function emergencySurchargeText(
+  kind: EmergencyKind,
+  surcharge: EmergencySurcharge,
+  vatBasisPoints: number | null,
+): string | null {
+  const name = `Notdienstzuschlag ${emergencyKindLabel[kind]}`
+
+  if (surcharge.flatCents > 0) {
+    if (vatBasisPoints === null) {
+      return `${name}: ${euros.format(surcharge.flatCents / 100)}`
+    }
+
+    const gross = surcharge.flatCents + applyRate(surcharge.flatCents, vatBasisPoints)
+
+    return `${name}: ${euros.format(gross / 100)} einschließlich ${percentOf(vatBasisPoints)} % Umsatzsteuer`
+  }
+
+  if (surcharge.basisPoints > 0) {
+    return `${name}: ${percentOf(surcharge.basisPoints)} % auf die Arbeitszeit`
+  }
+
+  return null
+}
+
+/**
+ * The surcharge of a call at a moment by a tariff (#1024), or null for a call
+ * in ordinary hours and for a kind the business set none for.
+ */
+export function emergencyTariffText(tariff: EmergencyTariff, moment: Date): string | null {
+  const kind = emergencyKindAt(moment, new Set(tariff.holidays), tariff.night)
+
+  return kind === null
+    ? null
+    : emergencySurchargeText(kind, tariff.surcharges[kind], tariff.vatBasisPoints)
 }

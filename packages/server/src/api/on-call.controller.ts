@@ -12,7 +12,13 @@ import {
   Query,
   UnprocessableEntityException,
 } from '@nestjs/common'
-import { isAllowed, type OnCallShiftId, onCallShiftProblem } from '@opengewerk/domain'
+import {
+  berlinClock,
+  type EmergencyTariff,
+  isAllowed,
+  type OnCallShiftId,
+  onCallShiftProblem,
+} from '@opengewerk/domain'
 import {
   Database,
   isUuid,
@@ -24,6 +30,7 @@ import { memberships } from '@opengewerk/platform-server/schema'
 import { and, asc, eq, gt, isNull, lt } from 'drizzle-orm'
 
 import { onCallShifts } from '../database/schema/index.js'
+import { emergencyTariffOn } from '../service-calls/on-call.js'
 import { RequiresPermission } from './authorization.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
 
@@ -118,6 +125,19 @@ async function rowOf(tx: TenantTransaction, id: string): Promise<Row> {
 @Controller('on-call-shifts')
 export class OnCallController {
   constructor(private readonly database: Database) {}
+
+  /**
+   * The surcharges of an emergency call as they stand today (#1024), for
+   * whoever takes calls: a device keeps them and names the surcharge to the
+   * caller before the order, with a network or without.
+   */
+  @Get('tariff')
+  @RequiresPermission('job.on_call')
+  tariff(@CurrentIdentity() identity: RequestIdentity): Promise<EmergencyTariff> {
+    return this.database.forTenant(identity, (tx) =>
+      emergencyTariffOn(tx, berlinClock(new Date()).day),
+    )
+  }
 
   /**
    * The times that overlap a span, the earliest first. Whoever sees every

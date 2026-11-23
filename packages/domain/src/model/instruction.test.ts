@@ -7,6 +7,7 @@ import {
   instructionBlocks,
   placeholdersIn,
   proposedFor,
+  deliversGoods,
   unfilledPlaceholders,
   unknownInstructionPlaceholders,
 } from './instruction.js'
@@ -200,5 +201,85 @@ describe('an instruction proposed for a document', () => {
     expect(proposedFor(notice, { ...goods, documentDate: '2026-09-26' })).toBe(false)
     // One the business wrote is proposed whatever the contract is about.
     expect(proposedFor({ ...notice, template: null }, { ...goods, variant: 'service' })).toBe(true)
+  })
+
+  it('proposes the notice for work with material, a quote one of whose positions delivers goods (#1024)', () => {
+    const notice = {
+      template: 'guarantee_notice' as const,
+      kinds: ['quote'] as const,
+      consumersOnly: true,
+    }
+    const work = {
+      kind: 'quote' as const,
+      recipientIsBusiness: false,
+      variant: 'service' as const,
+      documentDate: '2026-11-23',
+    }
+
+    expect(proposedFor(notice, { ...work, deliversGoods: true })).toBe(true)
+    expect(proposedFor(notice, { ...work, deliversGoods: false })).toBe(false)
+    expect(proposedFor(notice, work)).toBe(false)
+  })
+
+  it('proposes what a quote must carry on an order confirmation no instruction went before (#1024)', () => {
+    const confirmation = {
+      kind: 'order_confirmation' as const,
+      recipientIsBusiness: false,
+      variant: 'service' as const,
+      documentDate: '2026-11-23',
+    }
+
+    // Kinds the business set leave the confirmation out; after an estimate it is proposed anyway.
+    expect(proposedFor(withdrawal, { ...confirmation, instructedBefore: false })).toBe(true)
+    expect(proposedFor(withdrawal, { ...confirmation, instructedBefore: true })).toBe(false)
+    expect(proposedFor(withdrawal, confirmation)).toBe(false)
+    expect(
+      proposedFor(withdrawal, {
+        ...confirmation,
+        instructedBefore: false,
+        recipientIsBusiness: true,
+      }),
+    ).toBe(false)
+    // Not for a business where the instruction is for everybody, nor on another kind.
+    expect(
+      proposedFor(
+        { ...withdrawal, kinds: ['quote'], consumersOnly: false },
+        { ...confirmation, instructedBefore: false, recipientIsBusiness: true },
+      ),
+    ).toBe(false)
+    expect(
+      proposedFor(withdrawal, {
+        ...confirmation,
+        kind: 'final_invoice',
+        instructedBefore: false,
+      }),
+    ).toBe(false)
+    // Not the sheet for an early start, which no quote must carry.
+    expect(
+      proposedFor(
+        { template: 'early_start', kinds: [], consumersOnly: true },
+        { ...confirmation, instructedBefore: false },
+      ),
+    ).toBe(false)
+  })
+})
+
+describe('the lines of a document that deliver goods (#1024)', () => {
+  const line = (unit: string, articleId: string | null = null, kind = 'item') => ({
+    kind,
+    unit,
+    articleId,
+  })
+
+  it('are positions in a unit other than time, a flat rate included, or from an article', () => {
+    expect(deliversGoods([line('hour'), line('piece')])).toBe(true)
+    expect(deliversGoods([line('flat_rate')])).toBe(true)
+    expect(deliversGoods([line('hour', 'a-1')])).toBe(true)
+  })
+
+  it('are none where every position is time, and a title is no position', () => {
+    expect(deliversGoods([line('hour'), line('day')])).toBe(false)
+    expect(deliversGoods([line('piece', null, 'title')])).toBe(false)
+    expect(deliversGoods([])).toBe(false)
   })
 })

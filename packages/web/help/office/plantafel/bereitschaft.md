@@ -6,4 +6,4 @@ Hier steht, wer wann Bereitschaft für den Notdienst hat, mit Beginn, Ende und e
 
 1. Eine neue Bereitschaft anlegen, mit Person, Beginn und Ende.
 2. Zwei Bereitschaften tauschen, wenn zwei Leute ihre Zeiten tauschen.
-3. Wer Bereitschaft hat, legt einen Einsatz auf dem Telefon selbst an, auch ohne Netz. Die Zuschläge stehen unter [Einstellungen, Notdienst](/einstellungen/notdienst).
+3. Wer Bereitschaft hat, legt einen Einsatz auf dem Telefon selbst an, auch ohne Netz. Dabei steht dort der Notdienstzuschlag, den ein Verbraucher vor dem Auftrag erfahren muss. Die Zuschläge stehen unter [Einstellungen, Notdienst](/einstellungen/notdienst).

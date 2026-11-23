@@ -4,8 +4,13 @@ import {
   defaultNight,
   emergencyKindAt,
   type EmergencyKind,
+  emergencyKinds,
+  type EmergencySurcharge,
   emergencySurchargeLine,
+  type EmergencyTariff,
+  emergencyTariffText,
   holidaysIn,
+  type IsoDate,
   type JobId,
   type LineUnit,
   shippedRules,
@@ -125,29 +130,90 @@ export async function surchargeLineFor(
     return null
   }
 
-  const day = berlinClock(job.emergencyAt).day
-  const setting = await holidaySettingOf(tx)
-  const year = Number(day.slice(0, 4))
-  const holidays = new Set(
-    setting === null ? [] : holidaysIn(shippedRules, setting, year).map((holiday) => holiday.on),
+  const tariff = await emergencyTariffOn(tx, berlinClock(job.emergencyAt).day)
+  const kind: EmergencyKind | null = emergencyKindAt(
+    job.emergencyAt,
+    new Set(tariff.holidays),
+    tariff.night,
   )
-  const number = async (key: Parameters<typeof parameterAt>[1]) =>
-    (await parameterAt(tx, key, day))?.value ?? null
-  const night = {
-    fromMinute: (await number('emergency.night_from_minute')) ?? defaultNight.fromMinute,
-    untilMinute: (await number('emergency.night_until_minute')) ?? defaultNight.untilMinute,
-  }
-  const kind: EmergencyKind | null = emergencyKindAt(job.emergencyAt, holidays, night)
 
   if (kind === null) {
     return null
   }
 
-  const flatCents = (await number(`emergency.${kind}_flat_cents`)) ?? 0
-  const basisPoints = (await number(`emergency.${kind}_basis_points`)) ?? 0
   const hourNetCents = lines
     .filter((line) => hourUnits.includes(line.unit))
     .reduce((sum, line) => sum + line.netCents, 0)
 
-  return emergencySurchargeLine(kind, { flatCents, basisPoints }, hourNetCents)
+  return emergencySurchargeLine(kind, tariff.surcharges[kind], hourNetCents)
+}
+
+/**
+ * The surcharges of the business as they stand on a day (#293, #1024): the
+ * night, the amount of each kind, the tax on a flat amount and the public
+ * holidays of that year and the next, so that a device keeping it names the
+ * surcharge of a call on any day of a time on call, across New Year as well.
+ * The tax is the standard rate of the day, and none where the business
+ * claims section 19 UStG on it: the customer of a call is a consumer, never
+ * a recipient of construction services.
+ */
+export async function emergencyTariffOn(
+  tx: TenantTransaction,
+  day: IsoDate,
+): Promise<EmergencyTariff> {
+  const setting = await holidaySettingOf(tx)
+  const year = Number(day.slice(0, 4))
+  const holidays =
+    setting === null
+      ? []
+      : [year, year + 1].flatMap((each) =>
+          holidaysIn(shippedRules, setting, each).map((holiday) => holiday.on),
+        )
+  const number = async (key: Parameters<typeof parameterAt>[1]) =>
+    (await parameterAt(tx, key, day))?.value ?? null
+  const surcharges: Partial<Record<EmergencyKind, EmergencySurcharge>> = {}
+
+  // One after the other: a transaction is one connection.
+  for (const kind of emergencyKinds) {
+    surcharges[kind] = {
+      flatCents: (await number(`emergency.${kind}_flat_cents`)) ?? 0,
+      basisPoints: (await number(`emergency.${kind}_basis_points`)) ?? 0,
+    }
+  }
+
+  const smallBusiness = (await number('small_business.claimed')) === 1
+
+  return {
+    on: day,
+    night: {
+      fromMinute: (await number('emergency.night_from_minute')) ?? defaultNight.fromMinute,
+      untilMinute: (await number('emergency.night_until_minute')) ?? defaultNight.untilMinute,
+    },
+    surcharges: surcharges as Record<EmergencyKind, EmergencySurcharge>,
+    vatBasisPoints: smallBusiness
+      ? null
+      : shippedRules.valueAt('vat.standard', 'basis_points', day),
+    holidays,
+  }
+}
+
+/**
+ * The surcharge of an emergency call as its customer hears it (#1024), for
+ * the mail with its instructions: by the tariff of the day of the call, as
+ * the invoice charges it. Null for a call that is no emergency, one in
+ * ordinary hours, a kind the business set nothing for, and a business as
+ * customer, which gets no instructions.
+ */
+export async function callSurchargeText(
+  tx: TenantTransaction,
+  call: { readonly emergencyAt: Date | null; readonly isBusiness: boolean },
+): Promise<string | null> {
+  if (call.emergencyAt === null || call.isBusiness) {
+    return null
+  }
+
+  return emergencyTariffText(
+    await emergencyTariffOn(tx, berlinClock(call.emergencyAt).day),
+    call.emergencyAt,
+  )
 }
