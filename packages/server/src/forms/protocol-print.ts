@@ -40,10 +40,11 @@ import {
  * Printed on every request out of the record and kept nowhere, like the
  * circuit chart: a signed protocol does not change any more, and everything
  * it depends on is in it, down to the circuit each block was measured on, so
- * the same record prints the same values and verdicts next year. How a limit
- * is written may grow more exact on the way (#1089): since then a limit stands
- * as exactly as it holds, also on a protocol signed before. A photo it names is the one
- * exception (#817): it lies among the files, and the page shows the version the
+ * the same record prints the same values and verdicts next year. How a value
+ * or a limit is written may grow more exact on the way (#1089): since then a
+ * value stands with every place that was entered and a limit as exactly as it
+ * holds, also on a protocol signed before. A photo it names is the one thing
+ * that lies outside the record (#817): it lies among the files, and the page shows the version the
  * server had when the protocol was signed, also once the file is in the bin,
  * and nothing but where it lay once it is purged. A draft says so across the
  * page.
