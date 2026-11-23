@@ -633,6 +633,141 @@ describe('a filled form', () => {
 })
 
 /**
+ * A field required under a condition (`requiredWhen`): the photo of a worn
+ * shelf made of wood, the load of every shelf once it is worn.
+ */
+const conditioned: FormDefinition<ProbeTerms> = {
+  ...inspection,
+  key: 'shelf-inspection-conditioned',
+  sections: inspection.sections.map((section) => ({
+    ...section,
+    fields: section.fields.map((field) => {
+      if (field.key === 'overview') {
+        return {
+          ...field,
+          requiredWhen: {
+            answer: { field: 'condition', is: 'worn' },
+            subject: { key: 'material', is: 'wood' },
+          },
+        }
+      }
+
+      if (field.kind === 'group' && field.key === 'findings') {
+        return {
+          ...field,
+          fields: field.fields.map((nested) => ({
+            ...nested,
+            requiredWhen: { answer: { field: 'condition', is: 'worn' } },
+          })),
+        }
+      }
+
+      return field
+    }),
+  })),
+}
+
+describe('a field required under a condition', () => {
+  const worn: FormValues = { ...filled, condition: 'worn' }
+  const wood = { material: 'wood' }
+
+  it('is asked for where the answer and what the form hangs on both hold', () => {
+    expect(engine.definitionProblems(conditioned)).toEqual([])
+    expect(engine.sealProblems(conditioned, worn, { subject: wood })).toEqual(['Übersicht fehlt.'])
+    expect(engine.sealProblems(conditioned, filled, { subject: wood })).toEqual([])
+    expect(engine.sealProblems(conditioned, worn, { subject: { material: 'steel' } })).toEqual([])
+    expect(
+      engine.sealProblems(
+        conditioned,
+        { ...worn, overview: '0193d1a2-7f4e-7c6b-9a1d-2b3c4d5e6f70' },
+        {
+          subject: wood,
+        },
+      ),
+    ).toEqual([])
+  })
+
+  it('is asked for where what the form hangs on is not known', () => {
+    expect(engine.sealProblems(conditioned, worn, { subject: null })).toEqual(['Übersicht fehlt.'])
+    expect(engine.sealProblems(conditioned, worn)).toEqual(['Übersicht fehlt.'])
+  })
+
+  it('asks a field in a group by an answer of the form', () => {
+    const withoutFinding: FormValues = { ...worn, findings: [{ values: {} }] }
+
+    expect(
+      engine.sealProblems(conditioned, withoutFinding, { subject: { material: 'steel' } }),
+    ).toEqual(['Weitere Befunde, Block 1: Befund fehlt.'])
+    expect(
+      engine.sealProblems(
+        conditioned,
+        { ...filled, findings: [{ values: {} }] },
+        {
+          subject: { material: 'steel' },
+        },
+      ),
+    ).toEqual([])
+  })
+
+  it('is refused as signed by a record that lacks it, with what the form hangs on', () => {
+    const registry = formRegistry([conditioned])
+    const record = {
+      definitionKey: 'shelf-inspection-conditioned',
+      definitionVersion: 1,
+      status: 'signed',
+      values: formValuesText(worn),
+    }
+
+    expect(engine.formRecordProblem(registry, record, { subject: wood })).toBe(
+      'Unterschrieben wird ein vollständiges Protokoll: Übersicht fehlt.',
+    )
+    expect(
+      engine.formRecordProblem(registry, record, { subject: { material: 'steel' } }),
+    ).toBeNull()
+  })
+
+  it('names a choice of the form and one of its answers, or a property, and nothing that is required anyway', () => {
+    const withCondition = (requiredWhen: unknown, required?: boolean): FormDefinition<ProbeTerms> =>
+      ({
+        ...inspection,
+        sections: inspection.sections.map((section) => ({
+          ...section,
+          fields: section.fields.map((field) =>
+            field.key === 'labelled'
+              ? { ...field, requiredWhen, ...(required === undefined ? {} : { required }) }
+              : field,
+          ),
+        })),
+      }) as FormDefinition<ProbeTerms>
+
+    expect(
+      engine.definitionProblems(withCondition({ answer: { field: 'condition', is: 'broken' } })),
+    ).toEqual([
+      'shelf-inspection: labelled hängt an einer Antwort, die keine Auswahl des Formulars hat.',
+    ])
+    expect(
+      engine.definitionProblems(withCondition({ answer: { field: 'inspector', is: 'x' } })),
+    ).toEqual([
+      'shelf-inspection: labelled hängt an einer Antwort, die keine Auswahl des Formulars hat.',
+    ])
+    expect(engine.definitionProblems(withCondition({ subject: { key: '', is: 'wood' } }))).toEqual([
+      'shelf-inspection: labelled hängt an einer Eigenschaft des Gegenstands ohne Namen oder Wert.',
+    ])
+    expect(engine.definitionProblems(withCondition({}))).toEqual([
+      'shelf-inspection: labelled nennt eine Bedingung ohne Antwort und ohne Gegenstand.',
+    ])
+    expect(engine.definitionProblems(withCondition('worn'))).toEqual([
+      'shelf-inspection: labelled nennt eine Bedingung, die kein Objekt ist.',
+    ])
+    expect(
+      engine.definitionProblems(
+        withCondition({ answer: { field: 'condition', is: 'worn' } }, true),
+      ),
+    ).toEqual(['shelf-inspection: labelled ist schon Pflicht und braucht keine Bedingung.'])
+  })
+})
+
+/**
  * A round through the store room, as its operator keeps the template for this
  * one room: it names the room and the meter it reads, which a shipped form
  * cannot, and asks a check point of every shelf.

@@ -145,6 +145,33 @@
       "value": 10000,
       "source": "DGUV Information 203-070:2026-04, Tabelle 1, nach DIN EN 50699 (VDE 0702):2021-06",
       "note": "Höchster Schutzleiterstrom eines Geräts mit Heizelementen, gleich wie groß seine Heizleistung ist."
+    },
+    {
+      "key": "elektro.appliance.separation_insulation",
+      "validFrom": "2021-06-01",
+      "validUntil": null,
+      "unit": "kiloohms",
+      "value": 2000,
+      "source": "DGUV Information 203-070:2026-04, Tabelle 1 und Abbildung 4, nach DIN EN 50699 (VDE 0702):2021-06 und DIN EN 50678 (VDE 0701):2021-02",
+      "note": "Isolationswiderstand zwischen Eingangs- und Ausgangskreis. Nachweis der sicheren Trennung bei einem Gerät mit getrennter Ausgangsspannung, etwa einem Trenntransformator oder Ladegerät. Ab Fassung 4 des Protokolls (#1023)."
+    },
+    {
+      "key": "elektro.appliance.output_voltage_ac",
+      "validFrom": "2021-06-01",
+      "validUntil": null,
+      "unit": "volts",
+      "value": 25,
+      "source": "DGUV Information 203-070:2026-04, Tabelle 1 und Abbildung 4, nach DIN EN 50699 (VDE 0702):2021-06 und DIN EN 50678 (VDE 0701):2021-02",
+      "note": "Ausgangsspannung, Wechselspannung. Nachweis der sicheren Trennung bei einem Gerät mit getrennter Ausgangsspannung, etwa einem Trenntransformator oder Ladegerät. Ab Fassung 4 des Protokolls (#1023)."
+    },
+    {
+      "key": "elektro.appliance.output_voltage_dc",
+      "validFrom": "2021-06-01",
+      "validUntil": null,
+      "unit": "volts",
+      "value": 60,
+      "source": "DGUV Information 203-070:2026-04, Tabelle 1 und Abbildung 4, nach DIN EN 50699 (VDE 0702):2021-06 und DIN EN 50678 (VDE 0701):2021-02",
+      "note": "Ausgangsspannung, Gleichspannung. Nachweis der sicheren Trennung bei einem Gerät mit getrennter Ausgangsspannung, etwa einem Trenntransformator oder Ladegerät. Ab Fassung 4 des Protokolls (#1023)."
     }
   ]
 }

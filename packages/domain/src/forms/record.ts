@@ -1,5 +1,6 @@
 import type { FormRecordStatus, Id, IsoDate, Synced } from '@opengewerk/platform-domain'
 
+import { readApplianceFacts } from '../model/appliance.js'
 import type { ApplianceId, InstallationId, JobId } from '../model/identifier.js'
 import type { FormDefinition, FormRegistry } from './definition.js'
 import { tradeForms } from './engine.js'
@@ -51,7 +52,9 @@ export interface FormRecord extends Synced {
  * values that are not the text of an object, a value of the wrong kind, and a
  * form marked signed that lacks what signing needs are mistakes of the client
  * and refused with the sentence. What signing needs includes the next
- * inspection where the protocol has to name it (#814).
+ * inspection where the protocol has to name it (#814), and what a field asks
+ * of the appliance a test is signed with (#1023): its facts are the ones the
+ * record carries from the signature on.
  */
 export function formRecordProblem(
   registry: FormRegistry,
@@ -60,9 +63,12 @@ export function formRecordProblem(
     readonly definitionVersion: unknown
     readonly status: unknown
     readonly values: unknown
+    readonly applianceFacts?: unknown
   },
 ): string | null {
-  const problem = tradeForms.formRecordProblem(registry, record)
+  const problem = tradeForms.formRecordProblem(registry, record, {
+    subject: readApplianceFacts(record.applianceFacts) as Readonly<Record<string, unknown>> | null,
+  })
 
   if (problem !== null || record.status !== 'signed') {
     return problem

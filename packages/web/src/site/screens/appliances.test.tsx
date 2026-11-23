@@ -328,7 +328,7 @@ describe('the appliances of a site on site (#303)', () => {
     expect(appliance?.['heatingPowerWatts'] ?? null).toBeNull()
     expect(
       client.list('form_records').find((record) => record['applianceId'] === appliance?.['id']),
-    ).toMatchObject({ definitionKey: 'dguv-v3', definitionVersion: 3, values: '{}' })
+    ).toMatchObject({ definitionKey: 'dguv-v3', definitionVersion: 4, values: '{}' })
   })
 
   it('refuses a lead that is no figure before anything is made', async () => {
@@ -541,6 +541,45 @@ describe('the facts a test of an appliance is signed with', () => {
         .operations()
         .some((operation) => operation.patches.some((patch) => patch.field === 'status')),
     ).toBe(false)
+  })
+})
+
+describe('the protective conductor current after a repair (#1023)', () => {
+  /** A test after a repair, in version 4, with everything but the protective conductor current. */
+  function afterRepair(id: string, applianceId: string): RecordState {
+    const { tester_signature: _signature, ...unsigned } = lastYear
+
+    return {
+      id,
+      definitionKey: 'dguv-v3',
+      definitionVersion: 4,
+      installationId: null,
+      applianceId,
+      jobId: 'j-1',
+      performedOn: today(),
+      status: 'draft',
+      values: JSON.stringify({ ...unsigned, test_kind: 'after_repair' }),
+    }
+  }
+
+  it('is asked for before signing at an appliance of protection class I', async () => {
+    await mount('/auftraege/j-1/pruefprotokolle/p-7', {
+      form_records: [...(rows()['form_records'] ?? []), afterRepair('p-7', 'a-2')],
+    })
+
+    expect(await screen.findByText('Schutzleiterstrom IPE fehlt.')).toBeTruthy()
+  })
+
+  it('is not asked for at an appliance of protection class II, which has no protective conductor', async () => {
+    await mount('/auftraege/j-1/pruefprotokolle/p-8', {
+      form_records: [...(rows()['form_records'] ?? []), afterRepair('p-8', 'a-1')],
+    })
+
+    expect(await screen.findByRole('button', { name: 'Unterschreiben' })).toHaveProperty(
+      'disabled',
+      false,
+    )
+    expect(screen.queryByText('Schutzleiterstrom IPE fehlt.')).toBeNull()
   })
 })
 

@@ -5,6 +5,7 @@ import {
   type BlockField,
   type BlockFieldKind,
   type CheckPointField,
+  type ChoiceField,
   fieldsOf,
   type FormDefinition,
   type FormField,
@@ -14,6 +15,7 @@ import {
   type GroupField,
   isRuleLimit,
   type MeasurementField,
+  type RequiredWhen,
   type SignatureField,
 } from './definition.js'
 import {
@@ -151,6 +153,11 @@ export interface SealOptions<T extends FormTerms = FormTerms> {
   /** Whether the sealing signature itself is asked for, which it is unless said otherwise. */
   readonly seal?: boolean
   /**
+   * What the form hangs on, by its properties, as a condition of a field asks
+   * it (`requiredWhen`). Without it, a condition on it holds.
+   */
+  readonly subject?: Readonly<Record<string, unknown>> | null
+  /**
    * The items of every list as they stand now, by the name of the list. A
    * group over a list named here has to answer for each of them.
    */
@@ -247,7 +254,7 @@ export interface FormEngine<T extends FormTerms = FormTerms> {
   readonly formRecordProblem: (
     registry: FormRegistry<FormDefinition<T>>,
     record: FilledForm,
-    options?: Pick<SealOptions<T>, 'items'>,
+    options?: Pick<SealOptions<T>, 'items' | 'subject'>,
   ) => string | null
 }
 
@@ -441,9 +448,90 @@ export function formEngine<T extends FormTerms>(setup: FormEngineSetup<T>): Form
   const isShown = (kind: string): boolean =>
     kind === 'signature' || kind === 'group' || shown.includes(kind)
 
-  /** Whether an answer to this field is needed before the form is signed. */
+  /** Whether an answer to this field is needed before the form is signed, whatever was answered. */
   const needed = (field: FormField<E> | BlockField<E>): boolean =>
     field.required === true || field.kind === 'check_point'
+
+  /**
+   * Whether the condition of a field holds (`requiredWhen`): the answer it
+   * names is given, and what the form hangs on has the property it names, or
+   * is not known.
+   */
+  const conditionHolds = (
+    field: FormField<E> | BlockField<E>,
+    values: FormValues,
+    subject: Readonly<Record<string, unknown>> | null | undefined,
+  ): boolean => {
+    const when = (field as { readonly requiredWhen?: RequiredWhen }).requiredWhen
+
+    if (when === undefined) {
+      return false
+    }
+
+    const answered = when.answer === undefined || own(values, when.answer.field) === when.answer.is
+    const holds =
+      when.subject === undefined ||
+      subject === undefined ||
+      subject === null ||
+      own(subject, when.subject.key) === when.subject.is
+
+    return answered && holds
+  }
+
+  /** What the condition of a field may name, or why not, as the end of a sentence. */
+  function conditionProblem(field: unknown, top: readonly unknown[]): string | null {
+    const when = isObject(field)
+      ? (field as { readonly requiredWhen?: unknown }).requiredWhen
+      : undefined
+
+    if (when === undefined) {
+      return null
+    }
+
+    if (!isObject(when)) {
+      return 'nennt eine Bedingung, die kein Objekt ist.'
+    }
+
+    const { answer, subject } = when as { readonly answer?: unknown; readonly subject?: unknown }
+
+    if (answer === undefined && subject === undefined) {
+      return 'nennt eine Bedingung ohne Antwort und ohne Gegenstand.'
+    }
+
+    if (answer !== undefined) {
+      const named = isObject(answer)
+        ? (answer as { readonly field?: unknown; readonly is?: unknown })
+        : {}
+      const choice = top.find(
+        (candidate): candidate is ChoiceField =>
+          isObject(candidate) &&
+          (candidate as { readonly key?: unknown }).key === named.field &&
+          (candidate as { readonly kind?: unknown }).kind === 'choice',
+      )
+
+      if (
+        !choice ||
+        !Array.isArray(choice.options) ||
+        !choice.options.some((option) => option.value === named.is)
+      ) {
+        return 'hängt an einer Antwort, die keine Auswahl des Formulars hat.'
+      }
+    }
+
+    if (subject !== undefined) {
+      const named = isObject(subject)
+        ? (subject as { readonly key?: unknown; readonly is?: unknown })
+        : {}
+
+      if (typeof named.key !== 'string' || named.key === '' || typeof named.is !== 'string') {
+        return 'hängt an einer Eigenschaft des Gegenstands ohne Namen oder Wert.'
+      }
+    }
+
+    return (field as { readonly required?: unknown }).required === true
+      ? 'ist schon Pflicht und braucht keine Bedingung.'
+      : null
+  }
 
   const idOf = (block: GroupBlock): unknown =>
     (block as unknown as Record<string, unknown>)[keys.id]
@@ -712,6 +800,28 @@ export function formEngine<T extends FormTerms>(setup: FormEngineSetup<T>): Form
       }
     }
 
+    // A condition names a choice outside any group, so it is checked once
+    // every section is read; a field in a group may name one as well.
+    const top = definition.sections.flatMap((section) =>
+      isObject(section) && Array.isArray(section.fields)
+        ? (section.fields as readonly unknown[])
+        : [],
+    )
+
+    for (const field of top.flatMap((entry) =>
+      isObject(entry) && Array.isArray((entry as { readonly fields?: unknown }).fields)
+        ? [entry, ...(entry as { readonly fields: readonly unknown[] }).fields]
+        : [entry],
+    )) {
+      const problem = conditionProblem(field, top)
+
+      if (problem !== null) {
+        problems.push(
+          `${definition.key}: ${String((field as { readonly key?: unknown }).key)} ${problem}`,
+        )
+      }
+    }
+
     return problems
   }
 
@@ -889,16 +999,18 @@ export function formEngine<T extends FormTerms>(setup: FormEngineSetup<T>): Form
   function sealProblems(
     definition: FormDefinition<E>,
     values: FormValues,
-    { seal = true, items }: SealOptions<E> = {},
+    { seal = true, items, subject }: SealOptions<E> = {},
   ): readonly string[] {
     const missing: string[] = []
     const standing = items as
       Readonly<Record<string, readonly { readonly id: string }[]>> | undefined
+    const asked = (field: FormField<E> | BlockField<E>): boolean =>
+      needed(field) || conditionHolds(field, values, subject)
 
     for (const field of fieldsOf(definition)) {
       const value = own(values, field.key)
 
-      if (needed(field) && !filled(field, value)) {
+      if (asked(field) && !filled(field, value)) {
         missing.push(`${field.label} fehlt.`)
       }
 
@@ -921,7 +1033,7 @@ export function formEngine<T extends FormTerms>(setup: FormEngineSetup<T>): Form
           for (const nested of field.fields) {
             const nestedValue = own(block.values, nested.key)
 
-            if (needed(nested) && nestedValue === undefined) {
+            if (asked(nested) && nestedValue === undefined) {
               missing.push(`${where}: ${nested.label} fehlt.`)
             }
 
@@ -947,7 +1059,7 @@ export function formEngine<T extends FormTerms>(setup: FormEngineSetup<T>): Form
             continue
           }
 
-          for (const nested of field.fields.filter(needed)) {
+          for (const nested of field.fields.filter(asked)) {
             missing.push(`${field.label}, Eintrag ${String(position + 1)}: ${nested.label} fehlt.`)
           }
         }
@@ -1134,7 +1246,7 @@ export function formEngine<T extends FormTerms>(setup: FormEngineSetup<T>): Form
   function formRecordProblem(
     registry: FormRegistry<FormDefinition<E>>,
     record: FilledForm,
-    options: Pick<SealOptions<E>, 'items'> = {},
+    options: Pick<SealOptions<E>, 'items' | 'subject'> = {},
   ): string | null {
     const definition =
       typeof record.definitionKey === 'string' && typeof record.definitionVersion === 'number'

@@ -571,6 +571,50 @@ describe('the facts a test of an appliance is signed with', () => {
     expect(draftPage).toContain('höchstens 0,30 Ω; DGUV Information 203-070')
   })
 
+  it('refuses a signature of version 4 after a repair without the protective conductor current at class I (#1023)', async () => {
+    const withConductor = newId<'appliance'>()
+    const without = newId<'appliance'>()
+    const first = newId<'form-record'>()
+    const second = newId<'form-record'>()
+    const technician = as(north.id, 'technician')
+    const before = complete({ test_kind: 'after_repair', protective_conductor: 250 })
+    const after = complete({
+      test_kind: 'after_repair',
+      protective_conductor: 250,
+      tester_signature: signature,
+    })
+
+    await push(app, technician, [
+      anAppliance(withConductor),
+      anAppliance(without, { protectionClass: 'II' }),
+      aTest(first, { applianceId: withConductor, definitionVersion: 4 }, before),
+      aTest(second, { applianceId: without, definitionVersion: 4 }, before),
+    ])
+
+    const refused = await push(
+      app,
+      technician,
+      [signedWith(first, before, after, JSON.stringify({ ...unheated, cordLengthMilli: 25_000 }))],
+      400,
+    )
+
+    expect(refused.message).toBe(
+      'Unterschrieben wird ein vollständiges Protokoll: Schutzleiterstrom IPE fehlt.',
+    )
+    expect(await statusOf(first)).toBe('draft')
+
+    // An appliance of class II has no protective conductor to measure at.
+    await push(app, technician, [
+      signedWith(
+        second,
+        before,
+        after,
+        JSON.stringify({ ...unheated, protectionClass: 'II', cordLengthMilli: 25_000 }),
+      ),
+    ])
+    expect(await statusOf(second)).toBe('signed')
+  })
+
   it('refuses a signature as a conflict where the appliance no longer has the facts it was judged with', async () => {
     const appliance = newId<'appliance'>()
     const id = newId<'form-record'>()

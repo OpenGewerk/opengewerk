@@ -541,7 +541,7 @@ function Overview({
   }
 
   const resultSection = definition.sections.find(isResult)
-  const missing = protocol.unsaved ? [] : missingBeforeSigning(record)
+  const missing = protocol.unsaved ? [] : missingBeforeSigning(record, protocol.appliance)
   const seal = sealingField(definition)
   // A commissioning protocol is signed by the operator and the business (#304).
   const signedBy = signatureFields(definition).length
