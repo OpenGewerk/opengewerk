@@ -1226,6 +1226,38 @@ describe('the line of the surcharge on a draft (#1087)', () => {
 
     expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000, deleted: false })
   })
+  it('follows an hour a device moves from one draft to another, on both', async () => {
+    const from = await draftOf()
+    const to = await draftOf()
+
+    await price(from.invoice, from.hour, 10_000)
+
+    expect(await surchargeOf(from.invoice)).toMatchObject({ net_cents: 5000 })
+
+    await sent(
+      changed('document_lines', from.hour, { documentId: { from: from.invoice, to: to.invoice } }),
+    )
+
+    expect(await surchargeOf(from.invoice)).toMatchObject({ net_cents: 0, deleted: false })
+    expect(await surchargeOf(to.invoice)).toMatchObject({ net_cents: 5000, deleted: false })
+  })
+
+  it('answers a move of its own line with the line as the refresh left it', async () => {
+    const { job, invoice, hour } = await draftOf()
+
+    await price(invoice, hour, 10_000)
+    // 20,00 € named, past the routes: the line still says 50,00 €.
+    await writtenPastTheRoutes(namedTwenty, [job])
+
+    const answer = await http()
+      .patch(`/documents/${invoice}/lines/${(await surchargeOf(invoice)).id}`)
+      .set('x-test-identity', office())
+      .send({ position: 9 })
+      .expect(200)
+
+    expect(answer.body).toMatchObject({ netCents: 2000, emergencySurcharge: true })
+  })
+
   it('is no surcharge of a draft a device moves it to', async () => {
     const from = await draftOf()
     const to = await draftOf()
@@ -1617,13 +1649,20 @@ describe('the line of the surcharge on a draft, after the settings (#1087)', () 
           .set('x-test-identity', office())
           .send({ emergencyNamedFlatCents: 2000, emergencyNamedBasisPoints: 0 }),
       200,
+      [],
     ],
-    ['a device changes the call', ({ job }: Draft) => transmitted([toTheNight(job)]), 201],
+    [
+      'a device changes the call',
+      ({ job }: Draft) => transmitted([toTheNight(job)]),
+      201,
+      ['applied'],
+    ],
     [
       // The first operation writes, and the transmission holds the log from then on.
       'a device changes the call after another write',
       ({ job }: Draft) => transmitted([aCall().operation, toTheNight(job)]),
       201,
+      ['applied', 'applied'],
     ],
     [
       'a device prices a line of the draft after another write',
@@ -1633,6 +1672,7 @@ describe('the line of the surcharge on a draft, after the settings (#1087)', () 
           changed('document_lines', hour, { unitPriceCents: { from: 0, to: 1000 } }),
         ]),
       201,
+      ['applied', 'applied'],
     ],
     [
       'a setting of the surcharges',
@@ -1644,16 +1684,18 @@ describe('the line of the surcharge on a draft, after the settings (#1087)', () 
           note: null,
         }),
       201,
+      [],
     ],
     [
       'the public holidays',
       (_draft: Draft) =>
         http().put('/holidays').set('x-test-identity', owner()).send({ state: 'DE-NI', local: [] }),
       200,
+      [],
     ],
   ] as const)(
     '%s waits for a draft that is being issued, and does not deadlock',
-    async (_, change, status) => {
+    async (_, change, status, outcomes) => {
       const draft = await aDraft()
       const issuing = await lockedForIssuing(draft.invoice)
       const changing = change(draft).then((answer) => ({
@@ -1677,8 +1719,8 @@ describe('the line of the surcharge on a draft, after the settings (#1087)', () 
       const answer = await changing
 
       expect(answer.status).toBe(status)
-      // A transmission gets every operation applied, none kept as a conflict.
-      expect(answer.receipts.filter((receipt) => receipt.outcome !== 'applied')).toEqual([])
+      // A transmission gets a receipt for every operation, each applied.
+      expect(answer.receipts.map((receipt) => receipt.outcome)).toEqual(outcomes)
     },
   )
 

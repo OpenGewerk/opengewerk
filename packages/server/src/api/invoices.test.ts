@@ -973,7 +973,7 @@ describe('issuing next to a transmission from a device (opengewerk#1094)', () =>
       .set('x-test-identity', office())
       .send({})
       .then((answer) => answer.status)
-    let sent: Promise<number> | undefined
+    let sent: Promise<{ status: number; outcomes: string[] }> | undefined
 
     try {
       await held.reached
@@ -996,7 +996,12 @@ describe('issuing next to a transmission from a device (opengewerk#1094)', () =>
         .post('/sync')
         .set('x-test-identity', office())
         .send({ deviceId: 'geraet-im-keller', operations: [write, stale] })
-        .then((answer) => answer.status)
+        .then((answer) => ({
+          status: answer.status,
+          outcomes: ((answer.body as { receipts?: { outcome: string }[] }).receipts ?? []).map(
+            (receipt) => receipt.outcome,
+          ),
+        }))
 
       // Until the transmission waits for issuing.
       let waiting = 0
@@ -1017,6 +1022,46 @@ describe('issuing next to a transmission from a device (opengewerk#1094)', () =>
       held.release()
     }
 
-    expect({ issue: await issuing, sync: await sent }).toEqual({ issue: 201, sync: 201 })
+    // The job is written, the change of the quote issued meanwhile is a conflict.
+    expect({ issue: await issuing, sync: await sent }).toEqual({
+      issue: 201,
+      sync: { status: 201, outcomes: ['applied', 'conflict'] },
+    })
+  })
+
+  it('lets the first file of a quote above through while its final invoice is being issued', async () => {
+    const quote = await draft('quote')
+
+    await add(quote.id, { ...cable, quantityMilli: 1000 })
+    await issue(quote.id)
+
+    const confirmation = await successor(quote.id, 'order_confirmation')
+
+    await issue(confirmation.id)
+
+    const invoice = await successor(confirmation.id, 'final_invoice')
+
+    // Held after the lock of its chain, at the lock of the invoice itself.
+    const held = holdQuery((text) => /for update/i.test(text) && !/order by/i.test(text))
+    const issuing = http()
+      .post(`/documents/${invoice.id}/issue`)
+      .set('x-test-identity', office())
+      .send({})
+      .then((answer) => answer.status)
+    let pdf: Promise<number> | undefined
+
+    try {
+      await held.reached
+      // The first PDF of the quote: its file refers to the quote (a key share).
+      pdf = http()
+        .get(`/documents/${quote.id}/pdf`)
+        .set('x-test-identity', office())
+        .then((answer) => answer.status)
+      await pdf
+    } finally {
+      held.release()
+    }
+
+    expect({ issue: await issuing, pdf: await pdf }).toEqual({ issue: 201, pdf: 200 })
   })
 })

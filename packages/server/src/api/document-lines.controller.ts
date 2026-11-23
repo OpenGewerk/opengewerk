@@ -322,7 +322,14 @@ export class DocumentLinesController {
 
       await refreshSurchargeLine(tx, documentId)
 
-      return updated
+      // As the refresh left it: the line of the surcharge itself, moved in
+      // the list, may have been worked out again with it (#1087).
+      const [now] = await tx
+        .select()
+        .from(documentLines)
+        .where(eq(documentLines.id, lineId as DocumentLineId))
+
+      return now ?? updated
     })
   }
 

@@ -437,7 +437,9 @@ export class DocumentsController {
       // read every link above it; locked one after the other, or after a
       // write, issuing could hold one the transmission waits for and wait
       // for one it holds. The links are made with each document and never
-      // change (#129), so the chain is walked without a lock first.
+      // change (#129), so the chain is walked without a lock first. The lock
+      // a transmission takes, and no stronger: a key share, as the first file
+      // of a document above takes it for its reference, goes through.
       const chain: DocumentId[] = [id as DocumentId]
 
       for (let link: DocumentId | null = id as DocumentId; link !== null;) {
@@ -459,7 +461,7 @@ export class DocumentsController {
         .from(documents)
         .where(inArray(documents.id, chain))
         .orderBy(documents.id)
-        .for('update')
+        .for('no key update')
 
       // Locked before anything is read that the snapshot freezes: a line
       // route, a change to the head and the trigger on the lines wait for
