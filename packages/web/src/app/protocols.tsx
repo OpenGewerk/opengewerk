@@ -61,7 +61,7 @@ import {
   statusIcons,
   useEntry,
 } from '@opengewerk/platform-web'
-import { amount, date, scaledNumber, today } from '@opengewerk/platform-web/format'
+import { amount, date, largestStored, scaledNumber, today } from '@opengewerk/platform-web/format'
 import { useHoldUpdates } from '@opengewerk/platform-web/shell'
 import { NotSent, SiteRow, SiteRows } from '@opengewerk/platform-web/site'
 import {
@@ -662,21 +662,24 @@ function FigureInput({
       onChange={(event) => {
         const input = event.target.value
         const read = scaledNumber(input, places)
+        // Read in the places of its field, a figure is still kept in
+        // thousandths, and there "3000000" km no longer fits the column.
+        const stored = read === null ? null : read * 10 ** (3 - places)
 
         setTyped(input)
 
         if (input.trim() === '') {
           setProblem(undefined)
           onChange(undefined)
-        } else if (read === null) {
+        } else if (stored === null || Math.abs(stored) > largestStored) {
           setProblem(
-            places < 3 && scaledNumber(input, 3) !== null
+            read === null && places < 3 && scaledNumber(input, 3) !== null
               ? tooManyPlaces(places)
               : 'Eine Zahl, etwa 0,85.',
           )
         } else {
           setProblem(undefined)
-          onChange(read * 10 ** (3 - places))
+          onChange(stored)
         }
       }}
     />
@@ -747,7 +750,12 @@ export function FieldInput({
     case 'number':
       return isNextInspection(field) ? (
         <div className="flex flex-col gap-1">
-          <FigureInput field={field} value={value} onChange={onChange} />
+          <FigureInput
+            field={field}
+            value={value}
+            placesOfField={placesOfField}
+            onChange={onChange}
+          />
           <NextInspection performedOn={performedOn} value={value} partOnly={partOnly} />
         </div>
       ) : (

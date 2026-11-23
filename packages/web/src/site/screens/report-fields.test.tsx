@@ -187,6 +187,14 @@ describe('the fields of a report on site (#78)', () => {
     })
     expect(screen.queryByText('Eine ganze Zahl, ohne Nachkommastellen.')).toBeNull()
 
+    // Three million km read as a whole number, but in thousandths they no
+    // longer fit the column: not written, the draft keeps the 26.
+    await user.tripleClick(screen.getByLabelText('Anfahrt in km'))
+    await user.paste('3000000')
+    expect(screen.getByText('Eine Zahl, etwa 0,85.')).toBeTruthy()
+    await user.tab()
+    expect(distance()).toBe(26_000)
+
     // A device of an earlier version wrote 25,5 km: the field says so on opening.
     await client.update('documents', reportId, { fieldValues: JSON.stringify({ field_2: 25_500 }) })
     await router.navigate({ to: '/auftraege/j-1' })
@@ -196,6 +204,43 @@ describe('the fields of a report on site (#78)', () => {
     })
 
     expect(await screen.findByText('Eine ganze Zahl, ohne Nachkommastellen.')).toBeTruthy()
+  })
+
+  it('keep the places of their field where it names the next inspection (#1090)', async () => {
+    // Only a client that sends what the screen never would gives a report
+    // this key, but the input still keeps to the places it shows.
+    const next: ReportField = {
+      kind: 'number',
+      key: 'next_inspection_months',
+      label: 'Nächste Prüfung',
+      unit: 'month',
+      decimals: 0,
+    }
+    server.put('form_definitions', {
+      id: 'fd-2',
+      key: 'report',
+      definitionVersion: 2,
+      definition: JSON.stringify(reportDefinition(2, [weather, next])),
+    })
+
+    const user = userEvent.setup()
+    const { client, router } = await mount('/auftraege/j-1')
+
+    server.offline = true
+
+    await user.click(await screen.findByRole('button', { name: 'Regiebericht schreiben' }))
+    await screen.findByText('Noch nicht übertragen.')
+
+    const reportId = router.state.location.pathname.split('/').at(-1) ?? ''
+
+    await user.type(screen.getByLabelText(/^Nächste Prüfung in/), '1,5')
+    expect(screen.getByText('Eine ganze Zahl, ohne Nachkommastellen.')).toBeTruthy()
+    await user.tab()
+    expect(
+      readFormValues(client.get('documents', reportId)?.['fieldValues'])?.[
+        'next_inspection_months'
+      ],
+    ).toBe(1_000)
   })
 
   it('are filled in without a network, read before signing and signed with the report', async () => {
