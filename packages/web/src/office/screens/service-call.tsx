@@ -23,10 +23,10 @@ import {
   useSyncStatus,
 } from '@opengewerk/platform-web/sync'
 import { useNavigate } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { Check } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 
 import { customerKindLabel } from '../../app/labels.js'
@@ -67,6 +67,9 @@ function minuteOf(clock: string): number {
 
   return (hours ?? 0) * 60 + (minutes ?? 0)
 }
+
+/** The forms opened so far: each keeps the tariffs it asked for under its own number (#1081). */
+let formsOpened = 0
 
 /** Whether day and time of a call are typed in whole: a field being typed into is not. */
 function isWholeCall(calledOn: string, calledAt: string): boolean {
@@ -272,17 +275,27 @@ export function NewServiceCallScreen() {
   // 312e BGB), and a new caller is one unless the office says otherwise.
   const consumer = customer ? customer['isBusiness'] !== true : fresh.kind === 'private'
   const calledMoment = calledMomentOf(calledOn, calledAt)
+  const queries = useQueryClient()
+  const [form] = useState(() => (formsOpened += 1))
+
+  // What the form showed for a day is what it names and keeps (#1081): the
+  // tariffs of a day are asked once while the form is open, kept when another
+  // day is typed and the first one again, not asked anew in the background
+  // when the window comes back into focus, and forgotten with the form.
+  useEffect(
+    () => () => {
+      queries.removeQueries({ queryKey: ['emergency-tariffs', form] })
+    },
+    [queries, form],
+  )
+
   const tariffs = useQuery({
-    queryKey: ['emergency-tariffs', calledOn],
+    queryKey: ['emergency-tariffs', form, calledOn],
     queryFn: ({ signal }) => emergencyTariffs(signal, calledOn),
     enabled: emergency && consumer,
     retry: false,
-    // What the form showed for a day is what it names and keeps (#1081): the
-    // tariffs of a day are asked once while the form is open, not anew in the
-    // background when the window comes back into focus, and forgotten with
-    // the form. Only another day of the call asks again.
     staleTime: Infinity,
-    gcTime: 0,
+    gcTime: Infinity,
   })
   const asking = tariffs.data === undefined && tariffs.fetchStatus === 'fetching'
   const tariff = tariffs.data && calledMoment ? tariffOn(tariffs.data, calledMoment) : null

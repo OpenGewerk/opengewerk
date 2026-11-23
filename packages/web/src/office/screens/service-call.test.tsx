@@ -380,6 +380,36 @@ describe('a call taken on the phone (#292)', () => {
     expect(server.all('jobs')[0]).toMatchObject({ emergencyNamedFlatCents: 4500 })
   })
 
+  it('keeps the surcharge it showed for a day after another day and back (#1081)', async () => {
+    answers.set(`/on-call-shifts/tariffs?from=${callDay}`, fromTheCall)
+    await mount('/auftraege/service')
+
+    await type('Kunde suchen', 'Berg')
+    await userEvent.click(await screen.findByRole('button', { name: /Familie Berg/ }))
+    await userEvent.click(screen.getByLabelText('Notdiensteinsatz', { exact: false }))
+    await type('Anruf am', callDay)
+    await type('um', '02:14')
+    expect(
+      await screen.findByText(/^Vor dem Auftrag nennen: Notdienstzuschlag Nacht: 53,55/),
+    ).toBeTruthy()
+
+    const [raised] = fromTheCall
+
+    answers.set(`/on-call-shifts/tariffs?from=${callDay}`, [
+      {
+        ...raised,
+        surcharges: { ...raised?.surcharges, night: { flatCents: 6000, basisPoints: 0 } },
+      },
+    ])
+    await type('Anruf am', addDays(callDay, -1))
+    await type('Anruf am', callDay)
+
+    expect(
+      await screen.findByText(/^Vor dem Auftrag nennen: Notdienstzuschlag Nacht: 53,55/),
+    ).toBeTruthy()
+    expect(screen.queryByText(/71,40/)).toBeNull()
+  })
+
   it('asks the tariffs anew when the form is opened again', async () => {
     answers.set(`/on-call-shifts/tariffs?from=${callDay}`, fromTheCall)
     const { router } = await mount('/auftraege/service')
