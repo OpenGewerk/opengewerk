@@ -2567,7 +2567,7 @@ describe('the instructions of a document', () => {
     const section = within(await screen.findByRole('region', { name: 'Belehrungen' }))
 
     expect(
-      section.getByText(/^Vor dieser Auftragsbestätigung ging keine Widerrufsbelehrung hinaus/),
+      section.getByText(/^Kein festgeschriebener Beleg vor dieser Auftragsbestätigung trug eine/),
     ).toBeTruthy()
   })
 

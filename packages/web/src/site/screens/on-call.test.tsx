@@ -37,6 +37,8 @@ let answers: Map<string, unknown>
 let counter = 0
 // What the store of the tenant keeps of the tariffs before the screen opens (#1024).
 let keptBefore: string | null = null
+// Whether keeping in the store of the tenant fails, as on a device whose storage is full.
+let keepFails = false
 
 function shift(over: Partial<RecordState> = {}): RecordState {
   return {
@@ -99,6 +101,10 @@ async function mount(
     await client.keep(tariffsName, keptBefore)
   }
 
+  if (keepFails) {
+    vi.spyOn(client, 'keep').mockRejectedValue(new Error('Der Speicher ist voll.'))
+  }
+
   const root = createRootRoute()
   const router = createRouter({
     routeTree: root.addChildren([
@@ -130,6 +136,7 @@ beforeEach(() => {
   server = new TestServer()
   answers = new Map()
   keptBefore = null
+  keepFails = false
   globalThis.localStorage.clear()
   answers.set('/tasks/assignees', [{ userId: 'u-1', name: 'Jonas Brandt', active: true }])
 
@@ -298,6 +305,30 @@ describe('the surcharge named before the order (#1024)', () => {
       await screen.findByText(/^Dieses Gerät kennt den Notdienstzuschlag noch nicht/),
     ).toBeTruthy()
     expect(screen.queryByText(/^Notdienstzuschlag/)).toBeNull()
+  })
+
+  it('is named from the answer of the server where keeping it fails', async () => {
+    answers.set('/on-call-shifts/tariffs', tariffs)
+    keepFails = true
+    await mount('/einsatz/neu')
+
+    expect(await screen.findByText(named)).toBeTruthy()
+  })
+
+  it('is asked again when the screen opens, whatever the card asked a minute before', async () => {
+    answers.set('/on-call-shifts/tariffs', [tariff(today, addDays(today, 28), 4500)])
+    const { client } = await mount('/')
+
+    expect(await screen.findByText('Du hast Bereitschaft')).toBeTruthy()
+    // The card has asked and kept the answer of then.
+    await waitFor(() => {
+      expect(client.kept(tariffsName)).toContain('"flatCents":4500')
+    })
+    // The office raised the surcharge since.
+    answers.set('/on-call-shifts/tariffs', tariffs)
+    await userEvent.click(await screen.findByRole('link', { name: 'Einsatz anlegen' }))
+
+    expect(await screen.findByText(named)).toBeTruthy()
   })
 
   it('is not named to a business, which is owed it on no such ground', async () => {

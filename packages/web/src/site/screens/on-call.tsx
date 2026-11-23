@@ -59,7 +59,8 @@ function useCurrentShift(): RecordState | undefined {
  * The tariffs of an emergency call (#1024): asked from the server where there
  * is a network and kept in the store of the tenant, so that the surcharge is
  * there when a call comes in where there is none, and goes with a sign out.
- * Asked while on call only.
+ * Asked while on call only, and asked again each time a screen that shows
+ * them opens: a surcharge the office changed a minute ago is the one to name.
  */
 function useEmergencyTariffs(onCall: boolean): readonly EmergencyTariff[] | null {
   const client = useSync()
@@ -70,13 +71,19 @@ function useEmergencyTariffs(onCall: boolean): readonly EmergencyTariff[] | null
     queryFn: async () => {
       const tariffs = await emergencyTariffs()
 
-      await client.keep(tariffsName, JSON.stringify(tariffs))
+      try {
+        await client.keep(tariffsName, JSON.stringify(tariffs))
+      } catch {
+        // Not kept, but the answer stands: this screen names it now, and the
+        // next answer with a network is kept again.
+      }
 
       return tariffs
     },
     enabled: onCall,
     retry: false,
     staleTime: 60 * 60_000,
+    refetchOnMount: 'always',
   })
 
   return answer.data ?? keptTariffs(kept)
