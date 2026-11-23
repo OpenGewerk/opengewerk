@@ -125,6 +125,7 @@ export async function surchargeLineFor(
     readonly kind: string
     readonly articleId: string | null
     readonly unit: LineUnit
+    readonly unitPriceCents: number
     readonly netCents: number
   }[],
   prices: ReadonlyMap<string, PriceOfDay>,
@@ -161,8 +162,8 @@ export async function surchargeLineFor(
   const hourNetCents = hours.reduce((sum, line) => sum + line.netCents, 0)
   // Hours without a price yet, as a report has them, decide nothing between a
   // flat amount and a percentage (#1081); no hours at all cost nothing. An
-  // hour given free at 0,00 € has its price.
-  const priced = hours.every((line) => hasPriceOfDay(line, prices))
+  // hour given free at 0,00 € has its price, and so has one priced by hand.
+  const priced = hours.every((line) => line.unitPriceCents > 0 || hasPriceOfDay(line, prices))
 
   return emergencySurchargeLine(
     kind,

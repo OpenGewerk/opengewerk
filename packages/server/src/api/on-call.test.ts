@@ -638,7 +638,7 @@ describe('the surcharge named before the order (#1081)', () => {
     })
   })
 
-  it('takes the percentage of the day where an hour is given free at 0,00 €', async () => {
+  it('takes the percentage of the day where an hour is given free or priced by hand', async () => {
     const hour = async (number: string, unitPriceCents: number) =>
       (
         await post('/articles', {
@@ -658,6 +658,7 @@ describe('the surcharge named before the order (#1081)', () => {
     }
     const single = aCall(named)
     const collected = aCall(named)
+    const byHand = aCall(named)
     const lines = [
       {
         designation: 'Arbeitszeit',
@@ -675,7 +676,7 @@ describe('the surcharge named before the order (#1081)', () => {
       },
     ]
 
-    await push(app, office(), [single.operation, collected.operation])
+    await push(app, office(), [single.operation, collected.operation, byHand.operation])
 
     const report = await aSignedReport(single.id, lines)
 
@@ -684,6 +685,14 @@ describe('the surcharge named before the order (#1081)', () => {
     const invoices = [
       (await post(`/documents/${report}/successors`, { kind: 'final_invoice' })).id,
       (await post(`/jobs/${collected.id}/collective-invoice`, {})).id,
+      (
+        await post(
+          `/documents/${await aSignedReport(byHand.id, [
+            { designation: 'Arbeitszeit', quantityMilli: 1000, unit: 'hour', unitPriceCents: 1000 },
+          ])}/successors`,
+          { kind: 'final_invoice' },
+        )
+      ).id,
     ]
     const last = []
 
@@ -697,6 +706,7 @@ describe('the surcharge named before the order (#1081)', () => {
     }
 
     expect(last).toEqual([
+      { description: '50 % auf die Arbeitszeit', net_cents: 500 },
       { description: '50 % auf die Arbeitszeit', net_cents: 500 },
       { description: '50 % auf die Arbeitszeit', net_cents: 500 },
     ])
