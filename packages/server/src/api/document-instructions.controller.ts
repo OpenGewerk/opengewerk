@@ -35,6 +35,7 @@ import { customers, documentInstructionChoices, documents } from '../database/sc
 import { contentOf, frozenContent, issuerOf } from '../documents/content.js'
 import {
   choicesOf,
+  chainFactsOf,
   instructionsFor,
   instructionsOf,
   shownTitle,
@@ -88,6 +89,12 @@ export interface DocumentInstructionsView {
   readonly printed: readonly PrintedInstructionView[]
   /** What stands in the way of issuing with these instructions, as sentences. */
   readonly gaps: readonly string[]
+  /**
+   * A draft of an order confirmation to a consumer that no instruction on
+   * withdrawal went before (#1024): the screen says why the instructions of a
+   * quote are proposed for it.
+   */
+  readonly noInstructionBefore: boolean
 }
 
 function printedFrom(
@@ -174,6 +181,7 @@ export class DocumentInstructionsController {
         choices: [],
         printed: content ? printedFrom(content.instructions) : [],
         gaps: [],
+        noInstructionBefore: false,
       }
     }
 
@@ -186,6 +194,7 @@ export class DocumentInstructionsController {
       recipientIsBusiness: isBusiness,
       documentDate: document.documentDate,
       variant: choices.variant,
+      ...(await chainFactsOf(tx, document.id)),
     }
 
     return {
@@ -210,6 +219,11 @@ export class DocumentInstructionsController {
           : [],
       printed: printedFrom(contents),
       gaps: gaps.map((gap) => gap.message),
+      noInstructionBefore:
+        document.status === 'draft' &&
+        document.kind === 'order_confirmation' &&
+        !isBusiness &&
+        !facts.instructedBefore,
     }
   }
 
@@ -291,12 +305,13 @@ export class DocumentInstructionsController {
           recipientIsBusiness: await this.recipientIsBusiness(tx, document),
           documentDate: document.documentDate,
           variant: next.variant,
+          ...(await chainFactsOf(tx, document.id)),
         }
         const proposed = proposedFor(instruction, facts)
         const included = values.included === true
 
         if (!included && requiredFor(instruction, facts)) {
-          const about = goodsOnly(instruction.template) ? ' über eine Lieferung von Waren' : ''
+          const about = goodsOnly(instruction.template) ? ', das Waren liefert,' : ''
 
           throw new ConflictException(
             `Die Belehrung „${shownTitle(instruction, document.documentDate)}“ gehört zu jedem ` +

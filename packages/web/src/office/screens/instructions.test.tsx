@@ -375,7 +375,7 @@ describe('the notice on the legal guarantee', () => {
     expect(
       entry.getByText(
         'Vorgeschlagen für Angebot, nur an Kunden, die kein Unternehmen sind, wenn der Vertrag ' +
-          'eine Lieferung von Waren mit Montage betrifft. Geht mit dem Beleg hinaus, als letzte ' +
+          'Waren liefert, auch bei Arbeiten mit Material. Geht mit dem Beleg hinaus, als letzte ' +
           'Seite im PDF und damit auch in der E-Mail. Pflicht an jedem solchen Angebot an einen ' +
           'Verbraucher.',
       ),
@@ -398,6 +398,6 @@ describe('the notice on the legal guarantee', () => {
     await userEvent.setup().click(entry.getByRole('button', { name: 'Bearbeiten' }))
 
     expect(entry.queryByLabelText('Wortlaut')).toBeNull()
-    expect(entry.getByText(/über eine Lieferung von Waren, deshalb bleiben/)).toBeTruthy()
+    expect(entry.getByText(/, das Waren liefert, deshalb bleiben/)).toBeTruthy()
   })
 })

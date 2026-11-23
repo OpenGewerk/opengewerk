@@ -336,9 +336,7 @@ export class InstructionsController {
       const required = requiredKinds(row.template)
       const kinds = settings.kinds
       const about =
-        row.template !== null && onlyForGoods.includes(row.template)
-          ? ' über eine Lieferung von Waren'
-          : ''
+        row.template !== null && onlyForGoods.includes(row.template) ? ', das Waren liefert' : ''
 
       if (kinds && required.some((kind) => !kinds.includes(kind))) {
         throw new BadRequestException(

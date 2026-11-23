@@ -6,8 +6,13 @@ import { workingTimeWarnings } from '../rules/working-time.js'
 import {
   emergencyKindAt,
   emergencySurchargeLine,
+  emergencySurchargeText,
+  type EmergencyTariff,
+  emergencyTariffText,
   onCallShiftProblem,
   shiftCovers,
+  tariffOn,
+  tariffStarts,
 } from './on-call.js'
 
 /** Wednesday 28.10.2026 at a time of day in Germany (CET, UTC+1). */
@@ -74,6 +79,95 @@ describe('the surcharge line', () => {
 
   it('is none where the business set nothing for the kind', () => {
     expect(emergencySurchargeLine('holiday', { flatCents: 0, basisPoints: 0 }, 6800)).toBeNull()
+  })
+})
+
+describe('the surcharge the customer hears before the order (#1024)', () => {
+  it('is a flat amount with the tax, for a consumer is owed the total price', () => {
+    expect(emergencySurchargeText('night', { flatCents: 4500, basisPoints: 0 }, 1900)).toBe(
+      'Notdienstzuschlag Nacht: 53,55 € einschließlich 19 % Umsatzsteuer',
+    )
+  })
+
+  it('is the flat amount alone for a business that charges no tax', () => {
+    expect(emergencySurchargeText('holiday', { flatCents: 4500, basisPoints: 0 }, null)).toBe(
+      'Notdienstzuschlag Feiertag: 45,00 €',
+    )
+  })
+
+  it('is the percentage on the working time, and none where nothing is set', () => {
+    expect(emergencySurchargeText('weekend', { flatCents: 0, basisPoints: 2550 }, 1900)).toBe(
+      'Notdienstzuschlag Wochenende: 25,5 % auf die Arbeitszeit',
+    )
+    expect(emergencySurchargeText('weekend', { flatCents: 0, basisPoints: 0 }, 1900)).toBeNull()
+  })
+
+  it('is read from the tariff a device keeps, by the kind of the moment', () => {
+    const tariff: EmergencyTariff = {
+      on: '2026-10-28',
+      until: '2026-11-24',
+      night: { fromMinute: 22 * 60, untilMinute: 6 * 60 },
+      surcharges: {
+        night: { flatCents: 4500, basisPoints: 0 },
+        weekend: { flatCents: 0, basisPoints: 5000 },
+        holiday: { flatCents: 9000, basisPoints: 0 },
+      },
+      vatBasisPoints: 1900,
+      holidays: ['2026-11-01'],
+    }
+
+    expect(emergencyTariffText(tariff, wednesday('02:14'))).toMatch(
+      /^Notdienstzuschlag Nacht: 53,55/,
+    )
+    // Before the night the business set, and after the default one began.
+    expect(emergencyTariffText(tariff, wednesday('21:00'))).toBeNull()
+    expect(emergencyTariffText(tariff, new Date('2026-10-31T11:00:00+01:00'))).toBe(
+      'Notdienstzuschlag Wochenende: 50 % auf die Arbeitszeit',
+    )
+    expect(emergencyTariffText(tariff, new Date('2026-11-01T11:00:00+01:00'))).toMatch(
+      /^Notdienstzuschlag Feiertag: 107,10/,
+    )
+  })
+})
+
+describe('the tariffs a device keeps (#1024)', () => {
+  const tariff = (on: string, until: string, flatCents: number): EmergencyTariff => ({
+    on,
+    until,
+    night: { fromMinute: 20 * 60, untilMinute: 6 * 60 },
+    surcharges: {
+      night: { flatCents, basisPoints: 0 },
+      weekend: { flatCents: 0, basisPoints: 0 },
+      holiday: { flatCents: 0, basisPoints: 0 },
+    },
+    vatBasisPoints: 1900,
+    holidays: [],
+  })
+  const kept = [tariff('2026-10-26', '2026-10-28', 4500), tariff('2026-10-29', '2026-11-22', 6000)]
+
+  it('hold from their first to their last day, in German time', () => {
+    expect(tariffOn(kept, wednesday('02:14'))?.surcharges.night.flatCents).toBe(4500)
+    // 23:30 UTC on Wednesday is already Thursday in Germany.
+    expect(tariffOn(kept, new Date('2026-10-28T23:30:00Z'))?.surcharges.night.flatCents).toBe(6000)
+  })
+
+  it('know nothing of a day before or after them', () => {
+    expect(tariffOn(kept, new Date('2026-10-25T12:00:00+01:00'))).toBeNull()
+    expect(tariffOn(kept, new Date('2026-11-23T02:00:00+01:00'))).toBeNull()
+  })
+
+  it('begin anew on a day a setting begins on, and on a day the rate of tax changes', () => {
+    const rate = (day: string) => (day >= '2026-11-10' ? 1600 : 1900)
+
+    expect(
+      tariffStarts(
+        '2026-11-01',
+        '2026-11-29',
+        ['2026-11-05', '2026-01-01', '2026-11-30', '2026-11-05'],
+        rate,
+      ),
+    ).toEqual(['2026-11-01', '2026-11-05', '2026-11-10'])
+    expect(tariffStarts('2026-11-01', '2026-11-29', [], () => 1900)).toEqual(['2026-11-01'])
   })
 })
 

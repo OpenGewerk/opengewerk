@@ -179,6 +179,7 @@ const noInstructions = {
   choices: [],
   printed: [],
   gaps: [],
+  noInstructionBefore: false,
 }
 
 const job = {
@@ -2467,6 +2468,7 @@ describe('the instructions of a document', () => {
       },
     ],
     gaps: [],
+    noInstructionBefore: false,
   }
 
   it('lists what is proposed for a draft, and switches one off at the server', async () => {
@@ -2546,11 +2548,52 @@ describe('the instructions of a document', () => {
     expect(notice.disabled).toBe(true)
     expect(
       section.getByText(
-        'Pflicht an jedem Angebot an einen Verbraucher über eine Lieferung von Waren. Geht mit ' +
-          'dem Beleg hinaus, als letzte Seite im PDF und in der E-Mail.',
+        'Pflicht an jedem Angebot an einen Verbraucher, das Waren liefert. Geht mit dem Beleg ' +
+          'hinaus, als letzte Seite im PDF und in der E-Mail.',
       ),
     ).toBeTruthy()
-    expect(section.getByText(/ob die Mitteilung zur Gewährleistung dazugehört/)).toBeTruthy()
+    expect(
+      section.getByText(/sobald eine Position aus einem Artikel stammt oder nicht nach Stunden/),
+    ).toBeTruthy()
+  })
+
+  it('says why the instructions of a quote are proposed where none went before (#1024)', async () => {
+    serverSays('GET', '/documents/d-1/instructions', () => ({
+      status: 200,
+      body: { ...proposed, noInstructionBefore: true },
+    }))
+    await mount('/belege/d-1')
+
+    const section = within(await screen.findByRole('region', { name: 'Belehrungen' }))
+
+    expect(
+      section.getByText(/^Kein festgeschriebener Beleg vor dieser Auftragsbestätigung trug eine/),
+    ).toBeTruthy()
+  })
+
+  it('asks the server again once a position that delivers goods is added (#1024)', async () => {
+    serverSays('GET', '/documents/d-1/instructions', () => ({ status: 200, body: proposed }))
+    await mount('/belege/d-1', { document_lines: [] })
+    await screen.findByRole('region', { name: 'Belehrungen' })
+
+    const asked = () =>
+      calls.filter((call) => call.method === 'GET' && call.path === '/documents/d-1/instructions')
+        .length
+    const before = asked()
+    const person = userEvent.setup()
+
+    await person.click(await screen.findByRole('button', { name: 'Position hinzufügen' }))
+    await person.type(screen.getByLabelText('Bezeichnung'), 'Unterverteilung erneuert')
+    await person.selectOptions(screen.getByLabelText('Einheit'), 'flat_rate')
+    await person.type(screen.getByLabelText('Einzelpreis in Euro'), '1.000')
+    await person.click(screen.getByRole('button', { name: 'Position hinzufügen' }))
+
+    await waitFor(() => {
+      expect(server.operationsOn('document_lines')).toHaveLength(1)
+    })
+    await waitFor(() => {
+      expect(asked()).toBeGreaterThan(before)
+    })
   })
 
   it('keeps the one a quote to a consumer cannot go without switched on', async () => {

@@ -1,3 +1,4 @@
+import { type EmergencyTariff, emergencyKinds } from '@opengewerk/domain'
 import { request } from '@opengewerk/platform-web/sync'
 
 /**
@@ -49,4 +50,82 @@ export function swapOnCallShifts(id: string, other: string): Promise<unknown> {
     method: 'POST',
     body: JSON.stringify({ with: other }),
   })
+}
+
+/**
+ * The tariffs of an emergency call (#1024) from today on, as far as a time on
+ * call reaches, one for each span of the same values: whoever takes a call
+ * names the surcharge before the order, and calls come in where there is no
+ * network, so the device keeps the last answer.
+ */
+export function emergencyTariffs(signal?: AbortSignal): Promise<readonly EmergencyTariff[]> {
+  const waiting = new AbortController()
+  const stop = () => {
+    waiting.abort()
+  }
+  const timer = setTimeout(stop, tariffWaitMs)
+
+  signal?.addEventListener('abort', stop, { once: true })
+
+  return request<readonly EmergencyTariff[]>('/on-call-shifts/tariffs', {
+    signal: waiting.signal,
+  }).finally(() => {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', stop)
+  })
+}
+
+/**
+ * How long the question for the tariffs waits for the server (#1024). In a
+ * cellar a phone may show a network that gets nothing through, and no
+ * `offline` ever comes; after this the question gives up, and the screen
+ * names what the device kept instead of waiting while the customer is on the
+ * phone.
+ */
+export const tariffWaitMs = 5_000
+
+function isCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+}
+
+/** Whether a kept value is a tariff in the shape the server answers with. */
+function isTariff(value: unknown): value is EmergencyTariff {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const tariff = value as Partial<Record<keyof EmergencyTariff, unknown>>
+  const night = tariff.night as { fromMinute?: unknown; untilMinute?: unknown } | null | undefined
+  const surcharges = tariff.surcharges as Record<string, unknown> | null | undefined
+
+  return (
+    typeof tariff.on === 'string' &&
+    typeof tariff.until === 'string' &&
+    isCount(night?.fromMinute) &&
+    isCount(night?.untilMinute) &&
+    typeof surcharges === 'object' &&
+    surcharges !== null &&
+    emergencyKinds.every((kind) => {
+      const one = surcharges[kind] as { flatCents?: unknown; basisPoints?: unknown } | undefined
+
+      return isCount(one?.flatCents) && isCount(one?.basisPoints)
+    }) &&
+    (tariff.vatBasisPoints === null || isCount(tariff.vatBasisPoints)) &&
+    Array.isArray(tariff.holidays) &&
+    tariff.holidays.every((day) => typeof day === 'string')
+  )
+}
+
+/**
+ * The tariffs as the device keeps them (`tariffsName` in the store of the
+ * tenant), or null where it keeps none it can read.
+ */
+export function keptTariffs(raw: string | null): readonly EmergencyTariff[] | null {
+  try {
+    const kept: unknown = raw ? JSON.parse(raw) : null
+
+    return Array.isArray(kept) && kept.every(isTariff) ? (kept as EmergencyTariff[]) : null
+  } catch {
+    return null
+  }
 }

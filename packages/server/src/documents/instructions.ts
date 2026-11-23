@@ -1,4 +1,6 @@
 import {
+  currentContent,
+  deliversGoods,
   type DocumentId,
   documentInstructions,
   type DocumentKind,
@@ -20,9 +22,15 @@ import {
   wordingIsFixed,
 } from '@opengewerk/domain'
 import type { TenantTransaction } from '@opengewerk/platform-server'
-import { asc, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 
-import { documentInstructionChoices, instructions } from '../database/schema/index.js'
+import {
+  documentInstructionChoices,
+  documentLines,
+  documents,
+  documentSnapshots,
+  instructions,
+} from '../database/schema/index.js'
 
 export type InstructionRow = typeof instructions.$inferSelect
 
@@ -126,7 +134,10 @@ export interface InstructionView {
   readonly graphic: string | null
   /** Words the law prescribes whole: nothing on the screen changes them. */
   readonly fixedWording: boolean
-  /** Only for a contract about goods, "Lieferung von Waren mit Montage" on a document. */
+  /**
+   * Only for a contract about goods: "Lieferung von Waren mit Montage" on a
+   * document, or a position that delivers goods (#1024).
+   */
   readonly onlyForGoods: boolean
   /** The day the law asks for it from, where that came after its first documents. */
   readonly requiredFrom: IsoDate | null
@@ -195,9 +206,60 @@ export async function choicesOf(
 }
 
 /**
+ * What the instructions ask of a document beyond its head (#1024): whether one
+ * of its positions delivers goods, and whether an instruction on withdrawal
+ * went out with an issued document before it in its chain, read from what
+ * that document froze when it was issued.
+ */
+export async function chainFactsOf(
+  tx: TenantTransaction,
+  documentId: DocumentId,
+): Promise<{ readonly deliversGoods: boolean; readonly instructedBefore: boolean }> {
+  const lines = await tx
+    .select({
+      kind: documentLines.kind,
+      unit: documentLines.unit,
+      articleId: documentLines.articleId,
+    })
+    .from(documentLines)
+    .where(and(eq(documentLines.documentId, documentId), isNull(documentLines.deletedAt)))
+  const predecessorOf = async (id: DocumentId): Promise<DocumentId | null> => {
+    const [row] = await tx
+      .select({ predecessor: documents.predecessorDocumentId })
+      .from(documents)
+      .where(eq(documents.id, id))
+
+    return (row?.predecessor ?? null) as DocumentId | null
+  }
+  const seen = new Set<string>()
+  let instructedBefore = false
+  let at = await predecessorOf(documentId)
+
+  // A chain is a line, but a loop in it is no reason to hang.
+  while (at !== null && !instructedBefore && !seen.has(at)) {
+    seen.add(at)
+
+    const [snapshot] = await tx
+      .select({ content: documentSnapshots.content })
+      .from(documentSnapshots)
+      .where(eq(documentSnapshots.documentId, at))
+
+    instructedBefore = snapshot
+      ? currentContent(snapshot.content).instructions.some(
+          (instruction) => instruction.model?.template === 'withdrawal',
+        )
+      : false
+    at = await predecessorOf(at)
+  }
+
+  return { deliversGoods: deliversGoods(lines), instructedBefore }
+}
+
+/**
  * The instructions of a document the way it goes out, and what is missing for
  * them: the business's instructions, the choices on the document and the
- * letterhead, put together by `documentInstructions` in `domain`.
+ * letterhead, put together by `documentInstructions` in `domain`, with what
+ * its lines and its chain say (#1024).
  *
  * Writes the shipped instructions first when the business has none yet, so
  * that its first quote to a consumer gets the instruction on withdrawal
@@ -222,7 +284,12 @@ export async function instructionsFor(
   return documentInstructions(
     await instructionsOf(tx),
     await choicesOf(tx, document.id),
-    { kind: document.kind, documentDate: document.documentDate, recipientIsBusiness },
+    {
+      kind: document.kind,
+      documentDate: document.documentDate,
+      recipientIsBusiness,
+      ...(await chainFactsOf(tx, document.id)),
+    },
     issuer,
   )
 }

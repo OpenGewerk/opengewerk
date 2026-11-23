@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
-import type { TenantId } from '@opengewerk/domain'
+import { addDays, berlinClock, type EmergencyTariff, type TenantId } from '@opengewerk/domain'
 import { Database, FileStore, newId, type Renderer } from '@opengewerk/platform-server'
 import type { Pool } from 'pg'
 import request from 'supertest'
@@ -549,5 +549,69 @@ describe('the surcharge of an emergency call', () => {
     expect(designations.filter((one) => one === 'Arbeitszeit')).toHaveLength(2)
     expect(designations.filter((one) => one === 'Notdienstzuschlag Nacht')).toHaveLength(1)
     expect(designations.at(-1)).toBe('Notdienstzuschlag Nacht')
+  })
+})
+
+describe('the tariffs of an emergency call (#1024)', () => {
+  const today = berlinClock(new Date()).day
+
+  async function tariffs(who = jonas()) {
+    return (await http().get('/on-call-shifts/tariffs').set('x-test-identity', who).expect(200))
+      .body as EmergencyTariff[]
+  }
+
+  it('say what the business charges from today on, as far as a time on call reaches', async () => {
+    expect(await tariffs()).toEqual([
+      {
+        on: today,
+        until: addDays(today, 28),
+        night: { fromMinute: 20 * 60, untilMinute: 6 * 60 },
+        surcharges: {
+          night: { flatCents: 4500, basisPoints: 0 },
+          weekend: { flatCents: 0, basisPoints: 5000 },
+          holiday: { flatCents: 0, basisPoints: 0 },
+        },
+        vatBasisPoints: 1900,
+        holidays: [],
+      },
+    ])
+  })
+
+  it('begin anew on the day a new value of a surcharge begins', async () => {
+    await http()
+      .post('/settings/parameters')
+      .set('x-test-identity', owner())
+      .send({ key: 'emergency.night_flat_cents', from: addDays(today, 3), value: 6000, note: null })
+      .expect(201)
+
+    expect(
+      (await tariffs()).map((one) => [one.on, one.until, one.surcharges.night.flatCents]),
+    ).toEqual([
+      [today, addDays(today, 2), 4500],
+      [addDays(today, 3), addDays(today, 28), 6000],
+    ])
+  })
+
+  it('take the public holidays of the business of this year and the next', async () => {
+    await http()
+      .put('/holidays')
+      .set('x-test-identity', owner())
+      .send({ state: 'DE-BW', local: [] })
+      .expect(200)
+
+    const holidays = (await tariffs(office()))[0]?.holidays ?? []
+    const year = Number(today.slice(0, 4))
+
+    expect(holidays).toContain(`${String(year)}-12-25`)
+    expect(holidays).toContain(`${String(year + 1)}-01-01`)
+  })
+
+  it('name no tax for a business that claims section 19 UStG', async () => {
+    await setting('small_business.claimed', 1)
+
+    const answer = await tariffs()
+
+    expect(answer.length).toBeGreaterThan(0)
+    expect(answer.every((one) => one.vatBasisPoints === null)).toBe(true)
   })
 })

@@ -1,15 +1,25 @@
-import { berlinWall, type RecordState, urgentRepairNote } from '@opengewerk/domain'
+import {
+  berlinWall,
+  type EmergencyTariff,
+  emergencyTariffText,
+  type RecordState,
+  tariffOn,
+  urgentRepairNote,
+} from '@opengewerk/domain'
 import { Button, Field, Panel } from '@opengewerk/platform-web'
 import { SiteActionBar, SiteScreen, SiteText, SiteTrouble } from '@opengewerk/platform-web/site'
 import { maybeText, refusalFor, text, useRecords, useSync } from '@opengewerk/platform-web/sync'
+import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { BellRing, Check, Plus } from 'lucide-react'
-import { useId, useMemo, useState } from 'react'
+import { useCallback, useId, useMemo, useState, useSyncExternalStore } from 'react'
 import type { FormEvent } from 'react'
 
 import { berlinMoment, clockOf, dayMonth, longDays, weekdayIndex } from '../../app/appointments.js'
 import { useMay } from '../../app/queries.js'
 import { urgentRepairTitle } from '../../app/service-calls.js'
+import { emergencyTariffs, keptTariffs } from '../../session/on-call.js'
+import { tariffsName } from '../../sync/client.js'
 import { SiteHeader } from '../header.js'
 
 /**
@@ -45,10 +55,54 @@ function useCurrentShift(): RecordState | undefined {
   )
 }
 
+/**
+ * The tariffs of an emergency call (#1024): asked from the server where there
+ * is a network and kept in the store of the tenant, so that the surcharge is
+ * there when a call comes in where there is none, and goes with a sign out.
+ * Asked while on call only, and asked again each time a screen that shows
+ * them opens: a surcharge the office changed a minute ago is the one to name.
+ */
+function useEmergencyTariffs(onCall: boolean): {
+  readonly tariffs: readonly EmergencyTariff[] | null
+  /** Whether the server is being asked right now: what is held may be older than its answer. */
+  readonly asking: boolean
+} {
+  const client = useSync()
+  const read = useCallback(() => client.kept(tariffsName), [client])
+  const kept = useSyncExternalStore(client.subscribe, read, read)
+  const answer = useQuery({
+    queryKey: ['emergency-tariffs'],
+    queryFn: async ({ signal }) => {
+      const tariffs = await emergencyTariffs(signal)
+
+      try {
+        await client.keep(tariffsName, JSON.stringify(tariffs))
+      } catch {
+        // Not kept, but the answer stands: this screen names it now, and the
+        // next answer with a network is kept again.
+      }
+
+      return tariffs
+    },
+    enabled: onCall,
+    retry: false,
+    staleTime: 60 * 60_000,
+    refetchOnMount: 'always',
+  })
+
+  // Without a network the question pauses and is not asking, and one that
+  // gets no answer gives up after `tariffWaitMs`: then what the device kept is
+  // the surcharge to name.
+  return { tariffs: answer.data ?? keptTariffs(kept), asking: answer.fetchStatus === 'fetching' }
+}
+
 /** On top of the open jobs while on call: until when, and the way to a new call. */
 export function OnCallCard() {
   const shift = useCurrentShift()
   const may = useMay('job.on_call')
+
+  // Asked here already, so that a device on call has the surcharge before the first call.
+  useEmergencyTariffs(may && shift !== undefined)
 
   if (!shift || !may) {
     return null
@@ -119,6 +173,9 @@ export function SiteNewCallScreen() {
   const [working, setWorking] = useState(false)
   // The moment the call came in: when this screen opened.
   const [calledAt] = useState(() => new Date().toISOString())
+  const { tariffs, asking } = useEmergencyTariffs(may && shift !== undefined)
+  // The one of the day of the call; none where the kept ones do not reach it.
+  const tariff = tariffs ? tariffOn(tariffs, new Date(calledAt)) : null
 
   const found = useMemo(
     () =>
@@ -128,6 +185,10 @@ export function SiteNewCallScreen() {
     [customers, search],
   )
   const customer = chosen ? customers.find((record) => record['id'] === chosen) : undefined
+  // A new caller is made a private customer, so a consumer, and only a
+  // consumer is owed the surcharge before the order (section 312e BGB).
+  const consumer = customer ? customer['isBusiness'] !== true : true
+  const surcharge = tariff ? emergencyTariffText(tariff, new Date(calledAt)) : null
 
   if (!may || !shift) {
     return (
@@ -323,6 +384,31 @@ export function SiteNewCallScreen() {
             </label>
           </div>
         </Panel>
+
+        {consumer && (asking || surcharge !== null || tariff === null) ? (
+          <Panel title="Vor dem Auftrag nennen">
+            {asking ? (
+              <SiteText muted size={15}>
+                Der Notdienstzuschlag wird gerade vom Server geholt.
+              </SiteText>
+            ) : surcharge ? (
+              <div className="flex flex-col gap-1.5">
+                <SiteText size={16}>
+                  <b className="font-semibold">{surcharge}</b>
+                </SiteText>
+                <SiteText muted size={15}>
+                  Nenne den Zuschlag, bevor der Kunde den Auftrag gibt. Nur dann darf der Betrieb
+                  ihn berechnen.
+                </SiteText>
+              </div>
+            ) : (
+              <SiteText muted size={15}>
+                Dieses Gerät kennt den Notdienstzuschlag noch nicht, es holt ihn, sobald es Netz
+                hat. Berechnen darf der Betrieb ihn nur, wenn der Kunde ihn vor dem Auftrag erfährt.
+              </SiteText>
+            )}
+          </Panel>
+        ) : null}
       </form>
 
       <SiteText muted size={15}>

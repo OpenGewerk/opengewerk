@@ -10,6 +10,7 @@ import { and, desc, eq, gte, isNull, or, sql } from 'drizzle-orm'
 import { earlyStartRequests, mailOutbox } from '../database/schema/index.js'
 import { issuerOf } from '../documents/content.js'
 import { callOf } from '../service-calls/instructions.js'
+import { callSurchargeText } from '../service-calls/on-call.js'
 import { causeOf, nameOf, type Notification, signatureFor } from './notify.js'
 import { callInstructionsMessage } from './templates.js'
 import { customerDeleted, customerRestricted } from '../privacy/customer-erasure.js'
@@ -174,6 +175,7 @@ export async function signedEarlyStartMail(
     const text = callInstructionsMessage({
       call,
       signed: { signerName: request.signerName, signedOn: berlinClock(request.signedAt).day },
+      surcharge: await callSurchargeText(tx, call),
       issuer,
       signature: await signatureFor(tx, tenantId, issuer, null),
     })
@@ -233,6 +235,7 @@ export async function callInstructionsMail(
     const text = callInstructionsMessage({
       call,
       signed: null,
+      surcharge: await callSurchargeText(tx, call),
       issuer,
       signature: await signatureFor(tx, tenantId, issuer, senderName),
     })

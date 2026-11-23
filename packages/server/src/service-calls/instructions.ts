@@ -29,6 +29,8 @@ export interface CallForInstructions {
   readonly number: string | null
   readonly designation: string
   readonly urgentRepair: boolean
+  /** When the customer called, for an emergency call (#293); null otherwise. */
+  readonly emergencyAt: Date | null
   readonly customerId: CustomerId
   readonly customerName: string
   readonly customerEmail: string | null
@@ -71,6 +73,7 @@ export async function callOf(
       number: jobs.number,
       designation: jobs.designation,
       urgentRepair: jobs.urgentRepair,
+      emergencyAt: jobs.emergencyAt,
       customerId: jobs.customerId,
       customerName: customers.name,
       customerEmail: customers.email,

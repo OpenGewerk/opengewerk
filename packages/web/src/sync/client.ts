@@ -22,8 +22,19 @@ export type SyncClient = Mechanism
  */
 export const stopwatchName = 'stopwatch'
 
+/**
+ * The tariffs of an emergency call (#1024), as the server last gave them, so
+ * that whoever is on call names the surcharge without a network. In the store
+ * of the tenant, which every sign out takes along with the records.
+ */
+export const tariffsName = 'emergency-tariffs'
+
 export const SyncClient = {
   start(options: Omit<SyncStart, 'rules' | 'keeps'>): Promise<SyncClient> {
-    return Mechanism.start({ ...options, rules: offlineRules, keeps: [stopwatchName] })
+    return Mechanism.start({
+      ...options,
+      rules: offlineRules,
+      keeps: [stopwatchName, tariffsName],
+    })
   },
 }

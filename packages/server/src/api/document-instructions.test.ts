@@ -58,7 +58,22 @@ function http() {
   return request(app.getHttpServer())
 }
 
-async function quote(customerId = consumer, fields: Record<string, unknown> = {}) {
+/** A position that is work alone, in hours, so that it delivers no goods (#1024). */
+const hours = {
+  designation: 'Fehlersuche an der Unterverteilung',
+  quantityMilli: 2000,
+  unit: 'hour',
+  unitPriceCents: 6500,
+} as const
+
+/** A title over the positions, which the server gives the unit of a flat rate. */
+const title = { kind: 'title', designation: 'Arbeiten' } as const
+
+async function quote(
+  customerId = consumer,
+  fields: Record<string, unknown> = {},
+  lines: readonly Record<string, unknown>[] = [oneLine],
+) {
   const created = await http()
     .post('/documents')
     .set('x-test-identity', office())
@@ -66,11 +81,13 @@ async function quote(customerId = consumer, fields: Record<string, unknown> = {}
     .expect(201)
   const id = (created.body as { id: string }).id
 
-  await http()
-    .post(`/documents/${id}/lines`)
-    .set('x-test-identity', office())
-    .send(oneLine)
-    .expect(201)
+  for (const line of lines) {
+    await http()
+      .post(`/documents/${id}/lines`)
+      .set('x-test-identity', office())
+      .send(line)
+      .expect(201)
+  }
 
   return id
 }
@@ -171,7 +188,12 @@ describe('the instructions of a quote to a consumer', () => {
   it('are proposed: the instruction, its notes and its form go out with it, the sheet stays', async () => {
     const view = await instructionsOf(await quote())
 
-    expect(view).toMatchObject({ fixed: false, variant: 'service', gaps: [] })
+    expect(view).toMatchObject({
+      fixed: false,
+      variant: 'service',
+      gaps: [],
+      noInstructionBefore: false,
+    })
     expect(
       view.choices.map((entry) => [
         entry.title,
@@ -492,7 +514,7 @@ describe('the notice on the legal guarantee', () => {
   const onTheDay = { documentDate: '2026-09-27' }
 
   it('goes with a quote to a consumer about goods from 27.09.2026, last and as a page', async () => {
-    const id = await quote(consumer, onTheDay)
+    const id = await quote(consumer, onTheDay, [hours])
     const before = (await instructionsOf(id)).choices.find((entry) => entry.title === notice)
 
     expect(before).toMatchObject({
@@ -519,9 +541,49 @@ describe('the notice on the legal guarantee', () => {
     }).expect(409)
 
     expect((refused.body as { message: string }).message).toBe(
-      `Die Belehrung „${notice}“ gehört zu jedem Angebot an einen Verbraucher über eine ` +
-        'Lieferung von Waren und lässt sich nicht abschalten.',
+      `Die Belehrung „${notice}“ gehört zu jedem Angebot an einen Verbraucher, das Waren ` +
+        'liefert, und lässt sich nicht abschalten.',
     )
+  })
+
+  it('goes with a quote for work one of whose positions delivers goods, and stays on (#1024)', async () => {
+    const withMaterial = await quote(consumer, onTheDay, [hours, oneLine])
+    const view = await instructionsOf(withMaterial)
+
+    expect(view.variant).toBe('service')
+    expect(view.choices.find((entry) => entry.title === notice)).toMatchObject({
+      proposed: true,
+      included: true,
+      required: true,
+    })
+    await choose(withMaterial, {
+      instructionId: await idOf(withMaterial, notice),
+      included: false,
+    }).expect(409)
+  })
+
+  it('does not go with a quote of work alone, a title included, nor once its goods are gone (#1024)', async () => {
+    const workAlone = await quote(consumer, onTheDay, [title, hours])
+
+    expect((await instructionsOf(workAlone)).printed.map((entry) => entry.title)).not.toContain(
+      notice,
+    )
+
+    const id = await quote(consumer, onTheDay, [hours])
+    const added = await http()
+      .post(`/documents/${id}/lines`)
+      .set('x-test-identity', office())
+      .send(oneLine)
+      .expect(201)
+
+    expect((await instructionsOf(id)).printed.map((entry) => entry.title)).toContain(notice)
+
+    await http()
+      .delete(`/documents/${id}/lines/${(added.body as { id: string }).id}`)
+      .set('x-test-identity', office())
+      .expect(200)
+
+    expect((await instructionsOf(id)).printed.map((entry) => entry.title)).not.toContain(notice)
   })
 
   it('does not go with a quote dated earlier, or with one to a business', async () => {
@@ -583,6 +645,77 @@ describe('the notice on the legal guarantee', () => {
     expect(jobs.length).toBe(printedBefore)
     expect(page.getPageCount()).toBe(1)
     expect(page.getPage(0).getSize().height).toBeCloseTo(841.89, 1)
+  })
+})
+
+describe('an order confirmation to a consumer that no instruction went before (#1024)', () => {
+  const ofAQuote = [
+    'Widerrufsbelehrung',
+    'Hinweise zum Erlöschen des Widerrufsrechts',
+    'Muster-Widerrufsformular',
+  ]
+
+  async function confirmationAfter(predecessor: string) {
+    await issue(predecessor).expect(201)
+
+    const successor = await http()
+      .post(`/documents/${predecessor}/successors`)
+      .set('x-test-identity', office())
+      .send({ kind: 'order_confirmation' })
+      .expect(201)
+
+    return (successor.body as { id: string }).id
+  }
+
+  const proposedOn = async (id: string) =>
+    (await instructionsOf(id)).choices.filter((entry) => entry.proposed).map((entry) => entry.title)
+
+  it('gets what a quote must carry proposed after an estimate, and can do without it', async () => {
+    // Work alone, so that the notice on the guarantee stays out of it.
+    const id = await confirmationAfter(await quote(consumer, { kind: 'cost_estimate' }, [hours]))
+    const view = await instructionsOf(id)
+
+    expect(view.noInstructionBefore).toBe(true)
+    expect(await proposedOn(id)).toEqual(ofAQuote)
+    expect(view.printed.map((entry) => entry.title)).toEqual(ofAQuote)
+    expect(view.choices.filter((entry) => entry.required)).toEqual([])
+
+    const off = (
+      await choose(id, {
+        instructionId: await idOf(id, 'Widerrufsbelehrung'),
+        included: false,
+      }).expect(200)
+    ).body as DocumentInstructionsView
+
+    expect(off.printed.map((entry) => entry.title)).toEqual(ofAQuote.slice(1))
+
+    await issue(id).expect(201)
+
+    expect((await snapshotOf(id)).instructions.map((entry) => entry.title)).toEqual(
+      ofAQuote.slice(1),
+    )
+    expect((await instructionsOf(id)).noInstructionBefore).toBe(false)
+  })
+
+  it('gets it proposed with no document before it as well, the notice with goods from 27.09.2026', async () => {
+    expect(await proposedOn(await quote(consumer, { kind: 'order_confirmation' }))).toEqual(
+      ofAQuote,
+    )
+    expect(
+      await proposedOn(
+        await quote(consumer, { kind: 'order_confirmation', documentDate: '2026-09-27' }),
+      ),
+    ).toEqual([...ofAQuote, 'Mitteilung zur gesetzlichen Gewährleistung'])
+  })
+
+  it('gets none proposed after a quote that carried them, nor for a business', async () => {
+    const afterQuote = await confirmationAfter(await quote())
+    const toBusiness = await confirmationAfter(await quote(business, { kind: 'cost_estimate' }))
+
+    expect(await proposedOn(afterQuote)).toEqual([])
+    expect(await proposedOn(toBusiness)).toEqual([])
+    expect((await instructionsOf(afterQuote)).noInstructionBefore).toBe(false)
+    expect((await instructionsOf(toBusiness)).noInstructionBefore).toBe(false)
   })
 })
 
