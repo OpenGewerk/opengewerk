@@ -196,6 +196,17 @@ export interface FormEngine<T extends FormTerms = FormTerms> {
    */
   readonly valuesProblem: (definition: FormDefinition<T>, values: unknown) => string | null
   /**
+   * Whether a field needs an answer before the form is signed, with the values
+   * and what the form hangs on as they are: `required`, a check point, or a
+   * condition that holds (`requiredWhen`). What `sealProblems` asks of it, for
+   * a screen that says how far a section is.
+   */
+  readonly fieldAsked: (
+    field: FormField<T> | BlockField<T>,
+    values: FormValues,
+    options?: Pick<SealOptions<T>, 'subject'>,
+  ) => boolean
+  /**
    * What is missing before a form can be signed and fixed: the required
    * fields that are empty, required fields of every block included, every
    * check point without an answer or without the remark its answer needs,
@@ -210,17 +221,6 @@ export interface FormEngine<T extends FormTerms = FormTerms> {
    * to see to; a form whose values leave a block out is otherwise signed with
    * the check points of that item unanswered.
    */
-  /**
-   * Whether a field needs an answer before the form is signed, with the values
-   * and what the form hangs on as they are: `required`, a check point, or a
-   * condition that holds (`requiredWhen`). What `sealProblems` asks of it, for
-   * a screen that says how far a section is.
-   */
-  readonly fieldAsked: (
-    field: FormField<T> | BlockField<T>,
-    values: FormValues,
-    options?: Pick<SealOptions<T>, 'subject'>,
-  ) => boolean
   readonly sealProblems: (
     definition: FormDefinition<T>,
     values: FormValues,
