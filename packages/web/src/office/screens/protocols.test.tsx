@@ -390,6 +390,12 @@ describe('a test protocol in the office (#79)', () => {
       ),
     ).toBeTruthy()
     expect(screen.queryByText(/^F1, Isolationswiderstand/)).toBeNull()
+
+    // The row opened to its inputs judges in the same environment.
+    await userEvent
+      .setup()
+      .click(within(measured).getByRole('button', { name: /^F1 Steckdosen Küche/ }))
+    expect(screen.getByText(/^Innerhalb des Grenzwerts, mindestens 0,115 MΩ\./)).toBeTruthy()
   })
 
   it('judges a recurring inspection in the earthing system of its head (#1022)', async () => {

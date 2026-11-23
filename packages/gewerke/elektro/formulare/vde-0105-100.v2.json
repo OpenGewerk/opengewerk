@@ -255,7 +255,6 @@
               "kind": "choice",
               "key": "environment",
               "label": "Umgebung",
-              "carry": true,
               "hint": "Danach richtet sich der Mindestwert der Isolation nach Tabelle 11 der DGUV Information 203-072.",
               "options": [
                 { "value": "dry", "label": "trocken" },

@@ -253,6 +253,15 @@ describe('version 2 of the recurring inspection (#1022)', () => {
     ).toBe(true)
   })
 
+  it('takes nothing of a circuit over from the last protocol, so that a circuit starts with nothing entered', () => {
+    const definition = elektroRegistry.definitionFor('vde-0105-100', 2) as FormDefinition
+    const circuits = fieldsOf(definition).find((field) => field.key === 'circuits')
+    const fields = circuits?.kind === 'group' ? circuits.fields : []
+
+    expect(fields.map((field) => field.key)).toContain('environment')
+    expect(fields.filter((field) => field.carry === true)).toEqual([])
+  })
+
   it('leaves version 1 as it judged, for the protocols filled in it', () => {
     expect(recurring('insulation_without_loads', 120, damp, ordinary, 1).within).toBe(false)
     expect(recurring('insulation_with_loads', 12, itSystem, ordinary, 1).within).toBe(false)
