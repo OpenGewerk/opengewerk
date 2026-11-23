@@ -611,7 +611,7 @@ Die ersten beiden Zeilen und die letzte sind keine Einzelentscheidungen, sondern
 
 ## Änderungsprotokoll v2.95 → v2.96
 
-- Präzisiert: Das Inbetriebnahmeprotokoll einer Wallbox beurteilt den Auslösestrom der RCD über 0,5 IΔn bis IΔn mit IΔn = 30 mA, wie die Erstprüfung seit v2.91; die Schleifenimpedanz bleibt ohne Grenzwert (3.2, #1075)
+- Präzisiert: Das Inbetriebnahmeprotokoll einer Wallbox beurteilt den Auslösestrom der RCD über 0,5 IΔn bis IΔn mit IΔn = 30 mA, wie die Erstprüfung seit v2.91; die Schleifenimpedanz bleibt ohne Grenzwert (5.1, #1075)
 
 ## Änderungsprotokoll v2.94 → v2.95
 
