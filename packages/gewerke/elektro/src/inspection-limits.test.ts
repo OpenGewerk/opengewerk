@@ -248,9 +248,12 @@ describe('version 2 of the recurring inspection (#1022)', () => {
     })
     expect(recurring('rcd_trip_current', 15_000).within).toBe(false)
     expect(recurring('rcd_trip_current', 15_100).within).toBe(true)
-    expect(
-      recurring('rcd_trip_time', 400_000, {}, { ...ordinary, rcdSelective: true }).within,
-    ).toBe(true)
+    const selective = { ...ordinary, rcdSelective: true }
+
+    // A selective RCD between 130 and 500 ms, one without delay at most 300 ms.
+    expect(recurring('rcd_trip_time', 400_000, {}, selective).within).toBe(true)
+    expect(recurring('rcd_trip_time', 100_000, {}, selective).within).toBe(false)
+    expect(recurring('rcd_trip_time', 400_000).within).toBe(false)
   })
 
   it('takes nothing of a circuit over from the last protocol, so that a circuit starts with nothing entered', () => {
