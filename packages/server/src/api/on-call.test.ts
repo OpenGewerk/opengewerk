@@ -11,6 +11,7 @@ import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
+import { refreshSurchargeLine } from '../service-calls/on-call.js'
 import { ApiModule } from './api.module.js'
 import { fingerprintAsHeld } from './test-signing.js'
 import { as, testIdentities as identities } from './test-identity.js'
@@ -993,14 +994,16 @@ describe('the line of the surcharge on a draft (#1087)', () => {
       emergency_surcharge: false,
     })
 
-    // The mark is the server's: a device that sets it is refused.
-    await push(
-      app,
-      office(),
-      [changed('document_lines', its, { emergencySurcharge: { from: false, to: true } })],
-      400,
-    )
+    // The mark is the server's: a device that sets it meets a conflict.
+    const answer = await push(app, office(), [
+      changed('document_lines', its, { emergencySurcharge: { from: false, to: true } }),
+    ])
 
+    expect(answer.receipts[0]).toMatchObject({
+      outcome: 'conflict',
+      reason: 'set_by_server',
+      fields: ['emergencySurcharge'],
+    })
     expect(await surchargeOf(onDevice.invoice)).toMatchObject({ emergency_surcharge: false })
   })
 
@@ -1067,6 +1070,12 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     await price(invoice, hour, 10_000)
     await post(`/documents/${invoice}/issue`, {})
     await patch(`/jobs/${job}`, { emergencyNamedFlatCents: 2000, emergencyNamedBasisPoints: 0 })
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000, deleted: false })
+
+    // Picked as a draft just before another transaction issued it, the
+    // invoice is found fixed once it is locked, and left as it is.
+    await database.forTenant({ tenantId: north.id }, (tx) => refreshSurchargeLine(tx, invoice))
 
     expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000, deleted: false })
   })
