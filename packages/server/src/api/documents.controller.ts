@@ -447,6 +447,13 @@ export class DocumentsController {
           .select({ predecessorDocumentId: documents.predecessorDocumentId })
           .from(documents)
           .where(eq(documents.id, link))
+
+        // A document not to be seen yet, one being made right now, is not
+        // there to issue: its chain could not be locked whole.
+        if (!found && chain.length === 1) {
+          throw new NotFoundException()
+        }
+
         const next: DocumentId | null = found?.predecessorDocumentId ?? null
 
         link = next !== null && !chain.includes(next) ? next : null

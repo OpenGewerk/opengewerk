@@ -1003,21 +1003,22 @@ describe('issuing next to a transmission from a device (opengewerk#1094)', () =>
           ),
         }))
 
-      // Until the transmission waits for issuing.
-      let waiting = 0
+      // Until the transmission waits for issuing: at the lock of the quote,
+      // before it wrote anything, and not at the log behind a write.
+      let waitingAt: string[] = []
 
-      for (let tries = 0; tries < 100 && waiting === 0; tries += 1) {
+      for (let tries = 0; tries < 100 && waitingAt.length === 0; tries += 1) {
         await new Promise((resolve) => setTimeout(resolve, 50))
 
-        const { rows } = await admin.query<{ waiting: number }>(
-          'select count(*)::int as waiting from pg_stat_activity where $1 = any(pg_blocking_pids(pid))',
+        const { rows } = await admin.query<{ query: string }>(
+          'select query from pg_stat_activity where $1 = any(pg_blocking_pids(pid))',
           [held.holder()],
         )
 
-        waiting = rows[0]?.waiting ?? 0
+        waitingAt = rows.map((row) => row.query)
       }
 
-      expect(waiting).toBeGreaterThan(0)
+      expect(waitingAt).toEqual([expect.stringMatching(/from "documents".*for no key update/i)])
     } finally {
       held.release()
     }

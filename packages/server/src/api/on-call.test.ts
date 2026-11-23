@@ -1757,20 +1757,23 @@ describe('the line of the surcharge on a draft, after the settings (#1087)', () 
       contentFingerprint: await fingerprintAsHeld(admin, report),
     })
     const issuing = await lockedForIssuing(report)
-    const signing = transmitted([write, signature]).then((answer) => answer.status)
+    const signing = transmitted([write, signature]).then((answer) => ({
+      status: answer.status,
+      outcomes: ((answer.body as { receipts?: { outcome: string }[] }).receipts ?? []).map(
+        (receipt) => receipt.outcome,
+      ),
+    }))
 
     try {
       await waitingFor(admin, issuing, signing)
-      await issuing.query(
-        "update documents set subject = coalesce(subject, 'Bericht') where id = $1",
-        [report],
-      )
+      // A logged write that leaves what the signature covers as it is.
+      await issuing.query("update jobs set description = 'Zähler prüfen' where id = $1", [call.id])
       await issuing.query('commit')
     } finally {
       await issuing.query('rollback').catch(() => undefined)
       issuing.release()
     }
 
-    expect(await signing).toBe(201)
+    expect(await signing).toEqual({ status: 201, outcomes: ['applied', 'applied'] })
   })
 })
