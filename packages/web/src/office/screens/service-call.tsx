@@ -277,9 +277,13 @@ export function NewServiceCallScreen() {
     queryFn: ({ signal }) => emergencyTariffs(signal, calledOn),
     enabled: emergency && consumer,
     retry: false,
+    // What the form showed for a day is what it names and keeps (#1081): the
+    // tariffs of a day are asked once while the form is open, not anew in the
+    // background when the window comes back into focus, and forgotten with
+    // the form. Only another day of the call asks again.
+    staleTime: Infinity,
+    gcTime: 0,
   })
-  // Asked anew in the background, as when the window comes back into focus,
-  // the answer of the same day stays what the form names and keeps.
   const asking = tariffs.data === undefined && tariffs.fetchStatus === 'fetching'
   const tariff = tariffs.data && calledMoment ? tariffOn(tariffs.data, calledMoment) : null
   const surcharge = tariff && calledMoment ? emergencyTariffText(tariff, calledMoment) : null

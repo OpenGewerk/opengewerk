@@ -10,7 +10,7 @@ import {
 import { today } from '@opengewerk/platform-web/format'
 import { SyncProvider, openLocalStore } from '@opengewerk/platform-web/sync'
 import { TestServer } from '@opengewerk/platform-web/testing'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query'
 import {
   createMemoryHistory,
   createRootRoute,
@@ -18,7 +18,7 @@ import {
   createRouter,
   RouterProvider,
 } from '@tanstack/react-router'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -332,6 +332,85 @@ describe('a call taken on the phone (#292)', () => {
       emergencyNamedFlatCents: 4500,
       emergencyNamedBasisPoints: 0,
     })
+  })
+
+  it('keeps the surcharge it showed when the window comes back into focus (#1081)', async () => {
+    answers.set(`/on-call-shifts/tariffs?from=${callDay}`, fromTheCall)
+    await mount('/auftraege/service')
+
+    await type('Kunde suchen', 'Berg')
+    await userEvent.click(await screen.findByRole('button', { name: /Familie Berg/ }))
+    await userEvent.click(screen.getByRole('radio', { name: /Einfamilienhaus Lindenweg/ }))
+    await type('Anliegen', 'Heizung ohne Strom')
+    await userEvent.click(screen.getByLabelText('Notdiensteinsatz', { exact: false }))
+    await type('Anruf am', callDay)
+    await type('um', '02:14')
+
+    expect(
+      await screen.findByText(/^Vor dem Auftrag nennen: Notdienstzuschlag Nacht: 53,55/),
+    ).toBeTruthy()
+
+    // Meanwhile somebody raises the surcharge at night to 60,00 €, and the
+    // window comes back into focus.
+    const [raised] = fromTheCall
+
+    answers.set(`/on-call-shifts/tariffs?from=${callDay}`, [
+      {
+        ...raised,
+        surcharges: { ...raised?.surcharges, night: { flatCents: 6000, basisPoints: 0 } },
+      },
+    ])
+
+    try {
+      act(() => {
+        focusManager.setFocused(false)
+        focusManager.setFocused(true)
+      })
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    } finally {
+      focusManager.setFocused(undefined)
+    }
+
+    expect(screen.getByText(/^Vor dem Auftrag nennen: Notdienstzuschlag Nacht: 53,55/)).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Serviceeinsatz anlegen' }))
+
+    await waitFor(() => {
+      expect(server.all('jobs')).toHaveLength(1)
+    })
+    expect(server.all('jobs')[0]).toMatchObject({ emergencyNamedFlatCents: 4500 })
+  })
+
+  it('asks the tariffs anew when the form is opened again', async () => {
+    answers.set(`/on-call-shifts/tariffs?from=${callDay}`, fromTheCall)
+    const { router } = await mount('/auftraege/service')
+    const fill = async () => {
+      await type('Kunde suchen', 'Berg')
+      await userEvent.click(await screen.findByRole('button', { name: /Familie Berg/ }))
+      await userEvent.click(screen.getByLabelText('Notdiensteinsatz', { exact: false }))
+      await type('Anruf am', callDay)
+      await type('um', '02:14')
+    }
+
+    await fill()
+    expect(
+      await screen.findByText(/^Vor dem Auftrag nennen: Notdienstzuschlag Nacht: 53,55/),
+    ).toBeTruthy()
+
+    const [raised] = fromTheCall
+
+    answers.set(`/on-call-shifts/tariffs?from=${callDay}`, [
+      {
+        ...raised,
+        surcharges: { ...raised?.surcharges, night: { flatCents: 6000, basisPoints: 0 } },
+      },
+    ])
+    await act(() => router.navigate({ to: '/auftraege' }))
+    await act(() => router.navigate({ to: '/auftraege/service' }))
+    await fill()
+
+    expect(
+      await screen.findByText(/^Vor dem Auftrag nennen: Notdienstzuschlag Nacht: 71,40/),
+    ).toBeTruthy()
   })
 
   it('takes an emptied day of the call without breaking, and makes no job of it (#1080, #1084)', async () => {
