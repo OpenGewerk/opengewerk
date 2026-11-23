@@ -11,6 +11,12 @@ import {
   applianceProtectiveConductor,
   applianceProtectiveConductorCurrent,
 } from './appliance-limits.js'
+import {
+  circuitInsulation,
+  loopImpedanceMeasured,
+  rcdTripCurrentRange,
+  rcdTripTime,
+} from './circuit-limits.js'
 import { pvStringList } from './pv-strings.js'
 import { formUnits } from './units.js'
 
@@ -50,6 +56,10 @@ export const tradeForms = formEngine<TradeFormTerms>({
   limits: {
     loop_impedance: loopImpedance,
     rcd_trip_current: residualTripCurrent,
+    circuit_insulation: circuitInsulation,
+    loop_impedance_measured: loopImpedanceMeasured,
+    rcd_trip_current_range: rcdTripCurrentRange,
+    rcd_trip_time: rcdTripTime,
     appliance_insulation: applianceInsulation,
     appliance_protective_conductor: applianceProtectiveConductor,
     appliance_protective_conductor_current: applianceProtectiveConductorCurrent,

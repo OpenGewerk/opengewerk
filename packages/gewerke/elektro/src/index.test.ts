@@ -47,6 +47,7 @@ describe('the package Elektro und PV', () => {
       'formulare/vde-0100-600.v1.json',
       'formulare/vde-0100-600.v2.json',
       'formulare/vde-0100-600.v3.json',
+      'formulare/vde-0100-600.v4.json',
       'formulare/vde-0105-100.v1.json',
       'formulare/dguv-v3.v1.json',
       'formulare/dguv-v3.v2.json',
@@ -127,7 +128,7 @@ describe('the package Elektro und PV', () => {
     expect(
       elektroRegistry.current().map((definition) => [definition.key, definition.version]),
     ).toEqual([
-      ['vde-0100-600', 3],
+      ['vde-0100-600', 4],
       ['vde-0105-100', 1],
       ['dguv-v3', 3],
       ['vde-ar-n-4105', 1],

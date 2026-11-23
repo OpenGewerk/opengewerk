@@ -1,12 +1,13 @@
 {
   "name": "elektro",
   "title": "Elektro und PV",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "minimumCore": "0.0.0",
   "forms": [
     "formulare/vde-0100-600.v1.json",
     "formulare/vde-0100-600.v2.json",
     "formulare/vde-0100-600.v3.json",
+    "formulare/vde-0100-600.v4.json",
     "formulare/vde-0105-100.v1.json",
     "formulare/dguv-v3.v1.json",
     "formulare/dguv-v3.v2.json",

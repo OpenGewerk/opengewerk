@@ -35,6 +35,13 @@ const kitchen = {
   ratedResidualCurrentMilli: 30,
 }
 
+/**
+ * What a block of a new protocol takes from the chart beside the figures
+ * (#1021): an ordinary circuit up to 500 V with a general RCD. A signed
+ * protocol from before keeps its circuits without it.
+ */
+const ordinary = { voltageClass: 'up_to_500', rcdSelective: false }
+
 /** The protocol of the last test, as the site signed it. */
 const signed = {
   tester: 'Paul Prüfer',
@@ -246,7 +253,7 @@ describe('a test protocol in the office (#79)', () => {
       earthing_system: 'tn_s',
       nominal_voltage: 230_000,
       circuits: [
-        { circuitId: 'k-1', circuit: kitchen, values: {} },
+        { circuitId: 'k-1', circuit: { ...kitchen, ...ordinary }, values: {} },
         {
           circuitId: 'k-3',
           circuit: {
@@ -255,6 +262,7 @@ describe('a test protocol in the office (#79)', () => {
             tripCharacteristic: 'c',
             ratedCurrentMilli: 32_000,
             ratedResidualCurrentMilli: 30,
+            ...ordinary,
           },
           values: {},
         },
@@ -325,7 +333,7 @@ describe('a test protocol in the office (#79)', () => {
       earthing_system: 'tn_s',
       nominal_voltage: 230_000,
       circuits: [
-        { circuitId: 'k-1', circuit: kitchen, values: {} },
+        { circuitId: 'k-1', circuit: { ...kitchen, ...ordinary }, values: {} },
         {
           circuitId: 'k-3',
           circuit: {
@@ -334,6 +342,7 @@ describe('a test protocol in the office (#79)', () => {
             tripCharacteristic: 'c',
             ratedCurrentMilli: 32_000,
             ratedResidualCurrentMilli: 30,
+            ...ordinary,
           },
           values: {},
         },

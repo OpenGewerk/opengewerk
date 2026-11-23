@@ -350,9 +350,11 @@ describe('a test protocol on site (#79)', () => {
     expect(screen.getByText('Steckdosen Küche')).toBeTruthy()
     expect(screen.getByText('B 16 A, 30 mA, 0 von 7 eingetragen')).toBeTruthy()
     expect(screen.getByText('Für diesen Wert gibt es keinen Grenzwert.')).toBeTruthy()
-    // The limit in short beside the label, worked out of the circuit:
-    // 230 V over five times 16 A.
-    expect(screen.getByText('≤ 2,87 Ω')).toBeTruthy()
+    // The limit in short beside the label, worked out of the circuit: two
+    // thirds of 230 V over five times 16 A after Annex D (#1021), and the
+    // tripping current between half and all of 30 mA.
+    expect(screen.getByText('≤ 1,91 Ω')).toBeTruthy()
+    expect(screen.getByText('15,0 bis 30,0 mA')).toBeTruthy()
     expect(await screen.findByRole('button', { name: 'Foto zum Mangel' })).toBeTruthy()
 
     // 0,85 MΩ is below the 1 MΩ of the standard. It is shown, with where the
@@ -365,7 +367,7 @@ describe('a test protocol on site (#79)', () => {
         'Außerhalb des Grenzwerts, mindestens 1,00 MΩ. Quelle: DIN VDE 0100-600 (VDE 0100-600):2017-06, Tabelle 6.1.',
       ),
     ).toBeTruthy()
-    expect(screen.getByText('Innerhalb des Grenzwerts, höchstens 2,87 Ω.')).toBeTruthy()
+    expect(screen.getByText('Innerhalb des Grenzwerts, höchstens 1,91 Ω.')).toBeTruthy()
     expect(screen.getByText('B 16 A, 30 mA, 2 von 7 eingetragen, 1 Wert außerhalb')).toBeTruthy()
 
     // A figure that does not read is not taken.
@@ -379,7 +381,7 @@ describe('a test protocol on site (#79)', () => {
     expect(screen.getByText('Licht Flur')).toBeTruthy()
     // Nothing of F1 on the next circuit, and a limit of its own.
     expect(screen.getByLabelText('Isolationswiderstand Riso in MΩ')).toHaveProperty('value', '')
-    expect(screen.getByText('≤ 4,60 Ω')).toBeTruthy()
+    expect(screen.getByText('≤ 3,06 Ω')).toBeTruthy()
 
     // Back to F1, and what was typed there is there.
     await user.click(screen.getByRole('button', { name: 'Zu F1' }))
@@ -469,6 +471,9 @@ describe('a test protocol on site (#79)', () => {
           tripCharacteristic: 'b',
           ratedCurrentMilli: 16_000,
           ratedResidualCurrentMilli: 30,
+          // What version 4 judges by, from the chart (#1021).
+          voltageClass: 'up_to_500',
+          rcdSelective: false,
         },
         values: { insulation_resistance: 850, loop_impedance: 780, rcd_trip_time: 23_000 },
       },
@@ -480,6 +485,8 @@ describe('a test protocol on site (#79)', () => {
           tripCharacteristic: 'b',
           ratedCurrentMilli: 10_000,
           ratedResidualCurrentMilli: 30,
+          voltageClass: 'up_to_500',
+          rcdSelective: false,
         },
         values: {},
       },

@@ -146,6 +146,13 @@ describe('a circuit as a block keeps it', () => {
     expect(circuitList.itemIsValid(b16)).toBe(true)
   })
 
+  it('takes the nominal voltage and the selective RCD, and goes without them (#1021)', () => {
+    expect(isBlockCircuit({ ...b16, voltageClass: 'selv_pelv', rcdSelective: true })).toBe(true)
+    expect(isBlockCircuit({ ...b16, voltageClass: 'bis_500' })).toBe(false)
+    expect(isBlockCircuit({ ...b16, voltageClass: null })).toBe(false)
+    expect(isBlockCircuit({ ...b16, rcdSelective: 'ja' })).toBe(false)
+  })
+
   it('is refused for anything that is not one', () => {
     expect(isBlockCircuit(null)).toBe(false)
     expect(isBlockCircuit('F3')).toBe(false)

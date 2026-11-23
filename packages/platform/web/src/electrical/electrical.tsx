@@ -158,6 +158,9 @@ export function blockCircuits(
       tripCharacteristic: known(circuit, 'tripCharacteristic', tripCharacteristics),
       ratedCurrentMilli: figure(circuit, 'ratedCurrentMilli'),
       ratedResidualCurrentMilli: figure(circuit, 'ratedResidualCurrentMilli'),
+      // What the test record of version 4 judges by (#1021).
+      voltageClass: voltageClassOf(circuit),
+      rcdSelective: circuit['rcdSelective'] === true && typeof circuit['rcdType'] === 'string',
     }))
   })
 }

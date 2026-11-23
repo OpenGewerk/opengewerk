@@ -87,9 +87,13 @@ describe('the parts of one level', () => {
         tripCharacteristic: 'b',
         ratedCurrentMilli: 16_000,
         ratedResidualCurrentMilli: 30,
+        voltageClass: 'selv_pelv',
+        rcdType: 'a',
+        rcdSelective: true,
       }),
       // On the board directly, and one whose section is gone counts the same.
-      on(part('c2', 'F2', 0), 'hv', null),
+      // A selective without a type, as a record from before might hold it, is none (#1021).
+      on(part('c2', 'F2', 0), 'hv', null, { rcdSelective: true }),
       on(part('c1', 'F1', 0), 'hv', 'gone'),
       on(part('x1', 'F1', 0), 'uv', null),
     ]
@@ -104,12 +108,17 @@ describe('the parts of one level', () => {
       tripCharacteristic: 'b',
       ratedCurrentMilli: 16_000,
       ratedResidualCurrentMilli: 30,
+      voltageClass: 'selv_pelv',
+      rcdSelective: true,
     })
     expect(one[0]).toMatchObject({
       tripCharacteristic: null,
       ratedCurrentMilli: null,
       ratedResidualCurrentMilli: null,
+      voltageClass: 'up_to_500',
+      rcdSelective: false,
     })
+    expect(one[1]).toMatchObject({ rcdSelective: false })
 
     const two = blockCircuits([board, part('uv', 'UV', 1)], sections, circuits)
 
