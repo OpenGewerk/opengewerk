@@ -388,6 +388,13 @@ describe('a circuit on site', () => {
     expect(selective.disabled).toBe(true)
     expect(selective.value).toBe('general')
 
+    // A type chosen again does not bring the selective back.
+    await user.selectOptions(within(again).getByLabelText('Typ'), 'Typ A')
+
+    expect(selective.value).toBe('general')
+
+    await user.selectOptions(within(again).getByLabelText('Typ'), 'nicht angegeben')
+
     await user.click(screen.getByRole('button', { name: 'Angaben sichern' }))
 
     await waitFor(() => {

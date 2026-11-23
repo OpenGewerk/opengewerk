@@ -671,7 +671,15 @@ export function CircuitForm({
                 label: `Typ ${rcdTypeLabel[option]}`,
               })),
             ]}
-            onChange={setRcdType}
+            onChange={(value) => {
+              setRcdType(value)
+
+              // A type taken away takes the selective with it, also when a
+              // type is chosen again afterwards (#1021).
+              if (value === '') {
+                setSelective('general')
+              }
+            }}
             {...problemOf(problems, 'rcdType')}
           />
           {/* Selective only with a type: without one there is no RCD to be
