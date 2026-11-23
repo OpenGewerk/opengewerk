@@ -112,14 +112,16 @@ describe('the parts of one level', () => {
       voltageClass: 'selv_pelv',
       rcdSelective: true,
     })
-    expect(one[0]).toMatchObject({
+    // The ordinary circuit says neither, as a block from before (#1021).
+    expect(one[0]).toEqual({
+      id: 'c1',
+      designation: 'F1',
+      consumer: null,
       tripCharacteristic: null,
       ratedCurrentMilli: null,
       ratedResidualCurrentMilli: null,
-      voltageClass: 'up_to_500',
-      rcdSelective: false,
     })
-    expect(one[1]).toMatchObject({ rcdSelective: false })
+    expect(one[1]).not.toHaveProperty('rcdSelective')
 
     const two = blockCircuits([board, part('uv', 'UV', 1)], sections, circuits)
 

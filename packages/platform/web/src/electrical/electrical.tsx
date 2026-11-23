@@ -158,10 +158,13 @@ export function blockCircuits(
       tripCharacteristic: known(circuit, 'tripCharacteristic', tripCharacteristics),
       ratedCurrentMilli: figure(circuit, 'ratedCurrentMilli'),
       ratedResidualCurrentMilli: figure(circuit, 'ratedResidualCurrentMilli'),
-      // What the test record of version 4 judges by (#1021).
-      voltageClass: voltageClassOf(circuit),
-      rcdSelective:
-        circuit['rcdSelective'] === true && known(circuit, 'rcdType', rcdTypes) !== null,
+      // What the test record of version 4 judges by (#1021), only where it is
+      // not the ordinary circuit up to 500 V with a general RCD: a block from
+      // before has neither, and stays the same as the chart it was taken from.
+      ...(voltageClassOf(circuit) === 'up_to_500' ? {} : { voltageClass: voltageClassOf(circuit) }),
+      ...(circuit['rcdSelective'] === true && known(circuit, 'rcdType', rcdTypes) !== null
+        ? { rcdSelective: true }
+        : {}),
     }))
   })
 }

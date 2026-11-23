@@ -471,9 +471,6 @@ describe('a test protocol on site (#79)', () => {
           tripCharacteristic: 'b',
           ratedCurrentMilli: 16_000,
           ratedResidualCurrentMilli: 30,
-          // What version 4 judges by, from the chart (#1021).
-          voltageClass: 'up_to_500',
-          rcdSelective: false,
         },
         values: { insulation_resistance: 850, loop_impedance: 780, rcd_trip_time: 23_000 },
       },
@@ -485,8 +482,6 @@ describe('a test protocol on site (#79)', () => {
           tripCharacteristic: 'b',
           ratedCurrentMilli: 10_000,
           ratedResidualCurrentMilli: 30,
-          voltageClass: 'up_to_500',
-          rcdSelective: false,
         },
         values: {},
       },
