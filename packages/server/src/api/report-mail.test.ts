@@ -180,7 +180,9 @@ async function signedReport(business: Business, email: string | null = 'berg@exa
 
 /**
  * A delivery note out of an issued order confirmation, signed by whoever
- * received the goods on a device (#299).
+ * received the goods on a device (#299). The note is dated the day it is
+ * made, which is not the day of the signature in the first minutes after
+ * midnight (#1069).
  */
 async function signedDeliveryNote(business: Business) {
   const office = as(business.id, 'office')
@@ -267,7 +269,7 @@ async function signedDeliveryNote(business: Business) {
     (pushed.body as { receipts: { outcome: string }[] }).receipts.map((receipt) => receipt.outcome),
   ).toEqual(['applied'])
 
-  return id
+  return { id, documentDate: head.documentDate }
 }
 
 function recording() {
@@ -460,7 +462,7 @@ describe('a report signed on site', () => {
 
 describe('a delivery note signed on site (#299)', () => {
   it('goes to the customer, naming who received the goods, with its PDF', async () => {
-    await signedDeliveryNote(north)
+    const note = await signedDeliveryNote(north)
     const post = recording()
 
     expect(await cycle(post.transport)).toMatchObject({ written: 1, sent: 1 })
@@ -468,9 +470,11 @@ describe('a delivery note signed on site (#299)', () => {
     const [mail] = post.sent
 
     expect(mail?.to).toEqual({ name: 'Familie Berg', address: 'berg@example.org' })
-    expect(mail?.subject).toBe(`Lieferschein vom ${german(signedOn)} von Elektro Nord GmbH`)
+    expect(mail?.subject).toBe(
+      `Lieferschein vom ${german(note.documentDate)} von Elektro Nord GmbH`,
+    )
     expect(mail?.text).toContain(
-      `im Anhang erhalten Sie den Lieferschein vom ${german(signedOn)}. Den Empfang hat ` +
+      `im Anhang erhalten Sie den Lieferschein vom ${german(note.documentDate)}. Den Empfang hat ` +
         `Thomas Brenner am ${german(signedOn)} unterschrieben.`,
     )
     expect(mail?.attachments.map((file) => file.filename)).toEqual([
