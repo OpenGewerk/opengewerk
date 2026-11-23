@@ -21,10 +21,11 @@ import {
   shippedRules,
   type SurchargeLine,
   tariffStarts,
+  type TenantId,
   whyFixed,
 } from '@opengewerk/domain'
 import { isUuid, type TenantTransaction } from '@opengewerk/platform-server'
-import { and, eq, gt, isNull, lte } from 'drizzle-orm'
+import { and, desc, eq, gt, isNotNull, isNull, lte } from 'drizzle-orm'
 
 import { holidaySettingOf } from '../absences/absences.js'
 import { parameterAt, parameterHistory } from '../database/parameters.js'
@@ -200,7 +201,9 @@ export function takesOverSurcharge(
  * order, the settings of the day of the call. Only the marked line changes; a
  * draft without one, a fixed document and a line the office took over stay
  * as they are. The line goes where the call no longer has a surcharge, as on
- * a draft moved to a job that is no emergency.
+ * a draft moved to a job that is no emergency, and keeps its mark while it is
+ * gone: once the call has a surcharge again, the draft gets it back as a new
+ * line. A line the office or a device removes loses its mark as it goes.
  *
  * Locked like a line written in the office, so that it waits for a
  * transaction that is issuing the document and then finds it fixed.
@@ -214,7 +217,8 @@ export async function refreshSurchargeLine(
   }
 
   // Most lines are on a document without one, a report above all: asked
-  // first, before the document is locked.
+  // first, before the document is locked. A mark on a line that is gone
+  // counts, it is the surcharge the draft may get back.
   const [mark] = await tx
     .select({ id: documentLines.id })
     .from(documentLines)
@@ -222,7 +226,6 @@ export async function refreshSurchargeLine(
       and(
         eq(documentLines.documentId, documentId as DocumentId),
         eq(documentLines.emergencySurcharge, true),
-        isNull(documentLines.deletedAt),
       ),
     )
     .limit(1)
@@ -232,7 +235,12 @@ export async function refreshSurchargeLine(
   }
 
   const [document] = await tx
-    .select({ kind: documents.kind, status: documents.status, jobId: documents.jobId })
+    .select({
+      tenantId: documents.tenantId,
+      kind: documents.kind,
+      status: documents.status,
+      jobId: documents.jobId,
+    })
     .from(documents)
     .where(and(eq(documents.id, documentId as DocumentId), isNull(documents.deletedAt)))
     .for('no key update')
@@ -248,16 +256,19 @@ export async function refreshSurchargeLine(
       and(eq(documentLines.documentId, documentId as DocumentId), isNull(documentLines.deletedAt)),
     )
   const marked = lines.find((line) => line.emergencySurcharge)
-
-  if (!marked) {
-    return
-  }
-
   const surcharge = await surchargeLineFor(
     tx,
     document.jobId,
-    lines.filter((line) => line.id !== marked.id),
+    lines.filter((line) => line !== marked),
   )
+
+  if (!marked) {
+    if (surcharge !== null) {
+      await restoreSurchargeLine(tx, document.tenantId, documentId as DocumentId, lines, surcharge)
+    }
+
+    return
+  }
 
   if (surcharge === null) {
     await tx
@@ -288,6 +299,58 @@ export async function refreshSurchargeLine(
 }
 
 /**
+ * The surcharge back on a draft whose line the server took away while the
+ * call had none (#1087): a new line, as the last one, with the rate of tax of
+ * the line that went. The mark leaves the line that went, so that it comes
+ * back once and a line removed later stays removed.
+ */
+async function restoreSurchargeLine(
+  tx: TenantTransaction,
+  tenantId: TenantId,
+  documentId: DocumentId,
+  lines: readonly { readonly position: number }[],
+  surcharge: SurchargeLine,
+): Promise<void> {
+  const [gone] = await tx
+    .select({ vatRate: documentLines.vatRate })
+    .from(documentLines)
+    .where(
+      and(
+        eq(documentLines.documentId, documentId),
+        eq(documentLines.emergencySurcharge, true),
+        isNotNull(documentLines.deletedAt),
+      ),
+    )
+    .orderBy(desc(documentLines.deletedAt))
+    .limit(1)
+
+  await tx
+    .update(documentLines)
+    .set({ emergencySurcharge: false })
+    .where(
+      and(
+        eq(documentLines.documentId, documentId),
+        eq(documentLines.emergencySurcharge, true),
+        isNotNull(documentLines.deletedAt),
+      ),
+    )
+  await tx.insert(documentLines).values({
+    tenantId,
+    documentId,
+    kind: 'item',
+    position: lines.reduce((last, line) => Math.max(last, line.position), 0) + 1,
+    designation: surcharge.designation,
+    description: surcharge.description,
+    quantityMilli: surcharge.quantityMilli,
+    unit: surcharge.unit,
+    unitPriceCents: surcharge.unitPriceCents,
+    vatRate: gone?.vatRate ?? 'standard',
+    netCents: surcharge.netCents,
+    emergencySurcharge: true,
+  })
+}
+
+/**
  * The lines of the surcharge of every draft that has one, worked out again
  * (#1087): of the drafts of one job, after its call or the surcharge named
  * for it changed, or of all of them, after a setting of the surcharges or the
@@ -312,9 +375,9 @@ export async function refreshSurchargeLines(
       ),
     )
     .where(
+      // A marked line that is gone counts: its draft may get the surcharge back.
       and(
         eq(documentLines.emergencySurcharge, true),
-        isNull(documentLines.deletedAt),
         eq(documents.status, 'draft'),
         isNull(documents.deletedAt),
         ...(jobId === null ? [] : [eq(documents.jobId, jobId as JobId)]),

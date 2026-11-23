@@ -3084,6 +3084,7 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
   const changedByHand = newId<'document'>()
   const noCall = newId<'document'>()
   const twice = newId<'document'>()
+  const typedLater = newId<'document'>()
 
   async function forced(table: string): Promise<boolean> {
     const { rows } = await admin.query<{ forced: boolean }>(
@@ -3115,27 +3116,32 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
        values ($1, $5, $6, 'final_invoice', '2026-10-28', $7),
               ($2, $5, $6, 'final_invoice', '2026-10-28', $7),
               ($3, $5, $6, 'final_invoice', '2026-10-28', $8),
-              ($4, $5, $6, 'final_invoice', '2026-10-28', $7)`,
-      [given, changedByHand, noCall, twice, tenant.id, customer, call, plain],
+              ($4, $5, $6, 'final_invoice', '2026-10-28', $7),
+              ($9, $5, $6, 'final_invoice', '2026-10-28', $7)`,
+      [given, changedByHand, noCall, twice, tenant.id, customer, call, plain, typedLater],
     )
 
-    for (const [document, lines] of [
-      [given, 1],
-      [changedByHand, 1],
-      [noCall, 1],
-      [twice, 2],
+    // Given with the invoice, so in its transaction and with its moment; the
+    // last one typed by the office later, in a transaction of its own.
+    for (const [document, lines, withTheInvoice] of [
+      [given, 1, true],
+      [changedByHand, 1, true],
+      [noCall, 1, true],
+      [twice, 2, true],
+      [typedLater, 1, false],
     ] as const) {
       await admin.query(
-        `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents)
-         values ($1, $2, 1, 'Arbeitszeit', 1000, 'hour', 0, 0)`,
+        `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents, created_at)
+         values ($1, $2, 1, 'Arbeitszeit', 1000, 'hour', 0, 0, (select created_at from documents where id = $2))`,
         [tenant.id, document],
       )
 
       for (let line = 0; line < lines; line += 1) {
         await admin.query(
-          `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents)
-           values ($1, $2, $3, 'Notdienstzuschlag Nacht', 1000, 'flat_rate', 4500, 4500)`,
-          [tenant.id, document, line + 2],
+          `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents, created_at)
+           values ($1, $2, $3, 'Notdienstzuschlag Nacht', 1000, 'flat_rate', 4500, 4500,
+             case when $4::boolean then (select created_at from documents where id = $2) else now() end)`,
+          [tenant.id, document, line + 2, withTheInvoice],
         )
       }
     }
@@ -3159,6 +3165,7 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
       [changedByHand]: 0,
       [noCall]: 0,
       [twice]: 0,
+      [typedLater]: 0,
     })
     expect(
       (

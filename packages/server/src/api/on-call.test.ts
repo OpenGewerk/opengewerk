@@ -850,11 +850,14 @@ describe('the line of the surcharge on a draft (#1087)', () => {
       deleted: boolean
     }>(
       `select id, designation, description, net_cents, emergency_surcharge, deleted_at is not null as deleted
-       from document_lines where document_id = $1 and designation like 'Notdienstzuschlag %'`,
+       from document_lines where document_id = $1 and designation like 'Notdienstzuschlag %'
+       order by deleted_at desc nulls first`,
       [invoice],
     )
 
-    expect(rows).toHaveLength(1)
+    // At most one on the draft; one that went before it came back stays below.
+    expect(rows.filter((row) => !row.deleted).length).toBeLessThanOrEqual(1)
+    expect(rows.length).toBeGreaterThanOrEqual(1)
 
     return (
       rows[0] ?? {
@@ -882,6 +885,23 @@ describe('the line of the surcharge on a draft (#1087)', () => {
 
   const price = (invoice: string, line: string, unitPriceCents: number) =>
     patch(`/documents/${invoice}/lines/${line}`, { unitPriceCents })
+
+  const removeInOffice = async (invoice: string, line: string) => {
+    await http()
+      .delete(`/documents/${invoice}/lines/${line}`)
+      .set('x-test-identity', office())
+      .expect(200)
+  }
+
+  /** The lines of a draft that carry the mark, the ones gone included. */
+  async function marksOf(invoice: string) {
+    const { rows } = await admin.query<{ marks: number }>(
+      'select count(*)::int as marks from document_lines where document_id = $1 and emergency_surcharge',
+      [invoice],
+    )
+
+    return rows[0]?.marks
+  }
 
   it('follows the hours the office prices, up to what was named before the order', async () => {
     const { invoice, hour } = await draftOf({
@@ -1025,7 +1045,47 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     // Wednesday 28.10.2026 at 10:00 is no emergency.
     await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
 
+    expect(await surchargeOf(invoice)).toMatchObject({ deleted: true, emergency_surcharge: true })
+
+    // The night before is one again, and the surcharge comes back, once.
+    await sent(changed('jobs', job, { emergencyAt: { from: inTheDay, to: atNight } }))
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      designation: 'Notdienstzuschlag Nacht',
+      net_cents: 1500,
+      emergency_surcharge: true,
+      deleted: false,
+    })
+    expect(await marksOf(invoice)).toBe(1)
+
+    // Removed by the office after it came back, it stays removed.
+    await removeInOffice(invoice, (await surchargeOf(invoice)).id)
+    await price(invoice, hour, 20_000)
+
     expect(await surchargeOf(invoice)).toMatchObject({ deleted: true })
+    expect(await marksOf(invoice)).toBe(0)
+  })
+
+  it('stays removed once the office or a device removes it', async () => {
+    const inOffice = await draftOf()
+
+    await removeInOffice(inOffice.invoice, (await surchargeOf(inOffice.invoice)).id)
+    await price(inOffice.invoice, inOffice.hour, 1000)
+
+    expect(await surchargeOf(inOffice.invoice)).toMatchObject({
+      deleted: true,
+      emergency_surcharge: false,
+    })
+
+    const onDevice = await draftOf()
+
+    await sent(deleted('document_lines', (await surchargeOf(onDevice.invoice)).id))
+    await price(onDevice.invoice, onDevice.hour, 1000)
+
+    expect(await surchargeOf(onDevice.invoice)).toMatchObject({
+      deleted: true,
+      emergency_surcharge: false,
+    })
   })
 
   it('moves with the draft to the job of another call, in the office and on a device', async () => {

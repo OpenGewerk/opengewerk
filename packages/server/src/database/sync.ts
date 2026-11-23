@@ -1,6 +1,7 @@
 import {
   chosenPhotos,
   type CustomerId,
+  type DocumentLineId,
   type DocumentStatus,
   type EarlyStartWording,
   formRecordProblem,
@@ -702,6 +703,14 @@ async function afterSurchargeWrite(
   current: RecordState | null,
 ): Promise<void> {
   if (operation.entity === 'document_lines') {
+    // Removed on a device, the line of the surcharge does not come back.
+    if (operation.kind === 'delete' && current?.['emergencySurcharge'] === true) {
+      await tx
+        .update(schema.documentLines)
+        .set({ emergencySurcharge: false })
+        .where(eq(schema.documentLines.id, operation.recordId as DocumentLineId))
+    }
+
     const drafts = new Set([values['documentId'], current?.['documentId']])
 
     for (const draft of drafts) {

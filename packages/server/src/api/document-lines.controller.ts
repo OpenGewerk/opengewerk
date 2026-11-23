@@ -340,7 +340,8 @@ export class DocumentLinesController {
       // is gone is a row a device that was offline never hears about again.
       const [removed] = await tx
         .update(documentLines)
-        .set({ deletedAt: new Date() })
+        // Removed by hand, the line of the surcharge does not come back (#1087).
+        .set({ deletedAt: new Date(), emergencySurcharge: false })
         .where(
           and(
             eq(documentLines.id, lineId as DocumentLineId),

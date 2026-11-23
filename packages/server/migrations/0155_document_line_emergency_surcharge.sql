@@ -4,8 +4,10 @@
 --
 -- A draft from before gets the mark on the line its invoice was given, where
 -- nobody has changed that line since (version 1), it is the only surcharge on
--- the draft and the draft's job is an emergency call. A line the office
--- changed or typed itself stays the office's. An installation migrates as the
+-- the draft and the draft's job is an emergency call. Given means made in the
+-- transaction that made the invoice, so with its `created_at`, which is the
+-- start of that transaction. A line the office changed or typed itself stays
+-- the office's, even one that looks like it. An installation migrates as the
 -- owner of the tables, under FORCE, where the update would meet no row: the
 -- three tables go without FORCE for it and get it back right after.
 ALTER TABLE "document_lines" ADD COLUMN "emergency_surcharge" boolean DEFAULT false NOT NULL;--> statement-breakpoint
@@ -21,6 +23,7 @@ UPDATE "document_lines" l
 		AND d.kind = 'final_invoice' AND d.status = 'draft' AND d.deleted_at IS NULL
 		AND j.emergency_at IS NOT NULL
 		AND l.deleted_at IS NULL AND l.version = 1 AND l.kind = 'item' AND l.unit = 'flat_rate'
+		AND l.created_at = d.created_at
 		AND l.quantity_milli = 1000 AND l.price_base = 1
 		AND l.designation IN ('Notdienstzuschlag Nacht', 'Notdienstzuschlag Wochenende', 'Notdienstzuschlag Feiertag')
 		AND (
