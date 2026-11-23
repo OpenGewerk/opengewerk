@@ -425,6 +425,28 @@ describe('a test protocol in the office (#79)', () => {
     expect(screen.queryByText(/^F1, Isolationswiderstand/)).toBeNull()
   })
 
+  it.each(['draft', 'signed'])(
+    'judges the tripping current of a wallbox by the rated residual current the protocol names, %s (#1075)',
+    async (status) => {
+      server.put('form_records', {
+        id: `p-wallbox-${status}`,
+        definitionKey: 'vde-0100-722',
+        definitionVersion: 2,
+        installationId: 'i-1',
+        jobId: null,
+        performedOn: '2026-11-20',
+        status,
+        values: JSON.stringify({ rcd_rated_residual_current: '10', rcd_trip_current: 8000 }),
+      })
+      await mount(`/pruefprotokolle/p-wallbox-${status}`)
+
+      // 8 mA lie between half and all of 10 mA, and under half of 30 mA.
+      expect(
+        await screen.findByText(/^Innerhalb des Grenzwerts, zwischen 5,1 und 10,0 mA\./),
+      ).toBeTruthy()
+    },
+  )
+
   it('says under the interval of a recurring inspection the day of the next one (#301)', async () => {
     server.put('form_records', {
       id: 'p-9',

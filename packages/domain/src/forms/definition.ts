@@ -68,6 +68,7 @@ export interface TradeFormTerms {
     | 'circuit_insulation'
     | 'loop_impedance_measured'
     | 'rcd_trip_current_range'
+    | 'charging_rcd_trip_current_range'
     | 'rcd_trip_time'
     | 'recurring_insulation_without_loads'
     | 'recurring_insulation_with_loads'

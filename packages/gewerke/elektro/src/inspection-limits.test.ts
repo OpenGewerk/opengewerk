@@ -285,3 +285,86 @@ describe('version 2 of the recurring inspection (#1022)', () => {
     expect(measuringConditions(undefined, null)).toEqual({})
   })
 })
+
+describe('version 2 of the commissioning protocol of a wallbox (#1075)', () => {
+  function chargingMeasurement(version: number, key: string): MeasurementField {
+    const definition = elektroRegistry.definitionFor('vde-0100-722', version) as FormDefinition
+    const found = fieldsOf(definition).find((field) => field.key === key)
+
+    if (found?.kind !== 'measurement') {
+      throw new Error(`No measurement ${key} in version ${String(version)} of vde-0100-722`)
+    }
+
+    return found
+  }
+
+  function judged(milli: number, version = 2, form: Record<string, unknown> = {}) {
+    return limitVerdict(chargingMeasurement(version, 'rcd_trip_current'), milli, {
+      rules: elektroRules,
+      on,
+      circuit: null,
+      conditions: measuringConditions(null, form),
+    })
+  }
+
+  it('judges the tripping current above half up to all of the 30 mA of the charging point', () => {
+    // Milliamperes in thousandths: 15 mA is 15 000.
+    expect(judged(15_000)).toMatchObject({ within: false, fromMilli: 15_001, limitMilli: 30_000 })
+    expect(judged(15_100)).toMatchObject({ within: true })
+    expect(judged(30_000)).toMatchObject({ within: true })
+    expect(judged(30_100)).toMatchObject({ within: false })
+    expect(judged(12_000)?.text).toBe('Außerhalb des Grenzwerts, zwischen 15,1 und 30,0 mA.')
+    // The 30 mA per connection point and the range of DIN EN 61008-1.
+    expect(judged(12_000)?.source).toContain('722.531.3.101')
+    expect(judged(12_000)?.source).toContain('61008-1')
+  })
+
+  it('judges an RCD of 10 mA between half and all of its own rated residual current', () => {
+    const ten = { rcd_rated_residual_current: '10' }
+
+    expect(judged(5000, 2, ten)).toMatchObject({
+      within: false,
+      fromMilli: 5001,
+      limitMilli: 10_000,
+    })
+    expect(judged(8000, 2, ten)).toMatchObject({ within: true })
+    expect(judged(10_100, 2, ten)).toMatchObject({ within: false })
+    // The range is that of DIN EN 61008-1, the 30 mA of DIN VDE 0100-722 are not the limit then.
+    expect(judged(8000, 2, ten)?.source).not.toContain('722.531.3.101')
+    expect(judged(8000, 2, { rcd_rated_residual_current: '30' })).toMatchObject({ within: false })
+  })
+
+  it('judges nothing before DIN VDE 0100-722 asked for the RCD, named or not', () => {
+    const before = (form: Record<string, unknown>) =>
+      limitVerdict(chargingMeasurement(2, 'rcd_trip_current'), 12_000, {
+        rules: elektroRules,
+        on: '2019-05-31',
+        circuit: null,
+        conditions: measuringConditions(null, form),
+      })
+
+    expect(before({})).toMatchObject({ within: null, limitMilli: null })
+    expect(before({ rcd_rated_residual_current: '30' })).toMatchObject({
+      within: null,
+      limitMilli: null,
+    })
+  })
+
+  it('reads the rated residual current of the protocol in whole milliamperes up to 30', () => {
+    expect(measuringConditions(null, { rcd_rated_residual_current: '10' })).toEqual({
+      rcdRatedResidualMicro: 10_000,
+    })
+    expect(measuringConditions(null, { rcd_rated_residual_current: '30' })).toEqual({
+      rcdRatedResidualMicro: 30_000,
+    })
+
+    for (const odd of ['300', '0', '31', '10.5', 'zehn', 10, null]) {
+      expect(measuringConditions(null, { rcd_rated_residual_current: odd })).toEqual({})
+    }
+  })
+
+  it('leaves version 1 as it was for the protocols filled in it', () => {
+    expect(judged(12_000, 1)).toMatchObject({ within: true, limitMilli: 30_000 })
+    expect(judged(12_000, 1)).not.toHaveProperty('fromMilli')
+  })
+})
