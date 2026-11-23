@@ -448,6 +448,20 @@ describe('a service call made on call', () => {
     expect([atRoute.message, inSync.message]).toEqual([sentence, sentence])
   })
 
+  it('is no call before 2007, at the route and in the sync (#1085)', async () => {
+    const sentence = 'Der Tag des Anrufs liegt vor 2007 und ist wohl vertippt.'
+    const halfTyped = '0026-10-28T01:14:00.000Z'
+    const atRoute = await post(
+      '/jobs',
+      { customerId: customer, kind: 'service', designation: 'Licht', emergencyAt: halfTyped },
+      office(),
+      422,
+    )
+    const inSync = await push(app, office(), [aCall({ emergencyAt: halfTyped }).operation], 400)
+
+    expect([atRoute.message, inSync.message]).toEqual([sentence, sentence])
+  })
+
   it('is marked at the route of the office, and changed there', async () => {
     const made = await post('/jobs', {
       customerId: customer,

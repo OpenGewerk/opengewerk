@@ -219,10 +219,19 @@ export function emergencyAtProblem(emergencyAt: unknown): string | null {
 
   const moment = emergencyAt instanceof Date ? emergencyAt : new Date(String(emergencyAt))
 
-  return Number.isNaN(moment.getTime())
-    ? 'Der Notdiensteinsatz braucht Tag und Uhrzeit des Anrufs.'
+  if (Number.isNaN(moment.getTime())) {
+    return 'Der Notdiensteinsatz braucht Tag und Uhrzeit des Anrufs.'
+  }
+
+  // The rules of tax begin in 2007, and an invoice finds no surcharge before
+  // (#1085): a year like 0026 is a day typed in half.
+  return moment.getTime() < firstCallDay
+    ? 'Der Tag des Anrufs liegt vor 2007 und ist wohl vertippt.'
     : null
 }
+
+/** The first moment a call can be billed at: the rules of tax begin on 01.01.2007 (#1085). */
+const firstCallDay = Date.parse('2007-01-01T00:00:00+01:00')
 
 /**
  * What is wrong with the surcharge named before the order (#1081): both

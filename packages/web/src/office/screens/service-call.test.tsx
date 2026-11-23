@@ -1,6 +1,13 @@
 import 'fake-indexeddb/auto'
 
-import type { RecordState, RoleKey } from '@opengewerk/domain'
+import {
+  addDays,
+  berlinInstant,
+  type IsoDate,
+  type RecordState,
+  type RoleKey,
+} from '@opengewerk/domain'
+import { today } from '@opengewerk/platform-web/format'
 import { SyncProvider, openLocalStore } from '@opengewerk/platform-web/sync'
 import { TestServer } from '@opengewerk/platform-web/testing'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -157,6 +164,22 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+/**
+ * The day of the call in these tests: a weekday some ten days back, so that
+ * 02:14 is a call at night and within the year the form takes (#1085).
+ */
+function aWeekdayBack(): IsoDate {
+  let day = addDays(today(), -10)
+
+  while ([0, 6].includes(new Date(`${day}T12:00:00Z`).getUTCDay())) {
+    day = addDays(day, -1)
+  }
+
+  return day
+}
+
+const callDay = aWeekdayBack()
+
 describe('a call taken on the phone (#292)', () => {
   it('becomes customer, site, service call and appointment in one go', async () => {
     const { router } = await mount('/auftraege/service')
@@ -255,7 +278,7 @@ describe('a call taken on the phone (#292)', () => {
     await userEvent.click(screen.getByRole('radio', { name: /Einfamilienhaus Lindenweg/ }))
     await type('Anliegen', 'Heizung ohne Strom')
     await userEvent.click(screen.getByLabelText('Notdiensteinsatz', { exact: false }))
-    await type('Anruf am', '2026-10-28')
+    await type('Anruf am', callDay)
     await type('um', '02:14')
     await userEvent.click(screen.getByRole('button', { name: 'Serviceeinsatz anlegen' }))
 
@@ -263,15 +286,17 @@ describe('a call taken on the phone (#292)', () => {
       expect(server.all('jobs')).toHaveLength(1)
     })
 
-    // 02:14 in Germany on 28.10.2026, after the change to winter time.
-    expect(server.all('jobs')[0]?.['emergencyAt']).toBe('2026-10-28T01:14:00.000Z')
+    // 02:14 in Germany on that day, whether summer or winter time.
+    expect(server.all('jobs')[0]?.['emergencyAt']).toBe(
+      berlinInstant(callDay, 2 * 60 + 14).toISOString(),
+    )
   })
 
   // The tariffs from the day of the call: 45,00 € at night (#1080).
   const fromTheCall = [
     {
-      on: '2026-10-28',
-      until: '2026-11-25',
+      on: callDay,
+      until: addDays(callDay, 28),
       night: { fromMinute: 20 * 60, untilMinute: 6 * 60 },
       surcharges: {
         night: { flatCents: 4500, basisPoints: 0 },
@@ -284,7 +309,7 @@ describe('a call taken on the phone (#292)', () => {
   ]
 
   it('names the surcharge to a consumer before the order and keeps it with the job (#1080, #1081)', async () => {
-    answers.set('/on-call-shifts/tariffs?from=2026-10-28', fromTheCall)
+    answers.set(`/on-call-shifts/tariffs?from=${callDay}`, fromTheCall)
     await mount('/auftraege/service')
 
     await type('Kunde suchen', 'Berg')
@@ -292,7 +317,7 @@ describe('a call taken on the phone (#292)', () => {
     await userEvent.click(screen.getByRole('radio', { name: /Einfamilienhaus Lindenweg/ }))
     await type('Anliegen', 'Heizung ohne Strom')
     await userEvent.click(screen.getByLabelText('Notdiensteinsatz', { exact: false }))
-    await type('Anruf am', '2026-10-28')
+    await type('Anruf am', callDay)
     await type('um', '02:14')
 
     expect(
@@ -310,7 +335,7 @@ describe('a call taken on the phone (#292)', () => {
   })
 
   it('takes an emptied day of the call without breaking, and makes no job of it (#1080, #1084)', async () => {
-    answers.set('/on-call-shifts/tariffs?from=2026-10-28', fromTheCall)
+    answers.set(`/on-call-shifts/tariffs?from=${callDay}`, fromTheCall)
     await mount('/auftraege/service')
 
     await type('Kunde suchen', 'Berg')
@@ -331,8 +356,30 @@ describe('a call taken on the phone (#292)', () => {
     expect(server.all('jobs')).toHaveLength(0)
   })
 
+  it.each([
+    ['a year typed in half', '0026-10-28'],
+    ['older than a year', addDays(today(), -367)],
+    ['after today', addDays(today(), 1)],
+  ])('takes no call %s (#1085)', async (_, day) => {
+    await mount('/auftraege/service')
+
+    await type('Kunde suchen', 'Berg')
+    await userEvent.click(await screen.findByRole('button', { name: /Familie Berg/ }))
+    await userEvent.click(screen.getByRole('radio', { name: /Einfamilienhaus Lindenweg/ }))
+    await type('Anliegen', 'Heizung ohne Strom')
+    await userEvent.click(screen.getByLabelText('Notdiensteinsatz', { exact: false }))
+    await type('Anruf am', day)
+    await type('um', '02:14')
+    await userEvent.click(screen.getByRole('button', { name: 'Serviceeinsatz anlegen' }))
+
+    expect(
+      await screen.findByText('Der Anruf liegt höchstens ein Jahr zurück und nicht nach heute.'),
+    ).toBeTruthy()
+    expect(server.all('jobs')).toHaveLength(0)
+  })
+
   it('names nothing to a business, and keeps nothing named (#1080)', async () => {
-    answers.set('/on-call-shifts/tariffs?from=2026-10-28', fromTheCall)
+    answers.set(`/on-call-shifts/tariffs?from=${callDay}`, fromTheCall)
     await mount('/auftraege/service')
 
     await type('Kunde suchen', 'Lutz')
@@ -341,7 +388,7 @@ describe('a call taken on the phone (#292)', () => {
     await type('Ort', 'Ladenburg')
     await type('Anliegen', 'Maschine ohne Strom')
     await userEvent.click(screen.getByLabelText('Notdiensteinsatz', { exact: false }))
-    await type('Anruf am', '2026-10-28')
+    await type('Anruf am', callDay)
     await type('um', '02:14')
 
     expect(screen.queryByText(/^Vor dem Auftrag nennen/)).toBeNull()

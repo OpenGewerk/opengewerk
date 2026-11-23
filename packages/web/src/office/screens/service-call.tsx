@@ -253,9 +253,11 @@ export function NewServiceCallScreen() {
   // Only a consumer is owed the surcharge before the order (#1080, section
   // 312e BGB), and a new caller is one unless the office says otherwise.
   const consumer = customer ? customer['isBusiness'] !== true : fresh.kind === 'private'
-  // Only a whole day and time make a moment: a field being typed into makes none.
+  // Only a whole day and time make a moment, and only a call of today up to a
+  // year back (#1085): a field being typed into, or a year like 0026, makes none.
+  const calledWhole = /^\d{4}-\d{2}-\d{2}$/.test(calledOn) && /^\d{2}:\d{2}$/.test(calledAt)
   const calledMoment =
-    /^\d{4}-\d{2}-\d{2}$/.test(calledOn) && /^\d{2}:\d{2}$/.test(calledAt)
+    calledWhole && calledOn >= addDays(today(), -366) && calledOn <= today()
       ? berlinInstant(calledOn, minuteOf(calledAt))
       : null
   const tariffs = useQuery({
@@ -322,9 +324,12 @@ export function NewServiceCallScreen() {
       found['designation'] = 'Worum es geht, steht als Bezeichnung am Auftrag.'
     }
 
-    // A call of 01.01.1900 out of an emptied day is no call (#1084).
+    // A call of 01.01.1900 out of an emptied day is no call (#1084), nor one of
+    // a year typed in half (#1085).
     if (emergency && calledMoment === null) {
-      found['calledOn'] = 'Der Notdiensteinsatz braucht Tag und Uhrzeit des Anrufs.'
+      found['calledOn'] = calledWhole
+        ? 'Der Anruf liegt höchstens ein Jahr zurück und nicht nach heute.'
+        : 'Der Notdiensteinsatz braucht Tag und Uhrzeit des Anrufs.'
     }
 
     const where = newPlace ? place : customerId ? null : fresh
