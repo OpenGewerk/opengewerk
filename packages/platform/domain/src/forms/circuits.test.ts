@@ -205,7 +205,7 @@ describe('an application that binds them', () => {
     expect(engine.limitVerdict(zs, 2_880, { rules, on, item: b16 })).toMatchObject({
       within: false,
       limitMilli: 2_875,
-      text: 'Außerhalb des Grenzwerts, höchstens 2,87 Ω.',
+      text: 'Außerhalb des Grenzwerts, höchstens 2,875 Ω.',
     })
   })
 })

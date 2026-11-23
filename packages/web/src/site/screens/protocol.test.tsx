@@ -37,14 +37,14 @@ describe('the limit in short beside a measured value', () => {
     limit: { kind: 'at_most', rule: 'probe.limit' },
   }
 
-  it('says how a value stands to its limit, rounded towards the strict side', () => {
-    expect(shortLimit(field, 2_875)).toBe('≤ 2,87 Ω')
+  it('says how a value stands to its limit, as exactly as it holds (#1089)', () => {
+    expect(shortLimit(field, 2_875)).toBe('≤ 2,875 Ω')
     expect(shortLimit({ ...field, limit: { kind: 'at_least', rule: 'probe.limit' } }, 2_875)).toBe(
-      '≥ 2,88 Ω',
+      '≥ 2,875 Ω',
     )
     // Reaching the limit is outside already (opengewerk-haustechnik#93).
     expect(shortLimit({ ...field, limit: { kind: 'below', rule: 'probe.limit' } }, 2_875)).toBe(
-      '< 2,88 Ω',
+      '< 2,875 Ω',
     )
   })
 })
@@ -353,8 +353,8 @@ describe('a test protocol on site (#79)', () => {
     // The limit in short beside the label, worked out of the circuit: two
     // thirds of 230 V over five times 16 A after Annex D (#1021), and the
     // tripping current between half and all of 30 mA.
-    expect(screen.getByText('≤ 1,91 Ω')).toBeTruthy()
-    expect(screen.getByText('15,1 bis 30,0 mA')).toBeTruthy()
+    expect(screen.getByText('≤ 1,916 Ω')).toBeTruthy()
+    expect(screen.getByText('über 15,0 bis 30,0 mA')).toBeTruthy()
     expect(await screen.findByRole('button', { name: 'Foto zum Mangel' })).toBeTruthy()
 
     // 0,85 MΩ is below the 1 MΩ of the standard. It is shown, with where the
@@ -367,7 +367,7 @@ describe('a test protocol on site (#79)', () => {
         'Außerhalb des Grenzwerts, mindestens 1,00 MΩ. Quelle: DIN VDE 0100-600 (VDE 0100-600):2017-06, Tabelle 6.1.',
       ),
     ).toBeTruthy()
-    expect(screen.getByText('Innerhalb des Grenzwerts, höchstens 1,91 Ω.')).toBeTruthy()
+    expect(screen.getByText('Innerhalb des Grenzwerts, höchstens 1,916 Ω.')).toBeTruthy()
     expect(screen.getByText('B 16 A, 30 mA, 2 von 7 eingetragen, 1 Wert außerhalb')).toBeTruthy()
 
     // A figure that does not read is not taken.
@@ -381,7 +381,7 @@ describe('a test protocol on site (#79)', () => {
     expect(screen.getByText('Licht Flur')).toBeTruthy()
     // Nothing of F1 on the next circuit, and a limit of its own.
     expect(screen.getByLabelText('Isolationswiderstand Riso in MΩ')).toHaveProperty('value', '')
-    expect(screen.getByText('≤ 3,06 Ω')).toBeTruthy()
+    expect(screen.getByText('≤ 3,066 Ω')).toBeTruthy()
 
     // Back to F1, and what was typed there is there.
     await user.click(screen.getByRole('button', { name: 'Zu F1' }))
@@ -632,7 +632,7 @@ describe('a test protocol on site (#79)', () => {
 
     // 8 mA lie between half and all of 10 mA, and under half of 30 mA.
     expect(
-      await screen.findByText('Innerhalb des Grenzwerts, zwischen 5,1 und 10,0 mA.'),
+      await screen.findByText('Innerhalb des Grenzwerts, über 5,0 bis 10,0 mA.'),
     ).toBeTruthy()
   })
 
@@ -650,7 +650,7 @@ describe('a test protocol on site (#79)', () => {
     await mount('/auftraege/j-1/pruefprotokolle/p-wallbox-signed')
 
     expect(
-      await screen.findByText(/^Innerhalb des Grenzwerts, zwischen 5,1 und 10,0 mA\./),
+      await screen.findByText(/^Innerhalb des Grenzwerts, über 5,0 bis 10,0 mA\./),
     ).toBeTruthy()
   })
 

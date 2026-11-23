@@ -316,19 +316,39 @@ const numberFormats = new Map<number, Intl.NumberFormat>()
 
 /**
  * A value in thousandths as a number without its unit, `0,85`: in a column
- * whose head names the unit once.
+ * whose head names the unit once. With the places of its field and every
+ * further place the value has, down to the thousandths it is kept in (#1089):
+ * 15,01 in a field of one place stays 15,01, so that what is judged is what
+ * stands there, and a limit stands as exactly as it holds.
  */
 export function measuredNumber(milli: number, decimals: number): string {
   const format =
     numberFormats.get(decimals) ??
     new Intl.NumberFormat('de-DE', {
       minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
+      maximumFractionDigits: Math.max(decimals, 3),
     })
 
   numberFormats.set(decimals, format)
 
   return format.format(milli / 1000)
+}
+
+/**
+ * Where a range begins, as it is said (#1089): above a value the field shows
+ * when its least value inside lies one thousandth above it, as above half of a
+ * rated residual current ("über 15,0"), otherwise from its least value inside
+ * ("zwischen 130 und 500").
+ */
+export function lowerEnd(
+  fromMilli: number,
+  decimals: number,
+): { readonly above: boolean; readonly milli: number } {
+  const step = 10 ** Math.max(0, 3 - decimals)
+
+  return fromMilli % step !== 0 && (fromMilli - 1) % step === 0
+    ? { above: true, milli: fromMilli - 1 }
+    : { above: false, milli: fromMilli }
 }
 
 function isSignature(value: unknown): value is SignatureValue {
@@ -1230,19 +1250,18 @@ export function formEngine<T extends FormTerms>(setup: FormEngineSetup<T>): Form
     // A range from a lower end to the limit (#1021), both ends inside.
     const from = !atLeast && !under && worked.fromMilli !== undefined ? worked.fromMilli : null
 
-    // Written with the places of the field and rounded towards the strict
-    // side: 2,875 as "höchstens 2,87", never 2,88, or a measured 2,88 would be
-    // outside a limit that reads like it. A limit a value has to stay under
-    // rounds up instead: a value of two places under 2,875 is under 2,88. The
-    // lower end of a range rounds up like a limit to reach.
-    const step = 10 ** Math.max(0, 3 - field.decimals)
-    const shownLimit =
-      atLeast || under ? Math.ceil(limitMilli / step) * step : Math.floor(limitMilli / step) * step
+    // Written as exactly as it holds, with every place a measured value can
+    // have (#1089): 2,875 as "höchstens 2,875", and a measured 2,872 beside it
+    // is within as it reads. A range that begins just above a value the field
+    // shows says so: "über 15,0 bis 30,0".
     const written = (milli: number) => formatMeasured(milli, field.unit, field.decimals)
+    const start = from === null ? null : lowerEnd(from, field.decimals)
     const stated =
-      from === null
-        ? `${atLeast ? 'mindestens' : under ? 'unter' : 'höchstens'} ${written(shownLimit)}`
-        : `zwischen ${measuredNumber(Math.ceil(from / step) * step, field.decimals)} und ${written(shownLimit)}`
+      start === null
+        ? `${atLeast ? 'mindestens' : under ? 'unter' : 'höchstens'} ${written(limitMilli)}`
+        : `${start.above ? 'über' : 'zwischen'} ${measuredNumber(start.milli, field.decimals)} ${
+            start.above ? 'bis' : 'und'
+          } ${written(limitMilli)}`
     const range = from === null ? {} : { fromMilli: from }
 
     if (measuredMilli === null) {
