@@ -1,4 +1,10 @@
-import { applyRate, berlinClock, type IsoDate, type Synced } from '@opengewerk/platform-domain'
+import {
+  addDays,
+  applyRate,
+  berlinClock,
+  type IsoDate,
+  type Synced,
+} from '@opengewerk/platform-domain'
 
 import type { OnCallShiftId } from './identifier.js'
 
@@ -198,10 +204,12 @@ export function emergencyParameterProblem(unit: string, value: number): string |
 /**
  * What a device keeps to name the surcharge of a call where it has no network
  * (#1024): the night, the surcharge of each kind, the tax on a flat amount and
- * the public holidays, as they stood on the day it asked.
+ * the public holidays, from the first day these values hold (`on`) to the
+ * last (`until`).
  */
 export interface EmergencyTariff {
   readonly on: IsoDate
+  readonly until: IsoDate
   readonly night: { readonly fromMinute: number; readonly untilMinute: number }
   readonly surcharges: Readonly<Record<EmergencyKind, EmergencySurcharge>>
   /**
@@ -259,4 +267,46 @@ export function emergencyTariffText(tariff: EmergencyTariff, moment: Date): stri
   return kind === null
     ? null
     : emergencySurchargeText(kind, tariff.surcharges[kind], tariff.vatBasisPoints)
+}
+
+/**
+ * The tariff that holds on the day of a moment, among those a device keeps
+ * (#1024), or null where none does: a device that has been without a network
+ * for longer than they reach does not know the surcharge, and says so.
+ */
+export function tariffOn(
+  tariffs: readonly EmergencyTariff[],
+  moment: Date,
+): EmergencyTariff | null {
+  const { day } = berlinClock(moment)
+
+  return tariffs.find((tariff) => tariff.on <= day && day <= tariff.until) ?? null
+}
+
+/**
+ * The days on which a new tariff begins within the days from `from` to
+ * `until` (#1024): `from` itself, every day a setting begins on, and every
+ * day the rate of tax differs from the day before. In order, each once.
+ */
+export function tariffStarts(
+  from: IsoDate,
+  until: IsoDate,
+  settingDays: readonly IsoDate[],
+  rateOn: (day: IsoDate) => number,
+): IsoDate[] {
+  const starts = new Set<IsoDate>([from])
+
+  for (const day of settingDays) {
+    if (day > from && day <= until) {
+      starts.add(day)
+    }
+  }
+
+  for (let day = addDays(from, 1); day <= until; day = addDays(day, 1)) {
+    if (rateOn(day) !== rateOn(addDays(day, -1))) {
+      starts.add(day)
+    }
+  }
+
+  return [...starts].sort()
 }

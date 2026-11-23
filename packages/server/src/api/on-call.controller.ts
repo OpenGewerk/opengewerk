@@ -30,7 +30,7 @@ import { memberships } from '@opengewerk/platform-server/schema'
 import { and, asc, eq, gt, isNull, lt } from 'drizzle-orm'
 
 import { onCallShifts } from '../database/schema/index.js'
-import { emergencyTariffOn } from '../service-calls/on-call.js'
+import { emergencyTariffsFrom } from '../service-calls/on-call.js'
 import { RequiresPermission } from './authorization.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
 
@@ -127,15 +127,16 @@ export class OnCallController {
   constructor(private readonly database: Database) {}
 
   /**
-   * The surcharges of an emergency call as they stand today (#1024), for
-   * whoever takes calls: a device keeps them and names the surcharge to the
-   * caller before the order, with a network or without.
+   * The surcharges of an emergency call from today on, as far as a time on
+   * call reaches (#1024), for whoever takes calls: a device keeps them and
+   * names the surcharge of the day of a call to the caller before the order,
+   * with a network or without.
    */
-  @Get('tariff')
+  @Get('tariffs')
   @RequiresPermission('job.on_call')
-  tariff(@CurrentIdentity() identity: RequestIdentity): Promise<EmergencyTariff> {
+  tariffs(@CurrentIdentity() identity: RequestIdentity): Promise<readonly EmergencyTariff[]> {
     return this.database.forTenant(identity, (tx) =>
-      emergencyTariffOn(tx, berlinClock(new Date()).day),
+      emergencyTariffsFrom(tx, berlinClock(new Date()).day),
     )
   }
 

@@ -1,6 +1,12 @@
 import 'fake-indexeddb/auto'
 
-import type { EmergencyTariff, RecordState, RoleKey } from '@opengewerk/domain'
+import {
+  addDays,
+  berlinClock,
+  type EmergencyTariff,
+  type RecordState,
+  type RoleKey,
+} from '@opengewerk/domain'
 import { SyncProvider, openLocalStore } from '@opengewerk/platform-web/sync'
 import { TestServer } from '@opengewerk/platform-web/testing'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -227,45 +233,52 @@ describe('on call on site (#293)', () => {
 })
 
 describe('the surcharge named before the order (#1024)', () => {
+  const today = berlinClock(new Date()).day
   // A night around the clock, so that a call at any hour of a weekday is one.
-  const tariff: EmergencyTariff = {
-    on: '2026-11-23',
+  const tariff = (on: string, until: string, flatCents: number): EmergencyTariff => ({
+    on,
+    until,
     night: { fromMinute: 0, untilMinute: 24 * 60 },
     surcharges: {
-      night: { flatCents: 4500, basisPoints: 0 },
-      weekend: { flatCents: 4500, basisPoints: 0 },
-      holiday: { flatCents: 4500, basisPoints: 0 },
+      night: { flatCents, basisPoints: 0 },
+      weekend: { flatCents, basisPoints: 0 },
+      holiday: { flatCents, basisPoints: 0 },
     },
     vatBasisPoints: 1900,
     holidays: [],
-  }
-  const named = /^Notdienstzuschlag (Nacht|Wochenende): 53,55/
-  const kept = 'opengewerk.emergency-tariff.t-1'
+  })
+  // Until yesterday 45,00 €, from today 60,00 €: the call is today.
+  const tariffs = [
+    tariff(addDays(today, -2), addDays(today, -1), 4500),
+    tariff(today, addDays(today, 28), 6000),
+  ]
+  const named = /^Notdienstzuschlag (Nacht|Wochenende): 71,40/
+  const kept = 'opengewerk.emergency-tariffs.t-1'
 
-  it('is the one of the business, asked from the server and kept on the device', async () => {
-    answers.set('/on-call-shifts/tariff', tariff)
+  it('is the one of the business on the day of the call, asked from the server and kept on the device', async () => {
+    answers.set('/on-call-shifts/tariffs', tariffs)
     await mount('/einsatz/neu')
 
     expect(await screen.findByText(named)).toBeTruthy()
     expect(screen.getByText(/^Nenne den Zuschlag, bevor der Kunde den Auftrag gibt/)).toBeTruthy()
     await waitFor(() => {
-      expect(JSON.parse(globalThis.localStorage.getItem(kept) ?? 'null')).toEqual(tariff)
+      expect(JSON.parse(globalThis.localStorage.getItem(kept) ?? 'null')).toEqual(tariffs)
     })
   })
 
   it('comes from what the device kept where the server does not answer', async () => {
-    globalThis.localStorage.setItem(kept, JSON.stringify(tariff))
+    globalThis.localStorage.setItem(kept, JSON.stringify(tariffs))
     globalThis.localStorage.setItem(
-      'opengewerk.emergency-tariff.t-2',
-      JSON.stringify({ ...tariff, vatBasisPoints: null }),
+      'opengewerk.emergency-tariffs.t-2',
+      JSON.stringify([{ ...tariffs[1], vatBasisPoints: null }]),
     )
     await mount('/einsatz/neu')
 
     expect(await screen.findByText(named)).toBeTruthy()
   })
 
-  it('is said to be missing where the device kept none, or none it can read', async () => {
-    globalThis.localStorage.setItem(kept, JSON.stringify({ ...tariff, holidays: 'keine' }))
+  it('is said to be missing where the device kept none, none it can read, or none for the day', async () => {
+    globalThis.localStorage.setItem(kept, JSON.stringify([{ ...tariffs[1], holidays: 'keine' }]))
     await mount('/einsatz/neu')
 
     expect(
@@ -273,8 +286,18 @@ describe('the surcharge named before the order (#1024)', () => {
     ).toBeTruthy()
   })
 
+  it('is said to be missing where what the device kept ended before the day of the call', async () => {
+    globalThis.localStorage.setItem(kept, JSON.stringify([tariffs[0]]))
+    await mount('/einsatz/neu')
+
+    expect(
+      await screen.findByText(/^Dieses Gerät kennt den Notdienstzuschlag noch nicht/),
+    ).toBeTruthy()
+    expect(screen.queryByText(/^Notdienstzuschlag/)).toBeNull()
+  })
+
   it('is not named to a business, which is owed it on no such ground', async () => {
-    answers.set('/on-call-shifts/tariff', tariff)
+    answers.set('/on-call-shifts/tariffs', tariffs)
     await mount('/einsatz/neu', {
       customers: [
         { id: 'c-2', kind: 'business', name: 'Schreinerei Lutz', isBusiness: true, phone: null },

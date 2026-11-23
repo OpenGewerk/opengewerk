@@ -257,8 +257,9 @@ export function InstructionsCard({ document }: { readonly document: RecordState 
             {noInstructionBefore ? (
               <p className="text-[13px] leading-[1.4] text-ink-muted">
                 Vor dieser Auftragsbestätigung ging keine Widerrufsbelehrung hinaus, etwa weil ein
-                Kostenvoranschlag voranging. Die Widerrufsfrist beginnt erst mit ihr, deshalb sind
-                die Belehrungen eines Angebots vorgeschlagen.
+                Kostenvoranschlag voranging. Die Widerrufsfrist beginnt nicht vor einer
+                ordnungsgemäßen Belehrung, deshalb sind die Belehrungen eines Angebots
+                vorgeschlagen.
               </p>
             ) : null}
             {included.length === 0 ? (

@@ -513,7 +513,7 @@ export function requiredFor(
  * Whether an order confirmation to a consumer gets the instructions a quote
  * must carry proposed (#1024): where no instruction on withdrawal went out
  * before it in its chain, as when it follows an estimate. The period of
- * withdrawal starts only with the instruction (section 356 (3) BGB), and
+ * withdrawal does not begin before the instruction (section 356 (3) BGB), and
  * compensation for work already done is owed only after a proper one
  * (section 357a (2) BGB).
  */

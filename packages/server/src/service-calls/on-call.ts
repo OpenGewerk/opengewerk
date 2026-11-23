@@ -1,4 +1,5 @@
 import {
+  addDays,
   berlinClock,
   type ConflictReason,
   defaultNight,
@@ -13,14 +14,16 @@ import {
   type IsoDate,
   type JobId,
   type LineUnit,
+  longestOnCallDays,
   shippedRules,
   type SurchargeLine,
+  tariffStarts,
 } from '@opengewerk/domain'
 import { isUuid, type TenantTransaction } from '@opengewerk/platform-server'
 import { and, eq, gt, isNull, lte } from 'drizzle-orm'
 
 import { holidaySettingOf } from '../absences/absences.js'
-import { parameterAt } from '../database/parameters.js'
+import { parameterAt, parameterHistory } from '../database/parameters.js'
 import { jobs, onCallShifts } from '../database/schema/index.js'
 
 /**
@@ -185,6 +188,7 @@ export async function emergencyTariffOn(
 
   return {
     on: day,
+    until: day,
     night: {
       fromMinute: (await number('emergency.night_from_minute')) ?? defaultNight.fromMinute,
       untilMinute: (await number('emergency.night_until_minute')) ?? defaultNight.untilMinute,
@@ -195,6 +199,49 @@ export async function emergencyTariffOn(
       : shippedRules.valueAt('vat.standard', 'basis_points', day),
     holidays,
   }
+}
+
+/** The settings a tariff reads, so that a new value of one of them begins a new tariff. */
+const tariffSettings: ReadonlySet<string> = new Set([
+  ...emergencyKinds.flatMap((kind) => [
+    `emergency.${kind}_flat_cents`,
+    `emergency.${kind}_basis_points`,
+  ]),
+  'emergency.night_from_minute',
+  'emergency.night_until_minute',
+  'small_business.claimed',
+])
+
+/**
+ * The tariffs of the days from `from` on, as far as a time on call can reach
+ * (#1024): one for each span in which the values stay the same, so that a
+ * device without a network names the surcharge of the day of the call, also
+ * after a setting or the rate of tax changes. Each tariff is read the way the
+ * invoice reads it, by `emergencyTariffOn`.
+ */
+export async function emergencyTariffsFrom(
+  tx: TenantTransaction,
+  from: IsoDate,
+): Promise<EmergencyTariff[]> {
+  const last = addDays(from, longestOnCallDays)
+  const settingDays = (await parameterHistory(tx))
+    .filter((row) => tariffSettings.has(row.key))
+    .map((row) => row.validFrom)
+  const starts = tariffStarts(from, last, settingDays, (day) =>
+    shippedRules.valueAt('vat.standard', 'basis_points', day),
+  )
+  const tariffs: EmergencyTariff[] = []
+
+  for (const [index, start] of starts.entries()) {
+    const next = starts[index + 1]
+
+    tariffs.push({
+      ...(await emergencyTariffOn(tx, start)),
+      until: next === undefined ? last : addDays(next, -1),
+    })
+  }
+
+  return tariffs
 }
 
 /**

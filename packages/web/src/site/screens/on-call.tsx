@@ -3,6 +3,7 @@ import {
   type EmergencyTariff,
   emergencyTariffText,
   type RecordState,
+  tariffOn,
   urgentRepairNote,
 } from '@opengewerk/domain'
 import { Button, Field, Panel } from '@opengewerk/platform-web'
@@ -18,7 +19,7 @@ import type { FormEvent } from 'react'
 import { berlinMoment, clockOf, dayMonth, longDays, weekdayIndex } from '../../app/appointments.js'
 import { useMay } from '../../app/queries.js'
 import { urgentRepairTitle } from '../../app/service-calls.js'
-import { emergencyTariff, rememberTariff, rememberedTariff } from '../../session/on-call.js'
+import { emergencyTariffs, rememberTariffs, rememberedTariffs } from '../../session/on-call.js'
 import { SiteHeader } from '../header.js'
 
 /**
@@ -55,30 +56,30 @@ function useCurrentShift(): RecordState | undefined {
 }
 
 /**
- * The tariff of an emergency call (#1024): asked from the server where there
+ * The tariffs of an emergency call (#1024): asked from the server where there
  * is a network and kept on the device, so that the surcharge is there when a
  * call comes in where there is none. Asked while on call only.
  */
-function useEmergencyTariff(onCall: boolean): EmergencyTariff | null {
+function useEmergencyTariffs(onCall: boolean): readonly EmergencyTariff[] | null {
   const account = useQuery(accountQuery)
   const tenantId = account.data?.tenantId ?? null
   const answer = useQuery({
-    queryKey: ['emergency-tariff', tenantId],
+    queryKey: ['emergency-tariffs', tenantId],
     queryFn: async () => {
-      const tariff = await emergencyTariff()
+      const tariffs = await emergencyTariffs()
 
       if (tenantId !== null) {
-        rememberTariff(tenantId, tariff)
+        rememberTariffs(tenantId, tariffs)
       }
 
-      return tariff
+      return tariffs
     },
     enabled: onCall && tenantId !== null,
     retry: false,
     staleTime: 60 * 60_000,
   })
 
-  return answer.data ?? (tenantId === null ? null : rememberedTariff(tenantId))
+  return answer.data ?? (tenantId === null ? null : rememberedTariffs(tenantId))
 }
 
 /** On top of the open jobs while on call: until when, and the way to a new call. */
@@ -87,7 +88,7 @@ export function OnCallCard() {
   const may = useMay('job.on_call')
 
   // Asked here already, so that a device on call has the surcharge before the first call.
-  useEmergencyTariff(may && shift !== undefined)
+  useEmergencyTariffs(may && shift !== undefined)
 
   if (!shift || !may) {
     return null
@@ -158,7 +159,9 @@ export function SiteNewCallScreen() {
   const [working, setWorking] = useState(false)
   // The moment the call came in: when this screen opened.
   const [calledAt] = useState(() => new Date().toISOString())
-  const tariff = useEmergencyTariff(may && shift !== undefined)
+  const tariffs = useEmergencyTariffs(may && shift !== undefined)
+  // The one of the day of the call; none where the kept ones do not reach it.
+  const tariff = tariffs ? tariffOn(tariffs, new Date(calledAt)) : null
 
   const found = useMemo(
     () =>
