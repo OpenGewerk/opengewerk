@@ -55,8 +55,9 @@ export {
  * from its protective device and the tripping current from its residual
  * current appliance, the two worked out of an appliance (#303), its insulation by
  * the protection class and its protective conductor by the lead, the four of
- * version 4 of the first inspection worked out of a circuit (#1021), and the
- * kinds of field it shows.
+ * version 4 of the first inspection worked out of a circuit (#1021), the two
+ * insulations of version 2 of the recurring inspection (#1022), and the kinds
+ * of field it shows.
  */
 export interface TradeFormTerms {
   readonly unit: MeasurementUnit
@@ -68,6 +69,8 @@ export interface TradeFormTerms {
     | 'loop_impedance_measured'
     | 'rcd_trip_current_range'
     | 'rcd_trip_time'
+    | 'recurring_insulation_without_loads'
+    | 'recurring_insulation_with_loads'
     | 'appliance_insulation'
     | 'appliance_protective_conductor'
     | 'appliance_protective_conductor_current'

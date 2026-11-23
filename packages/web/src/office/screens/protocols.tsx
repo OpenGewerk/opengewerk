@@ -18,6 +18,7 @@ import {
   formatMeasured,
   formValuesText,
   limitVerdict,
+  measuringConditions,
   measuredNumber,
   measurementUnitSign,
   sealingField,
@@ -604,11 +605,14 @@ function columnHead(field: BlockField): string {
 function ValueCell({
   field,
   block,
+  form,
   performedOn,
   photos,
 }: {
   readonly field: BlockField
   readonly block: GroupBlock
+  /** The values of the whole protocol, whose earthing system a limit asks for (#1022). */
+  readonly form: ProtocolDraft['draft']
   readonly performedOn: string
   readonly photos: ProtocolDraft['photos']
 }) {
@@ -623,6 +627,7 @@ function ValueCell({
       rules: protocolRules,
       on: performedOn,
       circuit: block.circuit,
+      conditions: measuringConditions(block.values, form),
     })
 
     // Green while it holds, red outside its limit, as the board colours
@@ -652,13 +657,15 @@ function ValueCell({
 function Progress({
   field,
   block,
+  form,
   performedOn,
 }: {
   readonly field: GroupField
   readonly block: GroupBlock
+  readonly form: ProtocolDraft['draft']
   readonly performedOn: string
 }) {
-  const outside = outsideIn(field, block, performedOn)
+  const outside = outsideIn(field, block, performedOn, form)
   const filled = filledIn(field, block)
 
   if (outside > 0) {
@@ -682,6 +689,7 @@ function Progress({
 function outsideLines(
   field: GroupField,
   blocks: readonly GroupBlock[],
+  form: ProtocolDraft['draft'],
   performedOn: string,
 ): readonly { readonly key: string; readonly said: string; readonly source: string | null }[] {
   return blocks.flatMap((block, index) =>
@@ -696,6 +704,7 @@ function outsideLines(
         rules: protocolRules,
         on: performedOn,
         circuit: block.circuit,
+        conditions: measuringConditions(block.values, form),
       })
 
       return verdict.within === false
@@ -737,7 +746,7 @@ function MeasurementsCard({
     field.repeat === 'circuits' &&
     formValuesText({ blocks: followed }) !== formValuesText({ blocks })
   const columns = field.fields.filter((nested) => nested.kind !== 'text')
-  const outside = outsideLines(field, blocks, performedOn)
+  const outside = outsideLines(field, blocks, protocol.draft, performedOn)
 
   const change = (index: number, block: GroupBlock) => {
     protocol.set(
@@ -840,7 +849,7 @@ function MeasurementsCard({
   const cards: TableCard[] = blocks.map((block, index) => ({
     key: block.circuitId ?? `free-${String(index)}`,
     title: opener(block, index),
-    right: <Progress field={field} block={block} performedOn={performedOn} />,
+    right: <Progress field={field} block={block} form={protocol.draft} performedOn={performedOn} />,
     ...(open === index ? { form: editor(block, index) } : {}),
   }))
 
@@ -897,12 +906,18 @@ function MeasurementsCard({
                   key={nested.key}
                   field={nested}
                   block={block}
+                  form={protocol.draft}
                   performedOn={performedOn}
                   photos={photos}
                 />
               ))}
               <Cell>
-                <Progress field={field} block={block} performedOn={performedOn} />
+                <Progress
+                  field={field}
+                  block={block}
+                  form={protocol.draft}
+                  performedOn={performedOn}
+                />
               </Cell>
             </tr>
           )
@@ -955,6 +970,7 @@ function BlockEditor({
                 field={nested}
                 value={block.values[nested.key]}
                 circuit={block.circuit}
+                conditions={measuringConditions(block.values, protocol.draft)}
                 performedOn={performedOn}
                 photos={photos}
                 onChange={(value) => {
@@ -974,6 +990,7 @@ function BlockEditor({
                 field={nested}
                 value={block.values[nested.key]}
                 circuit={block.circuit}
+                conditions={measuringConditions(block.values, protocol.draft)}
                 performedOn={performedOn}
                 photos={photos}
               />

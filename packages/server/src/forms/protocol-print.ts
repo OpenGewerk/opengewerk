@@ -12,6 +12,7 @@ import {
   type IsoDate,
   isRuleLimit,
   limitVerdict,
+  measuringConditions,
   type MeasurementField,
   measurementUnitSign,
   nextInspectionKey,
@@ -269,6 +270,7 @@ function groupTable(
               rules: protocol.rules,
               on: protocol.performedOn,
               circuit: block.circuit,
+              conditions: measuringConditions(block.values, protocol.values),
             })
 
             return `<td class="figure${verdict.within === false ? ' outside' : ''}">${text(
@@ -321,6 +323,12 @@ function circuitLimitLegend(kind: string | undefined, protocol: PrintedProtocol)
 
     return rule ? String(rule.value / 10_000).replace('.', ',') : null
   }
+  // Ohms per volt as table 11 of the DGUV Information 203-072 writes them (#1022).
+  const perVolt = (key: string) => {
+    const rule = at(key)
+
+    return rule ? `${String(rule.value)} Ω/V` : null
+  }
   const missing = 'für diesen Tag kein Grenzwert hinterlegt'
 
   switch (kind) {
@@ -360,6 +368,23 @@ function circuitLimitLegend(kind: string | undefined, protocol: PrintedProtocol)
         ? `über ${least} × IΔn bis ${most} × IΔn des Stromkreises; ${sources(
             'elektro.rcd.trip_current_minimum',
             'elektro.rcd.trip_current_maximum',
+          )}`
+        : missing
+    }
+    case 'recurring_insulation_without_loads':
+    case 'recurring_insulation_with_loads': {
+      const loads = kind === 'recurring_insulation_with_loads' ? 'with_loads' : 'without_loads'
+      const dry = perVolt(`elektro.insulation.recurring_per_volt_${loads}_dry`)
+      const damp = perVolt(`elektro.insulation.recurring_per_volt_${loads}_damp`)
+      const it = perVolt('elektro.insulation.recurring_per_volt_it')
+      const low = ohms('elektro.insulation.recurring_selv_pelv')
+
+      return dry && damp && it && low
+        ? `nach Umgebung und Netzform des Stromkreises mindestens ${dry} trocken, ${damp} feucht, ${it} im IT-System, je Volt der Nennspannung des Protokolls, ohne Angabe 230 V, und ${text(
+            low,
+          )} bei SELV und PELV; einen Stromkreis über 500 V beurteilt das Protokoll nicht, weil es seine Nennspannung nicht kennt; ${sources(
+            `elektro.insulation.recurring_per_volt_${loads}_dry`,
+            'elektro.insulation.recurring_selv_pelv',
           )}`
         : missing
     }

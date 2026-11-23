@@ -116,6 +116,34 @@ describe('the limits under a table of a printed protocol', () => {
   })
 })
 
+describe('a printed recurring inspection in version 2 (#1022)', () => {
+  const second = elektroRegistry.definitionFor('vde-0105-100', 2)
+
+  it('judges a circuit in the earthing system of the protocol and says table 11 under the table', () => {
+    expect(second).not.toBeNull()
+
+    const { html } = protocolPrintJob({
+      ...protocol,
+      definition: second as FormDefinition,
+      values: {
+        earthing_system: 'it',
+        circuits: [
+          { circuitId: 'k-1', circuit: null, values: { insulation_with_loads: 20 } },
+          { circuitId: 'k-2', circuit: null, values: { insulation_with_loads: 11 } },
+        ],
+      },
+      performedOn: '2026-11-20',
+      rules: elektroRules,
+    })
+
+    // 50 Ω per volt in an IT system: 0,020 MΩ holds, 0,011 MΩ does not.
+    expect(html.match(/<td class="figure outside">/g)).toHaveLength(1)
+    expect(html).toContain(
+      'nach Umgebung und Netzform des Stromkreises mindestens 300 Ω/V trocken, 150 Ω/V feucht, 50 Ω/V im IT-System, je Volt der Nennspannung des Protokolls, ohne Angabe 230 V, und 0,25 MΩ bei SELV und PELV; einen Stromkreis über 500 V beurteilt das Protokoll nicht, weil es seine Nennspannung nicht kennt',
+    )
+  })
+})
+
 describe('the next inspection on a printed protocol (#301)', () => {
   const recurring = elektroRegistry.definitionFor('vde-0105-100', 1)
 
