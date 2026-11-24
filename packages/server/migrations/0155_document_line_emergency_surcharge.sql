@@ -4,7 +4,9 @@
 --
 -- A draft from before gets the mark on the line its invoice was given, where
 -- nobody has changed that line since (version 1), it is the only surcharge on
--- the draft and the draft's job is an emergency call. Given means made in the
+-- the draft (a position of the word alone or with its kind after it, as the
+-- server tells one the office typed; a heading is none) and the draft's job is
+-- an emergency call. Given means made in the
 -- transaction that made the invoice, so with its `created_at`, which is the
 -- start of that transaction. Not a line copied in that transaction from the
 -- report or a source of the collective invoice, which has a line of the same
@@ -44,7 +46,8 @@ UPDATE "document_lines" l
 		AND (
 			SELECT count(*) FROM "document_lines" o
 			WHERE o.tenant_id = l.tenant_id AND o.document_id = l.document_id
-				AND o.deleted_at IS NULL AND o.designation LIKE 'Notdienstzuschlag %'
+				AND o.deleted_at IS NULL AND o.kind = 'item'
+				AND (o.designation = 'Notdienstzuschlag' OR o.designation LIKE 'Notdienstzuschlag %')
 		) = 1;--> statement-breakpoint
 SELECT set_config('app.reason', '', true);--> statement-breakpoint
 ALTER TABLE "document_sources" FORCE ROW LEVEL SECURITY;--> statement-breakpoint

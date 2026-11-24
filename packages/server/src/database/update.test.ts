@@ -3089,6 +3089,8 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
   const source = newId<'document'>()
   const copied = newId<'document'>()
   const collected = newId<'document'>()
+  const withHeading = newId<'document'>()
+  const withTypedWord = newId<'document'>()
 
   async function forced(table: string): Promise<boolean> {
     const { rows } = await admin.query<{ forced: boolean }>(
@@ -3123,6 +3125,15 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
               ($4, $5, $6, 'final_invoice', '2026-10-28', $7),
               ($9, $5, $6, 'final_invoice', '2026-10-28', $7)`,
       [given, changedByHand, noCall, twice, tenant.id, customer, call, plain, typedLater],
+    )
+
+    // Two more given their surcharge: one with a heading of the word, one
+    // with a surcharge the office typed as the word alone.
+    await admin.query(
+      `insert into documents (id, tenant_id, customer_id, kind, document_date, job_id)
+       values ($1, $3, $4, 'final_invoice', '2026-10-28', $5),
+              ($2, $3, $4, 'final_invoice', '2026-10-28', $5)`,
+      [withHeading, withTypedWord, tenant.id, customer, call],
     )
 
     // Two reports that carry the surcharge as a line of their own: the
@@ -3170,6 +3181,8 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
       [typedLater, 1, false],
       [copied, 1, true],
       [collected, 1, true],
+      [withHeading, 1, true],
+      [withTypedWord, 1, true],
     ] as const) {
       await admin.query(
         `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents, created_at)
@@ -3186,6 +3199,13 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
         )
       }
     }
+
+    await admin.query(
+      `insert into document_lines (tenant_id, document_id, kind, position, designation, quantity_milli, unit, unit_price_cents, net_cents)
+       values ($1, $2, 'title', 8, 'Notdienstzuschlag Hinweis', 0, 'piece', 0, 0),
+              ($1, $3, 'item', 9, 'Notdienstzuschlag', 1000, 'flat_rate', 3000, 3000)`,
+      [tenant.id, withHeading, withTypedWord],
+    )
 
     // The office lowered the surcharge of this one by hand.
     await admin.query(
@@ -3211,6 +3231,8 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
       [source]: 0,
       [copied]: 0,
       [collected]: 0,
+      [withHeading]: 1,
+      [withTypedWord]: 0,
     })
     expect(
       (
