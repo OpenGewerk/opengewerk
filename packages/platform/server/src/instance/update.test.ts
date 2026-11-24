@@ -310,6 +310,21 @@ describe('the notes of a release', () => {
     ])
   }, 2000)
 
+  // A point that goes on over many lines is read once, not again with every
+  // line (the security review of opengewerk#1093).
+  it('read a point of many lines at once', () => {
+    const lines = 30_000
+    const shown = releaseNotes(`### Sicherheit\n- x\n${'a\n'.repeat(lines)}`)
+
+    expect(shown).toEqual([
+      {
+        title: 'Sicherheit',
+        security: true,
+        items: [`x${' a'.repeat(lines)}`.slice(0, 1000)],
+      },
+    ])
+  }, 2000)
+
   it('compare their versions by number and not as text', () => {
     expect(laterVersion('0.10.0', '0.9.9')).toBe(true)
     expect(laterVersion('0.9.9', '0.10.0')).toBe(false)

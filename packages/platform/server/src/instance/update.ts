@@ -166,8 +166,11 @@ function blank(character: string | undefined): boolean {
  * install, is left out. At most twelve parts of fifty points each.
  */
 export function releaseNotes(markdown: string): InstanceReleaseNotesSection[] {
-  const sections: { title: string; items: string[] }[] = []
-  let current: { title: string; items: string[] } | null = null
+  // Each point as its lines, read once it is complete: read again with each
+  // line that goes on with it, a point of many lines took time that grew
+  // with the square of them.
+  const sections: { title: string; points: string[][] }[] = []
+  let current: { title: string; points: string[][] } | null = null
 
   for (const raw of markdown.replace(/\r/g, '').split('\n')) {
     const line = raw.trimEnd()
@@ -178,7 +181,7 @@ export function releaseNotes(markdown: string): InstanceReleaseNotesSection[] {
 
     // By hand rather than with a pattern, for the same reason as `linkWords`.
     if (line.startsWith('###') && blank(line[3])) {
-      current = { title: plain(line.slice(3)), items: [] }
+      current = { title: plain(line.slice(3)), points: [] }
       sections.push(current)
       continue
     }
@@ -190,20 +193,19 @@ export function releaseNotes(markdown: string): InstanceReleaseNotesSection[] {
     const point = line.trimStart()
 
     if (point.length > 1 && '-*+'.includes(point[0] ?? '') && blank(point[1])) {
-      current.items.push(plain(point.slice(1)))
-    } else if (line.trim() !== '' && current.items.length > 0) {
+      current.points.push([point.slice(1)])
+    } else if (line.trim() !== '') {
       // A line that goes on with the point above it.
-      const last = current.items.length - 1
-      current.items[last] = plain(`${current.items[last] ?? ''} ${line}`)
+      current.points.at(-1)?.push(line)
     }
   }
 
   const kept = sections
-    .filter((section) => section.title !== '' && section.items.length > 0)
+    .filter((section) => section.title !== '' && section.points.length > 0)
     .map((section) => ({
       title: section.title.slice(0, 80),
       security: section.title.toLowerCase() === 'sicherheit',
-      items: section.items.slice(0, 50).map((item) => item.slice(0, 1000)),
+      items: section.points.slice(0, 50).map((lines) => plain(lines.join(' ')).slice(0, 1000)),
     }))
 
   // Sicherheit first and then cut, so that it is never the part cut off.
