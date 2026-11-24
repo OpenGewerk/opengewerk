@@ -359,7 +359,12 @@ export function PvForm({
   /** A sentence under the fields, for what is typed so far. */
   readonly note?: (inputs: Readonly<Record<string, string>>) => ReactNode
   readonly submitLabel: string | ((inputs: Readonly<Record<string, string>>) => string)
-  readonly onSubmit: (values: Draft) => Promise<EditResult>
+  /**
+   * Saves the values. `opened` is what the form would have handed when it was
+   * opened, or what it handed last and was taken, for `update` to write only
+   * what changed in the form (opengewerk#1057).
+   */
+  readonly onSubmit: (values: Draft, opened: Draft) => Promise<EditResult>
   readonly onCancel?: () => void
 }) {
   const site = useEntry() === 'site'
@@ -367,6 +372,7 @@ export function PvForm({
   const [inputs, setInputs] = useState<Record<string, string>>(() =>
     Object.fromEntries(fields.map((field) => [field.name, startOf(field, record)])),
   )
+  const [opened, setOpened] = useState(() => readAll(fields, inputs).values)
   const [problems, setProblems] = useState<Readonly<Record<string, string>>>({})
   const [trouble, setTrouble] = useState<string | null>(null)
   const [working, setWorking] = useState(false)
@@ -398,10 +404,12 @@ export function PvForm({
     setWorking(true)
 
     try {
-      const result = await onSubmit(read.values)
+      const result = await onSubmit(read.values, opened)
 
       if (result.outcome === 'refused') {
         setTrouble(refusalFor(result))
+      } else {
+        setOpened(read.values)
       }
     } finally {
       setWorking(false)

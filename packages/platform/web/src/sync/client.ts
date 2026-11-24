@@ -42,17 +42,32 @@ import {
 } from './transport.js'
 
 /**
- * Whether a value a form hands in is the one the device holds. A list or a
- * value of JSON is held as its text since opengewerk#519 and compared as that
- * text; `sameValue` takes neither.
+ * A value a form hands in, as the device would hold it. A list or a value of
+ * JSON is held as its text since opengewerk#519 and compared as that text;
+ * `sameValue` takes neither.
  */
-function sameAsHeld(held: SyncValue | undefined, handed: unknown): boolean {
-  const comparable =
-    handed !== null && typeof handed === 'object' && !(handed instanceof Date)
-      ? jsonText(handed)
-      : toSyncValue(handed)
+function asHeld(handed: unknown): SyncValue {
+  return handed !== null && typeof handed === 'object' && !(handed instanceof Date)
+    ? jsonText(handed)
+    : toSyncValue(handed)
+}
 
-  return Object.is(held ?? null, comparable)
+/** Whether a value a form hands in is the one the device holds. */
+function sameAsHeld(held: SyncValue | undefined, handed: unknown): boolean {
+  return Object.is(held ?? null, asHeld(handed))
+}
+
+/**
+ * The fields of what a form hands in that it changed against what it handed
+ * when it was opened (opengewerk#1057). A field the opening did not have
+ * counts as changed.
+ */
+function changedSince(opened: Draft, values: Draft): Draft {
+  return Object.fromEntries(
+    Object.entries(values).filter(
+      ([field, value]) => !(field in opened) || !Object.is(asHeld(opened[field]), asHeld(value)),
+    ),
+  )
 }
 
 /**
@@ -835,10 +850,19 @@ export class SyncClient {
    * nobody able to correct an address at all, which was the first thing that
    * broke when the first screens were built.
    */
-  update(entity: string, id: string, values: Draft): Promise<EditResult> {
+  update(entity: string, id: string, values: Draft, opened?: Draft): Promise<EditResult> {
+    // A form fixes what it shows when it is opened, and hands back every
+    // field when it is saved. Compared with what the device holds by then, a
+    // field another device changed while the form was open differed, and
+    // went back to what the form opened with, though nobody here touched it
+    // (opengewerk#1057). With `opened`, what the form handed when it was
+    // opened, in the shape it hands values, only the fields changed in the
+    // form are written; what another device changed in the others stays.
+    const changed = opened === undefined ? values : changedSince(opened, values)
+
     return this.needsConnection(entity)
-      ? this.writeDirectly(entity, id, values)
-      : this.edit(entity, id, 'update', values)
+      ? this.writeDirectly(entity, id, changed)
+      : this.edit(entity, id, 'update', changed)
   }
 
   remove(entity: string, id: string): Promise<EditResult> {

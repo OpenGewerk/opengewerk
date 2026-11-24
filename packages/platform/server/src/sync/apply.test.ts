@@ -1255,6 +1255,209 @@ describe('a gate while its record is being fixed', () => {
   })
 })
 
+describe('two transmissions to the same record (opengewerk#1074)', () => {
+  /** A draft with a line of three on it, and a note, as a device sent them. */
+  async function records() {
+    const letterId = newId<'letter'>()
+    const lineId = newId<'letter-line'>()
+    const noteId = newId<'note'>()
+
+    await send(north.id, [
+      operation({
+        entity: 'letters',
+        recordId: letterId,
+        patches: [{ field: 'subject', to: 'Angebot' }],
+      }),
+      operation({
+        entity: 'letter_lines',
+        recordId: lineId,
+        patches: [
+          { field: 'letterId', to: letterId },
+          { field: 'quantity', to: 3 },
+        ],
+      }),
+      operation({
+        entity: 'notes',
+        recordId: noteId,
+        patches: [{ field: 'text', to: 'Zähler ablesen' }],
+      }),
+    ])
+
+    return { letterId, lineId, noteId }
+  }
+
+  /**
+   * A change that is written in a transaction that has not ended, while a
+   * transmission is on its way: it reads what was there before, and its
+   * write waits for this one.
+   */
+  async function whileChanging<Result>(
+    change: (tx: TenantTransaction) => Promise<unknown>,
+    transmission: () => Promise<Result>,
+  ): Promise<Result> {
+    let held = () => {}
+    let release = () => {}
+    const holding = new Promise<void>((resolve) => {
+      held = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const changing = inTenant(
+      north.id,
+      async (tx) => {
+        await change(tx)
+        held()
+        await released
+      },
+      'office',
+    )
+
+    try {
+      await holding
+
+      const late = transmission()
+
+      await standingInLine(admin, 1)
+      release()
+      await changing
+
+      return await late
+    } finally {
+      release()
+    }
+  }
+
+  it('keeps a change made in between for a person, instead of writing past it', async () => {
+    const { noteId } = await records()
+
+    const receipts = await whileChanging(
+      (tx) => tx.update(notes).set({ text: 'Zähler abgelesen' }).where(eq(notes.id, noteId)),
+      () =>
+        send(north.id, [
+          operation({
+            entity: 'notes',
+            recordId: noteId,
+            kind: 'update',
+            patches: [{ field: 'text', from: 'Zähler ablesen', to: 'Zähler fehlt' }],
+          }),
+        ]),
+    )
+
+    expect(outcomes(receipts)).toEqual([
+      { outcome: 'conflict', reason: 'changed_elsewhere', fields: ['text'] },
+    ])
+    expect(await inTenant(north.id, (tx) => tx.select({ text: notes.text }).from(notes))).toEqual([
+      { text: 'Zähler abgelesen' },
+    ])
+  })
+
+  it('works out what the server puts in from the record as the change in between left it', async () => {
+    const { lineId } = await records()
+
+    const receipts = await whileChanging(
+      (tx) => tx.update(letterLines).set({ price: 5 }).where(eq(letterLines.id, lineId)),
+      () =>
+        send(north.id, [
+          operation({
+            entity: 'letter_lines',
+            recordId: lineId,
+            kind: 'update',
+            patches: [{ field: 'quantity', from: 3, to: 4 }],
+          }),
+        ]),
+    )
+
+    expect(outcomes(receipts)).toEqual([{ outcome: 'applied', reason: null, fields: [] }])
+    expect(
+      await inTenant(north.id, (tx) =>
+        tx
+          .select({
+            quantity: letterLines.quantity,
+            price: letterLines.price,
+            total: letterLines.total,
+          })
+          .from(letterLines),
+      ),
+    ).toEqual([{ quantity: 4, price: 5, total: 20 }])
+  })
+
+  it('lands two transmissions with a parent and its child in opposite order, each on what the other left', async () => {
+    const { letterId, lineId } = await records()
+    const transmit = (deviceId: string, operations: readonly Operation[]) =>
+      inTenant(north.id, (tx) => sync.applyOperations(tx, north.id, operations, courier), deviceId)
+    const holder = await admin.connect()
+    let settled: PromiseSettledResult<readonly OperationReceipt[]>[]
+
+    try {
+      await holder.query('begin')
+      await holder.query('select id from letters where id = $1 for update', [letterId])
+
+      const both = [
+        transmit('phone-a', [
+          operation({
+            entity: 'letters',
+            recordId: letterId,
+            kind: 'update',
+            patches: [{ field: 'subject', from: 'Angebot', to: 'Angebot A' }],
+            deviceId: 'phone-a',
+          }),
+          operation({
+            entity: 'letter_lines',
+            recordId: lineId,
+            kind: 'update',
+            patches: [{ field: 'price', from: 0, to: 5 }],
+            deviceId: 'phone-a',
+          }),
+        ]),
+        transmit('phone-b', [
+          operation({
+            entity: 'letter_lines',
+            recordId: lineId,
+            kind: 'update',
+            patches: [{ field: 'quantity', from: 3, to: 4 }],
+            deviceId: 'phone-b',
+          }),
+          operation({
+            entity: 'letters',
+            recordId: letterId,
+            kind: 'update',
+            patches: [{ field: 'subject', from: 'Angebot', to: 'Angebot B' }],
+            deviceId: 'phone-b',
+          }),
+        ]),
+      ]
+
+      await standingInLine(admin, 2)
+      await holder.query('commit')
+      settled = await Promise.allSettled(both)
+    } finally {
+      holder.release()
+    }
+
+    expect(settled.map((each) => each.status)).toEqual(['fulfilled', 'fulfilled'])
+    // Whichever came first: both lines land, one subject does, and the other
+    // is kept for a person.
+    expect(
+      settled
+        .flatMap((each) => (each.status === 'fulfilled' ? outcomes(each.value) : []))
+        .map(({ outcome, reason }) => `${outcome}:${String(reason)}`)
+        .sort(),
+    ).toEqual(['applied:null', 'applied:null', 'applied:null', 'conflict:changed_elsewhere'])
+    expect(
+      await inTenant(north.id, (tx) =>
+        tx
+          .select({
+            quantity: letterLines.quantity,
+            price: letterLines.price,
+            total: letterLines.total,
+          })
+          .from(letterLines),
+      ),
+    ).toEqual([{ quantity: 4, price: 5, total: 20 }])
+  })
+})
+
 describe('a value of JSON or a list', () => {
   /** The details of a note as a device might write them by hand: keys unsorted, spaces. */
   const written = '{ "rooms": 3, "access": { "via": "Hof", "key": null } }'

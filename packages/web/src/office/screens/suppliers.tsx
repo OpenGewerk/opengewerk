@@ -931,6 +931,10 @@ function SupplierFormScreen({ supplierId }: { readonly supplierId: string | unde
   const navigate = useNavigate()
   const supplier = useRecord('suppliers', supplierId)
   const [draft, setDraft] = useState<SupplierDraft>(() => draftOf(supplier))
+  // What the form handed when it was opened: only what changes against it is
+  // written, so that a field another device changed meanwhile stays
+  // (opengewerk#1057).
+  const [opened] = useState(() => asSupplier(draftOf(supplier)))
   const [problems, setProblems] = useState<Readonly<Record<string, string>>>({})
   const [working, setWorking] = useState(false)
   const [trouble, setTrouble] = useState<string | null>(null)
@@ -974,7 +978,7 @@ function SupplierFormScreen({ supplierId }: { readonly supplierId: string | unde
 
     try {
       const result: EditResult = editing
-        ? await client.update('suppliers', supplierId, values)
+        ? await client.update('suppliers', supplierId, values, opened)
         : await client.create('suppliers', values)
 
       if (result.outcome === 'refused') {

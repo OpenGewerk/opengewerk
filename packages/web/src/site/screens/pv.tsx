@@ -413,8 +413,8 @@ export function SitePvStringScreen() {
           onCancel={() => {
             setEditing(false)
           }}
-          onSubmit={async (values) => {
-            const saved = await client.update('pv_strings', stringId, values)
+          onSubmit={async (values, opened) => {
+            const saved = await client.update('pv_strings', stringId, values, opened)
 
             if (saved.outcome === 'queued') {
               setEditing(false)

@@ -34,6 +34,7 @@ export * from './model/rights.js'
 export * from './model/staff-words.js'
 export * from './model/stock.js'
 export * from './model/structure-audit.js'
+export * from './model/structure-figures.js'
 export * from './model/signature.js'
 export * from './model/task.js'
 

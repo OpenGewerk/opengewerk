@@ -56,7 +56,10 @@ const fields: readonly FormField[] = [
 const queued = (): Promise<EditResult> => Promise.resolve({ outcome: 'queued', id: 's-1' })
 
 /** A caller that takes what it is handed, and keeps it for the test to look at. */
-const taking = () => vi.fn<(values: Record<string, string>) => Promise<EditResult>>(queued)
+const taking = () =>
+  vi.fn<(values: Record<string, string>, opened: Record<string, string>) => Promise<EditResult>>(
+    queued,
+  )
 
 function form(props: Partial<Parameters<typeof RecordForm>[0]> = {}, entry: Entry = 'office') {
   return render(
@@ -102,15 +105,50 @@ describe('a form over a record', () => {
     await userEvent.selectOptions(screen.getByLabelText('Ecke'), 'door')
     await userEvent.click(screen.getByRole('button', { name: 'Speichern' }))
 
-    expect(submitted).toHaveBeenCalledWith({
-      name: 'Regal an der Tür',
-      boards: '4',
-      room: 'shop',
+    expect(submitted).toHaveBeenCalledWith(
+      {
+        name: 'Regal an der Tür',
+        boards: '4',
+        room: 'shop',
+        locked: 'false',
+        keyHolder: '',
+        corner: 'door',
+      },
+      expect.any(Object),
+    )
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('hands along what it was opened with, and after a save that was taken what it handed then (opengewerk#1057)', async () => {
+    const submitted = taking()
+
+    form({
+      record: { id: 's-1', name: 'Regal', boards: 5, room: 'cellar', locked: false },
+      onSubmit: submitted,
+    })
+
+    const opened = {
+      name: 'Regal',
+      boards: '5',
+      room: 'cellar',
       locked: 'false',
       keyHolder: '',
-      corner: 'door',
-    })
-    expect(screen.queryByRole('alert')).toBeNull()
+      corner: 'north',
+    }
+
+    await userEvent.type(screen.getByLabelText('Name'), ' links')
+    await userEvent.click(screen.getByRole('button', { name: 'Speichern' }))
+
+    expect(submitted).toHaveBeenLastCalledWith({ ...opened, name: 'Regal links' }, opened)
+
+    await userEvent.clear(screen.getByLabelText('Böden'))
+    await userEvent.type(screen.getByLabelText('Böden'), '6')
+    await userEvent.click(screen.getByRole('button', { name: 'Speichern' }))
+
+    expect(submitted).toHaveBeenLastCalledWith(
+      { ...opened, name: 'Regal links', boards: '6' },
+      { ...opened, name: 'Regal links' },
+    )
   })
 
   it('says what a hint says under its field, to a reader as well', () => {
@@ -427,12 +465,15 @@ describe('a form drawn as a board draws it', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Speichern' }))
 
-    expect(submitted).toHaveBeenCalledWith({
-      name: 'Regal',
-      boards: '',
-      room: 'shop',
-      note: 'Oben nur Leichtes.\nSchlüssel im Büro.',
-    })
+    expect(submitted).toHaveBeenCalledWith(
+      {
+        name: 'Regal',
+        boards: '',
+        room: 'shop',
+        note: 'Oben nur Leichtes.\nSchlüssel im Büro.',
+      },
+      expect.any(Object),
+    )
   })
 
   it('starts the box with what the record holds, and marks it as the reason of a refusal', async () => {

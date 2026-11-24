@@ -2199,6 +2199,54 @@ describe('an exchange with the server', () => {
     expect(writer.patched).toHaveLength(1)
   })
 
+  it('sends a route only what the form changed, and leaves what another device changed while it was open (opengewerk#1057)', async () => {
+    const client = await start(transport)
+
+    await holding(client, transport, {
+      entity: 'shelves',
+      rows: [row({ id: 's-1', name: 'Hall', kind: 'wood' })],
+    })
+
+    const opened = { name: 'Hall', kind: 'wood' }
+
+    // Another device makes the shelf one of steel while the form is open.
+    await holding(client, transport, {
+      entity: 'shelves',
+      rows: [row({ id: 's-1', name: 'Hall', kind: 'steel', version: 2, changeSequence: 2 })],
+    })
+
+    await client.update('shelves', 's-1', { name: 'Hall, left', kind: 'wood' }, opened)
+
+    expect(writer.patched).toEqual([
+      { entity: 'shelves', id: 's-1', values: { name: 'Hall, left' } },
+    ])
+  })
+
+  it('queues only what the form changed, and leaves what another device changed while it was open (opengewerk#1057)', async () => {
+    const client = await start(transport)
+
+    await holding(client, transport, {
+      entity: 'notes',
+      rows: [row({ id: 'n-1', title: 'Shelf by the door', kind: 'remark' })],
+    })
+
+    const opened = { title: 'Shelf by the door', kind: 'remark' }
+
+    await holding(client, transport, {
+      entity: 'notes',
+      rows: [
+        row({ id: 'n-1', title: 'Shelf by the door', kind: 'task', version: 2, changeSequence: 2 }),
+      ],
+    })
+
+    await client.update('notes', 'n-1', { title: 'Shelf by the window', kind: 'remark' }, opened)
+
+    expect(transport.sent.at(-1)?.[0]?.patches).toEqual([
+      { field: 'title', from: 'Shelf by the door', to: 'Shelf by the window' },
+    ])
+    expect(client.get('notes', 'n-1')?.['kind']).toBe('task')
+  })
+
   it('removes master data at its own route as well', async () => {
     const client = await start(transport)
 

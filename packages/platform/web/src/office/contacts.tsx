@@ -153,8 +153,13 @@ export function ContactsPanel({
             Entfernen
           </Button>
         }
-        onSubmit={async (values) => {
-          const saved = await client.update(contactEntity, contactId, asContact(values))
+        onSubmit={async (values, opened) => {
+          const saved = await client.update(
+            contactEntity,
+            contactId,
+            asContact(values),
+            asContact(opened),
+          )
 
           if (saved.outcome === 'queued') {
             closeForm(contactId)

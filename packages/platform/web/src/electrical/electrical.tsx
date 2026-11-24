@@ -417,6 +417,65 @@ export function readFigure(input: string, places: number, units: readonly string
 
 const nothing = { value: '', label: 'nicht angegeben' } as const
 
+/** What is typed in the form of a circuit, each field as its text. */
+interface CircuitInputs {
+  readonly designation: string
+  readonly consumer: string
+  readonly inSection: string
+  readonly voltage: string
+  readonly device: string
+  readonly characteristic: string
+  readonly ratedCurrent: string
+  readonly rcdType: string
+  readonly selective: string
+  readonly residualCurrent: string
+  readonly cableType: string
+  readonly cores: string
+  readonly crossSection: string
+  readonly length: string
+  readonly method: string
+}
+
+/**
+ * The values the form of a circuit hands back for what is typed in it, with
+ * how each figure was read. One function for saving and for what the form
+ * opened with, so that both are the same shape.
+ */
+function readCircuit(
+  typed: CircuitInputs,
+  withSection: boolean,
+): { readonly read: Record<string, Read>; readonly values: Draft } {
+  const read: Record<string, Read> = {
+    ratedCurrentMilli: readFigure(typed.ratedCurrent, 3, ['A']),
+    ratedResidualCurrentMilli: readFigure(typed.residualCurrent, 0, ['mA']),
+    cableCores: readFigure(typed.cores, 0),
+    cableCrossSectionMilli: readFigure(typed.crossSection, 3, ['mm²', 'mm2', 'qmm']),
+    cableLengthMilli: readFigure(typed.length, 3, ['m']),
+  }
+  const figures = Object.fromEntries(
+    Object.entries(read).map(([field, result]) => [field, 'value' in result ? result.value : null]),
+  )
+
+  return {
+    read,
+    values: {
+      designation: typed.designation.trim(),
+      consumer: asTextOrNull(typed.consumer),
+      ...(withSection ? { boardSectionId: typed.inSection === '' ? null : typed.inSection } : {}),
+      voltageClass: typed.voltage as CircuitVoltageClass,
+      overcurrentDevice: typed.device === '' ? null : (typed.device as OvercurrentDevice),
+      tripCharacteristic:
+        typed.characteristic === '' ? null : (typed.characteristic as TripCharacteristic),
+      rcdType: typed.rcdType === '' ? null : (typed.rcdType as RcdType),
+      rcdSelective: typed.rcdType !== '' && typed.selective === 'selective',
+      cableType: asTextOrNull(typed.cableType),
+      cableInstallationMethod:
+        typed.method === '' ? null : (typed.method as CableInstallationMethod),
+      ...figures,
+    },
+  }
+}
+
 /**
  * A circuit, with everything its chart and a test record ask for.
  *
@@ -445,7 +504,12 @@ export function CircuitForm({
   /** The section a new circuit starts in, when it is not the record's. */
   readonly section?: string | null
   readonly submitLabel: string
-  readonly onSubmit: (values: Draft) => Promise<EditResult>
+  /**
+   * Saves the values. `opened` is what the form would have handed when it was
+   * opened, or what it handed last and was taken, for `update` to write only
+   * what changed in the form (opengewerk#1057).
+   */
+  readonly onSubmit: (values: Draft, opened: Draft) => Promise<EditResult>
   readonly onCancel?: () => void
 }) {
   const entry = useEntry()
@@ -479,39 +543,33 @@ export function CircuitForm({
   const [working, setWorking] = useState(false)
 
   const curves = characteristicsFor(device === '' ? null : (device as OvercurrentDevice))
+  const typed: CircuitInputs = {
+    designation,
+    consumer,
+    inSection,
+    voltage,
+    device,
+    characteristic,
+    ratedCurrent,
+    rcdType,
+    selective,
+    residualCurrent,
+    cableType,
+    cores,
+    crossSection,
+    length,
+    method,
+  }
+  const withSection = sections.length > 0 || maybeText(record, 'boardSectionId') !== null
+  // What the form would have handed when it was opened, and then what it
+  // handed last and was taken (opengewerk#1057).
+  const [opened, setOpened] = useState(() => readCircuit(typed, withSection).values)
 
   async function submit(event: FormEvent) {
     event.preventDefault()
     setTrouble(null)
 
-    const read: Record<string, Read> = {
-      ratedCurrentMilli: readFigure(ratedCurrent, 3, ['A']),
-      ratedResidualCurrentMilli: readFigure(residualCurrent, 0, ['mA']),
-      cableCores: readFigure(cores, 0),
-      cableCrossSectionMilli: readFigure(crossSection, 3, ['mm²', 'mm2', 'qmm']),
-      cableLengthMilli: readFigure(length, 3, ['m']),
-    }
-    const figures = Object.fromEntries(
-      Object.entries(read).map(([field, result]) => [
-        field,
-        'value' in result ? result.value : null,
-      ]),
-    )
-    const values: Draft = {
-      designation: designation.trim(),
-      consumer: asTextOrNull(consumer),
-      ...(sections.length > 0 || maybeText(record, 'boardSectionId') !== null
-        ? { boardSectionId: inSection === '' ? null : inSection }
-        : {}),
-      voltageClass: voltage as CircuitVoltageClass,
-      overcurrentDevice: device === '' ? null : (device as OvercurrentDevice),
-      tripCharacteristic: characteristic === '' ? null : (characteristic as TripCharacteristic),
-      rcdType: rcdType === '' ? null : (rcdType as RcdType),
-      rcdSelective: rcdType !== '' && selective === 'selective',
-      cableType: asTextOrNull(cableType),
-      cableInstallationMethod: method === '' ? null : (method as CableInstallationMethod),
-      ...figures,
-    }
+    const { read, values } = readCircuit(typed, withSection)
     const found: Record<string, string> = {
       ...Object.fromEntries(
         Object.entries(read).flatMap(([field, result]) =>
@@ -533,10 +591,12 @@ export function CircuitForm({
     setWorking(true)
 
     try {
-      const result = await onSubmit(values)
+      const result = await onSubmit(values, opened)
 
       if (result.outcome === 'refused') {
         setTrouble(refusalFor(result))
+      } else {
+        setOpened(values)
       }
     } finally {
       setWorking(false)

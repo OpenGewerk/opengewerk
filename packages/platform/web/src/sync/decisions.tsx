@@ -1,4 +1,4 @@
-import { isPicture } from '@opengewerk/platform-domain'
+import { circuitAlong, isPicture, structureProblem } from '@opengewerk/platform-domain'
 import type {
   ConflictReason,
   Operation,
@@ -201,6 +201,26 @@ function ConflictCard({
 
     try {
       if (takeMine) {
+        // Judged as it would stand, before it is queued (opengewerk#1072). A
+        // version no form checked can be one the server takes for a mistake
+        // of the device: a curve that does not go with the protective device
+        // somebody changed meanwhile, a selective RCD whose type is gone. It
+        // would refuse the whole transmission, and the outbox would hang
+        // until somebody threw the change away. The merge alone does not see
+        // it; the rule of the record does, the one the server asks.
+        const held = client.get(conflict.entity, conflict.recordId)
+        const problem = structureProblem(
+          conflict.entity,
+          circuitAlong(conflict.entity, conflict.wanted, held),
+          held,
+        )
+
+        if (problem !== null) {
+          setTrouble(problem)
+
+          return
+        }
+
         const again = await client.update(conflict.entity, conflict.recordId, conflict.wanted)
 
         if (again.outcome === 'refused') {

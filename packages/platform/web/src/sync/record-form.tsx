@@ -166,7 +166,15 @@ export function RecordForm({
   readonly fields: readonly FormField[]
   readonly record?: RecordState | null
   readonly submitLabel: string
-  readonly onSubmit: (values: Record<string, string>) => Promise<EditResult>
+  /**
+   * Saves the values. `opened` is what the form handed when it was opened, or
+   * last when what it handed was taken, for `update` to write only what
+   * changed in the form (opengewerk#1057).
+   */
+  readonly onSubmit: (
+    values: Record<string, string>,
+    opened: Record<string, string>,
+  ) => Promise<EditResult>
   readonly onCancel?: () => void
   /** Set when the rules say this cannot be written at all right now. */
   readonly disabled?: boolean
@@ -234,7 +242,7 @@ export function RecordForm({
     setWorking(true)
 
     try {
-      const result = await onSubmit(handed)
+      const result = await onSubmit(handed, settled(fields, kept))
 
       if (result.outcome === 'refused') {
         setTrouble(refusalFor(result))
