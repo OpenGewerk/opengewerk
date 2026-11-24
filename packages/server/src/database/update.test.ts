@@ -3085,6 +3085,10 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
   const noCall = newId<'document'>()
   const twice = newId<'document'>()
   const typedLater = newId<'document'>()
+  const report = newId<'document'>()
+  const source = newId<'document'>()
+  const copied = newId<'document'>()
+  const collected = newId<'document'>()
 
   async function forced(table: string): Promise<boolean> {
     const { rows } = await admin.query<{ forced: boolean }>(
@@ -3121,6 +3125,41 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
       [given, changedByHand, noCall, twice, tenant.id, customer, call, plain, typedLater],
     )
 
+    // Two reports that carry the surcharge as a line of their own: the
+    // invoice made out of the first copied that line in its transaction, and
+    // so did a collective invoice over the second.
+    await admin.query(
+      `insert into documents (id, tenant_id, customer_id, kind, document_date, job_id)
+       values ($1, $3, $4, 'time_and_material_report', '2026-10-28', $5),
+              ($2, $3, $4, 'time_and_material_report', '2026-10-28', $5)`,
+      [report, source, tenant.id, customer, call],
+    )
+
+    for (const reportId of [report, source]) {
+      await admin.query(
+        `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents)
+         values ($1, $2, 1, 'Notdienstzuschlag Nacht', 1000, 'flat_rate', 4500, 4500)`,
+        [tenant.id, reportId],
+      )
+    }
+
+    await admin.query(
+      `update documents set status = 'issued', number = 'RB-2026-0001', issued_at = now()
+       where id = $1`,
+      [source],
+    )
+    await admin.query(
+      `insert into documents (id, tenant_id, customer_id, kind, document_date, job_id, predecessor_document_id)
+       values ($1, $3, $4, 'final_invoice', '2026-10-28', $5, $6),
+              ($2, $3, $4, 'final_invoice', '2026-10-28', $5, null)`,
+      [copied, collected, tenant.id, customer, call, report],
+    )
+    await admin.query(
+      `insert into document_sources (tenant_id, document_id, source_document_id, position)
+       values ($1, $2, $3, 1)`,
+      [tenant.id, collected, source],
+    )
+
     // Given with the invoice, so in its transaction and with its moment; the
     // last one typed by the office later, in a transaction of its own.
     for (const [document, lines, withTheInvoice] of [
@@ -3129,6 +3168,8 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
       [noCall, 1, true],
       [twice, 2, true],
       [typedLater, 1, false],
+      [copied, 1, true],
+      [collected, 1, true],
     ] as const) {
       await admin.query(
         `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents, created_at)
@@ -3166,6 +3207,10 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
       [noCall]: 0,
       [twice]: 0,
       [typedLater]: 0,
+      [report]: 0,
+      [source]: 0,
+      [copied]: 0,
+      [collected]: 0,
     })
     expect(
       (
@@ -3176,7 +3221,7 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
       ).rows,
     ).toEqual([{ designation: 'Notdienstzuschlag Nacht' }])
 
-    for (const table of ['document_lines', 'documents', 'jobs']) {
+    for (const table of ['document_lines', 'documents', 'jobs', 'document_sources']) {
       expect(await forced(table), table).toBe(true)
     }
   })
