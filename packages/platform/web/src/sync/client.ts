@@ -988,6 +988,14 @@ export class SyncClient {
   }
 
   /**
+   * One change after the other on this device (CodeRabbit on #1074): two at
+   * once both read the same record before either was in the outbox, and each
+   * passed the check of the structure that their sum fails, a selective RCD
+   * without a type. A change that fails takes nothing down after it.
+   */
+  private editing: Promise<unknown> = Promise.resolve()
+
+  /**
    * Puts one write into the outbox, after asking the same question the server
    * will ask.
    *
@@ -1002,14 +1010,6 @@ export class SyncClient {
    * here and collides at the server. That collision becomes a conflict, which
    * is the one thing this layer never resolves by itself.
    */
-  /**
-   * One change after the other on this device (CodeRabbit on #1074): two at
-   * once both read the same record before either was in the outbox, and each
-   * passed the check of the structure that their sum fails, a selective RCD
-   * without a type. A change that fails takes nothing down after it.
-   */
-  private editing: Promise<unknown> = Promise.resolve()
-
   private edit(
     entity: string,
     id: string,
