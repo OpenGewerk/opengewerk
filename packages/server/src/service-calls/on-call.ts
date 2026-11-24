@@ -192,14 +192,18 @@ const surchargeFields = [
  * something else than it holds. Its place among the lines and its rate of
  * tax are no change of the surcharge. Compared as text: the line route takes
  * a number written as text, which the column stores as the number, so the
- * same value sent that way changes nothing.
+ * same value sent that way changes nothing. Nothing compared on its own: the
+ * word "null" typed as a text is a text, not nothing.
  */
 export function takesOverSurcharge(
   values: Readonly<Record<string, unknown>>,
   current: Readonly<Record<string, unknown>>,
 ): boolean {
+  const differs = (sent: unknown, held: unknown) =>
+    sent === null || held === null ? sent !== held : String(sent) !== String(held)
+
   return surchargeFields.some(
-    (field) => values[field] !== undefined && String(values[field]) !== String(current[field]),
+    (field) => values[field] !== undefined && differs(values[field], current[field]),
   )
 }
 

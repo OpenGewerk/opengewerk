@@ -1182,6 +1182,21 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 2000 })
   })
 
+  it('belongs to the office when it types the word null as the text below it', async () => {
+    // At night: a flat amount, with no text below the line.
+    const { invoice } = await draftOf({ emergencyAt: atNight })
+    const line = (await surchargeOf(invoice)).id
+
+    expect(await surchargeOf(invoice)).toMatchObject({ description: null })
+
+    await patch(`/documents/${invoice}/lines/${line}`, { description: 'null' })
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      description: 'null',
+      emergency_surcharge: false,
+    })
+  })
+
   it('stays the server’s when the office sends its values unchanged, a number as text included', async () => {
     const { invoice, hour } = await draftOf()
     const line = (await surchargeOf(invoice)).id
