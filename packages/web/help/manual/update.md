@@ -8,7 +8,7 @@ Das geht auf einem Linux-Server mit einem Paket aus einem Release. Unter Docker 
 
 **In einem Checkout des Quelltexts** arbeitest du im Ordner des Checkouts. Dort sicherst du zuerst mit `docker compose -f docker/compose.yaml --profile backup run --rm backup backup.sh`. Dann holst du die neue Fassung mit `git pull`, oder, wenn der Checkout auf einem Tag steht, mit `git fetch --tags` und `git checkout` auf den Tag der neuen Fassung, etwa `git checkout v0.3.1`, und startest dort mit `sh docker/start.sh`; er baut die Abbilder dann selbst.
 
-**Unter Docker Desktop auf Windows** arbeitest du in Git Bash mit deinem eigenen Benutzer, `sudo` brauchst du dort nicht, und Docker Desktop muss laufen. Die Schritte sind dieselben wie unten, nur im Ordner, in den du das Paket beim ersten Mal entpackt hast, etwa `C:\opengewerk`, in Git Bash `/c/opengewerk`: dort sichern, das neue Paket in den Ordner darüber entpacken (`tar -xzf opengewerk-X.Y.Z.tar.gz -C /c`) und dort `sh docker/start.sh`. Unter macOS genauso im Terminal.
+**Unter Docker Desktop auf Windows** arbeitest du in Git Bash mit deinem eigenen Benutzer, `sudo` brauchst du dort nicht, und Docker Desktop muss laufen. Die Schritte sind dieselben wie unten, nur im Ordner, in den du das Paket beim ersten Mal entpackt hast, etwa `C:\opengewerk`, in Git Bash `/c/opengewerk`: dort sichern, das neue Paket in den Ordner darüber entpacken (`tar -xzf opengewerk-X.Y.Z.tar.gz -C /c`) und dort `sh docker/start.sh`. Unter macOS genauso im Terminal, mit dem Ordner über deiner Installation als Ziel, etwa `tar -xzf opengewerk-X.Y.Z.tar.gz -C ~` für eine Installation in `~/opengewerk`.
 
 **Auf einem Linux-Server** gilt, was folgt.
 

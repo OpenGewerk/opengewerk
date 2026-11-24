@@ -38,15 +38,27 @@ export class MailDeliveryError extends Error {
    */
   readonly command: string | null
 
+  /**
+   * Whether the server turned the sender away (opengewerk#1102): at
+   * `MAIL FROM`, or at `RCPT TO` with an answer about the sender, as Postfix
+   * gives it in its default of answering every restriction there.
+   */
+  readonly refusedSender: boolean
+
   constructor(
     message: string,
     readonly code: string | null,
     readonly responseCode: number | null,
-    options: { readonly permanent?: boolean; readonly command?: string | null } = {},
+    options: {
+      readonly permanent?: boolean
+      readonly command?: string | null
+      readonly refusedSender?: boolean
+    } = {},
   ) {
     super(message)
     this.declaredPermanent = options.permanent ?? false
     this.command = options.command ?? null
+    this.refusedSender = options.refusedSender ?? this.command === 'MAIL FROM'
   }
 
   /**
@@ -61,10 +73,11 @@ export class MailDeliveryError extends Error {
     // gives no link, and it does not become open again. `EDESTINATION`: a
     // mail server in an internal network or on a port that is not for mail
     // stays where it is until somebody changes the settings.
-    // A sender the server does not take (`MAIL FROM`) is about the settings,
-    // not the message, and every message goes out once they are corrected
-    // (opengewerk#1102). nodemailer calls it an envelope error as well.
-    if (this.command === 'MAIL FROM' && !this.declaredPermanent) {
+    // A sender the server does not take is about the settings, not the
+    // message (opengewerk#1102), and is tried again like a server that does
+    // not take anything right now: up to the last attempt of the outbox.
+    // nodemailer calls it an envelope error as well.
+    if (this.refusedSender && !this.declaredPermanent) {
       return false
     }
 
@@ -100,7 +113,35 @@ export interface MailTransport {
   close(): void
 }
 
-function asDeliveryError(error: unknown): MailDeliveryError {
+/**
+ * Whether a refusal is about the sender of the mail (opengewerk#1102). At
+ * `MAIL FROM` it is. At `RCPT TO` it is where the answer names the sender in
+ * angle brackets and not the recipient, as Postfix does: "553 5.7.1
+ * <post@nord.example.de>: Sender address rejected". A recipient it refuses
+ * it names as well, and that stays a refusal of the message.
+ */
+function aboutTheSender(
+  command: string | null,
+  answer: string,
+  mail: OutgoingMail | undefined,
+): boolean {
+  if (command === 'MAIL FROM') {
+    return true
+  }
+
+  if (command !== 'RCPT TO' || mail === undefined) {
+    return false
+  }
+
+  const said = answer.toLowerCase()
+
+  return (
+    said.includes(`<${mail.from.address.toLowerCase()}>`) &&
+    !said.includes(`<${mail.to.address.toLowerCase()}>`)
+  )
+}
+
+function asDeliveryError(error: unknown, mail?: OutgoingMail): MailDeliveryError {
   if (error instanceof MailDeliveryError) {
     return error
   }
@@ -110,13 +151,17 @@ function asDeliveryError(error: unknown): MailDeliveryError {
     code?: unknown
     responseCode?: unknown
     command?: unknown
+    response?: unknown
   }
+  const message = typeof detail.message === 'string' ? detail.message : String(error)
+  const command = typeof detail.command === 'string' ? detail.command : null
+  const answer = typeof detail.response === 'string' ? detail.response : message
 
   return new MailDeliveryError(
-    typeof detail.message === 'string' ? detail.message : String(error),
+    message,
     typeof detail.code === 'string' ? detail.code : null,
     typeof detail.responseCode === 'number' ? detail.responseCode : null,
-    { command: typeof detail.command === 'string' ? detail.command : null },
+    { command, refusedSender: aboutTheSender(command, answer, mail) },
   )
 }
 
@@ -220,7 +265,7 @@ export function smtpTransport(
           )
         }
 
-        throw asDeliveryError(error)
+        throw asDeliveryError(error, mail)
       } finally {
         clearTimeout(timer)
       }

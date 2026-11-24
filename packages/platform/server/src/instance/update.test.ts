@@ -635,33 +635,39 @@ describe('telling how an update ended', () => {
     expect(toldOf().length).toBe(before + 1)
   })
 
-  it('gives up on nobody when the server turns the sender away, and tells everybody once it takes it', async () => {
-    finished('failed')
-    const before = toldOf().length
-    const picky = await fakeSmtpServer({
-      credentials: { user: 'instanz', password: mailPassword },
-      refuseSenders: ['instanz@nord.example.de'],
-    })
+  it.each([
+    ['at MAIL FROM', { refuseSenders: ['instanz@nord.example.de'] }],
+    ['at RCPT TO, as Postfix does', { refuseSendersAtRecipient: ['instanz@nord.example.de'] }],
+  ] as const)(
+    'gives up on nobody when the server turns the sender away %s, and tells everybody once it takes it',
+    async (_where, refusal) => {
+      finished('failed')
+      const before = toldOf().length
+      const picky = await fakeSmtpServer({
+        credentials: { user: 'instanz', password: mailPassword },
+        ...refusal,
+      })
 
-    try {
-      const refusing: MailContext = {
-        ...mail,
-        connect: (configuration) => smtpTransport({ ...configuration, port: picky.port }),
+      try {
+        const refusing: MailContext = {
+          ...mail,
+          connect: (configuration) => smtpTransport({ ...configuration, port: picky.port }),
+        }
+
+        await expect(reportFinishedUpdate({ ...reporting(), mail: refusing })).rejects.toThrow()
+        expect(picky.received).toEqual([])
+      } finally {
+        await picky.close()
       }
 
-      await expect(reportFinishedUpdate({ ...reporting(), mail: refusing })).rejects.toThrow()
-      expect(picky.received).toEqual([])
-    } finally {
-      await picky.close()
-    }
-
-    expect(await reportFinishedUpdate(reporting())).toBe(true)
-    expect(
-      toldOf()
-        .slice(before)
-        .map((sent) => sent.to),
-    ).toEqual([[lea.email]])
-  })
+      expect(await reportFinishedUpdate(reporting())).toBe(true)
+      expect(
+        toldOf()
+          .slice(before)
+          .map((sent) => sent.to),
+      ).toEqual([[lea.email]])
+    },
+  )
 
   it('tells each operator once, tries an address again after a passing refusal and gives it up after a final one', async () => {
     const lead = userIds.get(lea.email) ?? ''

@@ -16,6 +16,11 @@ export interface FakeSmtpOptions {
   readonly refuse?: readonly string[]
   /** Senders refused with a 553, the answer for an address the login may not send from. */
   readonly refuseSenders?: readonly string[]
+  /**
+   * The same, and only at RCPT TO, as Postfix answers by default: every
+   * restriction waits for the recipient (`smtpd_delay_reject`).
+   */
+  readonly refuseSendersAtRecipient?: readonly string[]
   /** Takes a message and never says whether it took it, the way a server that hangs over one does. */
   readonly stallAfterData?: boolean
   /** Milliseconds it waits before it answers DATA, the way a server that is slow to take a message does. */
@@ -135,8 +140,10 @@ export async function fakeSmtpServer(options: FakeSmtpOptions = {}): Promise<Fak
         } else if (command === 'RCPT') {
           const recipient = /<([^>]*)>/.exec(line)?.[1] ?? ''
 
-          if (options.refuse?.includes(recipient)) {
-            say('550 5.1.1 Recipient address rejected: User unknown')
+          if (options.refuseSendersAtRecipient?.includes(from)) {
+            say(`553 5.7.1 <${from}>: Sender address rejected: not owned by user`)
+          } else if (options.refuse?.includes(recipient)) {
+            say(`550 5.1.1 <${recipient}>: Recipient address rejected: User unknown`)
           } else {
             to.push(recipient)
             say('250 2.1.5 Ok')

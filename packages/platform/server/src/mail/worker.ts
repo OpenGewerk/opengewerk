@@ -100,7 +100,7 @@ export function failsServerWide(error: unknown): boolean {
  * sends from, not about the one message or its recipient.
  */
 export function refusesSender(error: unknown): boolean {
-  return asFailure(error).command === 'MAIL FROM'
+  return asFailure(error).refusedSender
 }
 
 /** Whether trying the message again cannot help (`MailDeliveryError.permanent`). */
@@ -277,7 +277,15 @@ export async function runMailCycle<Message extends OutboxMessage>(
         transport.close()
       }
 
-      if (serverDown) {
+      if (serverDown && refusesSender(serverDown)) {
+        // The server answered: it is the address the mails go out from.
+        console.warn(
+          `Der Mailserver ${configuration.host} nimmt die Absenderadresse ${configuration.from} ` +
+            `nicht an (${serverDown.message}). Die E-Mails warten im Postausgang und gehen ` +
+            'hinaus, sobald die Absenderadresse in den Einstellungen des Mailservers stimmt, ' +
+            'höchstens bis zum letzten Versuch.',
+        )
+      } else if (serverDown) {
         console.warn(
           `Der Mailserver ${configuration.host} antwortet nicht (${serverDown.message}). Die ` +
             'E-Mails warten im Postausgang und werden später noch einmal versucht.',

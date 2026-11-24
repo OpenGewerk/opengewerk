@@ -95,6 +95,37 @@ describe('a message', () => {
     expect(failure.permanent).toBe(true)
   })
 
+  it('is no refusal of the sender when the server names the recipient (opengewerk#1102)', async () => {
+    server = await fakeSmtpServer({ refuse: ['berg@example.de'] })
+    const transport = smtpTransport(settings(server.port), short)
+
+    const failure = await failureOf(transport.send(letter))
+    transport.close()
+
+    expect(failure).toMatchObject({ command: 'RCPT TO', refusedSender: false, permanent: true })
+  })
+
+  it.each([
+    ['at MAIL FROM', { refuseSenders: ['rechnung@nord.example.de'] }, 'MAIL FROM'],
+    [
+      'at RCPT TO, as Postfix does',
+      { refuseSendersAtRecipient: ['rechnung@nord.example.de'] },
+      'RCPT TO',
+    ],
+  ] as const)(
+    'is a refusal of the sender for now when the server turns it away %s (opengewerk#1102)',
+    async (_where, options, command) => {
+      server = await fakeSmtpServer(options)
+      const transport = smtpTransport(settings(server.port), short)
+
+      const failure = await failureOf(transport.send(letter))
+      transport.close()
+
+      expect(failure).toMatchObject({ command, refusedSender: true, permanent: false })
+      expect(server.received).toEqual([])
+    },
+  )
+
   it('is refused for now when the server takes the connection and says nothing', async () => {
     server = await fakeSmtpServer({ silent: true })
     const transport = smtpTransport(settings(server.port), short)
