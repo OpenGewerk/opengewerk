@@ -43,6 +43,22 @@ const toldWithinMs = 24 * 60 * 60_000
  */
 const toldHere = new Map<string, Set<string>>()
 
+/** The runs whose mark could not be written, said once each. */
+const markFailedSaid = new Set<string>()
+
+/** Says once per run that who was told could not be marked. */
+function markFailed(here: string, error: unknown): void {
+  if (markFailedSaid.has(here)) {
+    return
+  }
+
+  markFailedSaid.add(here)
+  console.error(
+    'Wer die Nachricht über die Aktualisierung der Instanz bekam, ließ sich nicht vermerken.',
+    error,
+  )
+}
+
 export interface UpdateReporting {
   readonly database: Database
   readonly mail: MailContext
@@ -163,10 +179,7 @@ export async function reportFinishedUpdate(
       try {
         await markUpdateTold(updates, run.id, { done: false, to: [...reached] })
       } catch (error) {
-        console.error(
-          'Wer die Nachricht über die Aktualisierung der Instanz bekam, ließ sich nicht vermerken.',
-          error,
-        )
+        markFailed(here, error)
       }
     }
   } finally {
@@ -175,7 +188,13 @@ export async function reportFinishedUpdate(
 
   const done = operators.every((operator) => reached.has(operator.email.toLowerCase()))
 
-  await markUpdateTold(updates, run.id, { done, to: [...reached] })
+  // A mark that fails is said once and is no mail that did not go out: once
+  // everybody has it, no look after this one sends or fails again.
+  try {
+    await markUpdateTold(updates, run.id, { done, to: [...reached] })
+  } catch (error) {
+    markFailed(here, error)
+  }
 
   if (!done) {
     throw missed ?? new Error('Nicht jede Adresse hat die Nachricht bekommen.')

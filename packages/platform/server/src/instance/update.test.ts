@@ -760,6 +760,19 @@ describe('telling how an update ended, when the mark of who was told fails', () 
     })
 
   const reporting = () => ({ database, mail, messages, updates })
+
+  // On its own as well, without the mail server the group before sets up.
+  beforeAll(async () => {
+    await saveInstanceMailServer(database, userIds.get(lea.email) ?? '', key, {
+      host: '127.0.0.1',
+      port: smtp.port,
+      security: 'none',
+      username: 'instanz',
+      password: mailPassword,
+      fromAddress: 'instanz@nord.example.de',
+    })
+  })
+
   const toLea = () =>
     smtp.received.filter(
       (sent) =>
@@ -776,15 +789,24 @@ describe('telling how an update ended, when the mark of who was told fails', () 
     // A folder where the mark goes takes no mark, as a disk that ran full.
     mkdirSync(join(blocked, 'inside'), { recursive: true })
 
+    const looks: string[] = []
+
     try {
       for (let look = 0; look < 3; look += 1) {
-        await reportFinishedUpdate(reporting()).catch(() => false)
+        looks.push(
+          await reportFinishedUpdate(reporting()).then(
+            () => 'ended',
+            () => 'failed',
+          ),
+        )
       }
     } finally {
       rmSync(blocked, { recursive: true, force: true })
     }
 
     expect(toLea() - before).toBe(1)
+    // Nothing that did not go out is said: everybody has the mail.
+    expect(looks).toEqual(['ended', 'ended', 'ended'])
   })
 
   it('marks each address as it is told, so that a look that stops leaves who got the mail (CodeRabbit on #1101)', async () => {
