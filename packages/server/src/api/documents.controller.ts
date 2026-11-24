@@ -33,6 +33,7 @@ import {
   isCancellable,
   isInvoice,
   type IsoDate,
+  lineLimits,
   type MissingDetail,
   missingDetails,
   noInstructionChoices,
@@ -512,8 +513,15 @@ export class DocumentsController {
       // The line of the surcharge as everything stands now, once more before
       // it is frozen (#1087): a change that raced the draft into being, or
       // one that came before its line, shows here at the latest. After the
-      // locks above, in their order.
-      await refreshSurchargeLine(tx, existing.id)
+      // locks above, in their order. A surcharge that is due and has no room
+      // on a full draft is not left off in silence.
+      if ((await refreshSurchargeLine(tx, existing.id)) === 'waits for room') {
+        throw new ConflictException(
+          'Für den Notdienstzuschlag ist kein Platz mehr: Ein Beleg hat höchstens ' +
+            `${lineLimits.lines.toLocaleString('de-DE')} Positionen. Sobald eine entfernt ist, ` +
+            'kommt er dazu, dann lässt sich der Beleg festschreiben.',
+        )
+      }
 
       // One moment for the date and the issuing, so that an invoice issued
       // across midnight in Germany is not dated the day before its issue.

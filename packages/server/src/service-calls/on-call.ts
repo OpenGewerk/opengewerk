@@ -211,6 +211,7 @@ export function takesOverSurcharge(
  * a draft moved to a job that is no emergency, and keeps its mark while it is
  * gone: once the call has a surcharge again, the draft gets it back as a new
  * line. A line the office or a device removes loses its mark as it goes.
+ * Answers whether a surcharge that is due waits for room on a full draft.
  *
  * Locked like a line written in the office, so that it waits for a
  * transaction that is issuing the document and then finds it fixed.
@@ -218,9 +219,9 @@ export function takesOverSurcharge(
 export async function refreshSurchargeLine(
   tx: TenantTransaction,
   documentId: string,
-): Promise<void> {
+): Promise<'waits for room' | null> {
   if (!isUuid(documentId)) {
-    return
+    return null
   }
 
   // Most lines are on a document without one, a report above all: asked
@@ -238,7 +239,7 @@ export async function refreshSurchargeLine(
     .limit(1)
 
   if (!mark) {
-    return
+    return null
   }
 
   const [document] = await tx
@@ -253,7 +254,7 @@ export async function refreshSurchargeLine(
     .for('no key update')
 
   if (!document || whyFixed(document) !== null) {
-    return
+    return null
   }
 
   const lines = await tx
@@ -270,11 +271,15 @@ export async function refreshSurchargeLine(
   )
 
   if (!marked) {
-    if (surcharge !== null) {
-      await restoreSurchargeLine(tx, document.tenantId, documentId as DocumentId, lines, surcharge)
-    }
-
-    return
+    return surcharge === null
+      ? null
+      : await restoreSurchargeLine(
+          tx,
+          document.tenantId,
+          documentId as DocumentId,
+          lines,
+          surcharge,
+        )
   }
 
   if (surcharge === null) {
@@ -283,7 +288,7 @@ export async function refreshSurchargeLine(
       .set({ deletedAt: new Date() })
       .where(eq(documentLines.id, marked.id))
 
-    return
+    return null
   }
 
   const next = {
@@ -299,10 +304,12 @@ export async function refreshSurchargeLine(
   if (
     Object.entries(next).every(([field, value]) => marked[field as keyof typeof next] === value)
   ) {
-    return
+    return null
   }
 
   await tx.update(documentLines).set(next).where(eq(documentLines.id, marked.id))
+
+  return null
 }
 
 /**
@@ -322,13 +329,13 @@ async function restoreSurchargeLine(
   tx: TenantTransaction,
   tenantId: TenantId,
   documentId: DocumentId,
-  lines: readonly { readonly position: number; readonly designation: string }[],
+  lines: readonly {
+    readonly kind: string
+    readonly position: number
+    readonly designation: string
+  }[],
   surcharge: SurchargeLine,
-): Promise<void> {
-  if (lines.length >= lineLimits.lines) {
-    return
-  }
-
+): Promise<'waits for room' | null> {
   const gone = and(
     eq(documentLines.documentId, documentId),
     eq(documentLines.emergencySurcharge, true),
@@ -342,15 +349,29 @@ async function restoreSurchargeLine(
     .limit(1)
 
   if (!last) {
-    return
+    return null
+  }
+
+  // A position the office typed as a surcharge, by its word alone or with
+  // its kind after it; a heading or a text with the word is none.
+  const typed = lines.some(
+    (line) =>
+      line.kind === 'item' &&
+      (line.designation === surchargeDesignation ||
+        line.designation.startsWith(`${surchargeDesignation} `)),
+  )
+
+  if (typed) {
+    await tx.update(documentLines).set({ emergencySurcharge: false }).where(gone)
+
+    return null
+  }
+
+  if (lines.length >= lineLimits.lines) {
+    return 'waits for room'
   }
 
   await tx.update(documentLines).set({ emergencySurcharge: false }).where(gone)
-
-  if (lines.some((line) => line.designation.startsWith(`${surchargeDesignation} `))) {
-    return
-  }
-
   await tx.insert(documentLines).values({
     tenantId,
     documentId,
@@ -365,6 +386,8 @@ async function restoreSurchargeLine(
     netCents: surcharge.netCents,
     emergencySurcharge: true,
   })
+
+  return null
 }
 
 /** The word every line of a surcharge begins with (`emergencySurchargeLine`). */

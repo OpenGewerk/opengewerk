@@ -1252,22 +1252,48 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     ])
   })
 
-  it('does not come back next to a surcharge the office typed in', async () => {
+  it.each(['Notdienstzuschlag Nacht', 'Notdienstzuschlag'])(
+    'does not come back next to a surcharge the office typed in as „%s“',
+    async (designation) => {
+      const { job, invoice } = await draftOf()
+
+      await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+      await post(`/documents/${invoice}/lines`, {
+        designation,
+        quantityMilli: 1000,
+        unit: 'flat_rate',
+        unitPriceCents: 4500,
+      })
+      await sent(changed('jobs', job, { emergencyAt: { from: inTheDay, to: atNight } }))
+
+      const { rows } = await admin.query<{ marked: number; shown: number }>(
+        `select count(*) filter (where emergency_surcharge)::int as marked, count(*)::int as shown
+         from document_lines where document_id = $1 and deleted_at is null and designation like 'Notdienstzuschlag%'`,
+        [invoice],
+      )
+
+      expect(rows).toEqual([{ marked: 0, shown: 1 }])
+      expect(await marksOf(invoice)).toBe(0)
+    },
+  )
+
+  it('comes back next to a heading with the word in it', async () => {
     const { job, invoice } = await draftOf()
 
     await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
     await post(`/documents/${invoice}/lines`, {
-      designation: 'Notdienstzuschlag Nacht',
-      quantityMilli: 1000,
-      unit: 'flat_rate',
-      unitPriceCents: 4500,
+      kind: 'title',
+      designation: 'Notdienstzuschlag Hinweis',
     })
     await sent(changed('jobs', job, { emergencyAt: { from: inTheDay, to: atNight } }))
 
-    expect(await shownSurchargesOf(invoice)).toEqual([
-      { designation: 'Notdienstzuschlag Nacht', emergency_surcharge: false },
-    ])
-    expect(await marksOf(invoice)).toBe(0)
+    const { rows } = await admin.query<{ kind: string; designation: string }>(
+      `select kind, designation from document_lines
+       where document_id = $1 and deleted_at is null and emergency_surcharge`,
+      [invoice],
+    )
+
+    expect(rows).toEqual([{ kind: 'item', designation: 'Notdienstzuschlag Nacht' }])
   })
 
   it('follows an hour a device moves from one draft to another, on both', async () => {
@@ -1435,7 +1461,7 @@ describe('the line of the surcharge on a draft (#1087)', () => {
       .set('x-test-identity', office())
       .send({})
       .then((answer) => answer.status)
-    let refreshing: Promise<void> | undefined
+    let refreshing: Promise<unknown> | undefined
 
     try {
       await held.reached
@@ -1478,6 +1504,15 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     await patch(`/jobs/${job}`, { emergencyAt: atNight })
 
     expect(await surchargeOf(invoice)).toMatchObject({ deleted: true, emergency_surcharge: true })
+
+    // Issued now, the invoice would go out without the surcharge that is due.
+    const refused = await http()
+      .post(`/documents/${invoice}/issue`)
+      .set('x-test-identity', office())
+      .send({})
+      .expect(409)
+
+    expect((refused.body as { message?: string }).message).toContain('Notdienstzuschlag')
 
     const { rows: room } = await admin.query<{ id: string }>(
       "select id from document_lines where document_id = $1 and designation = 'Kleinmaterial' limit 1",
