@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { InstanceUpdateView } from '@opengewerk/platform-domain'
+import { type InstanceUpdateView, laterVersion } from '@opengewerk/platform-domain'
 import type { Pool } from 'pg'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -25,7 +25,6 @@ import type { AccountMessages } from './account-mail.js'
 import { saveInstanceMailServer } from './mail-server.js'
 import {
   type InstanceUpdates,
-  laterVersion,
   readInstanceUpdate,
   releaseNotes,
   requestInstanceUpdate,
@@ -436,6 +435,26 @@ describe('telling how an update ended', () => {
     expect(told.map((sent) => sent.to)).toEqual([[lea.email]])
     expect(told[0]?.data).toContain('abgebrochen')
     expect(told[0]?.data).toContain('Schritt backup')
+  })
+
+  it('is tried again a minute later when the mail server could not be reached, and then told once', async () => {
+    finished('succeeded')
+    const before = toldOf().length
+    const down: MailContext = {
+      ...mail,
+      connect: () => {
+        throw new Error('Der Mailserver antwortet nicht.')
+      },
+    }
+
+    await expect(reportFinishedUpdate({ ...reporting(), mail: down })).rejects.toThrow(
+      'Der Mailserver antwortet nicht.',
+    )
+    expect(toldOf().length).toBe(before)
+
+    expect(await reportFinishedUpdate(reporting())).toBe(true)
+    expect(await reportFinishedUpdate(reporting())).toBe(false)
+    expect(toldOf().length).toBe(before + 1)
   })
 
   it('says nothing of an update under way, of one that ended more than a day ago, or without words for it', async () => {

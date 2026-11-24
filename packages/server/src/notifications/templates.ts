@@ -736,13 +736,31 @@ export function instanceUpdatedMessage(facts: {
   readonly from: string | null
   readonly succeeded: boolean
   readonly step: InstanceUpdateStep
+  readonly reason: 'vanished' | 'docker' | null
   readonly by: string
   readonly startedAt: Date
   readonly link: string
 }): MessageText {
   const before = facts.from ?? 'der Fassung davor'
   const asked = facts.by ? ` von ${facts.by}` : ''
-  const stopped = stoppedIn[facts.step]
+  // A run that went away, or never started, has no step that says what it
+  // left behind.
+  const stopped =
+    facts.reason === 'vanished'
+      ? {
+          where: 'mittendrin',
+          left: () =>
+            'Der Lauf ist verschwunden, ohne zu sagen, wie er endete, etwa weil der Server neu ' +
+            'gestartet wurde. Bitte auf dem Server nachsehen, was dort läuft: ' +
+            'docker compose -f docker/compose.yaml ps',
+        }
+      : facts.reason === 'docker'
+        ? {
+            where: 'vor dem ersten Schritt',
+            left: (from: string) =>
+              `Der Lauf ließ sich nicht starten. Geändert wurde nichts, die Instanz läuft weiter auf Fassung ${from}.`,
+          }
+        : stoppedIn[facts.step]
   const what = facts.succeeded
     ? [
         `die Aktualisierung Ihrer OpenGewerk-Instanz auf Fassung ${facts.version}, am ` +

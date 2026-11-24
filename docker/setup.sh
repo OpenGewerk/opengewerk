@@ -303,7 +303,9 @@ fi
 # Linux: under Docker Desktop on Windows or macOS the engine sees other paths
 # than this shell. A folder that moved gets its new path on the next start. A
 # path with a character beyond letters, digits and . _ - / stays out of the
-# .env, and the office then says how to update by hand.
+# .env, and one moved to such a path takes the old path out, so that no update
+# runs on a folder this installation left; the office then says how to update
+# by hand.
 directory_variable="${APPLICATION_PREFIX}_DIRECTORY"
 
 if [ "$(uname -s)" = Linux ] && grep -q "^${directory_variable}=" "$env_file"; then
@@ -312,7 +314,7 @@ if [ "$(uname -s)" = Linux ] && grep -q "^${directory_variable}=" "$env_file"; t
     /*[!A-Za-z0-9/._-]* | [!/]*) directory='' ;;
   esac
   recorded=$(sed -n "s/^${directory_variable}=//p" "$env_file" | head -n 1 | tr -d "$carriage_return")
-  if [ -n "$directory" ] && [ "$recorded" != "$directory" ]; then
+  if [ "$recorded" != "$directory" ]; then
     draft=$(mktemp "$here/.env.XXXXXX")
     trap 'rm -f "$draft"' EXIT
     while IFS= read -r line || [ -n "$line" ]; do
@@ -322,7 +324,11 @@ if [ "$(uname -s)" = Linux ] && grep -q "^${directory_variable}=" "$env_file"; t
       esac
     done < "$env_file" > "$draft"
     replace_env "$draft"
-    say "Ordner der Installation für Aktualisierungen aus dem Büro eingetragen: $directory"
+    if [ -n "$directory" ]; then
+      say "Ordner der Installation für Aktualisierungen aus dem Büro eingetragen: $directory"
+    else
+      say "Der Pfad dieses Ordners hat Zeichen außer Buchstaben, Ziffern und . _ - /. Aus dem Büro lässt sich die Instanz deshalb nicht aktualisieren, nur von Hand."
+    fi
   fi
 fi
 

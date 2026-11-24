@@ -6,6 +6,7 @@ import {
   type InstanceUpdateStep,
   instanceUpdateSteps,
   type InstanceUpdateView,
+  laterVersion,
 } from '@opengewerk/platform-domain'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -63,7 +64,7 @@ const reasonTexts: Readonly<Record<InstanceUpdateReason, string>> = {
 function refusalText(reason: InstanceUpdateRefusal): string {
   switch (reason) {
     case 'expired':
-      return 'Der Auftrag wartete länger als zehn Minuten auf den Dienst für Aktualisierungen und wurde verworfen. Bitte noch einmal.'
+      return 'Die Anfrage wartete länger als zehn Minuten auf den Dienst für Aktualisierungen und wurde verworfen. Bitte noch einmal.'
     case 'version':
       return 'Der Dienst kennt inzwischen eine andere neueste Fassung. Bitte die Seite neu laden.'
     case 'current':
@@ -154,18 +155,28 @@ export function InstanceUpdateScreen() {
       return data?.run?.state === 'running' || data?.pending ? 3000 : 60_000
     },
   })
-  const [confirming, setConfirming] = useState(false)
+  // The version the dialog asks about, fixed when it opened, and the try it
+  // belongs to: a confirmation that comes back after the dialog was closed,
+  // or for a dialog opened anew since, sends nothing.
+  const [confirming, setConfirming] = useState<{
+    readonly version: string
+    readonly attempt: number
+  } | null>(null)
+  const attempt = useRef(0)
   const [trouble, setTrouble] = useState<string | null>(null)
   const loadedWith = useRef<string | null | undefined>(undefined)
   const running = update.data?.running
 
   const start = useMutation({
     mutationFn: startInstanceUpdate,
-    onSuccess: (view) => {
+    onSuccess: async (view) => {
+      // A question still under way read the state from before the request
+      // and would put the button back.
+      await queries.cancelQueries({ queryKey: ['instance-update'] })
       queries.setQueryData(['instance-update'], view)
     },
     onError: (error) => {
-      setTrouble(saidWhy(error, 'Der Auftrag kam nicht an. Bitte gleich noch einmal.'))
+      setTrouble(saidWhy(error, 'Die Anfrage kam nicht an. Bitte gleich noch einmal.'))
     },
   })
 
@@ -199,7 +210,7 @@ export function InstanceUpdateScreen() {
   // The notes only beside the button, as the boards draw it: while an update
   // runs, and after one that stopped, the card of the run takes their place.
   const underWay = view.pending !== null || view.run?.state === 'running'
-  const stopped = view.run?.state === 'failed' && view.run.version === view.latest
+  const stopped = stoppedShort(view) !== null
 
   return (
     <InstancePage title="Aktualisierung" sub={sub}>
@@ -216,43 +227,50 @@ export function InstanceUpdateScreen() {
           ) : null}
           <Action
             view={view}
-            busy={start.isPending || confirming}
+            busy={start.isPending || confirming !== null}
             onUpdate={() => {
+              if (!view.latest) {
+                return
+              }
+
+              attempt.current += 1
               setTrouble(null)
-              setConfirming(true)
+              setConfirming({ version: view.latest, attempt: attempt.current })
             }}
           />
         </div>
       </Panel>
 
-      {confirming && view.latest ? (
+      {confirming ? (
         <Dialog
-          title={`Auf ${view.latest} aktualisieren?`}
+          title={`Auf ${confirming.version} aktualisieren?`}
           width={520}
           onClose={() => {
-            setConfirming(false)
+            attempt.current += 1
+            setConfirming(null)
           }}
         >
           <div className="flex flex-col gap-3">
             <p className="m-0 text-[14px] leading-[1.5]">
               Die Instanz sichert zuerst die Datenbank und den Dateispeicher. Dann lädt sie{' '}
-              {view.latest}, prüft die Signatur, holt die neuen Abbilder, migriert die Datenbank und
-              startet neu. Für etwa eine Minute ist sie nicht erreichbar.
+              {confirming.version}, prüft die Signatur, holt die neuen Abbilder, migriert die
+              Datenbank und startet neu. Für etwa eine Minute ist sie nicht erreichbar.
             </p>
             <Reconfirmation
               narrow={false}
               confirm="Aktualisieren"
               onConfirmed={() => {
-                const wanted = view.latest
-
-                setConfirming(false)
-
-                if (wanted) {
-                  start.mutate(wanted)
+                if (attempt.current !== confirming.attempt) {
+                  return
                 }
+
+                attempt.current += 1
+                setConfirming(null)
+                start.mutate(confirming.version)
               }}
               onCancel={() => {
-                setConfirming(false)
+                attempt.current += 1
+                setConfirming(null)
               }}
             />
           </div>
@@ -444,6 +462,20 @@ function Steps({
   )
 }
 
+/**
+ * The run that stopped short of a version that is still ahead of what runs:
+ * shown until the instance runs that version or a later one, also when a
+ * newer one came out meanwhile, since a stop after the migration left the
+ * database on the new state.
+ */
+function stoppedShort(view: InstanceUpdateView): InstanceUpdateRun | null {
+  const { run, running } = view
+
+  return run?.state === 'failed' && (running === null || laterVersion(run.version, running))
+    ? run
+    : null
+}
+
 /** Who started a run and when, as one sentence. */
 function startedBy(run: InstanceUpdateRun): string {
   return `Gestartet ${moment(run.startedAt)}${run.by ? ` von ${run.by}` : ''}.`
@@ -473,7 +505,7 @@ function Action({
         <SettingsText muted>
           {run?.state === 'running'
             ? startedBy(run)
-            : 'Der Auftrag wartet darauf, dass der Dienst für Aktualisierungen ihn aufnimmt.'}
+            : 'Die Anfrage wartet darauf, dass der Dienst für Aktualisierungen sie aufnimmt.'}
         </SettingsText>
         <Steps run={run?.state === 'running' ? run : null} waiting={run?.state !== 'running'} />
         <NoteBox>
@@ -496,33 +528,40 @@ function Action({
     )
   }
 
-  const failed =
-    run?.state === 'failed' && view.newer && run.version === view.latest ? stoppedIn(run) : null
+  const stopped = stoppedShort(view)
+  const failed = stopped ? stoppedIn(stopped) : null
   const asked =
     refusal !== null ? (
       <p role="alert" className="m-0 text-[13px] font-semibold text-conflict">
-        Der Auftrag wurde abgelehnt. {refusalText(refusal.reason)}
+        Die Anfrage wurde abgelehnt. {refusalText(refusal.reason)}
       </p>
     ) : null
 
-  if (failed && run) {
+  if (failed && stopped) {
+    const again =
+      view.mode === 'ready' && view.newer && view.latest
+        ? stopped.version === view.latest
+          ? 'Erneut versuchen'
+          : `Auf ${view.latest} aktualisieren`
+        : null
+
     return (
       <>
         <div role="alert" className="flex items-center gap-2 text-[14px] text-conflict">
           <TriangleAlert size={16} strokeWidth={2.2} aria-hidden="true" />
-          <strong>Die Aktualisierung auf {run.version} ist abgebrochen.</strong>
+          <strong>Die Aktualisierung auf {stopped.version} ist abgebrochen.</strong>
         </div>
         <SettingsText muted>
-          {startedBy(run)} {failed.left}
+          {startedBy(stopped)} {failed.left}
         </SettingsText>
-        <Steps run={run} />
-        {run.log.length > 0 ? (
+        <Steps run={stopped} />
+        {stopped.log.length > 0 ? (
           <>
             <span className="text-[12px] font-semibold tracking-[0.04em] text-ink-muted uppercase">
               Auszug aus dem Protokoll des Laufs
             </span>
             <pre className="m-0 overflow-x-auto rounded-[4px] border border-line bg-surface-sunken px-3 py-2.5 font-mono text-[12px] leading-[1.5] whitespace-pre-wrap text-ink">
-              {run.log.slice(-12).join('\n')}
+              {stopped.log.slice(-12).join('\n')}
             </pre>
           </>
         ) : null}
@@ -530,11 +569,11 @@ function Action({
           Wer die Instanz verwaltet, bekommt dazu eine E-Mail über den Mailserver der Instanz.
         </SettingsText>
         {asked}
-        {view.mode === 'ready' ? (
+        {again ? (
           <div className="flex flex-wrap gap-2">
             <div className="grow" />
             <Button tone="primary" icon={RefreshCw} disabled={busy} onClick={onUpdate}>
-              Erneut versuchen
+              {again}
             </Button>
           </div>
         ) : null}

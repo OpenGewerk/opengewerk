@@ -10,6 +10,7 @@ import {
   type InstanceUpdateRun,
   instanceUpdateSteps,
   type InstanceUpdateView,
+  laterVersion,
 } from '@opengewerk/platform-domain'
 
 /**
@@ -99,22 +100,6 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | nul
   return typeof value === 'string' && (allowed as readonly string[]).includes(value)
     ? (value as T)
     : null
-}
-
-/** Whether version `a` comes after version `b`, both of the form 1.2.3. */
-export function laterVersion(a: string, b: string): boolean {
-  const left = a.split('.').map(Number)
-  const right = b.split('.').map(Number)
-
-  for (let index = 0; index < 3; index++) {
-    const difference = (left[index] ?? 0) - (right[index] ?? 0)
-
-    if (difference !== 0) {
-      return difference > 0
-    }
-  }
-
-  return false
 }
 
 /** A line of Markdown as text: links as their words, without marks for bold, code or emphasis. */
@@ -344,44 +329,29 @@ export async function requestInstanceUpdate(
   return id
 }
 
-/**
- * Marks a finished update as told, once: true for the one call that set the
- * mark, false when it was set before. The marks of earlier updates go.
- */
-export async function markUpdateTold(updates: InstanceUpdates, id: string): Promise<boolean> {
+/** Whether the end of the update with this ID was told already. */
+export async function updateTold(updates: InstanceUpdates, id: string): Promise<boolean> {
   if (!uuid.test(id)) {
-    return false
+    return true
   }
 
-  try {
-    await writeFile(join(updates.requestsPath, `told-${id}`), '', { flag: 'wx' })
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      return false
-    }
+  return stat(join(updates.requestsPath, `told-${id}`)).then(
+    () => true,
+    () => false,
+  )
+}
 
-    throw error
+/** Marks the end of the update with this ID as told. The marks of earlier updates go. */
+export async function markUpdateTold(updates: InstanceUpdates, id: string): Promise<void> {
+  if (!uuid.test(id)) {
+    return
   }
+
+  await writeFile(join(updates.requestsPath, `told-${id}`), '')
 
   for (const name of await readdir(updates.requestsPath)) {
     if (name.startsWith('told-') && name !== `told-${id}`) {
       await rm(join(updates.requestsPath, name), { force: true })
     }
   }
-
-  return true
-}
-
-/** Whether both folders are there; a test of the preview leaves them out. */
-export async function updateFoldersExist(updates: InstanceUpdates): Promise<boolean> {
-  const both = await Promise.all(
-    [updates.requestsPath, updates.statusPath].map((path) =>
-      stat(path).then(
-        (found) => found.isDirectory(),
-        () => false,
-      ),
-    ),
-  )
-
-  return both.every(Boolean)
 }

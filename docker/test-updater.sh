@@ -34,6 +34,10 @@ pack() {
     "ghcr.io/opengewerk/updater@sha256:$(printf '%064d' 3)"
   cat > "$folder/docker/start.sh" <<'START'
 #!/bin/sh
+# setup.sh writes a new .env as whoever runs it, as here.
+here=$(dirname "$0")
+cat "$here/.env" > "$here/.env.new"
+mv "$here/.env.new" "$here/.env"
 echo 'OpenGewerk: Fassung: die signierten Abbilder werden geholt.'
 [ "${START_ENDS:-ok}" != images ] || exit 1
 echo 'OpenGewerk: Die Datenbank wird eingerichtet oder auf den neuen Stand gebracht.'
@@ -370,5 +374,31 @@ sh "$source_dir/updater/update.sh" 13131313-2222-4333-8444-555555555555 1.1.0 > 
 [ "$(cat "$run")" = "$before" ] || fail 'ein fremder Lauf hat run.json verändert'
 unchanged 'fremder Lauf'
 check 'Lauf zu einem anderen Auftrag: schreibt nichts, entpackt nichts'
+
+# 15. A start.sh that fails after setup.sh wrote the .env anew leaves it with
+# the owner of the installation, who could not read it otherwise.
+restore
+chown -R 1234:1234 "$work/install"
+update 14141414-2222-4333-8444-555555555555 START_ENDS=migration
+failed_in 3 '.env nach einem Abbruch'
+[ "$(stat -c %u:%g "$work/install/docker/.env")" = 1234:1234 ] || fail 'die .env gehört nach einem Abbruch root'
+check 'Abbruch nach dem Schreiben der .env: sie gehört weiter dem Besitzer'
+
+# 16. After a run that stopped once the files of the new version were in
+# place, the installation names the new version while the instance runs the
+# one before. A new request for the version that failed takes it up again,
+# from the version it started from; another version than that still counts
+# as current.
+pack 1.1.0
+cp -R "$work/pack/opengewerk/." "$work/install/"
+jq -n '{id: "15151515-2222-4333-8444-555555555555", version: "1.1.0", from: "1.0.0", by: "Moritz Beispiel",
+  state: "failed", reason: null, step: 3, started_at: "2026-11-24T10:00:00Z", finished_at: "2026-11-24T10:01:00Z", log: []}' > "$run"
+request 16161616-2222-4333-8444-555555555555 1.1.0
+round
+started || fail 'ein neuer Versuch nach einem Abbruch startete nicht'
+[ "$(field .from "$run")" = 1.0.0 ] || fail 'der neue Versuch nennt nicht die Fassung, von der er ausging'
+jq '.state = "succeeded"' "$run" > "$run.new" && mv "$run.new" "$run"
+refused 17171717-2222-4333-8444-555555555555 1.1.0 current
+check 'Neuer Versuch nach einem Abbruch mit entpackter Fassung: startet, nach einem Erfolg nicht mehr'
 
 printf 'Dienst für Aktualisierungen: alles in Ordnung.\n'

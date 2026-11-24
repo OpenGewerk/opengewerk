@@ -93,6 +93,10 @@ describe('the update of the instance', () => {
     await page(newer)
 
     expect(await screen.findByText('Neuere Fassung')).toBeTruthy()
+    const versions = screen.getByRole('region', { name: 'Fassung' })
+
+    expect(within(versions).getByText('Läuft').nextElementSibling?.textContent).toBe('0.3.0')
+    expect(within(versions).getByText('Neueste').nextElementSibling?.textContent).toContain('0.3.1')
     const notes = screen.getByRole('region', { name: 'Was 0.3.1 bringt' })
     const headings = within(notes)
       .getAllByRole('heading', { level: 3 })
@@ -147,6 +151,25 @@ describe('the update of the instance', () => {
     expect(screen.getByText(/Es wurde nichts geändert, 0.3.0 läuft weiter/)).toBeTruthy()
     expect(screen.getByText(/No space left on device/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Erneut versuchen' })).toBeTruthy()
+  })
+
+  it('keeps a run that stopped after the migration in view when a newer version came out, and offers that one', async () => {
+    await page({
+      ...newer,
+      latest: '0.3.2',
+      run: { ...stopped, step: 'restart', log: [] },
+    })
+
+    expect(await screen.findByText('Die Aktualisierung auf 0.3.1 ist abgebrochen.')).toBeTruthy()
+    expect(screen.getByText(/Die Datenbank ist schon migriert/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Auf 0.3.2 aktualisieren' })).toBeTruthy()
+  })
+
+  it('no longer shows a run that stopped once the instance runs that version', async () => {
+    await page({ ...newer, running: '0.3.1', latest: '0.3.1', newer: false, run: stopped })
+
+    expect(await screen.findByText('Diese Instanz ist auf dem neuesten Stand.')).toBeTruthy()
+    expect(screen.queryByText(/ist abgebrochen/)).toBeNull()
   })
 
   it('says why the service turned the last request away', async () => {

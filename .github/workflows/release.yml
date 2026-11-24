@@ -150,6 +150,28 @@ jobs:
           cosign sign --yes --recursive "$BACKUP"
           cosign sign --yes --recursive "$UPDATER"
 
+      # Every image of the kit is pulled without signing in, by every start
+      # of this version. A package that is not public, as the updater is when
+      # it is pushed the first time (#1093), would stop each of them at the
+      # pull; asked here without the login of this run, before the kit and the
+      # release page exist. Set public under the packages of the organisation,
+      # then run the job again.
+      - name: Abbilder ohne Anmeldung erreichbar
+        env:
+          APP: ghcr.io/opengewerk/opengewerk@${{ steps.app.outputs.digest }}
+          BACKUP: ghcr.io/opengewerk/backup@${{ steps.backup.outputs.digest }}
+          UPDATER: ghcr.io/opengewerk/updater@${{ steps.updater.outputs.digest }}
+        run: |
+          set -eu
+          DOCKER_CONFIG=$(mktemp -d)
+          export DOCKER_CONFIG
+          for image in "$APP" "$BACKUP" "$UPDATER"; do
+            if ! docker manifest inspect "$image" > /dev/null; then
+              echo "$image lässt sich ohne Anmeldung nicht holen. Das Paket in ghcr.io auf öffentlich stellen und den Lauf wiederholen." >&2
+              exit 1
+            fi
+          done
+
       - name: Installationspaket packen
         env:
           VERSION: ${{ steps.version.outputs.version }}

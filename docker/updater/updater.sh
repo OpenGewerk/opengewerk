@@ -170,7 +170,7 @@ take_request() {
   request="$requests_path/request.json"
   [ -f "$request" ] || return 0
   id=$(jq -r 'if (.id | type) == "string" then .id else "" end' "$request" 2>/dev/null) || return 0
-  printf '%s' "$id" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || return 0
+  id_valid "$id" || return 0
   taken=$(cat "$status_path/taken" 2>/dev/null) || taken=''
   [ "$id" != "$taken" ] || return 0
   printf '%s\n' "$id" > "$temp/taken"
@@ -185,7 +185,20 @@ take_request() {
   [ "$mode" = ready ] || { refuse "$reason"; return 0; }
   version_valid "$version" || { refuse version; return 0; }
   [ "$version" = "$latest" ] || { refuse version; return 0; }
-  newer "$version" "$installed" || { refuse current; return 0; }
+  # The version of the files is not always the one that runs: an update that
+  # stopped after it unpacked the kit leaves the files of the new version and
+  # the instance on the one before. A new try for the version that failed
+  # picks up from there, and the run says the version it started from.
+  from=$installed
+  retry=$(jq -r --arg version "$version" \
+    'if .state == "failed" and .version == $version then .from // "" else "" end' \
+    "$status_path/run.json" 2>/dev/null) || retry=''
+  if [ -n "$retry" ]; then
+    from=$retry
+  elif ! newer "$version" "$installed"; then
+    refuse current
+    return 0
+  fi
   ! update_running "$project" || { refuse running; return 0; }
 
   image=$(self_image) || image=''
@@ -196,11 +209,11 @@ take_request() {
     return 0
   fi
 
-  jq -n --arg id "$id" --arg version "$version" --arg from "$installed" --arg by "$by" --arg at "$(now)" '{
+  jq -n --arg id "$id" --arg version "$version" --arg from "$from" --arg by "$by" --arg at "$(now)" '{
     id: $id, version: $version, from: $from, by: $by, state: "running", reason: null,
     step: 0, started_at: $at, finished_at: null, log: []
   }' | write_json "$status_path/run.json"
-  say "Aktualisierung $id von $installed auf $version, angestoßen von $by."
+  say "Aktualisierung $id von $from auf $version, angestoßen von $by."
 
   # Beside Compose and not under it: the update replaces this service, and
   # the container that runs it must outlive that. The same image, the
@@ -233,7 +246,10 @@ watch_run() {
   [ $(($(date +%s) - started_seconds)) -gt 60 ] || return 0
   if ! update_running "$project"; then
     say 'Der Lauf ist verschwunden, ohne zu Ende zu kommen.'
-    record --arg at "$(now)" '. + {state: "failed", reason: "vanished", finished_at: $at}'
+    # Only while it still says so: a run that ended between the two questions
+    # wrote how, and that stays.
+    record --arg at "$(now)" \
+      'if .state == "running" then . + {state: "failed", reason: "vanished", finished_at: $at} else . end'
   fi
 }
 

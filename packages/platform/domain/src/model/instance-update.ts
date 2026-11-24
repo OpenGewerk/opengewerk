@@ -49,6 +49,22 @@ export const instanceUpdateSteps = [
 
 export type InstanceUpdateStep = (typeof instanceUpdateSteps)[number]
 
+/** Whether version `a` comes after version `b`, both of the form 1.2.3, by number and not as text. */
+export function laterVersion(a: string, b: string): boolean {
+  const left = a.split('.').map(Number)
+  const right = b.split('.').map(Number)
+
+  for (let index = 0; index < 3; index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0)
+
+    if (difference !== 0) {
+      return difference > 0
+    }
+  }
+
+  return false
+}
+
 /** One part of the notes of a release, as its changelog heads it. */
 export interface InstanceReleaseNotesSection {
   readonly title: string

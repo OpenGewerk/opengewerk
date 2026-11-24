@@ -25,7 +25,7 @@ set -eu
 
 id=${1:-}
 version=${2:-}
-printf '%s' "$id" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' ||
+id_valid "$id" ||
   { echo 'Keine Kennung eines Laufs.' >&2; exit 2; }
 version_valid "$version" || { echo 'Keine Fassung der Form 1.2.3.' >&2; exit 2; }
 
@@ -58,11 +58,18 @@ finish() {
   record '{state: $state, finished_at: $at}' --arg at "$(now)" --arg state "$1" || true
 }
 
-# Whatever ends the run before it says so: failed in the step it was in.
+# Whatever ends the run before it says so: failed in the step it was in. And
+# the .env back to the owner of the installation in any case: setup.sh writes
+# a new one as the user it runs as, root in here, and a start.sh that fails
+# after that would leave the owner a .env they cannot read.
+owner=''
 leave() {
   status=$?
   if [ -z "$finished" ]; then
     finish failed
+  fi
+  if [ -n "$owner" ] && [ -f "$install/docker/.env" ]; then
+    chown "$owner" "$install/docker/.env" || true
   fi
   rm -rf "$work"
   exit "$status"
@@ -170,11 +177,6 @@ done
 if ! wait "$started"; then
   step=$(step_of_start)
   exit 1
-fi
-
-# setup.sh writes a new .env as the user it runs as, root in here.
-if [ -f "$install/docker/.env" ]; then
-  chown "$owner" "$install/docker/.env"
 fi
 
 # 5: the version the application answers with.

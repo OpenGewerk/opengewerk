@@ -4,7 +4,7 @@ import { type RepeatingJob, startRepeating } from '../start/repeat.js'
 import type { AccountMessages } from './account-mail.js'
 import { instanceMailConnection } from './mail-server.js'
 import { listOperators } from './operators.js'
-import { type InstanceUpdates, markUpdateTold, readInstanceUpdate } from './update.js'
+import { type InstanceUpdates, markUpdateTold, readInstanceUpdate, updateTold } from './update.js'
 
 /**
  * Everybody who runs the instance learns by mail how an update from its area
@@ -15,7 +15,10 @@ import { type InstanceUpdates, markUpdateTold, readInstanceUpdate } from './upda
  * Told by whichever version of the application runs once the update ended:
  * the new one after an update that went through, the one before after an
  * update that stopped before the restart. A mark in the folder of the
- * requests says it was told, so that it is told once.
+ * requests says it was told, so that it is told once. It is set once every
+ * mail was handed to the server: a question to the database or a connection
+ * that fails before is tried again a minute later. A mail the server takes
+ * and then does not deliver is not, as with every notice to an account.
  *
  * Only an update that ended within the last day, so that an instance whose
  * mail server is set up a week later does not tell of an old one. Without a
@@ -54,22 +57,28 @@ export async function reportFinishedUpdate(
     return false
   }
 
-  const connection = await instanceMailConnection(database, mail.key)
-
-  if (connection?.state !== 'ready' || !(await markUpdateTold(updates, run.id))) {
+  if (await updateTold(updates, run.id)) {
     return false
   }
 
+  const connection = await instanceMailConnection(database, mail.key)
+
+  if (connection?.state !== 'ready') {
+    return false
+  }
+
+  const operators = await listOperators(database)
   const transport = mail.connect(connection.configuration)
 
   try {
-    for (const operator of await listOperators(database)) {
+    for (const operator of operators) {
       const text = words({
         name: operator.name,
         version: run.version,
         from: run.from,
         succeeded: run.state === 'succeeded',
         step: run.step,
+        reason: run.reason,
         by: run.by,
         startedAt: new Date(run.startedAt),
         link: mail.origin,
@@ -94,6 +103,8 @@ export async function reportFinishedUpdate(
   } finally {
     transport.close()
   }
+
+  await markUpdateTold(updates, run.id)
 
   return true
 }

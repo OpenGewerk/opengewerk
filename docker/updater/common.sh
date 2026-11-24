@@ -47,8 +47,20 @@ write_json() {
   mv "$draft" "$1"
 }
 
+# Each held to its pattern as a whole: grep alone takes a value of several
+# lines when one of them fits.
 version_valid() {
+  case "$1" in
+    '' | *[!0-9.]*) return 1 ;;
+  esac
   printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+}
+
+id_valid() {
+  case "$1" in
+    '' | *[!0-9a-f-]*) return 1 ;;
+  esac
+  printf '%s' "$1" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 }
 
 # Whether the first version comes after the second.
