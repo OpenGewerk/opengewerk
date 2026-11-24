@@ -1494,6 +1494,45 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000, deleted: false })
   })
 
+  it('leaves a surcharge more than a line holds off, and issuing says so', async () => {
+    const { invoice, hour } = await draftOf()
+    const twentyMillion = 2_000_000_000
+    const anHour = {
+      designation: 'Fahrzeit',
+      quantityMilli: 1000,
+      unit: 'hour',
+      unitPriceCents: twentyMillion,
+    }
+
+    await price(invoice, hour, twentyMillion)
+    await post(`/documents/${invoice}/lines`, anHour)
+
+    // 50 % of 40 million € fit a line.
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 2_000_000_000 })
+
+    // 50 % of 60 million € do not: the line is written, the surcharge stays.
+    await post(`/documents/${invoice}/lines`, anHour)
+    await sent(
+      created('document_lines', newId<'document-line'>(), {
+        documentId: invoice,
+        kind: 'item',
+        position: 20,
+        ...anHour,
+        vatRate: 'standard',
+      }),
+    )
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 2_000_000_000 })
+
+    const refused = await http()
+      .post(`/documents/${invoice}/issue`)
+      .set('x-test-identity', office())
+      .send({})
+      .expect(409)
+
+    expect((refused.body as { message?: string }).message).toContain('größer')
+  })
+
   it('waits on a full draft until the office makes room', async () => {
     const { job, invoice } = await draftOf()
 

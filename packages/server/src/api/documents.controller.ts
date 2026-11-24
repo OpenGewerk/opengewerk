@@ -513,13 +513,24 @@ export class DocumentsController {
       // The line of the surcharge as everything stands now, once more before
       // it is frozen (#1087): a change that raced the draft into being, or
       // one that came before its line, shows here at the latest. After the
-      // locks above, in their order. A surcharge that is due and has no room
-      // on a full draft is not left off in silence.
-      if ((await refreshSurchargeLine(tx, existing.id)) === 'waits for room') {
+      // locks above, in their order. A surcharge that is due and is not on
+      // the draft, for want of room or for its size, is not left off in
+      // silence.
+      const surchargeWaits = await refreshSurchargeLine(tx, existing.id)
+
+      if (surchargeWaits === 'waits for room') {
         throw new ConflictException(
           'Für den Notdienstzuschlag ist kein Platz mehr: Ein Beleg hat höchstens ' +
             `${lineLimits.lines.toLocaleString('de-DE')} Positionen. Sobald eine entfernt ist, ` +
             'kommt er dazu, dann lässt sich der Beleg festschreiben.',
+        )
+      }
+
+      if (surchargeWaits === 'too large') {
+        throw new ConflictException(
+          'Der Notdienstzuschlag wäre größer, als eine Position fassen kann. Die Stunden ' +
+            'prüfen; stimmen sie, die Zeile des Zuschlags von Hand ändern, dann rechnet sie ' +
+            'sich nicht mehr selbst.',
         )
       }
 

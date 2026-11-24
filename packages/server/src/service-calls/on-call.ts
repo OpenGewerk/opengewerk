@@ -211,7 +211,8 @@ export function takesOverSurcharge(
  * a draft moved to a job that is no emergency, and keeps its mark while it is
  * gone: once the call has a surcharge again, the draft gets it back as a new
  * line. A line the office or a device removes loses its mark as it goes.
- * Answers whether a surcharge that is due waits for room on a full draft.
+ * Answers whether a surcharge that is due waits for room on a full draft, or
+ * is more than a line holds, in which case the line stays as it was.
  *
  * Locked like a line written in the office, so that it waits for a
  * transaction that is issuing the document and then finds it fixed.
@@ -219,7 +220,7 @@ export function takesOverSurcharge(
 export async function refreshSurchargeLine(
   tx: TenantTransaction,
   documentId: string,
-): Promise<'waits for room' | null> {
+): Promise<SurchargeWait | null> {
   if (!isUuid(documentId)) {
     return null
   }
@@ -269,6 +270,12 @@ export async function refreshSurchargeLine(
     document.jobId,
     lines.filter((line) => line !== marked),
   )
+
+  // Out of hours a line holds each, a sum the column cannot: written, it would
+  // refuse whatever brought it, a transmission with no operation to blame.
+  if (surcharge !== null && tooLarge(surcharge)) {
+    return 'too large'
+  }
 
   if (!marked) {
     return surcharge === null
@@ -335,7 +342,7 @@ async function restoreSurchargeLine(
     readonly designation: string
   }[],
   surcharge: SurchargeLine,
-): Promise<'waits for room' | null> {
+): Promise<SurchargeWait | null> {
   const gone = and(
     eq(documentLines.documentId, documentId),
     eq(documentLines.emergencySurcharge, true),
@@ -394,13 +401,29 @@ async function restoreSurchargeLine(
 const surchargeDesignation = 'Notdienstzuschlag'
 
 /**
+ * Why a surcharge that is due is not on its draft (#1087): the draft has no
+ * room left, or the surcharge is more than a line holds.
+ */
+export type SurchargeWait = 'waits for room' | 'too large'
+
+/** The most cents a line holds: the largest integer of its columns. */
+const largestCents = 2_147_483_647
+
+function tooLarge(surcharge: SurchargeLine): boolean {
+  return (
+    Math.abs(surcharge.netCents) > largestCents || Math.abs(surcharge.unitPriceCents) > largestCents
+  )
+}
+
+/**
  * The line of the surcharge of an invoice made out of the reports of a job
  * (#293), marked as the server's (#1087), as its last line. Where the call
  * has no surcharge now, the line is made and taken away at once, marked: the
  * draft follows its call all the same and gets the surcharge once there is
  * one, as a draft does whose line the server took away. Only for a job that
  * is an emergency call: an invoice of any other job holds no line of a
- * surcharge, not even one taken away, and its log names none.
+ * surcharge, not even one taken away, and its log names none. A surcharge
+ * more than a line holds is made taken away as well; issuing names it.
  */
 export async function insertSurchargeLine(
   tx: TenantTransaction,
@@ -408,8 +431,10 @@ export async function insertSurchargeLine(
   documentId: string,
   position: number,
   jobId: string | null,
-  surcharge: SurchargeLine | null,
+  due: SurchargeLine | null,
 ): Promise<void> {
+  const surcharge = due !== null && tooLarge(due) ? null : due
+
   if (surcharge === null) {
     const [job] =
       jobId === null || !isUuid(jobId)

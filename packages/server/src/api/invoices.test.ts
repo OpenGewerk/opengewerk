@@ -1050,7 +1050,7 @@ describe('issuing next to a transmission from a device (opengewerk#1094)', () =>
       .send({})
       .then((answer) => answer.status)
     let pdf: Promise<number> | undefined
-    let throughBeforeIssuing = false
+    let throughBeforeIssuing: boolean | undefined
 
     try {
       await held.reached
