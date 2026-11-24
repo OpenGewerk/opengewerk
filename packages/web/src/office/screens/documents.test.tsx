@@ -1582,6 +1582,30 @@ describe('invoices in the chain', () => {
     expect(screen.getByText('Rechnungsbetrag').nextElementSibling?.textContent).toMatch(/856,80\s€/)
   })
 
+  it('saves only what the form of a line changed, and keeps the price another device set meanwhile (opengewerk#1057)', async () => {
+    const { client } = await mount('/belege/d-1', {
+      documents: [document()],
+      document_lines: [line('l-1', 1)],
+    })
+    const person = userEvent.setup()
+
+    await person.click(await screen.findByRole('button', { name: '1 bearbeiten' }))
+    server.put('document_lines', { ...line('l-1', 1, { unitPriceCents: 99000 }), version: 2 })
+    await client.synchronise()
+    const form = screen.getByLabelText('Beschreibung').closest('form') as HTMLFormElement
+
+    await person.type(within(form).getByLabelText('Beschreibung'), 'mit Überspannungsschutz')
+    await person.click(within(form).getByRole('button', { name: 'Speichern' }))
+
+    await waitFor(() => {
+      expect(server.operationsOn('document_lines')).toHaveLength(1)
+    })
+    expect(valuesOf(server.operationsOn('document_lines')[0])).toEqual({
+      description: 'mit Überspannungsschutz',
+    })
+    expect(server.row('document_lines', 'l-1')).toMatchObject({ unitPriceCents: 99000 })
+  })
+
   it('take the time of the work in the head, and keep it there', async () => {
     await mount('/belege/d-1', {
       documents: [document({ kind: 'final_invoice' })],

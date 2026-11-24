@@ -1083,7 +1083,11 @@ export class SyncClient {
       const saw = opened !== undefined && field in opened ? asHeld(opened[field]) : held
       const from = sameButWritten(saw, held) ? held : saw
 
-      if (!sameValue(from, to)) {
+      // A value the device holds already is no change: another device made
+      // the same one. Sent with what the person saw, it would take the
+      // version of the change away, and with it a check of the server that
+      // asks the version (`selectiveRefusal`).
+      if (!sameValue(from, to) && !sameValue(held, to)) {
         patches.push({ field, from, to })
       }
     }

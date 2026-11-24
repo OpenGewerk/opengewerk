@@ -13,7 +13,7 @@ import {
 import { eq, sql } from 'drizzle-orm'
 import type { Pool } from 'pg'
 import request from 'supertest'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { type Authorization, AUTHORIZATION, AuthorizationGuard } from '../api/authorization.js'
 import { databaseErrors } from '../api/database-errors.js'
@@ -822,12 +822,17 @@ describe('sending an outbox', () => {
     })
   })
 
-  it('names no operation over a failure of its own', async () => {
+  it('names no operation over a failure of its own, and says its cause in the log (opengewerk#1105)', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const answer = await push(olga(), [
       operation({ entity: 'notes', patches: [{ field: 'text', to: 'Platte voll' }] }),
     ]).expect(500)
 
     expect(answer.body).not.toHaveProperty('operationId')
+    expect(logged).toHaveBeenCalledWith(
+      'Eine Übertragung ließ sich nicht anwenden.',
+      expect.objectContaining({ message: 'Kein Platz mehr auf dem Datenträger.' }),
+    )
   })
 })
 

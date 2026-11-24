@@ -298,6 +298,27 @@ describe('the page of a defect (#311)', () => {
     expect(screen.queryByRole('button', { name: 'Behoben' })).toBeNull()
   })
 
+  it('saves only what its form changed, and keeps the deadline another device set meanwhile (opengewerk#1057)', async () => {
+    const { client } = await mount('/maengel/d-1', { defects: [defect()] })
+    const person = userEvent.setup()
+
+    await person.click(await screen.findByRole('button', { name: 'Bearbeiten' }))
+    server.put('defects', defect({ remedyDueOn: '2026-11-30', version: 2 }))
+    await client.synchronise()
+    await person.type(screen.getByLabelText(/Was mangelhaft ist/), ' Scharnier lose.')
+    await person.click(screen.getByRole('button', { name: 'Speichern' }))
+
+    await waitFor(() => {
+      expect(
+        server.operations().filter((operation) => operation.entity === 'defects'),
+      ).toHaveLength(1)
+    })
+    const [sent] = server.operations().filter((operation) => operation.entity === 'defects')
+
+    expect(sent?.patches.map((patch) => patch.field)).toEqual(['description'])
+    expect(server.row('defects', 'd-1')).toMatchObject({ remedyDueOn: '2026-11-30' })
+  })
+
   it('says a complaint after the acceptance lies within the warranty of the job', async () => {
     await mount('/maengel/d-1', {
       form_records: [acceptance],

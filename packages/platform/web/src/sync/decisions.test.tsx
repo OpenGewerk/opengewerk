@@ -568,6 +568,27 @@ describe('the version of the device of a circuit (opengewerk#1072)', () => {
     },
   )
 
+  it('sends no patch for a value the device holds already, and keeps the version for the checks of the server', async () => {
+    // Another device set the method the form changes to as well; the type
+    // of the RCD the device still holds, while a third one may have taken it
+    // away: the server asks the version for that, and sees it is old.
+    const started = await withCircuit({ ...circuit, cableInstallationMethod: 'c', version: 5 })
+    const opened = { cableInstallationMethod: null, rcdType: 'a', rcdSelective: false }
+
+    await started.update(
+      'circuits',
+      'sk-1',
+      { ...opened, cableInstallationMethod: 'c', rcdSelective: true },
+      opened,
+    )
+    await started.synchronise()
+
+    expect(server.sent.flat().at(-1)).toMatchObject({
+      baseVersion: 5,
+      patches: [{ field: 'rcdSelective', from: false, to: true }],
+    })
+  })
+
   it('queues nothing a form changed on a circuit that the change of another device would leave broken, and says why', async () => {
     // The form opened with a type of RCD; another device took it away since.
     // Selective on its own would leave a selective RCD without a type, which
