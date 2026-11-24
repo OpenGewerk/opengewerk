@@ -222,8 +222,14 @@ case "$version" in
   '' | latest | source)
     say 'Die Abbilder werden aus dem Quelltext gebaut.'
     # The backup along with the application: the service that backs up every
-    # night would otherwise keep the image of the first start.
-    compose build migrate backup-schedule ||
+    # night would otherwise keep the image of the first start. And the
+    # service for updates, where the application has one (#1093).
+    built='migrate backup-schedule'
+    if compose config --services 2>/dev/null | grep -qx updater; then
+      built="$built updater"
+    fi
+    # shellcheck disable=SC2086
+    compose build $built ||
       fail 'Die Abbilder ließen sich nicht bauen, der Grund steht darüber. Eine laufende Instanz arbeitet unverändert weiter.'
     ;;
   *)

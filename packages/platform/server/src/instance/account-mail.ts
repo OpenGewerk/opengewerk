@@ -1,3 +1,5 @@
+import type { InstanceUpdateStep } from '@opengewerk/platform-domain'
+
 import {
   type AddressMail,
   addressPath,
@@ -135,6 +137,22 @@ export interface AccountMessages {
     readonly name: string
     readonly address: string
     readonly changedAt: Date
+    readonly link: string
+  }) => AccountMessageText
+  /**
+   * To everybody who runs the instance, once an update from its area ended
+   * (opengewerk#1093): to `version` from `from`, gone through or stopped in
+   * `step`, asked for by `by` at `startedAt`; `link` is the instance.
+   * Optional: an application without the service for updates says nothing.
+   */
+  readonly instanceUpdated?: (facts: {
+    readonly name: string
+    readonly version: string
+    readonly from: string | null
+    readonly succeeded: boolean
+    readonly step: InstanceUpdateStep
+    readonly by: string
+    readonly startedAt: Date
     readonly link: string
   }) => AccountMessageText
 }

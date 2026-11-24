@@ -23,7 +23,7 @@ import type { InstanceSentences } from './sentences.js'
 export const secondFactorSetUp = sql<boolean>`(${authUsers.twoFactorEnabled} is true or exists (
   select 1 from auth_passkeys where auth_passkeys.user_id = ${authUsers.id}))`
 
-export async function listOperators(database: Database, asUser: string): Promise<OperatorView[]> {
+export async function listOperators(database: Database, asUser?: string): Promise<OperatorView[]> {
   const rows = await database.forInstance(
     (tx) =>
       tx

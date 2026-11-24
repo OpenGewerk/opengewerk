@@ -297,6 +297,35 @@ if grep -q "^${version_variable}=latest[[:space:]]*\$" "$env_file"; then
   say "$version_variable stand auf latest, der früheren Vorgabe, und ist jetzt leer: ein Paket läuft damit in seiner Fassung, ein Checkout baut aus dem Quelltext."
 fi
 
+# Where the installation lies on this machine (#1093). The service for updates
+# runs an update from the office with this folder under the same path, so
+# that every path in compose.yaml means the same in its container. Only on
+# Linux: under Docker Desktop on Windows or macOS the engine sees other paths
+# than this shell. A folder that moved gets its new path on the next start. A
+# path with a character beyond letters, digits and . _ - / stays out of the
+# .env, and the office then says how to update by hand.
+directory_variable="${APPLICATION_PREFIX}_DIRECTORY"
+
+if [ "$(uname -s)" = Linux ] && grep -q "^${directory_variable}=" "$env_file"; then
+  directory=$(cd "$here/.." && pwd -P)
+  case "$directory" in
+    /*[!A-Za-z0-9/._-]* | [!/]*) directory='' ;;
+  esac
+  recorded=$(sed -n "s/^${directory_variable}=//p" "$env_file" | head -n 1 | tr -d "$carriage_return")
+  if [ -n "$directory" ] && [ "$recorded" != "$directory" ]; then
+    draft=$(mktemp "$here/.env.XXXXXX")
+    trap 'rm -f "$draft"' EXIT
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        "${directory_variable}="*) printf '%s=%s\n' "$directory_variable" "$directory" ;;
+        *) printf '%s\n' "$line" ;;
+      esac
+    done < "$env_file" > "$draft"
+    replace_env "$draft"
+    say "Ordner der Installation für Aktualisierungen aus dem Büro eingetragen: $directory"
+  fi
+fi
+
 # Every placeholder becomes a secret of its own. The loop reads from a file
 # and writes to one, with no pipe in between: behind a pipe it would run in a
 # subshell, and the list of names would be empty afterwards.

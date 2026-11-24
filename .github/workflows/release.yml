@@ -118,6 +118,21 @@ jobs:
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
             org.opencontainers.image.licenses=AGPL-3.0-only
 
+      # The service for updates (#1093), signed and named in the kit like the
+      # two above: start.sh checks its signature before it pulls it.
+      - name: Dienst für Aktualisierungen bauen und veröffentlichen
+        id: updater
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: docker/updater
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/opengewerk/updater:${{ steps.version.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/OpenGewerk/opengewerk
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.licenses=AGPL-3.0-only
+
       - name: Cosign bereitstellen
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
@@ -128,16 +143,19 @@ jobs:
         env:
           APP: ghcr.io/opengewerk/opengewerk@${{ steps.app.outputs.digest }}
           BACKUP: ghcr.io/opengewerk/backup@${{ steps.backup.outputs.digest }}
+          UPDATER: ghcr.io/opengewerk/updater@${{ steps.updater.outputs.digest }}
         run: |
           set -eu
           cosign sign --yes --recursive "$APP"
           cosign sign --yes --recursive "$BACKUP"
+          cosign sign --yes --recursive "$UPDATER"
 
       - name: Installationspaket packen
         env:
           VERSION: ${{ steps.version.outputs.version }}
           APP_DIGEST: ${{ steps.app.outputs.digest }}
           BACKUP_DIGEST: ${{ steps.backup.outputs.digest }}
+          UPDATER_DIGEST: ${{ steps.updater.outputs.digest }}
         run: |
           set -eu
           # The folder as committed, without its tests, no .env and nothing
@@ -154,7 +172,8 @@ jobs:
           # exactly these bytes before it pulls them, and every docker compose
           # command docs/betrieb.md names runs them.
           sh docker/kit-images.sh opengewerk/docker/compose.yaml OPENGEWERK "$VERSION" \
-            "ghcr.io/opengewerk/opengewerk@$APP_DIGEST" "ghcr.io/opengewerk/backup@$BACKUP_DIGEST"
+            "ghcr.io/opengewerk/opengewerk@$APP_DIGEST" "ghcr.io/opengewerk/backup@$BACKUP_DIGEST" \
+            "ghcr.io/opengewerk/updater@$UPDATER_DIGEST"
 
           # Every entry belongs to root, by number and without a name. tar
           # otherwise writes down the account that packs, the runner's, and
@@ -190,6 +209,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           APP_DIGEST: ${{ steps.app.outputs.digest }}
           BACKUP_DIGEST: ${{ steps.backup.outputs.digest }}
+          UPDATER_DIGEST: ${{ steps.updater.outputs.digest }}
           # Whether the job below mirrors the release to Docker Hub (#281).
           DOCKER_HUB: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
         run: |
@@ -273,7 +293,7 @@ jobs:
           mirror = ""
           if os.environ.get("DOCKER_HUB") == "true":
               mirror = (
-                  "\nDieselben Abbilder liegen mit denselben Digests und Signaturen auch auf "
+                  "\nAnwendung und Sicherung liegen mit denselben Digests und Signaturen auch auf "
                   f"Docker Hub, als `opengewerk/opengewerk:{version}` und `opengewerk/backup:{version}`. "
                   "Das Paket holt sie trotzdem aus ghcr.io, denn Docker Hub begrenzt anonyme Pulls.\n"
               )
@@ -293,8 +313,9 @@ jobs:
 
           - `ghcr.io/opengewerk/opengewerk:{version}` (`{os.environ["APP_DIGEST"]}`)
           - `ghcr.io/opengewerk/backup:{version}` (`{os.environ["BACKUP_DIGEST"]}`)
+          - `ghcr.io/opengewerk/updater:{version}` (`{os.environ["UPDATER_DIGEST"]}`)
           {mirror}
-          Gebraucht werden Docker Engine ab 28.3.3 und Docker Compose ab 2.22. Beide Abbilder sind ohne Schlüssel über Sigstore signiert. Prüfen:
+          Gebraucht werden Docker Engine ab 28.3.3 und Docker Compose ab 2.22. Alle drei Abbilder sind ohne Schlüssel über Sigstore signiert. Prüfen:
 
           ```bash
           cosign verify ghcr.io/opengewerk/opengewerk:{version} \\

@@ -9,13 +9,15 @@ updates:
       interval: weekly
 
   # The bases the images are built on, by their digest (#687): node for the
-  # application, the database image for the backup. The one in
-  # docker/backup has to move with the database in compose.yaml above;
-  # "test-stack.sh base-images" stays red until both name the same.
+  # application, the database image for the backup, the Docker CLI and cosign
+  # for the service for updates (#1093). The one in docker/backup has to move
+  # with the database in compose.yaml above; "test-stack.sh base-images" stays
+  # red until both name the same.
   - package-ecosystem: docker
     directories:
       - /
       - /docker/backup
+      - /docker/updater
     schedule:
       interval: weekly
 

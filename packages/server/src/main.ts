@@ -24,6 +24,7 @@ import {
   startAddressSweep,
   startFileSweep,
   startSessionSweep,
+  startUpdateReports,
   stopOnSignals,
   takeOverFromEnvironment,
   tenantStorage,
@@ -197,6 +198,7 @@ async function start(): Promise<void> {
             push,
             setupCode: configuration.setupCode,
             instance: { settings: instanceSettings },
+            updates: configuration.updates,
           },
     ),
     {
@@ -216,6 +218,7 @@ async function start(): Promise<void> {
   let fileSweep: { readonly stop: () => Promise<void> } | null = null
   let addressSweep: { readonly stop: () => Promise<void> } | null = null
   let sessionSweep: { readonly stop: () => Promise<void> } | null = null
+  let updateReports: { readonly stop: () => Promise<void> } | null = null
 
   stopOnSignals(opengewerk.name, [
     () => mailWorker?.stop(),
@@ -224,6 +227,7 @@ async function start(): Promise<void> {
     () => fileSweep?.stop(),
     () => addressSweep?.stop(),
     () => sessionSweep?.stop(),
+    () => updateReports?.stop(),
     stopInstanceSettings,
     () => application.close(),
     () => database.close(),
@@ -293,6 +297,18 @@ async function start(): Promise<void> {
   // The same store and renderer the routes use, so that the file a message
   // carries is the file the document keeps.
   const printing = new DocumentFiles(database, output.files, output.renderer, output.limits)
+
+  // How an update from the area of the instance ended goes by mail to
+  // everybody who runs it, once (#1093), where the Compose file shares the
+  // folders of the service for updates.
+  if (mail && configuration.updates && !configuration.closed) {
+    updateReports = startUpdateReports({
+      database,
+      mail,
+      messages: accountMessages,
+      updates: configuration.updates,
+    })
+  }
 
   if (mail) {
     mailWorker = startMailWorker({

@@ -1,0 +1,481 @@
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import type { InstanceUpdateView } from '@opengewerk/platform-domain'
+import type { Pool } from 'pg'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+
+import {
+  type ProbeFoundation,
+  probeFoundation,
+  type ProbeInstance,
+  probeInstance,
+  probeOrigin as origin,
+  type ProbeVisitors,
+  probeVisitors,
+} from '../authentication/probe-application.js'
+import { addStaffMember } from '../authentication/staff.js'
+import { Database } from '../database/database.js'
+import type { MailContext } from '../mail/context.js'
+import { type FakeSmtpServer, fakeSmtpServer } from '../mail/test-smtp.js'
+import { smtpTransport } from '../mail/transport.js'
+import { SecretKey } from '../secrets/key.js'
+import type { AccountMessages } from './account-mail.js'
+import { saveInstanceMailServer } from './mail-server.js'
+import {
+  type InstanceUpdates,
+  laterVersion,
+  readInstanceUpdate,
+  releaseNotes,
+  requestInstanceUpdate,
+} from './update.js'
+import { reportFinishedUpdate } from './update-reports.js'
+
+/**
+ * The update of the instance from its area (opengewerk#1093), on the side of
+ * the application: what it reads from the service for updates and holds to
+ * its shape, who may ask for an update and only after confirming, what the
+ * request says, and that everybody who runs the instance is told once how
+ * an update ended.
+ */
+
+const password = 'ein-ordentlich-langes-passwort'
+const setupCode = 'K7Q4-9PXM'
+const mailPassword = 'mail-passwort'
+const key = SecretKey.from('u'.repeat(64))
+
+/** Sets the instance up, and so runs it. */
+const lea = { email: 'lea@nord.example.de', name: 'Lea Leitung' }
+/** Leads the first tenant, and runs nothing. */
+const otto = { email: 'otto@nord.example.de', name: 'Otto Zweitleitung' }
+
+const unconfirmed = 'Die Instanz wird erst nach der Bestätigung mit Passwort und Code aktualisiert.'
+
+const messages: AccountMessages = {
+  senderName: 'Probewerk',
+  accountPath: '/konto',
+  passwordReset: ({ name }) => ({ subject: 'Passwort', body: name }),
+  passkeyAdded: ({ name }) => ({ subject: 'Passkey', body: name }),
+  recoveryCodesRenewed: ({ name }) => ({ subject: 'Codes', body: name }),
+  secondFactorChanged: ({ name }) => ({ subject: 'Faktor', body: name }),
+  addressConfirmation: ({ name }) => ({ subject: 'Adresse', body: name }),
+  addressChanged: ({ name }) => ({ subject: 'Adresse', body: name }),
+  operatorsChanged: ({ name }) => ({ subject: 'Verwaltung', body: name }),
+  mailServerChanged: ({ name }) => ({ subject: 'Mailserver', body: name }),
+  instanceUpdated: ({ name, version, from, succeeded, step, by }) => ({
+    subject: `Aktualisierung auf ${version} ${succeeded ? 'durch' : 'abgebrochen'}`,
+    body: `Hallo ${name}, von ${from ?? '?'} auf ${version}, Schritt ${step}, angestoßen von ${by}.`,
+  }),
+}
+
+let foundation: ProbeFoundation
+let admin: Pool
+let instance: ProbeInstance
+let visitors: ProbeVisitors
+let database: Database
+let smtp: FakeSmtpServer
+let mail: MailContext
+let folders: string
+let updates: InstanceUpdates
+
+const signedIn = new Map<string, string>()
+const userIds = new Map<string, string>()
+const as = (person: { email: string }) => signedIn.get(person.email) ?? ''
+
+function get(path: string, person?: { email: string }) {
+  const asking = instance.http().get(path)
+
+  return person ? asking.set('cookie', as(person)) : asking
+}
+
+function post(path: string, person: { email: string }, body: object) {
+  return instance.http().post(path).set('cookie', as(person)).set('origin', origin).send(body)
+}
+
+const message = (answer: { body: unknown }) => (answer.body as { message: string }).message
+
+/** A file of the service, as it writes them. */
+function written(name: string, content: unknown): void {
+  writeFileSync(
+    join(updates.statusPath, name),
+    typeof content === 'string' ? content : JSON.stringify(content),
+  )
+}
+
+const notes = [
+  '> Diese Fassung schließt eine Sicherheitslücke.',
+  '',
+  '### Behoben',
+  '',
+  '- Die Zeile des **Notdienstzuschlags** rechnet sich neu',
+  '  nach einem Abgleich.',
+  '',
+  '### Sicherheit',
+  '',
+  '- Ein Link zum Zurücksetzen galt weiter, siehe [#1080](https://github.com/x/y/issues/1080).',
+  '',
+  '## Installieren und aktualisieren',
+  '',
+  '### Nicht mehr',
+  '',
+  '- `sh docker/start.sh`',
+].join('\n')
+
+/** The service as it writes after looking: alive, with 0.3.1 as the newest and the instance ready. */
+function serviceFound(over: Record<string, unknown> = {}, alive = new Date()): void {
+  written('alive', `${alive.toISOString()}\n`)
+  written('available.json', {
+    checked_at: '2026-11-24T03:12:00Z',
+    mode: 'ready',
+    reason: null,
+    installed: '0.3.0',
+    latest: '0.3.1',
+    published_at: '2026-12-02T10:00:00Z',
+    url: 'https://github.com/OpenGewerk/opengewerk/releases/tag/v0.3.1',
+    notes,
+    error: null,
+    ...over,
+  })
+}
+
+function cleared(): void {
+  for (const path of [updates.requestsPath, updates.statusPath]) {
+    for (const name of readdirSync(path)) {
+      rmSync(join(path, name), { force: true })
+    }
+  }
+}
+
+async function view(): Promise<InstanceUpdateView> {
+  return (await get('/instance/update', lea).expect(200)).body as InstanceUpdateView
+}
+
+function requestFile(): Record<string, unknown> | null {
+  try {
+    return JSON.parse(readFileSync(join(updates.requestsPath, 'request.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+  } catch {
+    return null
+  }
+}
+
+beforeAll(async () => {
+  foundation = await probeFoundation()
+  admin = await foundation.kit.connect()
+  await foundation.empty()
+
+  folders = mkdtempSync(join(tmpdir(), 'instance-update-'))
+  updates = { requestsPath: join(folders, 'requests'), statusPath: join(folders, 'status') }
+  for (const path of [updates.requestsPath, updates.statusPath]) {
+    mkdirSync(path)
+  }
+
+  const url = foundation.kit.applicationDatabaseUrl()
+
+  smtp = await fakeSmtpServer({ credentials: { user: 'instanz', password: mailPassword } })
+  mail = { origin, key, connect: (configuration) => smtpTransport(configuration) }
+  database = Database.connect(url)
+  instance = await probeInstance(url, {
+    setupCode,
+    mail,
+    version: '0.3.0',
+    instanceUpdates: updates,
+  })
+  visitors = probeVisitors(instance, password)
+
+  await instance
+    .http()
+    .post('/setup')
+    .set('origin', origin)
+    .send({ setupCode, company: 'Mandant Nord', name: lea.name, email: lea.email, password })
+    .expect(201)
+
+  const { rows: tenants } = await admin.query<{ id: string }>('select id from tenants')
+
+  await addStaffMember(instance.authentication, instance.database, {
+    ...otto,
+    password,
+    tenantId: tenants[0]?.id as never,
+    roles: ['lead'],
+  })
+
+  await visitors.setUpSecondFactor(lea.email)
+  await visitors.setUpSecondFactor(otto.email)
+
+  for (const person of [lea, otto]) {
+    signedIn.set(person.email, await visitors.signIn(person.email))
+  }
+
+  const { rows: users } = await admin.query<{ id: string; email: string }>(
+    'select id, email from auth_users',
+  )
+  for (const user of users) {
+    userIds.set(user.email, user.id)
+  }
+}, 60_000)
+
+afterAll(async () => {
+  await instance.close()
+  await database.close()
+  await smtp.close()
+  await foundation.kit.resetSchema(admin)
+  await admin.end()
+  foundation.remove()
+  rmSync(folders, { recursive: true, force: true })
+})
+
+beforeEach(() => {
+  cleared()
+})
+
+describe('the notes of a release', () => {
+  it('are the parts of the changelog, Sicherheit first, without the hint, the installation or marks', () => {
+    expect(releaseNotes(notes)).toEqual([
+      {
+        title: 'Sicherheit',
+        security: true,
+        items: ['Ein Link zum Zurücksetzen galt weiter, siehe #1080.'],
+      },
+      {
+        title: 'Behoben',
+        security: false,
+        items: ['Die Zeile des Notdienstzuschlags rechnet sich neu nach einem Abgleich.'],
+      },
+    ])
+  })
+
+  it('compare their versions by number and not as text', () => {
+    expect(laterVersion('0.10.0', '0.9.9')).toBe(true)
+    expect(laterVersion('0.9.9', '0.10.0')).toBe(false)
+    expect(laterVersion('1.0.0', '1.0.0')).toBe(false)
+  })
+})
+
+describe('what the screen reads', () => {
+  it('is what the service wrote, held to its shape, with whether the newest is newer than what runs', async () => {
+    serviceFound()
+
+    const read = await view()
+
+    expect(read).toMatchObject({
+      running: '0.3.0',
+      service: 'alive',
+      mode: 'ready',
+      latest: '0.3.1',
+      newer: true,
+      url: 'https://github.com/OpenGewerk/opengewerk/releases/tag/v0.3.1',
+      run: null,
+      pending: null,
+      refusal: null,
+    })
+    expect(read.notes.map((section) => section.title)).toEqual(['Sicherheit', 'Behoben'])
+  })
+
+  it('leaves out what does not hold: a page that is not on GitHub, a version that is none, an unknown mode', async () => {
+    serviceFound({ url: 'https://example.org/v0.3.1', latest: '0.3.1; reboot', mode: 'whatever' })
+
+    expect(await view()).toMatchObject({ url: null, latest: null, newer: false, mode: null })
+  })
+
+  it('says when the service is silent, or was never there', async () => {
+    expect((await view()).service).toBe('missing')
+
+    serviceFound({}, new Date(Date.now() - 10 * 60_000))
+
+    expect((await view()).service).toBe('silent')
+  })
+
+  it('is not there for somebody who does not run the instance, nor for nobody', async () => {
+    await get('/instance/update').expect(401)
+    await get('/instance/update', otto).expect(403)
+    await post('/instance/update', otto, { version: '0.3.1' }).expect(403)
+
+    expect(requestFile()).toBeNull()
+  })
+})
+
+describe('asking for an update', () => {
+  it('is refused without confirming again, and nothing is written', async () => {
+    serviceFound()
+
+    const answer = await post('/instance/update', lea, { version: '0.3.1' }).expect(403)
+
+    expect(message(answer)).toBe(unconfirmed)
+    expect(requestFile()).toBeNull()
+  })
+
+  it('writes the request with the version, who asked and when, after confirming', async () => {
+    serviceFound()
+    await visitors.reconfirm(lea.email, as(lea))
+
+    const read = (await post('/instance/update', lea, { version: '0.3.1' }).expect(202))
+      .body as InstanceUpdateView
+    const request = requestFile()
+
+    expect(request).toMatchObject({ version: '0.3.1', by: lea.name })
+    expect(String(request?.['id'])).toMatch(/^[0-9a-f-]{36}$/)
+    expect(read.pending).toMatchObject({ id: request?.['id'], version: '0.3.1' })
+  })
+
+  it('is refused before the confirmation is spent when it cannot be, and says why', async () => {
+    const refusedFor = async (version: string, expected: string) => {
+      await visitors.reconfirm(lea.email, as(lea))
+      const answer = await post('/instance/update', lea, { version }).expect(409)
+
+      expect(message(answer)).toContain(expected)
+      expect(requestFile()).toBeNull()
+    }
+
+    // The service never ran, and one that has been silent for ten minutes.
+    await refusedFor('0.3.1', 'läuft nicht')
+    serviceFound({}, new Date(Date.now() - 10 * 60_000))
+    await refusedFor('0.3.1', 'läuft nicht')
+
+    // Another version than the newest.
+    serviceFound()
+    await refusedFor('0.3.2', 'neueste Fassung')
+
+    // An instance run from a checkout.
+    serviceFound({ mode: 'checkout', reason: 'checkout' })
+    await refusedFor('0.3.1', 'nicht aus ihrem Bereich')
+
+    // The newest is what runs.
+    serviceFound({ latest: '0.3.0' })
+    await refusedFor('0.3.0', 'läuft schon')
+
+    // An update under way.
+    serviceFound()
+    written('run.json', {
+      id: '11111111-2222-4333-8444-555555555555',
+      version: '0.3.1',
+      from: '0.3.0',
+      by: 'Lea Leitung',
+      state: 'running',
+      step: 2,
+      started_at: new Date().toISOString(),
+      finished_at: null,
+      log: [],
+    })
+    await refusedFor('0.3.1', 'läuft schon')
+
+    // The confirmation was not spent by any of these.
+    rmSync(join(updates.statusPath, 'run.json'))
+    await post('/instance/update', lea, { version: '0.3.1' }).expect(202)
+  })
+
+  it('is refused while a request waits for the service, and shows the refusal of the service', async () => {
+    serviceFound()
+    const id = await requestInstanceUpdate(updates, '0.3.1', 'Lea Leitung')
+
+    await visitors.reconfirm(lea.email, as(lea))
+    await post('/instance/update', lea, { version: '0.3.1' }).expect(409)
+
+    written('refusal.json', {
+      id,
+      version: '0.3.1',
+      reason: 'elsewhere',
+      at: new Date().toISOString(),
+    })
+
+    expect(await view()).toMatchObject({ pending: null, refusal: { id, reason: 'elsewhere' } })
+  })
+
+  it('takes nothing but a version of the form 1.2.3', async () => {
+    serviceFound()
+    await visitors.reconfirm(lea.email, as(lea))
+
+    for (const version of [undefined, 3, '0.3.1 && reboot', '../0.3.1']) {
+      await post('/instance/update', lea, { version }).expect(400)
+    }
+
+    expect(requestFile()).toBeNull()
+  })
+})
+
+describe('telling how an update ended', () => {
+  const finished = (state: 'succeeded' | 'failed', finishedAt = new Date()) =>
+    written('run.json', {
+      id: '22222222-2222-4333-8444-555555555555',
+      version: '0.3.1',
+      from: '0.3.0',
+      by: 'Lea Leitung',
+      state,
+      step: state === 'failed' ? 0 : 5,
+      started_at: new Date(finishedAt.getTime() - 60_000).toISOString(),
+      finished_at: finishedAt.toISOString(),
+      log: [],
+    })
+
+  const reporting = () => ({ database, mail, messages, updates })
+  const toldOf = () =>
+    smtp.received.filter((sent) => sent.data?.includes('Subject: Aktualisierung auf 0.3.1'))
+
+  beforeAll(async () => {
+    await saveInstanceMailServer(database, userIds.get(lea.email) ?? '', key, {
+      host: '127.0.0.1',
+      port: smtp.port,
+      security: 'none',
+      username: 'instanz',
+      password: mailPassword,
+      fromAddress: 'instanz@nord.example.de',
+    })
+  })
+
+  it('goes to everybody who runs the instance, once', async () => {
+    finished('failed')
+    const before = toldOf().length
+
+    expect(await reportFinishedUpdate(reporting())).toBe(true)
+    expect(await reportFinishedUpdate(reporting())).toBe(false)
+
+    const told = toldOf().slice(before)
+
+    expect(told.map((sent) => sent.to)).toEqual([[lea.email]])
+    expect(told[0]?.data).toContain('abgebrochen')
+    expect(told[0]?.data).toContain('Schritt backup')
+  })
+
+  it('says nothing of an update under way, of one that ended more than a day ago, or without words for it', async () => {
+    const before = toldOf().length
+
+    written('run.json', {
+      id: '33333333-2222-4333-8444-555555555555',
+      version: '0.3.1',
+      from: '0.3.0',
+      by: 'Lea Leitung',
+      state: 'running',
+      step: 3,
+      started_at: new Date().toISOString(),
+      finished_at: null,
+      log: [],
+    })
+    expect(await reportFinishedUpdate(reporting())).toBe(false)
+
+    finished('succeeded', new Date(Date.now() - 25 * 60 * 60_000))
+    expect(await reportFinishedUpdate(reporting())).toBe(false)
+
+    finished('succeeded')
+    const { instanceUpdated: _, ...withoutWords } = messages
+    expect(await reportFinishedUpdate({ ...reporting(), messages: withoutWords })).toBe(false)
+
+    expect(toldOf().length).toBe(before)
+  })
+})
+
+describe('what the screen reads, straight from the folders', () => {
+  it('drops a run whose ID or version is not of its form', async () => {
+    serviceFound()
+    written('run.json', {
+      id: '../../etc',
+      version: '0.3.1',
+      state: 'running',
+      step: 1,
+      started_at: new Date().toISOString(),
+    })
+
+    expect((await readInstanceUpdate(updates, '0.3.0')).run).toBeNull()
+  })
+})

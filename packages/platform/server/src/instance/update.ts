@@ -1,0 +1,387 @@
+import { randomUUID } from 'node:crypto'
+import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+
+import {
+  type InstanceReleaseNotesSection,
+  type InstanceUpdateMode,
+  type InstanceUpdateReason,
+  type InstanceUpdateRefusal,
+  type InstanceUpdateRun,
+  instanceUpdateSteps,
+  type InstanceUpdateView,
+} from '@opengewerk/platform-domain'
+
+/**
+ * The update of the instance from its area (opengewerk#1093), on the side
+ * of the application.
+ *
+ * A service of its own beside the application does the work: it looks once
+ * a day for the newest release and updates when asked. The application talks
+ * to it through two folders and nothing else. Into the first it writes the
+ * request of somebody who runs the instance, and only it may write there; in
+ * the second it reads what the service found and how the last update went,
+ * and only the service writes there. Everything read from there is held to
+ * its shape here before the screen sees it, the notes of a release among
+ * them, which come from GitHub.
+ */
+
+/** Where the two folders are, as the Compose file of the application mounts them. */
+export interface InstanceUpdates {
+  /** Where the application writes its request, and the mark that a finished update was told. */
+  readonly requestsPath: string
+  /** Where the service writes what it found and how the last update went. */
+  readonly statusPath: string
+}
+
+/** The token the area of the instance is handed the folders by. */
+export const INSTANCE_UPDATES = Symbol('InstanceUpdates')
+
+/** How long the service may be silent before the screen says it does not run: it writes every minute. */
+const silentAfterMs = 5 * 60_000
+
+/** How long a request waits for the service before it counts as not taken; the service turns older ones away. */
+export const requestLifetimeMs = 10 * 60_000
+
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+const versionPattern = /^\d+\.\d+\.\d+$/
+const modes: readonly InstanceUpdateMode[] = ['ready', 'checkout', 'unsupported']
+const reasons: readonly InstanceUpdateReason[] = [
+  'checkout',
+  'unsigned',
+  'directory',
+  'elsewhere',
+  'docker',
+  'application',
+]
+const refusals: readonly InstanceUpdateRefusal[] = [
+  'expired',
+  'version',
+  'current',
+  'running',
+  ...reasons,
+]
+
+type Json = Record<string, unknown>
+
+/** A file of one of the folders as JSON, or null when it is not there or not JSON. */
+async function readJson(path: string): Promise<Json | null> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(path, 'utf8'))
+
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Json)
+      : null
+  } catch {
+    return null
+  }
+}
+
+function text(value: unknown, longest = 200): string | null {
+  return typeof value === 'string' && value.length > 0 ? value.slice(0, longest) : null
+}
+
+function version(value: unknown): string | null {
+  return typeof value === 'string' && versionPattern.test(value) ? value : null
+}
+
+function moment(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const at = new Date(value)
+
+  return Number.isNaN(at.getTime()) ? null : at.toISOString()
+}
+
+function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | null {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : null
+}
+
+/** Whether version `a` comes after version `b`, both of the form 1.2.3. */
+export function laterVersion(a: string, b: string): boolean {
+  const left = a.split('.').map(Number)
+  const right = b.split('.').map(Number)
+
+  for (let index = 0; index < 3; index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0)
+
+    if (difference !== 0) {
+      return difference > 0
+    }
+  }
+
+  return false
+}
+
+/** A line of Markdown as text: links as their words, without marks for bold, code or emphasis. */
+function plain(line: string): string {
+  return line
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/(\*\*|__|`)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * The notes of a release, from its page on GitHub: the parts of its changelog
+ * under their headings, `Sicherheit` first. What stands before the first
+ * heading, a hint, and from the first heading of the second level on, how to
+ * install, is left out. At most twelve parts of fifty points each.
+ */
+export function releaseNotes(markdown: string): InstanceReleaseNotesSection[] {
+  const sections: { title: string; items: string[] }[] = []
+  let current: { title: string; items: string[] } | null = null
+
+  for (const raw of markdown.replace(/\r/g, '').split('\n')) {
+    const line = raw.trimEnd()
+
+    if (/^##\s/.test(line)) {
+      break
+    }
+
+    const heading = /^###\s+(.+)$/.exec(line)
+
+    if (heading) {
+      current = { title: plain(heading[1] ?? ''), items: [] }
+      sections.push(current)
+      continue
+    }
+
+    if (!current) {
+      continue
+    }
+
+    const item = /^\s*[-*+]\s+(.+)$/.exec(line)
+
+    if (item) {
+      current.items.push(plain(item[1] ?? ''))
+    } else if (line.trim() !== '' && current.items.length > 0) {
+      // A line that goes on with the point above it.
+      const last = current.items.length - 1
+      current.items[last] = plain(`${current.items[last] ?? ''} ${line}`)
+    }
+  }
+
+  const kept = sections
+    .filter((section) => section.title !== '' && section.items.length > 0)
+    .slice(0, 12)
+    .map((section) => ({
+      title: section.title.slice(0, 80),
+      security: section.title.toLowerCase() === 'sicherheit',
+      items: section.items.slice(0, 50).map((item) => item.slice(0, 1000)),
+    }))
+
+  return [...kept.filter((section) => section.security), ...kept.filter((s) => !s.security)]
+}
+
+function runOf(json: Json | null): InstanceUpdateRun | null {
+  if (!json) {
+    return null
+  }
+
+  const id = typeof json['id'] === 'string' && uuid.test(json['id']) ? json['id'] : null
+  const target = version(json['version'])
+  const state = oneOf(json['state'], ['running', 'succeeded', 'failed'] as const)
+  const startedAt = moment(json['started_at'])
+  const step = typeof json['step'] === 'number' ? instanceUpdateSteps[json['step']] : undefined
+
+  if (!id || !target || !state || !startedAt || !step) {
+    return null
+  }
+
+  const log = Array.isArray(json['log'])
+    ? json['log']
+        .filter((line): line is string => typeof line === 'string')
+        .slice(-60)
+        .map((line) => line.slice(0, 500))
+    : []
+
+  return {
+    id,
+    version: target,
+    from: version(json['from']),
+    by: text(json['by']) ?? '',
+    state,
+    reason: oneOf(json['reason'], ['vanished', 'docker'] as const),
+    step,
+    startedAt,
+    finishedAt: moment(json['finished_at']),
+    log,
+  }
+}
+
+/** The request written last, as the application wrote it. */
+interface Request {
+  readonly id: string
+  readonly version: string
+  readonly at: string
+}
+
+async function lastRequest(updates: InstanceUpdates): Promise<Request | null> {
+  const json = await readJson(join(updates.requestsPath, 'request.json'))
+  const id = json && typeof json['id'] === 'string' && uuid.test(json['id']) ? json['id'] : null
+  const target = json ? version(json['version']) : null
+  const at = json ? moment(json['at']) : null
+
+  return id && target && at ? { id, version: target, at } : null
+}
+
+/** What the service last wrote, held to its shape, with the version that runs. */
+export async function readInstanceUpdate(
+  updates: InstanceUpdates,
+  running: string | null,
+  now: Date = new Date(),
+): Promise<InstanceUpdateView> {
+  const [available, runJson, refusalJson, request, alive] = await Promise.all([
+    readJson(join(updates.statusPath, 'available.json')),
+    readJson(join(updates.statusPath, 'run.json')),
+    readJson(join(updates.statusPath, 'refusal.json')),
+    lastRequest(updates),
+    readFile(join(updates.statusPath, 'alive'), 'utf8').then(
+      (written) => moment(written.trim()),
+      () => null,
+    ),
+  ])
+
+  const run = runOf(runJson)
+  const latest = available ? version(available['latest']) : null
+  const runningVersion = running !== null && versionPattern.test(running) ? running : null
+  const url = available ? text(available['url'], 500) : null
+  const refusal =
+    refusalJson && request && refusalJson['id'] === request.id
+      ? {
+          id: request.id,
+          version: version(refusalJson['version']) ?? request.version,
+          reason: oneOf(refusalJson['reason'], refusals) ?? 'version',
+          at: moment(refusalJson['at']) ?? request.at,
+        }
+      : null
+  const pending =
+    request &&
+    run?.id !== request.id &&
+    refusal === null &&
+    now.getTime() - new Date(request.at).getTime() < requestLifetimeMs
+      ? request
+      : null
+
+  return {
+    running: runningVersion,
+    service:
+      alive === null
+        ? 'missing'
+        : now.getTime() - new Date(alive).getTime() < silentAfterMs
+          ? 'alive'
+          : 'silent',
+    checkedAt: available ? moment(available['checked_at']) : null,
+    mode: available ? oneOf(available['mode'], modes) : null,
+    reason: available ? oneOf(available['reason'], reasons) : null,
+    latest,
+    publishedAt: available ? moment(available['published_at']) : null,
+    url: url?.startsWith('https://github.com/') ? url : null,
+    error: available ? oneOf(available['error'], ['unreachable', 'invalid'] as const) : null,
+    newer: latest !== null && runningVersion !== null && laterVersion(latest, runningVersion),
+    notes:
+      available && typeof available['notes'] === 'string'
+        ? releaseNotes(available['notes'].slice(0, 60_000))
+        : [],
+    run,
+    pending,
+    refusal,
+  }
+}
+
+/**
+ * Why an update cannot be asked for now, as the sentence the screen shows,
+ * or null when it can. The service checks all of it again, and more; this is
+ * so that nobody confirms with password and code for a request that would be
+ * turned away.
+ */
+export function updateRefusedNow(view: InstanceUpdateView, wanted: string): string | null {
+  if (view.service !== 'alive') {
+    return 'Der Dienst für Aktualisierungen läuft nicht. Wie er gestartet wird, steht in docs/betrieb.md unter "Aktualisieren".'
+  }
+
+  if (view.mode !== 'ready') {
+    return 'Diese Instanz lässt sich nicht aus ihrem Bereich aktualisieren. Warum, steht auf der Seite.'
+  }
+
+  if (view.run?.state === 'running' || view.pending !== null) {
+    return 'Eine Aktualisierung läuft schon.'
+  }
+
+  if (view.latest === null || wanted !== view.latest) {
+    return 'Aktualisiert wird nur auf die neueste Fassung, und das ist eine andere. Bitte die Seite neu laden.'
+  }
+
+  if (!view.newer) {
+    return 'Diese Fassung läuft schon.'
+  }
+
+  return null
+}
+
+/**
+ * Writes the request for an update to `wanted`, whole or not at all: first
+ * under a name of its own, then under the one the service reads.
+ */
+export async function requestInstanceUpdate(
+  updates: InstanceUpdates,
+  wanted: string,
+  by: string,
+  now: Date = new Date(),
+): Promise<string> {
+  const id = randomUUID()
+  const draft = join(updates.requestsPath, `.request-${id}.json`)
+  const body = JSON.stringify({ id, version: wanted, by: by.slice(0, 200), at: now.toISOString() })
+
+  await writeFile(draft, body, { encoding: 'utf8', mode: 0o644, flag: 'wx' })
+  await rename(draft, join(updates.requestsPath, 'request.json'))
+
+  return id
+}
+
+/**
+ * Marks a finished update as told, once: true for the one call that set the
+ * mark, false when it was set before. The marks of earlier updates go.
+ */
+export async function markUpdateTold(updates: InstanceUpdates, id: string): Promise<boolean> {
+  if (!uuid.test(id)) {
+    return false
+  }
+
+  try {
+    await writeFile(join(updates.requestsPath, `told-${id}`), '', { flag: 'wx' })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      return false
+    }
+
+    throw error
+  }
+
+  for (const name of await readdir(updates.requestsPath)) {
+    if (name.startsWith('told-') && name !== `told-${id}`) {
+      await rm(join(updates.requestsPath, name), { force: true })
+    }
+  }
+
+  return true
+}
+
+/** Whether both folders are there; a test of the preview leaves them out. */
+export async function updateFoldersExist(updates: InstanceUpdates): Promise<boolean> {
+  const both = await Promise.all(
+    [updates.requestsPath, updates.statusPath].map((path) =>
+      stat(path).then(
+        (found) => found.isDirectory(),
+        () => false,
+      ),
+    ),
+  )
+
+  return both.every(Boolean)
+}

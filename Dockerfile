@@ -66,6 +66,10 @@ COPY --from=build --chown=node:node /anwendung ./
 # nothing belongs to root, and the application does not run as root.
 RUN mkdir -p /var/lib/opengewerk/storage && chown node:node /var/lib/opengewerk/storage
 
+# The same for the folder of the requests for an update (#1093), which the
+# application writes and the service for updates reads.
+RUN mkdir -p /var/lib/opengewerk/update-requests && chown node:node /var/lib/opengewerk/update-requests
+
 # Not as root. An escape from the application then lands on a user with no
 # rights, and the application misses nothing: it writes nothing into the image.
 USER node

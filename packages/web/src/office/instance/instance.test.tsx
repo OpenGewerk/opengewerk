@@ -203,6 +203,7 @@ describe('the area of the instance in this application', () => {
     ).toEqual([
       ['Betriebe', '/instanz'],
       ['Einstellungen', '/instanz/einstellungen'],
+      ['Aktualisierung', '/instanz/aktualisierung'],
       ['Maßnahmen', '/instanz/massnahmen'],
       ['Betreiber', '/instanz/betreiber'],
       ['Rechtstexte', '/instanz/rechtstexte'],
