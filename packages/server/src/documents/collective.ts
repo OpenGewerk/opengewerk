@@ -288,6 +288,7 @@ export async function makeCollectiveInvoice(
     tenantId,
     created.id,
     copied.length + 1,
+    jobId,
     await surchargeLineFor(tx, jobId, copied),
   )
 

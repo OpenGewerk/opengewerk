@@ -398,15 +398,32 @@ const surchargeDesignation = 'Notdienstzuschlag'
  * (#293), marked as the server's (#1087), as its last line. Where the call
  * has no surcharge now, the line is made and taken away at once, marked: the
  * draft follows its call all the same and gets the surcharge once there is
- * one, as a draft does whose line the server took away.
+ * one, as a draft does whose line the server took away. Only for a job that
+ * is an emergency call: an invoice of any other job holds no line of a
+ * surcharge, not even one taken away, and its log names none.
  */
 export async function insertSurchargeLine(
   tx: TenantTransaction,
   tenantId: TenantId,
   documentId: string,
   position: number,
+  jobId: string | null,
   surcharge: SurchargeLine | null,
 ): Promise<void> {
+  if (surcharge === null) {
+    const [job] =
+      jobId === null || !isUuid(jobId)
+        ? []
+        : await tx
+            .select({ emergencyAt: jobs.emergencyAt })
+            .from(jobs)
+            .where(and(eq(jobs.id, jobId as JobId), isNull(jobs.deletedAt)))
+
+    if (!job?.emergencyAt) {
+      return
+    }
+  }
+
   await tx.insert(documentLines).values({
     tenantId,
     documentId: documentId as DocumentId,

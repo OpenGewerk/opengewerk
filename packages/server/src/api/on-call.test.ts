@@ -1238,6 +1238,17 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     return rows
   }
 
+  it('is no line at all, not one taken away, on an invoice of a job that is no emergency', async () => {
+    const { invoice } = await draftOf({ emergencyAt: null })
+    const { rows } = await admin.query<{ lines: number }>(
+      `select count(*)::int as lines from document_lines
+       where document_id = $1 and designation like 'Notdienstzuschlag%'`,
+      [invoice],
+    )
+
+    expect(rows).toEqual([{ lines: 0 }])
+  })
+
   it('comes on a draft whose invoice had none, once the call has one', async () => {
     // Wednesday 28.10.2026 at 10:00: no surcharge when the invoice is made.
     const { job, invoice } = await draftOf({ emergencyAt: inTheDay })

@@ -793,6 +793,7 @@ export class DocumentsController {
           identity.tenantId,
           created.id,
           priced.reduce((last, line) => Math.max(last, line.position), 0) + 1,
+          predecessor.jobId,
           await surchargeLineFor(tx, predecessor.jobId, priced),
         )
       }
