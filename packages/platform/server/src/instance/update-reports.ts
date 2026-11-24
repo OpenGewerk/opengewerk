@@ -35,6 +35,14 @@ import { type InstanceUpdates, markUpdateTold, readInstanceUpdate, updateTold } 
  */
 const toldWithinMs = 24 * 60 * 60_000
 
+/**
+ * Who was told of a run in this process, beside the mark in the folder: a
+ * mark that cannot be written, on a disk that ran full, repeats no mail while
+ * the application runs (CodeRabbit and the review on #1101). By the run and
+ * when it ended.
+ */
+const toldHere = new Map<string, Set<string>>()
+
 export interface UpdateReporting {
   readonly database: Database
   readonly mail: MailContext
@@ -78,7 +86,14 @@ export async function reportFinishedUpdate(
   }
 
   const operators = await listOperators(database)
-  const reached = new Set(told.to)
+  const here = `${run.id} ${run.finishedAt}`
+  const reached = toldHere.get(here) ?? new Set<string>()
+
+  for (const address of told.to) {
+    reached.add(address)
+  }
+
+  toldHere.set(here, reached)
   let missed: unknown = null
   const transport = mail.connect(connection.configuration)
 
@@ -112,9 +127,6 @@ export async function reportFinishedUpdate(
           attachments: [],
         })
         reached.add(address)
-        // Written before the next goes out (CodeRabbit on #1101): a mark that
-        // fails then costs one address a second mail, not all of them.
-        await markUpdateTold(updates, run.id, { done: false, to: [...reached] })
       } catch (error) {
         // A sender the server does not take is about the instance, for every
         // address alike, and for good only until somebody corrects it: the
@@ -140,6 +152,21 @@ export async function reportFinishedUpdate(
         if (failsServerWide(error)) {
           break
         }
+
+        continue
+      }
+
+      // Written before the next goes out (CodeRabbit on #1101): a look that
+      // stops on the way leaves the next one who was told. A mark that fails
+      // is said and is no mail that did not go out; this process keeps who
+      // got one all the same.
+      try {
+        await markUpdateTold(updates, run.id, { done: false, to: [...reached] })
+      } catch (error) {
+        console.error(
+          'Wer die Nachricht über die Aktualisierung der Instanz bekam, ließ sich nicht vermerken.',
+          error,
+        )
       }
     }
   } finally {

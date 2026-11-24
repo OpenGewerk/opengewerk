@@ -33,6 +33,7 @@ import {
   releaseNotes,
   requestInstanceUpdate,
   stillTelling,
+  updateTold,
 } from './update.js'
 import { updateNotices } from '../schema.js'
 import { recordFinishedUpdate, reportFinishedUpdate } from './update-reports.js'
@@ -741,6 +742,85 @@ describe('telling how an update ended', () => {
     expect(await reportFinishedUpdate({ ...reporting(), messages: withoutWords })).toBe(false)
 
     expect(toldOf().length).toBe(before)
+  })
+})
+
+describe('telling how an update ended, when the mark of who was told fails', () => {
+  const finished = (id: string) =>
+    written('run.json', {
+      id,
+      version: '0.3.1',
+      from: '0.3.0',
+      by: 'Lea Leitung',
+      state: 'failed',
+      step: 0,
+      started_at: new Date(Date.now() - 60_000).toISOString(),
+      finished_at: new Date().toISOString(),
+      log: [],
+    })
+
+  const reporting = () => ({ database, mail, messages, updates })
+  const toLea = () =>
+    smtp.received.filter(
+      (sent) =>
+        sent.data?.includes('Subject: Aktualisierung auf 0.3.1') &&
+        sent.to.includes(lea.email.toLowerCase()),
+    ).length
+
+  it('tells nobody twice while the application runs, though the mark cannot be written (CodeRabbit on #1101)', async () => {
+    const id = 'bbbbbbbb-3333-4333-8444-555555555555'
+    const blocked = join(updates.requestsPath, `told-${id}`)
+    finished(id)
+    const before = toLea()
+
+    // A folder where the mark goes takes no mark, as a disk that ran full.
+    mkdirSync(join(blocked, 'inside'), { recursive: true })
+
+    try {
+      for (let look = 0; look < 3; look += 1) {
+        await reportFinishedUpdate(reporting()).catch(() => false)
+      }
+    } finally {
+      rmSync(blocked, { recursive: true, force: true })
+    }
+
+    expect(toLea() - before).toBe(1)
+  })
+
+  it('marks each address as it is told, so that a look that stops leaves who got the mail (CodeRabbit on #1101)', async () => {
+    const id = 'cccccccc-3333-4333-8444-555555555555'
+    const lead = userIds.get(lea.email) ?? ''
+    const second = await appointOperator(database, probeAccess.sentences.instance, lead, otto.email)
+    const words = messages.instanceUpdated
+
+    if (!words) {
+      throw new Error('The probe application has the words of the mail.')
+    }
+
+    let told = 0
+    const stopping = {
+      ...messages,
+      instanceUpdated: (facts: Parameters<typeof words>[0]) => {
+        told += 1
+
+        // The second address stops the look, after the first got its mail.
+        if (told === 2) {
+          throw new Error('Der Text ließ sich nicht schreiben.')
+        }
+
+        return words(facts)
+      },
+    }
+
+    try {
+      finished(id)
+
+      await expect(reportFinishedUpdate({ ...reporting(), messages: stopping })).rejects.toThrow()
+
+      expect((await updateTold(updates, id)).to).toHaveLength(1)
+    } finally {
+      await removeOperator(database, probeAccess.sentences.instance, lead, second.userId)
+    }
   })
 })
 
