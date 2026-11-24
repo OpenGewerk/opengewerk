@@ -562,8 +562,11 @@ export function CircuitForm({
   }
   const withSection = sections.length > 0 || maybeText(record, 'boardSectionId') !== null
   // What the form would have handed when it was opened, and then what it
-  // handed last and was taken (opengewerk#1057).
-  const [opened, setOpened] = useState(() => readCircuit(typed, withSection).values)
+  // handed last and was taken (opengewerk#1057). With the section always,
+  // empty where there is none: a section added while the form is open makes
+  // the field appear, and an empty one left alone is no change (CodeRabbit
+  // on #1108).
+  const [opened, setOpened] = useState(() => readCircuit(typed, true).values)
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -596,7 +599,7 @@ export function CircuitForm({
       if (result.outcome === 'refused') {
         setTrouble(refusalFor(result))
       } else {
-        setOpened(values)
+        setOpened(readCircuit(typed, true).values)
       }
     } finally {
       setWorking(false)

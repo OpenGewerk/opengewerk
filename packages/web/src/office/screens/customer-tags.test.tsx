@@ -399,6 +399,62 @@ describe('the tags of a site', () => {
   })
 })
 
+describe('a site whose tags were refused (CodeRabbit on #1108)', () => {
+  it('sends with a second try none of the fields the first one wrote', async () => {
+    business()
+    server.put('sites', {
+      id: 's-1',
+      customerId: 'c-hv',
+      designation: 'Rheinstraße 12',
+      street: 'Rheinstraße',
+      houseNumber: '12',
+      postalCode: '68159',
+      city: 'Mannheim',
+      country: 'DE',
+      version: 1,
+      deletedAt: null,
+    })
+    link('site_tags', 'st-1', 's-1', 't-rahmen')
+    tagAnswer = { status: 422, body: { message: 'Einen der Tags gibt es nicht mehr.' } }
+    const patch = vi.spyOn(writer, 'patch')
+
+    try {
+      await mount('/objekte/s-1')
+      const user = userEvent.setup()
+
+      await user.click(await screen.findByRole('button', { name: 'Bearbeiten' }))
+      await user.type(screen.getByLabelText('Bezeichnung'), ' links')
+      await user.click(screen.getByRole('button', { name: 'Rahmenvertrag entfernen' }))
+      await user.click(screen.getByRole('button', { name: 'Speichern' }))
+      await screen.findByRole('alert')
+
+      expect(patch.mock.calls.map((call) => call[2])).toEqual([
+        { designation: 'Rheinstraße 12 links' },
+      ])
+
+      // Another device names the site again while the form stays open.
+      server.put('sites', {
+        ...(server.all('sites').find((row) => row['id'] === 's-1') ?? {}),
+        designation: 'Rheinstraße 12, Hinterhaus',
+        version: 3,
+      })
+      await syncClient.synchronise()
+
+      await user.click(screen.getByRole('button', { name: 'Speichern' }))
+
+      await waitFor(() => {
+        expect(calls.filter((call) => call.method === 'PUT')).toHaveLength(2)
+      })
+      expect(patch).toHaveBeenCalledTimes(1)
+      expect(server.all('sites').find((row) => row['id'] === 's-1')?.['designation']).toBe(
+        'Rheinstraße 12, Hinterhaus',
+      )
+    } finally {
+      patch.mockRestore()
+    }
+  })
+})
+
 describe('what a form and a device can know about tags', () => {
   it('offers Bestandskunde and Neukunde only on a device that holds every job', async () => {
     // The roles still say office, as they may for a while after a change;

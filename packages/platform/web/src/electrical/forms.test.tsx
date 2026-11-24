@@ -61,7 +61,8 @@ describe('what a form of the structure hands along (opengewerk#1057)', () => {
     const first = lastSave(submitted)
 
     expect(first.values).toMatchObject({ consumer: 'Herd links', designation: 'F3' })
-    expect(first.opened).toEqual({ ...first.values, consumer: 'Herd' })
+    // With the section always, empty where there is none.
+    expect(first.opened).toEqual({ ...first.values, consumer: 'Herd', boardSectionId: null })
 
     await userEvent.type(screen.getByLabelText('Bezeichnung'), 'a')
     await userEvent.click(screen.getByRole('button', { name: 'Speichern' }))
@@ -69,7 +70,50 @@ describe('what a form of the structure hands along (opengewerk#1057)', () => {
     const second = lastSave(submitted)
 
     expect(second.values).toEqual({ ...first.values, designation: 'F3a' })
-    expect(second.opened).toEqual(first.values)
+    expect(second.opened).toEqual({ ...first.values, boardSectionId: null })
+  })
+
+  it('hands no section along as changed that the form left empty, though a section came while it was open (CodeRabbit on #1108)', async () => {
+    const circuit: RecordState = {
+      id: 'sk-1',
+      designation: 'F3',
+      consumer: 'Herd',
+      voltageClass: 'up_to_500',
+      overcurrentDevice: 'circuit_breaker',
+      tripCharacteristic: 'b',
+      ratedCurrentMilli: 16_000,
+      rcdType: 'a',
+      rcdSelective: false,
+      ratedResidualCurrentMilli: 30,
+      cableType: 'NYM-J',
+      cableCores: 3,
+      cableCrossSectionMilli: 1500,
+      cableLengthMilli: 12_000,
+      cableInstallationMethod: null,
+      version: 4,
+    }
+    const submitted = taking()
+    const form = (sections: readonly RecordState[]) => (
+      <Shell entry="office">
+        <CircuitForm
+          record={circuit}
+          sections={sections}
+          submitLabel="Speichern"
+          onSubmit={submitted}
+        />
+      </Shell>
+    )
+    const { rerender } = render(form([]))
+
+    // Another device adds the first section of the board.
+    rerender(form([{ id: 'fs-1', label: 'Feld 1', position: 1, version: 1 }]))
+    await userEvent.type(screen.getByLabelText('Verbraucher'), ' links')
+    await userEvent.click(screen.getByRole('button', { name: 'Speichern' }))
+
+    const { values, opened } = lastSave(submitted)
+
+    expect(values?.['boardSectionId']).toBeNull()
+    expect(opened).toHaveProperty('boardSectionId', null)
   })
 
   it('hands a part of the PV structure along as it was opened, and after a save that was taken as it was saved', async () => {

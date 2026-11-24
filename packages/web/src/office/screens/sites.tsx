@@ -28,7 +28,7 @@ import {
 import type { FormField } from '@opengewerk/platform-web/sync'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import { House, Pencil, Plus } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 
 import { addressLine, countryOptions } from '../../app/format.js'
 import { installationKindLabel, installationKindOf, jobStatusOf } from '../../app/labels.js'
@@ -362,6 +362,9 @@ export function SiteScreen() {
   const [editing, setEditing] = useState(false)
   // Null until somebody changes the tags, as in the form of a customer.
   const [chosen, setChosen] = useState<ChosenTags | null>(null)
+  // What was saved of the site while its tags were not (CodeRabbit on #1108):
+  // the next try compares with it and sends only what changed since.
+  const savedWithoutTags = useRef<Readonly<Record<string, string>> | null>(null)
   const [adding, setAdding] = useState<'installation' | 'job' | null>(null)
   // A battery, a meter or a wallbox says where it belongs from the start (#300).
   const linkFields = useCompanionFields(siteId)
@@ -452,6 +455,7 @@ export function SiteScreen() {
                 icon={Pencil}
                 onClick={() => {
                   setChosen(null)
+                  savedWithoutTags.current = null
                   setEditing(true)
                 }}
               >
@@ -636,7 +640,7 @@ export function SiteScreen() {
                       'sites',
                       siteId,
                       asSite(values),
-                      asSite(opened),
+                      asSite(savedWithoutTags.current ?? opened),
                     )
 
                     if (saved.outcome !== 'queued') {
@@ -648,6 +652,8 @@ export function SiteScreen() {
                         await setTags({ siteId }, chosen)
                         await client.synchronise()
                       } catch (error) {
+                        savedWithoutTags.current = values
+
                         return {
                           outcome: 'refused',
                           reason: 'online_only',
@@ -659,6 +665,7 @@ export function SiteScreen() {
                       }
                     }
 
+                    savedWithoutTags.current = null
                     setEditing(false)
 
                     return saved

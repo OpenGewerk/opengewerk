@@ -834,7 +834,16 @@ export function LinesPanel({
           setEditing(null)
         }}
         onSave={async (values, opened) => {
-          const saved = await client.update('document_lines', line.id, values, opened ?? undefined)
+          // A unit and the base of its price go together, a flat rate has
+          // none: a unit changed in the form takes its base along, whatever it
+          // was when the form opened (CodeRabbit on #1108).
+          const base =
+            opened && opened.unit !== values.unit
+              ? Object.fromEntries(
+                  Object.entries(opened).filter(([field]) => field !== 'priceBase'),
+                )
+              : opened
+          const saved = await client.update('document_lines', line.id, values, base ?? undefined)
 
           if (saved.outcome === 'queued') {
             setEditing(null)
