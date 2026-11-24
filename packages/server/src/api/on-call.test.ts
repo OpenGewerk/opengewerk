@@ -1851,7 +1851,11 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     await post(`/documents/${invoice}/lines`, anHour)
 
     // 50 % of 40 million € fit a line.
-    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 2_000_000_000 })
+    expect(await surchargeOf(invoice)).toMatchObject({
+      net_cents: 2_000_000_000,
+      deleted: false,
+      emergency_surcharge: true,
+    })
 
     // 50 % of 60 million € do not: the line is written, the surcharge stays.
     await post(`/documents/${invoice}/lines`, anHour)
@@ -1865,7 +1869,11 @@ describe('the line of the surcharge on a draft (#1087)', () => {
       }),
     )
 
-    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 2_000_000_000 })
+    expect(await surchargeOf(invoice)).toMatchObject({
+      net_cents: 2_000_000_000,
+      deleted: false,
+      emergency_surcharge: true,
+    })
 
     const refused = await http()
       .post(`/documents/${invoice}/issue`)
