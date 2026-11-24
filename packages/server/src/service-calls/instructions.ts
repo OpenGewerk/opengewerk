@@ -34,6 +34,7 @@ export interface CallForInstructions {
   /** The surcharge named before the order (#1081); null where nobody recorded one. */
   readonly emergencyNamedFlatCents: number | null
   readonly emergencyNamedBasisPoints: number | null
+  readonly emergencyNamedVatBasisPoints: number | null
   readonly customerId: CustomerId
   readonly customerName: string
   readonly customerEmail: string | null
@@ -79,6 +80,7 @@ export async function callOf(
       emergencyAt: jobs.emergencyAt,
       emergencyNamedFlatCents: jobs.emergencyNamedFlatCents,
       emergencyNamedBasisPoints: jobs.emergencyNamedBasisPoints,
+      emergencyNamedVatBasisPoints: jobs.emergencyNamedVatBasisPoints,
       customerId: jobs.customerId,
       customerName: customers.name,
       customerEmail: customers.email,

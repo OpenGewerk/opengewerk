@@ -1120,6 +1120,47 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     return rows[0]?.marks
   }
 
+  it('charges no more in total than was named with its tax, when the invoice has another (#1083)', async () => {
+    // 45,00 € named in the night under section 19, the invoice with 19 %.
+    const underSection19 = await draftOf({
+      emergencyAt: atNight,
+      emergencyNamedFlatCents: 4500,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 0,
+    })
+
+    expect(await surchargeOf(underSection19.invoice)).toMatchObject({
+      designation: 'Notdienstzuschlag Nacht',
+      net_cents: 3781,
+    })
+
+    // Named with the tax the invoice has: the amount as named.
+    const withTheSameTax = await draftOf({
+      emergencyAt: atNight,
+      emergencyNamedFlatCents: 4500,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
+    })
+
+    expect(await surchargeOf(withTheSameTax.invoice)).toMatchObject({ net_cents: 4500 })
+  })
+
+  it('refuses a tax of the named surcharge that is no rate, or without an amount (#1083)', async () => {
+    for (const fields of [
+      {
+        emergencyNamedFlatCents: 4500,
+        emergencyNamedBasisPoints: 0,
+        emergencyNamedVatBasisPoints: 10_001,
+      },
+      { emergencyNamedVatBasisPoints: 1900 },
+    ]) {
+      const call = aCall({ emergencyAt: atNight, ...fields })
+      const answer = await push(app, office(), [call.operation], 400)
+
+      expect(answer.message).toMatch(/Steuer eines genannten Notdienstzuschlags/)
+    }
+  })
+
   it('follows the hours the office prices, up to what was named before the order', async () => {
     const { invoice, hour } = await draftOf({
       emergencyNamedFlatCents: 3000,

@@ -328,9 +328,11 @@ describe('a call taken on the phone (#292)', () => {
     await waitFor(() => {
       expect(server.all('jobs')).toHaveLength(1)
     })
+    // With the tax of the tariff it was named from (#1083).
     expect(server.all('jobs')[0]).toMatchObject({
       emergencyNamedFlatCents: 4500,
       emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
     })
   })
 

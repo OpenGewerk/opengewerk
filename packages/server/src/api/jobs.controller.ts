@@ -65,6 +65,7 @@ const writableFields = [
   // The surcharge the office named before the order (#1081).
   'emergencyNamedFlatCents',
   'emergencyNamedBasisPoints',
+  'emergencyNamedVatBasisPoints',
 ] as const
 
 /**
@@ -85,6 +86,7 @@ function requireTerms(
       after('emergencyNamedFlatCents'),
       after('emergencyNamedBasisPoints'),
       after('emergencyAt'),
+      after('emergencyNamedVatBasisPoints'),
     )
 
   if (problem !== null) {

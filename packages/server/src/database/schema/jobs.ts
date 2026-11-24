@@ -71,6 +71,10 @@ export const jobs = pgTable(
     // recorded it for, which is billed by the settings of the day as before.
     emergencyNamedFlatCents: integer('emergency_named_flat_cents'),
     emergencyNamedBasisPoints: integer('emergency_named_basis_points'),
+    // The tax the flat amount was named with (#1083), in basis points, 0 under
+    // section 19 UStG; null where it was named before or by a device that
+    // does not know it, and then the amount is held net.
+    emergencyNamedVatBasisPoints: integer('emergency_named_vat_basis_points'),
     // The maintenance contract whose deadline made this service job, and the day
     // that maintenance is due (#294); written by the deadline engine, one job per
     // contract and day, and kept when the job is deleted so the day is not made again.
@@ -124,6 +128,12 @@ export const jobs = pgTable(
         and (${table.emergencyNamedFlatCents} is null or (${table.emergencyAt} is not null
           and ${table.emergencyNamedFlatCents} between 0 and 100000000
           and ${table.emergencyNamedBasisPoints} between 0 and 100000))`,
+    ),
+    // The tax of a named surcharge only with its amount, and as a rate (#1083).
+    check(
+      'jobs_emergency_named_vat',
+      sql`${table.emergencyNamedVatBasisPoints} is null or (${table.emergencyNamedFlatCents} is not null
+        and ${table.emergencyNamedVatBasisPoints} between 0 and 10000)`,
     ),
     unique('jobs_maintenance_visit_key').on(table.maintenanceContractId, table.maintenanceDueOn),
     index('jobs_customer_idx').on(table.tenantId, table.customerId),

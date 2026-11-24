@@ -169,6 +169,8 @@ async function aCall(
     urgentRepair?: boolean
     emergencyAt?: string
     named?: readonly [number, number]
+    /** The tax the amount was named with (#1083). */
+    namedVat?: number
   } = {},
 ) {
   const who = office(options.tenant)
@@ -195,6 +197,9 @@ async function aCall(
         ? {
             emergencyNamedFlatCents: options.named[0],
             emergencyNamedBasisPoints: options.named[1],
+            ...(options.namedVat === undefined
+              ? {}
+              : { emergencyNamedVatBasisPoints: options.namedVat }),
           }
         : {}),
     },
@@ -740,6 +745,28 @@ describe('the instructions by mail', () => {
     )
     expect(bodyOf(none)).toContain('im Anhang erhalten Sie zu')
     expect(bodyOf(none)).not.toContain('Notdienst')
+  })
+
+  it('name the surcharge named before the order with the tax it was named with (#1083)', async () => {
+    const { job: section19 } = await aCall({
+      emergencyAt: '2026-10-28T01:14:00.000Z',
+      named: [3000, 0],
+      namedVat: 0,
+    })
+
+    await http()
+      .post(`/jobs/${section19}/instructions/mail`)
+      .set('x-test-identity', office())
+      .send({})
+      .expect(202)
+
+    const { rows } = await admin.query<{ body: string }>(
+      "select body from mail_outbox where kind = 'job_instructions' and job_id = $1",
+      [section19],
+    )
+
+    // As heard: 30,00 € without tax, whatever the settings say today.
+    expect(rows[0]?.body).toContain('Notdienstzuschlag Nacht: 30,00\u00a0€\n')
   })
 
   it('are not written for a job given to another customer while they were asked for', async () => {

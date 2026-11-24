@@ -10,6 +10,7 @@ import {
   type EmergencyTariff,
   emergencyTariffText,
   chargeableSurcharge,
+  netWithin,
   namedSurcharge,
   onCallShiftProblem,
   shiftCovers,
@@ -350,5 +351,52 @@ describe('the surcharge named before the order and the one charged (#1081)', () 
       flatCents: 0,
       basisPoints: 0,
     })
+  })
+})
+
+describe('a surcharge named with its tax (#1083)', () => {
+  const night = { flatCents: 4500, basisPoints: 0 }
+
+  it('comes on an invoice with tax to no more than the customer heard without it', () => {
+    // 45,00 € named under section 19, the invoice after the new year with 19 %.
+    const charged = chargeableSurcharge(night, night, 0, { named: 0, line: 1900 })
+
+    expect(charged.flatCents).toBe(3781)
+    expect(charged.flatCents + Math.round((charged.flatCents * 1900) / 10_000)).toBeLessThanOrEqual(
+      4500,
+    )
+  })
+
+  it('stays the amount named where the tax did not change, and counts net where none was recorded', () => {
+    expect(chargeableSurcharge(night, night, 0, { named: 1900, line: 1900 }).flatCents).toBe(4500)
+    expect(chargeableSurcharge(night, night, 0, { named: null, line: 1900 }).flatCents).toBe(4500)
+    expect(chargeableSurcharge(night, night, 0).flatCents).toBe(4500)
+  })
+
+  it('may come to more net where the tax fell, never to more in total', () => {
+    const charged = chargeableSurcharge({ flatCents: 6000, basisPoints: 0 }, night, 0, {
+      named: 1900,
+      line: 1600,
+    })
+
+    expect(charged.flatCents).toBe(netWithin(5355, 1600))
+    expect(charged.flatCents + Math.round((charged.flatCents * 1600) / 10_000)).toBeLessThanOrEqual(
+      5355,
+    )
+  })
+
+  it('is the most net amount whose total stays within', () => {
+    for (const [gross, rate] of [
+      [4500, 1900],
+      [5355, 1900],
+      [1, 1900],
+      [0, 700],
+      [100_000, 1600],
+    ] as const) {
+      const net = netWithin(gross, rate)
+
+      expect(net + Math.round((net * rate) / 10_000)).toBeLessThanOrEqual(gross)
+      expect(net + 1 + Math.round(((net + 1) * rate) / 10_000)).toBeGreaterThan(gross)
+    }
   })
 })

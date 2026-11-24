@@ -391,9 +391,11 @@ describe('the surcharge named before the order (#1024)', () => {
     await waitFor(() => {
       expect(client.list('jobs')).toHaveLength(1)
     })
+    // With the tax of the tariff it was named from (#1083).
     expect(client.list('jobs')[0]).toMatchObject({
       emergencyNamedFlatCents: 6000,
       emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
     })
   })
 
@@ -418,6 +420,8 @@ describe('the surcharge named before the order (#1024)', () => {
       emergencyNamedFlatCents: 0,
       emergencyNamedBasisPoints: 0,
     })
+    // No tariff, no tax it was named with (#1083).
+    expect(client.list('jobs')[0]?.['emergencyNamedVatBasisPoints'] ?? null).toBeNull()
   })
 
   it('is not kept for a call of a business', async () => {

@@ -92,6 +92,13 @@ export interface Job extends Synced {
   readonly emergencyNamedFlatCents: number | null
   readonly emergencyNamedBasisPoints: number | null
   /**
+   * The tax the flat amount was named with (#1083), in basis points, 0 for a
+   * business under section 19 UStG: the invoice charges no more than that
+   * amount with this tax, whatever tax it has itself. Null where it was named
+   * before or by a device that does not know it; the amount then counts net.
+   */
+  readonly emergencyNamedVatBasisPoints: number | null
+  /**
    * The maintenance contract whose deadline made this service job (#294), and
    * the day that maintenance is due: the proposal on the planning board. Set
    * by the server and only there, never by a device.
@@ -242,8 +249,25 @@ export function emergencyNamedProblem(
   flatCents: unknown,
   basisPoints: unknown,
   emergencyAt: unknown,
+  vatBasisPoints: unknown = null,
 ): string | null {
   const absent = (value: unknown) => value === undefined || value === null
+
+  // The tax only with an amount it was named with (#1083), and as a rate.
+  if (!absent(vatBasisPoints)) {
+    if (absent(flatCents)) {
+      return 'Die Steuer eines genannten Notdienstzuschlags gehört zu seinem Betrag.'
+    }
+
+    if (
+      typeof vatBasisPoints !== 'number' ||
+      !Number.isInteger(vatBasisPoints) ||
+      vatBasisPoints < 0 ||
+      vatBasisPoints > 10_000
+    ) {
+      return 'Die Steuer eines genannten Notdienstzuschlags ist ein Satz zwischen 0 und 100 %.'
+    }
+  }
 
   if (absent(flatCents) && absent(basisPoints)) {
     return null

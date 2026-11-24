@@ -158,12 +158,18 @@ const rules: RecordRules = {
     { fields: ['emergencyAt'], problem: (at) => emergencyAtProblem(at('emergencyAt')) },
     // The surcharge named before the order (#1081), only on an emergency call.
     {
-      fields: ['emergencyNamedFlatCents', 'emergencyNamedBasisPoints', 'emergencyAt'],
+      fields: [
+        'emergencyNamedFlatCents',
+        'emergencyNamedBasisPoints',
+        'emergencyAt',
+        'emergencyNamedVatBasisPoints',
+      ],
       problem: (at) =>
         emergencyNamedProblem(
           at('emergencyNamedFlatCents'),
           at('emergencyNamedBasisPoints'),
           at('emergencyAt'),
+          at('emergencyNamedVatBasisPoints'),
         ),
     },
   ],

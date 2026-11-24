@@ -127,6 +127,7 @@ export async function surchargeLineFor(
   tx: TenantTransaction,
   jobId: string | null,
   lines: readonly { readonly unit: LineUnit; readonly netCents: number }[],
+  lineVatBasisPoints: number,
 ): Promise<SurchargeLine | null> {
   if (jobId === null || !isUuid(jobId)) {
     return null
@@ -137,6 +138,7 @@ export async function surchargeLineFor(
       emergencyAt: jobs.emergencyAt,
       namedFlatCents: jobs.emergencyNamedFlatCents,
       namedBasisPoints: jobs.emergencyNamedBasisPoints,
+      namedVatBasisPoints: jobs.emergencyNamedVatBasisPoints,
     })
     .from(jobs)
     .where(eq(jobs.id, jobId as JobId))
@@ -162,7 +164,10 @@ export async function surchargeLineFor(
 
   return emergencySurchargeLine(
     kind,
-    chargeableSurcharge(tariff.surcharges[kind], namedOf(job), hourNetCents),
+    chargeableSurcharge(tariff.surcharges[kind], namedOf(job), hourNetCents, {
+      named: job.namedVatBasisPoints,
+      line: lineVatBasisPoints,
+    }),
     hourNetCents,
   )
 }
@@ -260,6 +265,8 @@ export async function refreshSurchargeLine(
       status: documents.status,
       jobId: documents.jobId,
       followsCall: documents.followsCall,
+      taxTreatment: documents.taxTreatment,
+      documentDate: documents.documentDate,
     })
     .from(documents)
     .where(and(eq(documents.id, documentId as DocumentId), isNull(documents.deletedAt)))
@@ -276,10 +283,15 @@ export async function refreshSurchargeLine(
       and(eq(documentLines.documentId, documentId as DocumentId), isNull(documentLines.deletedAt)),
     )
   const marked = lines.find((line) => line.emergencySurcharge)
+  // The tax the line of the surcharge carries on this draft (#1083): the
+  // standard rate on its date, none without tax on the document.
   const surcharge = await surchargeLineFor(
     tx,
     document.jobId,
     lines.filter((line) => line !== marked),
+    document.taxTreatment === 'standard'
+      ? shippedRules.valueAt('vat.standard', 'basis_points', document.documentDate)
+      : 0,
   )
 
   // A surcharge the office typed in, or one a device moved here from another
@@ -619,6 +631,7 @@ export const surchargeFieldsOfJob: readonly string[] = [
   'emergencyAt',
   'emergencyNamedFlatCents',
   'emergencyNamedBasisPoints',
+  'emergencyNamedVatBasisPoints',
 ]
 
 /** The surcharge named before the order of a call (#1081), or null where nobody recorded one. */
@@ -741,6 +754,7 @@ export async function callSurchargeText(
     readonly isBusiness: boolean
     readonly emergencyNamedFlatCents: number | null
     readonly emergencyNamedBasisPoints: number | null
+    readonly emergencyNamedVatBasisPoints: number | null
   },
 ): Promise<string | null> {
   if (call.emergencyAt === null || call.isBusiness) {
@@ -761,5 +775,12 @@ export async function callSurchargeText(
   // no more; where nothing was named, the mail names nothing either.
   const kind = emergencyKindAt(call.emergencyAt, new Set(tariff.holidays), tariff.night)
 
-  return kind === null ? null : emergencySurchargeText(kind, named, tariff.vatBasisPoints)
+  // With the tax it was named with (#1083), where that was recorded: none
+  // under section 19 is no tax at all.
+  const vat =
+    call.emergencyNamedVatBasisPoints === null
+      ? tariff.vatBasisPoints
+      : call.emergencyNamedVatBasisPoints || null
+
+  return kind === null ? null : emergencySurchargeText(kind, named, vat)
 }
