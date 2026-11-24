@@ -1,10 +1,15 @@
+import { instanceUpdateStepNames } from '@opengewerk/platform-domain'
+import { eq } from 'drizzle-orm'
+
 import type { Database } from '../database/database.js'
+import { everyTenant } from '../database/every-tenant.js'
 import type { MailContext } from '../mail/context.js'
 import { failsForGood, failsServerWide, refusesSender } from '../mail/worker.js'
 import { type RepeatingJob, startRepeating } from '../start/repeat.js'
 import type { AccountMessages } from './account-mail.js'
 import { instanceMailConnection } from './mail-server.js'
 import { listOperators } from './operators.js'
+import { updateNotices, instanceUpdates } from '../schema.js'
 import { type InstanceUpdates, markUpdateTold, readInstanceUpdate, updateTold } from './update.js'
 
 /**
@@ -147,6 +152,97 @@ export async function reportFinishedUpdate(
   }
 
   return true
+}
+
+/**
+ * Writes how the last update ended into the log of the instance and into the
+ * log of every tenant on it (opengewerk#1093), once per run and whether or
+ * not a mail goes out. Every tenant first and the instance last: the row of
+ * the instance says the run stands in every log, and a look that stopped
+ * halfway writes the rest a minute later. A tenant that already has the run
+ * is not written again. True when it wrote now.
+ *
+ * Within the same day as the mail, so that an update that ended before this
+ * version was there stays out of the logs it never reached.
+ */
+export async function recordFinishedUpdate(
+  database: Database,
+  updates: InstanceUpdates,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const { run } = await readInstanceUpdate(updates, null, now)
+
+  if (
+    !run ||
+    run.state === 'running' ||
+    run.finishedAt === null ||
+    now.getTime() - new Date(run.finishedAt).getTime() > toldWithinMs
+  ) {
+    return false
+  }
+
+  const recorded = await database.forInstance(
+    (tx) =>
+      tx
+        .select({ id: instanceUpdates.id })
+        .from(instanceUpdates)
+        .where(eq(instanceUpdates.id, run.id)),
+    undefined,
+    'instance.update',
+  )
+
+  if (recorded.length > 0) {
+    return false
+  }
+
+  const succeeded = run.state === 'succeeded'
+  const outcome = {
+    toVersion: run.version,
+    fromVersion: run.from,
+    succeeded,
+    stoppedIn: succeeded ? null : instanceUpdateStepNames[run.step],
+    finishedAt: new Date(run.finishedAt),
+  }
+
+  for (const tenantId of await everyTenant(database)) {
+    await database.forTenant({ tenantId, reason: 'instance.update' }, (tx) =>
+      tx
+        .insert(updateNotices)
+        .values({ tenantId, runId: run.id, ...outcome })
+        .onConflictDoNothing(),
+    )
+  }
+
+  await database.forInstance(
+    (tx) =>
+      tx
+        .insert(instanceUpdates)
+        .values({ id: run.id, ...outcome })
+        .onConflictDoNothing(),
+    undefined,
+    'instance.update',
+  )
+
+  return true
+}
+
+/**
+ * Looks every minute whether an update ended that the logs do not have yet,
+ * with or without a mail server.
+ */
+export function startUpdateRecords(
+  database: Database,
+  updates: InstanceUpdates,
+  complain?: (line: string, error: unknown) => void,
+): RepeatingJob {
+  return startRepeating({
+    run: () => recordFinishedUpdate(database, updates),
+    intervalMs: 60_000,
+    firstAfterMs: 15_000,
+    failure:
+      'Wie die Aktualisierung der Instanz ausging, ließ sich nicht ins Protokoll schreiben, der nächste Versuch kommt in einer Minute.',
+    ...(complain === undefined ? {} : { complain }),
+  })
 }
 
 /** Looks every minute whether an update ended that nobody was told of yet. */

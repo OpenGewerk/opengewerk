@@ -49,6 +49,16 @@ export const instanceUpdateSteps = [
 
 export type InstanceUpdateStep = (typeof instanceUpdateSteps)[number]
 
+/** The steps by the names the screen and the logs give them. */
+export const instanceUpdateStepNames: Readonly<Record<InstanceUpdateStep, string>> = {
+  backup: 'Sichern',
+  download: 'Neue Fassung laden und prüfen',
+  images: 'Abbilder holen und prüfen',
+  migration: 'Datenbank migrieren',
+  restart: 'Neu starten',
+  check: 'Fassung prüfen',
+}
+
 /** Whether version `a` comes after version `b`, both of the form 1.2.3, by number and not as text. */
 export function laterVersion(a: string, b: string): boolean {
   const [leftCore, leftPre] = withPreRelease(a)

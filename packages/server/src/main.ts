@@ -24,6 +24,7 @@ import {
   startAddressSweep,
   startFileSweep,
   startSessionSweep,
+  startUpdateRecords,
   startUpdateReports,
   stopOnSignals,
   takeOverFromEnvironment,
@@ -218,6 +219,7 @@ async function start(): Promise<void> {
   let fileSweep: { readonly stop: () => Promise<void> } | null = null
   let addressSweep: { readonly stop: () => Promise<void> } | null = null
   let sessionSweep: { readonly stop: () => Promise<void> } | null = null
+  let updateRecords: { readonly stop: () => Promise<void> } | null = null
   let updateReports: { readonly stop: () => Promise<void> } | null = null
 
   stopOnSignals(opengewerk.name, [
@@ -227,6 +229,7 @@ async function start(): Promise<void> {
     () => fileSweep?.stop(),
     () => addressSweep?.stop(),
     () => sessionSweep?.stop(),
+    () => updateRecords?.stop(),
     () => updateReports?.stop(),
     stopInstanceSettings,
     () => application.close(),
@@ -298,9 +301,14 @@ async function start(): Promise<void> {
   // carries is the file the document keeps.
   const printing = new DocumentFiles(database, output.files, output.renderer, output.limits)
 
-  // How an update from the area of the instance ended goes by mail to
-  // everybody who runs it, once (#1093), where the Compose file shares the
-  // folders of the service for updates.
+  // How an update from the area of the instance ended stands in the log of
+  // the instance and of every business, and goes by mail to everybody who
+  // runs it, once (#1093), where the Compose file shares the folders of the
+  // service for updates. The logs need no mail server.
+  if (configuration.updates && !configuration.closed) {
+    updateRecords = startUpdateRecords(database, configuration.updates)
+  }
+
   if (mail && configuration.updates && !configuration.closed) {
     updateReports = startUpdateReports({
       database,

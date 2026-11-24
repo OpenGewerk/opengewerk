@@ -225,6 +225,7 @@ export const personalDataCatalogue: Readonly<Record<string, PersonalData>> = {
   },
   instance_operators: ofPerson('user_id'),
   instance_settings: none,
+  instance_updates: none,
   instructions: none,
   inverters: none,
   invitations: ofPerson('email', 'name', 'invited_by', 'token_hash'),
@@ -389,6 +390,7 @@ export const personalDataCatalogue: Readonly<Record<string, PersonalData>> = {
     'end_latitude_micro',
     'end_longitude_micro',
   ),
+  update_notices: none,
   working_times: ofPerson('person_id'),
 }
 

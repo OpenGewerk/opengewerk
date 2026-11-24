@@ -3,7 +3,7 @@ import {
   type InstanceUpdateReason,
   type InstanceUpdateRefusal,
   type InstanceUpdateRun,
-  type InstanceUpdateStep,
+  instanceUpdateStepNames,
   instanceUpdateSteps,
   type InstanceUpdateView,
   laterVersion,
@@ -34,14 +34,7 @@ import { InstancePage } from './frame.js'
 
 const sub = 'Welche Fassung auf dieser Instanz läuft, und ob es eine neuere gibt.'
 
-const stepNames: Readonly<Record<InstanceUpdateStep, string>> = {
-  backup: 'Sichern',
-  download: 'Neue Fassung laden und prüfen',
-  images: 'Abbilder holen und prüfen',
-  migration: 'Datenbank migrieren',
-  restart: 'Neu starten',
-  check: 'Fassung prüfen',
-}
+const stepNames = instanceUpdateStepNames
 
 const betrieb = 'docs/betrieb.md unter „Aktualisieren“'
 

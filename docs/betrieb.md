@@ -1106,12 +1106,14 @@ Abbild, neben Compose und nicht darunter, damit er den Neustart übersteht. Der
 geht die Schritte von oben: zuerst die Sicherung mit `backup.sh`, ohne die nichts
 weitergeht. Dann das Paket der neuen Fassung, mit `cosign verify-blob` gegen den
 Workflow "Release" genau ihres Tags geprüft, auf Verweise und auf Pfade außerhalb
-seines Ordners untersucht und über die Installation entpackt; die `.env` bleibt,
-und jede Datei gehört danach dem Besitzer des Ordners. Dann `sh docker/start.sh`
+seines Ordners untersucht und Datei für Datei über die Installation gelegt, jede
+erst unter eigenem Namen, damit eine volle Platte keine abschneidet; die `.env`
+bleibt, und jede Datei gehört danach dem Besitzer des Ordners. Dann `sh docker/start.sh`
 der neuen Fassung. Fertig ist der Lauf erst, wenn die Anwendung über `/health`
 die neue Fassung nennt. Wie er ausging, zeigt die Seite mit den Schritten und dem
-Ende des Protokolls, und alle Betreiber bekommen eine E-Mail, sofern der
-Mailserver der Instanz eingerichtet ist.
+Ende des Protokolls. Es steht außerdem im Protokoll der Instanz und im
+Änderungsprotokoll jedes Betriebs, und alle Betreiber bekommen eine E-Mail,
+sofern der Mailserver der Instanz eingerichtet ist.
 
 Der Dienst braucht den Socket von Docker und kann damit auf der Maschine, was
 root kann; anders geht ein Update nicht. Deshalb erreicht ihn nichts von außen:

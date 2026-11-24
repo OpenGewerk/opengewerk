@@ -368,6 +368,7 @@ export const foundationAuditTables = [
   'tenant_roles',
   'tenant_sessions',
   'tenants',
+  'update_notices',
 ] as const
 
 type FoundationAuditTable = (typeof foundationAuditTables)[number]
@@ -508,6 +509,19 @@ function foundationTables(
         changed_at: 'Geändert am',
       },
     },
+    // How an update of the instance ended, which every tenant learns of: from
+    // which version to which, and where it stopped if it did.
+    update_notices: {
+      label: 'Instanz aktualisiert',
+      fields: {
+        run_id: 'Lauf',
+        to_version: 'Fassung',
+        from_version: 'Fassung bisher',
+        succeeded: 'Durchgelaufen',
+        stopped_in: 'Abgebrochen bei',
+        finished_at: 'Beendet am',
+      },
+    },
     // A value of the log blacked out (ADR 0013): which entry, which side, why
     // and by whom, and the witness of an entry written before the redactions.
     audit_redactions: {
@@ -641,6 +655,16 @@ function foundationInstanceTables(
       },
     },
     instance_operators: { label: words.operator },
+    instance_updates: {
+      label: 'Aktualisierung der Instanz',
+      fields: {
+        to_version: 'Fassung',
+        from_version: 'Fassung bisher',
+        succeeded: 'Durchgelaufen',
+        stopped_in: 'Abgebrochen bei',
+        finished_at: 'Beendet am',
+      },
+    },
   }
 }
 
@@ -655,6 +679,9 @@ const foundationTitles: Readonly<Record<string, AuditTitleRule>> = {
   // A change of the mail server of the instance by the server it sends through
   // now, and by the one it sent through when it was removed.
   account_mail_server_changes: ['host_after', 'host_before'],
+  // An update by the version it went to.
+  update_notices: ['to_version'],
+  instance_updates: ['to_version'],
   password_resets: ['user_id'],
   second_factor_changes: ['user_id'],
   // A redaction by its reason.

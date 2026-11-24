@@ -34,7 +34,8 @@ import {
   requestInstanceUpdate,
   stillTelling,
 } from './update.js'
-import { reportFinishedUpdate } from './update-reports.js'
+import { updateNotices } from '../schema.js'
+import { recordFinishedUpdate, reportFinishedUpdate } from './update-reports.js'
 
 /**
  * The update of the instance from its area (opengewerk#1093), on the side of
@@ -740,6 +741,129 @@ describe('telling how an update ended', () => {
     expect(await reportFinishedUpdate({ ...reporting(), messages: withoutWords })).toBe(false)
 
     expect(toldOf().length).toBe(before)
+  })
+})
+
+describe('the logs of an update', () => {
+  const ended = (id: string, state: 'succeeded' | 'failed' | 'running', finishedAt = new Date()) =>
+    written('run.json', {
+      id,
+      version: '0.3.1',
+      from: '0.3.0',
+      by: 'Lea Leitung',
+      state,
+      step: state === 'succeeded' ? 5 : 2,
+      started_at: new Date(finishedAt.getTime() - 60_000).toISOString(),
+      finished_at: state === 'running' ? null : finishedAt.toISOString(),
+      log: [],
+    })
+
+  /** What the log of the instance holds of a run, field by field. */
+  const inTheInstanceLog = async (id: string) => {
+    const { rows } = await admin.query<{ field: string; new_value: string | null }>(
+      `select field, new_value from instance_changes
+        where table_name = 'instance_updates' and record_id = $1 order by field`,
+      [id],
+    )
+
+    return Object.fromEntries(rows.map((row) => [row.field, row.new_value]))
+  }
+
+  /** The runs each tenant's log holds, by tenant, with where they stopped. */
+  const inTheTenantLogs = async (id: string) => {
+    const { rows } = await admin.query<{
+      tenant_id: string
+      record_id: string
+      new_value: string | null
+    }>(
+      `select e.tenant_id, e.record_id::text as record_id, s.new_value
+         from audit_entries e
+         left join audit_entries s on s.record_id = e.record_id and s.field = 'stopped_in'
+        where e.table_name = 'update_notices' and e.field = 'run_id' and e.new_value = $1
+        order by e.tenant_id`,
+      [id],
+    )
+
+    return rows
+  }
+
+  const tenants = async () =>
+    (await admin.query<{ id: string }>('select id from tenants order by id')).rows.map(
+      (row) => row.id,
+    )
+
+  beforeAll(async () => {
+    await admin.query(`select create_tenant('Mandant Süd')`)
+  })
+
+  it('writes how a run ended into the log of the instance and of every tenant, once, without a mail server as well (opengewerk#1093)', async () => {
+    const id = '33333333-2222-4333-8444-555555555555'
+    ended(id, 'failed')
+
+    expect(await recordFinishedUpdate(database, updates)).toBe(true)
+    expect(await recordFinishedUpdate(database, updates)).toBe(false)
+
+    expect(await inTheInstanceLog(id)).toEqual({
+      finished_at: expect.any(String),
+      from_version: '0.3.0',
+      id,
+      stopped_in: 'Abbilder holen und prüfen',
+      succeeded: 'false',
+      to_version: '0.3.1',
+    })
+
+    const everyTenant = await tenants()
+    const logged = await inTheTenantLogs(id)
+
+    expect(everyTenant).toHaveLength(2)
+    expect(logged.map((row) => row.tenant_id)).toEqual(everyTenant)
+    expect(logged.map((row) => row.new_value)).toEqual([
+      'Abbilder holen und prüfen',
+      'Abbilder holen und prüfen',
+    ])
+  })
+
+  it('finishes what a look that stopped halfway left, and writes no tenant twice (opengewerk#1093)', async () => {
+    const id = '44444444-2222-4333-8444-555555555555'
+    const [first] = await tenants()
+    ended(id, 'succeeded')
+
+    // A look that reached the first tenant and stopped before the others.
+    await database.forTenant({ tenantId: first as never, reason: 'instance.update' }, (tx) =>
+      tx.insert(updateNotices).values({
+        tenantId: first as never,
+        runId: id,
+        toVersion: '0.3.1',
+        fromVersion: '0.3.0',
+        succeeded: true,
+        stoppedIn: null,
+        finishedAt: new Date(),
+      }),
+    )
+
+    expect(await recordFinishedUpdate(database, updates)).toBe(true)
+
+    const logged = await inTheTenantLogs(id)
+
+    expect(logged.map((row) => row.tenant_id)).toEqual(await tenants())
+    expect(new Set(logged.map((row) => row.record_id)).size).toBe(2)
+    expect((await inTheInstanceLog(id))['succeeded']).toBe('true')
+  })
+
+  it('writes nothing of a run under way, or of one that ended more than a day ago (opengewerk#1093)', async () => {
+    const running = '55555555-3333-4333-8444-555555555555'
+    const old = '66666666-3333-4333-8444-555555555555'
+
+    ended(running, 'running')
+    expect(await recordFinishedUpdate(database, updates)).toBe(false)
+
+    ended(old, 'failed', new Date(Date.now() - 25 * 60 * 60_000))
+    expect(await recordFinishedUpdate(database, updates)).toBe(false)
+
+    for (const id of [running, old]) {
+      expect(await inTheInstanceLog(id)).toEqual({})
+      expect(await inTheTenantLogs(id)).toEqual([])
+    }
   })
 })
 

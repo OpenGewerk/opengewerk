@@ -186,7 +186,7 @@ describe('the tables of the foundation', () => {
     const tables = foundationGuards.map((guard) => guard.table)
 
     expect(new Set(tables).size).toBe(tables.length)
-    expect(tables).toHaveLength(33)
+    expect(tables).toHaveLength(35)
   })
 
   it('give the application nothing but reading on what only a trigger writes', () => {
@@ -206,6 +206,7 @@ describe('the tables of the foundation', () => {
       'password_resets',
       'account_mail_server_changes',
       'second_factor_changes',
+      'update_notices',
     ]) {
       expect(foundationGuards.find((guard) => guard.table === table)?.grants).toEqual([
         'select',
@@ -227,7 +228,7 @@ describe('the tables of the foundation', () => {
       (guard) => !guard.table.startsWith('auth_') && !guard.table.startsWith('instance_'),
     )
 
-    expect(ofATenant).toHaveLength(22)
+    expect(ofATenant).toHaveLength(23)
     expect(
       ofATenant.filter((guard) => guard.grants.includes('delete')).map((guard) => guard.table),
     ).toEqual(['tenant_roles', 'mail_settings'])
@@ -248,6 +249,7 @@ describe('the tables of the foundation', () => {
     expect(ofTheInstance).toEqual({
       instance_operators: { grants: ['select', 'insert', 'delete'], audited: false },
       instance_settings: { grants: ['select', 'update'], audited: false },
+      instance_updates: { grants: ['select', 'insert'], audited: false },
       instance_changes: { grants: ['select'], audited: false },
     })
   })
@@ -273,6 +275,7 @@ describe('the tables of the foundation', () => {
       'tenant_roles',
       'tenant_sessions',
       'tenants',
+      'update_notices',
     ])
   })
 })

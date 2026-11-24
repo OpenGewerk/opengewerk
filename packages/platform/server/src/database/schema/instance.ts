@@ -53,6 +53,36 @@ export const instanceOperators = pgTable(
 )
 
 /**
+ * How each update from the area of the instance ended (opengewerk#1093), one
+ * row per run, for the log of the instance: the trigger of the instance puts
+ * it into `instance_changes`. The run with its steps and the end of what it
+ * wrote stays in the folder of the service for updates; here is what the log
+ * keeps of it, from which version to which, and whether it went through or
+ * in which step it stopped. The id is the one of the run.
+ *
+ * Written once, by the application that runs after the run ended, and never
+ * changed or removed.
+ */
+export const instanceUpdates = pgTable(
+  'instance_updates',
+  {
+    id: uuid('id').primaryKey(),
+    toVersion: text('to_version').notNull(),
+    fromVersion: text('from_version'),
+    succeeded: boolean('succeeded').notNull(),
+    stoppedIn: text('stopped_in'),
+    finishedAt: timestamp('finished_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    outsideAnyTenant(),
+    check(
+      'instance_updates_stopped_somewhere',
+      sql`${table.succeeded} = (${table.stoppedIn} is null)`,
+    ),
+  ],
+)
+
+/**
  * The settings of the instance, one row. Everything here moved in from the
  * `.env`, where only what is needed before there is a screen belongs.
  */
