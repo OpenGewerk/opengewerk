@@ -108,6 +108,23 @@ export interface Job extends Synced {
 }
 
 /**
+ * A change of a job with the tax of its named surcharge taken along (#1083).
+ * The tax belongs to the amount it was named with: a change of the named
+ * amount or percentage that does not say with which tax, as from a device
+ * that does not know it, leaves none recorded, and the amount counts net, as
+ * for a call from before. Kept, the tax of the old amount would have made the
+ * new one a total it never was.
+ */
+export function namedTaxAlong<Values extends Readonly<Record<string, unknown>>>(
+  values: Values,
+): Values {
+  return ('emergencyNamedFlatCents' in values || 'emergencyNamedBasisPoints' in values) &&
+    !('emergencyNamedVatBasisPoints' in values)
+    ? { ...values, emergencyNamedVatBasisPoints: null }
+    : values
+}
+
+/**
  * How long a closed job stays on the device of a technician assigned to it
  * (#140): long enough to look something up after the handover, not so long
  * that a lost telephone carries every job of the year.

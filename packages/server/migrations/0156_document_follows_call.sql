@@ -18,6 +18,7 @@ ALTER TABLE "documents" ADD COLUMN "follows_call" boolean DEFAULT false NOT NULL
 ALTER TABLE "documents" NO FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "document_lines" NO FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "document_sources" NO FORCE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "audit_entries" NO FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 SELECT set_config('app.reason', 'migration', true);--> statement-breakpoint
 UPDATE "documents" d
 	SET "follows_call" = true
@@ -40,10 +41,18 @@ UPDATE "documents" d
 		AND NOT EXISTS (
 			SELECT 1 FROM "document_lines" o
 			WHERE o.tenant_id = d.tenant_id AND o.document_id = d.id
-				AND o.deleted_at IS NULL AND o.kind = 'item' AND NOT o.emergency_surcharge
+				AND o.kind = 'item' AND NOT o.emergency_surcharge
 				AND (o.designation = 'Notdienstzuschlag' OR o.designation LIKE 'Notdienstzuschlag %')
+		)
+		AND NOT EXISTS (
+			SELECT 1 FROM "document_lines" o
+			JOIN "audit_entries" a
+				ON a.tenant_id = o.tenant_id AND a.table_name = 'document_lines' AND a.record_id = o.id
+			WHERE o.tenant_id = d.tenant_id AND o.document_id = d.id AND NOT o.emergency_surcharge
+				AND a.field = 'emergency_surcharge' AND a.old_value = 'true' AND a.new_value = 'false'
 		);--> statement-breakpoint
 SELECT set_config('app.reason', '', true);--> statement-breakpoint
+ALTER TABLE "audit_entries" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "document_sources" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "document_lines" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "documents" FORCE ROW LEVEL SECURITY;

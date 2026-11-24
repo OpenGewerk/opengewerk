@@ -13,6 +13,7 @@ import {
   lineNetCents,
   locationFields,
   mayDeleteDraft,
+  namedTaxAlong,
   notOwnDraft,
   offlineRules,
   type Operation,
@@ -159,6 +160,19 @@ const onCall: Check = async ({ tx, operation, values, sender }) => {
   const refusal = await onCallRefusal(tx, sender.userId, values)
 
   return refusal ? { kind: 'conflict', reason: refusal.reason, fields: refusal.fields } : null
+}
+
+/**
+ * A named surcharge changed on a device without its tax (#1083) takes none
+ * along (`namedTaxAlong`), before the rules of the job judge it and before it
+ * is written: as the route does.
+ */
+const namedTax: Check = ({ operation, values }) => {
+  if (operation.entity === 'jobs' && operation.kind === 'update') {
+    Object.assign(values, namedTaxAlong(values))
+  }
+
+  return null
 }
 
 /**
@@ -1133,6 +1147,7 @@ export const sync = serverSync<FoundIdentity>({
   // place to remember on the next table.
   tables,
   checks: [
+    namedTax,
     signature,
     earlyStart,
     onCall,

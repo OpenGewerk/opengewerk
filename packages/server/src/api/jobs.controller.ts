@@ -14,6 +14,7 @@ import {
 import {
   emergencyAtProblem,
   emergencyNamedProblem,
+  namedTaxAlong,
   type JobId,
   jobTermsProblem,
   urgentRepairProblem,
@@ -190,7 +191,7 @@ export class JobsController {
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
-    const values = pick(body, writableFields)
+    const values = namedTaxAlong(pick(body, writableFields))
     requireSomething(values)
 
     const [updated] = await this.database.forTenant(identity, async (tx) => {

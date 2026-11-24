@@ -267,6 +267,8 @@ export async function refreshSurchargeLine(
       followsCall: documents.followsCall,
       taxTreatment: documents.taxTreatment,
       documentDate: documents.documentDate,
+      serviceFrom: documents.serviceFrom,
+      serviceUntil: documents.serviceUntil,
     })
     .from(documents)
     .where(and(eq(documents.id, documentId as DocumentId), isNull(documents.deletedAt)))
@@ -284,13 +286,20 @@ export async function refreshSurchargeLine(
     )
   const marked = lines.find((line) => line.emergencySurcharge)
   // The tax the line of the surcharge carries on this draft (#1083): the
-  // standard rate on its date, none without tax on the document.
+  // standard rate on the day the totals reckon with, the end of the service
+  // before the date of the document (`documentTotals`), none without tax on
+  // the document. Taken from the date of the document, a line written after
+  // the rate went down charged more than was named.
   const surcharge = await surchargeLineFor(
     tx,
     document.jobId,
     lines.filter((line) => line !== marked),
     document.taxTreatment === 'standard'
-      ? shippedRules.valueAt('vat.standard', 'basis_points', document.documentDate)
+      ? shippedRules.valueAt(
+          'vat.standard',
+          'basis_points',
+          document.serviceUntil ?? document.serviceFrom ?? document.documentDate,
+        )
       : 0,
   )
 

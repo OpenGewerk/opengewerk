@@ -308,5 +308,8 @@ export async function makeCollectiveInvoice(
     })),
   )
 
-  return created
+  // As it stands after following its call (#1097), not as its insert left it.
+  const [now] = await tx.select().from(documents).where(eq(documents.id, created.id))
+
+  return now ?? created
 }

@@ -1,5 +1,11 @@
 import type { JobKind, JobStatus, RecordState } from '@opengewerk/domain'
-import { followUpProblem, jobKinds, jobStatuses, urgentRepairNote } from '@opengewerk/domain'
+import {
+  applyRate,
+  followUpProblem,
+  jobKinds,
+  jobStatuses,
+  urgentRepairNote,
+} from '@opengewerk/domain'
 import {
   Button,
   Field,
@@ -607,17 +613,33 @@ function Tabs({ tab, onChange }: { readonly tab: Tab; readonly onChange: (tab: T
  * the customer before the order, which is the most its invoice charges, or
  * that none was recorded and the invoice takes the one of the day. So
  * whoever issues the invoice can check its line without the history.
+ *
+ * A flat amount with the tax it was named with, as the mail names it
+ * (#1083): the total with the tax, or that there was none. The invoice keeps
+ * to that total, and its line can be less than the figure named, where it
+ * carries a tax that was not named. Net only for a call from before.
  */
 function heldSurcharge(job: RecordState): string {
   const flatCents = job['emergencyNamedFlatCents']
   const basisPoints = job['emergencyNamedBasisPoints']
+  const vatBasisPoints = job['emergencyNamedVatBasisPoints']
 
   if (typeof flatCents !== 'number' || typeof basisPoints !== 'number') {
     return 'keiner festgehalten, die Rechnung nimmt den des Tages'
   }
 
   if (flatCents > 0) {
-    return `${euros(flatCents)} netto pauschal, vor dem Auftrag genannt`
+    if (typeof vatBasisPoints !== 'number') {
+      return `${euros(flatCents)} netto pauschal, vor dem Auftrag genannt`
+    }
+
+    if (vatBasisPoints === 0) {
+      return `${euros(flatCents)} pauschal ohne Umsatzsteuer, vor dem Auftrag genannt`
+    }
+
+    const percent = (vatBasisPoints / 100).toLocaleString('de-DE', { maximumFractionDigits: 2 })
+
+    return `${euros(flatCents + applyRate(flatCents, vatBasisPoints))} pauschal einschließlich ${percent} % Umsatzsteuer, vor dem Auftrag genannt`
   }
 
   if (basisPoints > 0) {

@@ -3283,8 +3283,9 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
 /**
  * Whether a draft follows its call (0156, opengewerk#1097). One from before
  * does where it has a marked line, came out of a report or is a collective
- * invoice, unless the office typed a surcharge on it; an invoice made by hand
- * and an issued one do not. Under FORCE, as an installation migrates.
+ * invoice, unless the office typed a surcharge on it or took over the line of
+ * the server, by changing or by removing it; an invoice made by hand and an
+ * issued one do not. Under FORCE, as an installation migrates.
  */
 describe('the drafts from before 0156 that follow their call', () => {
   const before = () =>
@@ -3297,6 +3298,8 @@ describe('the drafts from before 0156 that follow their call', () => {
     newId<'document'>(),
     newId<'document'>(),
     newId<'document'>(),
+    newId<'document'>(),
+    newId<'document'>(),
   ]
   const fromReport = newId<'document'>()
   const collective = newId<'document'>()
@@ -3304,6 +3307,8 @@ describe('the drafts from before 0156 that follow their call', () => {
   const typed = newId<'document'>()
   const byHand = newId<'document'>()
   const issued = newId<'document'>()
+  const removed = newId<'document'>()
+  const renamed = newId<'document'>()
 
   it('is set where the draft follows and nowhere else', async () => {
     expect(before()).toBeGreaterThan(0)
@@ -3374,6 +3379,32 @@ describe('the drafts from before 0156 that follow their call', () => {
       [issued],
     )
 
+    // Two out of a report whose line of the server the office took over
+    // before the update, as the routes of then did: removed, and renamed.
+    // Either took the mark away, which the log of the line keeps.
+    await admin.query(
+      `insert into documents (id, tenant_id, customer_id, kind, document_date, job_id, predecessor_document_id)
+       values ($1, $3, $4, 'final_invoice', '2026-10-28', $5, $6),
+              ($2, $3, $4, 'final_invoice', '2026-10-28', $5, $7)`,
+      [removed, renamed, tenant.id, customer, job, reports[4], reports[5]],
+    )
+    await admin.query(
+      `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit,
+         unit_price_cents, net_cents, emergency_surcharge)
+       values ($1, $2, 1, 'Notdienstzuschlag Nacht', 1000, 'flat_rate', 4500, 4500, true),
+              ($1, $3, 1, 'Notdienstzuschlag Nacht', 1000, 'flat_rate', 4500, 4500, true)`,
+      [tenant.id, removed, renamed],
+    )
+    await admin.query(
+      `update document_lines set emergency_surcharge = false, deleted_at = now() where document_id = $1`,
+      [removed],
+    )
+    await admin.query(
+      `update document_lines set emergency_surcharge = false, designation = 'Zuschlag Nachteinsatz'
+       where document_id = $1`,
+      [renamed],
+    )
+
     await runMigrations(ownerDatabaseUrl(), migrationsFolder)
 
     const { rows } = await admin.query<{ id: string; follows_call: boolean }>(
@@ -3387,9 +3418,11 @@ describe('the drafts from before 0156 that follow their call', () => {
       [typed]: false,
       [byHand]: false,
       [issued]: false,
+      [removed]: false,
+      [renamed]: false,
     })
 
-    for (const table of ['documents', 'document_lines', 'document_sources']) {
+    for (const table of ['documents', 'document_lines', 'document_sources', 'audit_entries']) {
       const { rows: forced } = await admin.query<{ forced: boolean }>(
         'select relrowsecurity and relforcerowsecurity as forced from pg_class where relname = $1',
         [table],

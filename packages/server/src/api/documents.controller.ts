@@ -270,6 +270,20 @@ function checkPaymentTerm(values: Partial<Record<string, unknown>>): void {
   }
 }
 
+/**
+ * A document made a moment ago as it stands after what followed in the same
+ * transaction: whether it follows its call and the version the line of the
+ * surcharge gave it (#1097), which the row its insert returned does not know.
+ */
+async function asItStands(
+  tx: TenantTransaction,
+  created: typeof documents.$inferSelect,
+): Promise<typeof documents.$inferSelect> {
+  const [now] = await tx.select().from(documents).where(eq(documents.id, created.id))
+
+  return now ?? created
+}
+
 /** Refuses a text longer than a document holds (`documentTextLimits`), as the check in the database does. */
 function checkTexts(values: Partial<Record<string, unknown>>): void {
   const problem =
@@ -758,7 +772,7 @@ export class DocumentsController {
         // it counts the hours of the draft, of which a flat price has none.
         await followCall(tx, created.id)
 
-        return created
+        return await asItStands(tx, created)
       }
 
       const lines = await tx
@@ -807,6 +821,8 @@ export class DocumentsController {
       // call later gets it then.
       if (predecessor.kind === 'time_and_material_report') {
         await followCall(tx, created.id)
+
+        return await asItStands(tx, created)
       }
 
       return created

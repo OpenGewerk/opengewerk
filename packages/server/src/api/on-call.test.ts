@@ -1145,6 +1145,75 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(await surchargeOf(withTheSameTax.invoice)).toMatchObject({ net_cents: 4500 })
   })
 
+  it('takes the tax of the line from the day the totals reckon with, not from the date of the invoice (#1083)', async () => {
+    const draft = await draftOf({
+      emergencyAt: atNight,
+      emergencyNamedFlatCents: 3000,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
+    })
+
+    // Written on a day of another rate than the work: 16 % in the second half
+    // of 2020. The totals take the rate of the work, and so does the line;
+    // with 16 % it would be 30,78 €, and 36,63 € with the 19 % of the totals,
+    // more than the 35,70 € that were named.
+    await admin.query(`update documents set document_date = '2020-07-02' where id = $1`, [
+      draft.invoice,
+    ])
+    await price(draft.invoice, draft.hour, 6100)
+
+    expect(await surchargeOf(draft.invoice)).toMatchObject({ net_cents: 3000 })
+  })
+
+  it('takes no tax along where the named surcharge changes without it, on a device or at the route (#1083)', async () => {
+    for (const where of ['device', 'route'] as const) {
+      const call = aCall({
+        emergencyNamedFlatCents: 4500,
+        emergencyNamedBasisPoints: 0,
+        emergencyNamedVatBasisPoints: 1900,
+      })
+
+      await push(app, office(), [call.operation])
+
+      // As a device or a client does that does not know the tax: the tax of
+      // 45,00 € would have made 30,00 € a total of 35,70 €.
+      if (where === 'device') {
+        await sent(changed('jobs', call.id, { emergencyNamedFlatCents: { from: 4500, to: 3000 } }))
+      } else {
+        await patch(`/jobs/${call.id}`, { emergencyNamedFlatCents: 3000 })
+      }
+
+      const { rows } = await admin.query<{ flat: number; vat: number | null }>(
+        `select emergency_named_flat_cents as flat, emergency_named_vat_basis_points as vat
+         from jobs where id = $1`,
+        [call.id],
+      )
+
+      expect(rows, where).toEqual([{ flat: 3000, vat: null }])
+    }
+  })
+
+  it('answers the making of an invoice out of a report and of a collective one with whether it follows its call (#1097)', async () => {
+    const call = aCall({ emergencyAt: saturday })
+
+    await push(app, office(), [call.operation])
+
+    const fromReport = await post(`/documents/${await aSignedReport(call.id)}/successors`, {
+      kind: 'final_invoice',
+    })
+
+    expect(fromReport).toMatchObject({ followsCall: true })
+
+    const other = aCall({ emergencyAt: saturday })
+
+    await push(app, office(), [other.operation])
+    await post(`/documents/${await aSignedReport(other.id)}/issue`, {})
+
+    expect(await post(`/jobs/${other.id}/collective-invoice`, {})).toMatchObject({
+      followsCall: true,
+    })
+  })
+
   it('refuses a tax of the named surcharge that is no rate, or without an amount (#1083)', async () => {
     for (const fields of [
       {
