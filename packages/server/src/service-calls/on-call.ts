@@ -209,8 +209,8 @@ export function takesOverSurcharge(
  * draft without one, a fixed document and a line the office took over stay
  * as they are. The line goes where the call no longer has a surcharge, as on
  * a draft moved to a job that is no emergency, and keeps its mark while it is
- * gone: once the call has a surcharge again, the draft gets it back as a new
- * line. A line the office or a device removes loses its mark as it goes.
+ * gone: once the call has a surcharge again, the same line comes back, under
+ * its own id. A line the office or a device removes loses its mark as it goes.
  * Answers whether a surcharge that is due waits for room on a full draft, or
  * is more than a line holds, in which case the line stays as it was.
  *
@@ -346,8 +346,9 @@ export async function refreshSurchargeLine(
  * The surcharge back on a draft whose line the server took away while the
  * call had none (#1087): the line that went, back as itself, as the last one,
  * with its rate of tax. As itself, so that whoever still holds it and removes
- * it removes the line that is there, and it stays removed (#1099). Any other
- * line that went loses its mark.
+ * it comes to the line that is there (#1099): as a conflict to decide, since
+ * the server changed it meanwhile, and not past a new line in silence. Any
+ * other line that went loses its mark.
  *
  * Only where a line that went still carries the mark: one the office removed
  * while this transaction waited for the draft lost it and stays removed. And

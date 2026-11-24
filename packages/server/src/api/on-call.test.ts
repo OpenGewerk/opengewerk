@@ -1286,9 +1286,16 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(await shownSurchargesOf(invoice)).toEqual([])
   })
 
-  it('comes back as itself, so that a device removing what it held removes it for good', async () => {
+  it('comes back as itself, so that a device removing what it held comes to a conflict', async () => {
     const { job, invoice } = await draftOf()
     const line = (await surchargeOf(invoice)).id
+    const versionOf = async () =>
+      (
+        await admin.query<{ version: number }>('select version from document_lines where id = $1', [
+          line,
+        ])
+      ).rows[0]?.version ?? -1
+    const held = await versionOf()
 
     // Taken away and brought back before a device that held it sends anything.
     await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
@@ -1300,7 +1307,22 @@ describe('the line of the surcharge on a draft (#1087)', () => {
       emergency_surcharge: true,
     })
 
-    await sent(deleted('document_lines', line))
+    // Removed from the version the device held: the server changed the line
+    // since, which a person decides, as any change in between. Not past a
+    // new line in silence.
+    const stale = await push(app, office(), [
+      { ...deleted('document_lines', line), baseVersion: held },
+    ])
+
+    expect(stale.receipts.map((receipt) => [receipt.outcome, receipt.reason])).toEqual([
+      ['conflict', 'changed_elsewhere'],
+    ])
+    expect(await shownSurchargesOf(invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Wochenende', emergency_surcharge: true },
+    ])
+
+    // Removed once more from the line as it is now, it stays away.
+    await sent({ ...deleted('document_lines', line), baseVersion: await versionOf() })
 
     expect(await shownSurchargesOf(invoice)).toEqual([])
     expect(await marksOf(invoice)).toBe(0)
