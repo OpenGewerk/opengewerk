@@ -183,6 +183,26 @@ describe('a message', () => {
     expect(failure).toMatchObject({ command: 'RCPT TO', refusedSender: false, permanent: true })
   })
 
+  it('stays a refusal of the message when the answer names no address at all (opengewerk#1102)', async () => {
+    server = await fakeSmtpServer({ refuseWithoutAddress: ['berg@example.de'] })
+    const transport = smtpTransport(settings(server.port), short)
+
+    const failure = await failureOf(transport.send(letter))
+    transport.close()
+
+    expect(failure).toMatchObject({ command: 'RCPT TO', refusedSender: false, permanent: true })
+  })
+
+  it('writes the address to answer to as it is stored (opengewerk#1104)', async () => {
+    server = await fakeSmtpServer()
+    const transport = smtpTransport(settings(server.port), short)
+
+    await transport.send({ ...letter, replyTo: 'a(b)@example.de' })
+    transport.close()
+
+    expect(server.received[0]?.data).toMatch(/^Reply-To: <?"a\(b\)"@example\.de>?\r?$/m)
+  })
+
   it('reaches the same mailbox with a name as without one (opengewerk#1104)', async () => {
     server = await fakeSmtpServer()
     const transport = smtpTransport(settings(server.port), short)

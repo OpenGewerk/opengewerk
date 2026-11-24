@@ -21,7 +21,8 @@
 # request of an operator. It only says "now", with an ID, the version the
 # office showed and who asked. The version to update to is never taken from
 # it: it has to be the newest release this service found itself, newer than
-# the installation, and the request at most ten minutes old, so that a request
+# the version that runs and not older than the files of the installation,
+# and the request at most ten minutes old, so that a request
 # that waited through a stop of this service does not start an update
 # nobody expects any more.
 
