@@ -91,7 +91,10 @@ log_line() {
 
 read_application || { log_line 'application.env der Installation ist nicht lesbar.'; exit 1; }
 compose_file="$install/docker/compose.yaml"
-from=$(installed_version)
+# The version the instance runs from, as the service wrote it into run.json:
+# after a run that stopped with the kit in place, not the one of the files.
+from=$(jq -r '.from // ""' "$status_path/run.json")
+version_valid "$from" || from=$(installed_version)
 owner=$(stat -c '%u:%g' "$install")
 
 compose() {

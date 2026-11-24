@@ -6,6 +6,8 @@ Das geht auf einem Linux-Server mit einem Paket aus einem Release. Unter Docker 
 
 ## Von Hand
 
+In einem Checkout des Quelltexts holst du die neue Fassung mit `git pull` und startest mit `sh docker/start.sh`; er baut die Abbilder dann selbst. Die Schritte unten gelten für eine Installation aus einem Paket.
+
 Vorher sichern, das neue Paket an dieselbe Stelle entpacken und derselbe Befehl wie beim ersten Start. Die Datei `.env` bleibt, wie sie ist. Die Befehle gehen von einer Installation in `/opt/opengewerk` aus und laufen als root; als anderer Benutzer wirst du vorher mit `sudo -i` zu root.
 
 1. Im Ordner der Installation sichern: `cd /opt/opengewerk && docker compose -f docker/compose.yaml --profile backup run --rm backup backup.sh`

@@ -88,6 +88,13 @@ const serverWide = new Set([
   'ENOAUTH',
 ])
 
+/** Whether a failure to send is about the server and not about the one message. */
+export function failsServerWide(error: unknown): boolean {
+  const failure = asFailure(error)
+
+  return failure.code !== null && serverWide.has(failure.code)
+}
+
 function outgoing(
   message: OutboxMessage,
   from: string,

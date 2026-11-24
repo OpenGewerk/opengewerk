@@ -1,5 +1,6 @@
 import type { Database } from '../database/database.js'
 import type { MailContext } from '../mail/context.js'
+import { failsServerWide } from '../mail/worker.js'
 import { type RepeatingJob, startRepeating } from '../start/repeat.js'
 import type { AccountMessages } from './account-mail.js'
 import { instanceMailConnection } from './mail-server.js'
@@ -16,9 +17,11 @@ import { type InstanceUpdates, markUpdateTold, readInstanceUpdate, updateTold } 
  * the new one after an update that went through, the one before after an
  * update that stopped before the restart. A mark in the folder of the
  * requests says it was told, so that it is told once. It is set once every
- * mail was handed to the server: a question to the database or a connection
- * that fails before is tried again a minute later. A mail the server takes
- * and then does not deliver is not, as with every notice to an account.
+ * mail was handed to the server: a question to the database before, or a
+ * failure of the server itself (no connection, no answer, no sign in), sets
+ * none, and the next look a minute later tries again. A mail the server
+ * turns away for its address alone is said in the log and not tried again,
+ * as with every notice to an account.
  *
  * Only an update that ended within the last day, so that an instance whose
  * mail server is set up a week later does not tell of an old one. Without a
@@ -94,6 +97,10 @@ export async function reportFinishedUpdate(
           attachments: [],
         })
       } catch (error) {
+        if (failsServerWide(error)) {
+          throw error
+        }
+
         console.error(
           'Die Nachricht über die Aktualisierung der Instanz ging an eine Adresse nicht hinaus.',
           error,

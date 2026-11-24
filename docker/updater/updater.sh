@@ -185,17 +185,19 @@ take_request() {
   [ "$mode" = ready ] || { refuse "$reason"; return 0; }
   version_valid "$version" || { refuse version; return 0; }
   [ "$version" = "$latest" ] || { refuse version; return 0; }
-  # The version of the files is not always the one that runs: an update that
-  # stopped after it unpacked the kit leaves the files of the new version and
-  # the instance on the one before. A new try for the version that failed
-  # picks up from there, and the run says the version it started from.
+  # The version the instance runs is not always the one of its files: an
+  # update that stopped after it unpacked the kit leaves the files of its
+  # version and the instance on the one before, which that run names. From
+  # there a new try for the same version goes, or one for a later; never one
+  # for an earlier, and the run names the version it starts from.
   from=$installed
-  retry=$(jq -r --arg version "$version" \
-    'if .state == "failed" and .version == $version then .from // "" else "" end' \
-    "$status_path/run.json" 2>/dev/null) || retry=''
-  if [ -n "$retry" ]; then
-    from=$retry
-  elif ! newer "$version" "$installed"; then
+  stopped_from=$(jq -r --arg installed "$installed" \
+    'if .state == "failed" and .version == $installed then .from // "" else "" end' \
+    "$status_path/run.json" 2>/dev/null) || stopped_from=''
+  if version_valid "$stopped_from"; then
+    from=$stopped_from
+  fi
+  if ! newer "$version" "$from"; then
     refuse current
     return 0
   fi

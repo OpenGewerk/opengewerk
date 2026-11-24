@@ -197,7 +197,8 @@ round
 started || fail 'das Update startete nicht'
 line=$(grep '^docker|run --detach ' "$CALLS")
 for part in "--label opengewerk.update.project=opengewerk" "--cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER" \
-  "--security-opt no-new-privileges:true --read-only" "--volume $work/install:$work/install" \
+  "--security-opt no-new-privileges:true --read-only --tmpfs /tmp:rw,size=512m" "--env UPDATE_INSTALL=$work/install" \
+  "--volume $work/install:$work/install" \
   "--volume /var/run/docker.sock:/var/run/docker.sock" "--volume opengewerk_update-status:/var/lib/opengewerk/update-status" \
   "sha256:updater update.sh $id 1.1.0"; do
   printf '%s' "$line" | grep -qF -- "$part" || fail "dem Start fehlt: $part"
@@ -400,5 +401,25 @@ started || fail 'ein neuer Versuch nach einem Abbruch startete nicht'
 jq '.state = "succeeded"' "$run" > "$run.new" && mv "$run.new" "$run"
 refused 17171717-2222-4333-8444-555555555555 1.1.0 current
 check 'Neuer Versuch nach einem Abbruch mit entpackter Fassung: startet, nach einem Erfolg nicht mehr'
+
+# 17. After such a stop a later version starts from the version that runs, as
+# the stopped run names it, not from the one of the files; an earlier version
+# than the files never starts, whatever run.json says.
+stopped_run() {
+  jq -n '{id: "15151515-2222-4333-8444-555555555555", version: "1.1.0", from: "1.0.0", by: "Moritz Beispiel",
+    state: "failed", reason: null, step: 3, started_at: "2026-11-24T10:00:00Z", finished_at: "2026-11-24T10:01:00Z", log: []}' > "$run"
+}
+stopped_run
+release v1.2.0
+request 18181818-2222-4333-8444-555555555555 1.2.0
+round
+started || fail 'eine neuere Fassung nach einem Abbruch startete nicht'
+[ "$(field .from "$run")" = 1.0.0 ] || fail "der Lauf nennt $(field .from "$run") statt der Fassung, die läuft"
+pack 1.2.0
+cp -R "$work/pack/opengewerk/." "$work/install/"
+stopped_run
+release v1.1.0
+refused 19191919-2222-4333-8444-555555555555 1.1.0 current
+check 'Nach einem Abbruch: neuere Fassung von der laufenden aus, ältere als die Dateien nie'
 
 printf 'Dienst für Aktualisierungen: alles in Ordnung.\n'

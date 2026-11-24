@@ -440,16 +440,14 @@ describe('telling how an update ended', () => {
   it('is tried again a minute later when the mail server could not be reached, and then told once', async () => {
     finished('succeeded')
     const before = toldOf().length
+    // The server of the instance, at a port nobody answers on, as when it is
+    // down: the transport connects only when it sends.
     const down: MailContext = {
       ...mail,
-      connect: () => {
-        throw new Error('Der Mailserver antwortet nicht.')
-      },
+      connect: (configuration) => smtpTransport({ ...configuration, port: 1 }),
     }
 
-    await expect(reportFinishedUpdate({ ...reporting(), mail: down })).rejects.toThrow(
-      'Der Mailserver antwortet nicht.',
-    )
+    await expect(reportFinishedUpdate({ ...reporting(), mail: down })).rejects.toThrow()
     expect(toldOf().length).toBe(before)
 
     expect(await reportFinishedUpdate(reporting())).toBe(true)

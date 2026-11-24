@@ -516,8 +516,8 @@ function Action({
     )
   }
 
-  if (view.service !== 'alive') {
-    return (
+  const silent =
+    view.service !== 'alive' ? (
       <NoteBox tone="waiting" icon={TriangleAlert}>
         {view.service === 'missing'
           ? 'Der Dienst für Aktualisierungen hat sich noch nie gemeldet.'
@@ -525,7 +525,11 @@ function Action({
         Ohne ihn sieht die Instanz nicht nach neuen Fassungen und lässt sich nicht von hier
         aktualisieren. Wie er läuft, steht in {betrieb}.
       </NoteBox>
-    )
+    ) : null
+
+  // A silent service and no run that stopped: the note is all there is to say.
+  if (silent && !stoppedShort(view)) {
+    return silent
   }
 
   const stopped = stoppedShort(view)
@@ -538,8 +542,9 @@ function Action({
     ) : null
 
   if (failed && stopped) {
+    // A new try only while the service goes round; else the note on it.
     const again =
-      view.mode === 'ready' && view.newer && view.latest
+      silent === null && view.mode === 'ready' && view.newer && view.latest
         ? stopped.version === view.latest
           ? 'Erneut versuchen'
           : `Auf ${view.latest} aktualisieren`
@@ -569,6 +574,7 @@ function Action({
           Wer die Instanz verwaltet, bekommt dazu eine E-Mail über den Mailserver der Instanz.
         </SettingsText>
         {asked}
+        {silent}
         {again ? (
           <div className="flex flex-wrap gap-2">
             <div className="grow" />

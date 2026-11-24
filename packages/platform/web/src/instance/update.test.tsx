@@ -172,6 +172,14 @@ describe('the update of the instance', () => {
     expect(screen.queryByText(/ist abgebrochen/)).toBeNull()
   })
 
+  it('shows a run that stopped also while the service is silent, without a new try', async () => {
+    await page({ ...newer, service: 'silent', run: stopped })
+
+    expect(await screen.findByText('Die Aktualisierung auf 0.3.1 ist abgebrochen.')).toBeTruthy()
+    expect(screen.getByText(/meldet sich seit einigen Minuten nicht mehr/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Erneut versuchen' })).toBeNull()
+  })
+
   it('says why the service turned the last request away', async () => {
     await page({
       ...newer,
