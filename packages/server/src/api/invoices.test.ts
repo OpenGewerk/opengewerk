@@ -1018,7 +1018,11 @@ describe('issuing next to a transmission from a device (opengewerk#1094)', () =>
         waitingAt = rows.map((row) => row.query)
       }
 
-      expect(waitingAt).toEqual([expect.stringMatching(/from "documents".*for no key update/i)])
+      // The lock taken before the first operation, of one document: the quote,
+      // the only one the transmission comes to.
+      expect(waitingAt).toEqual([
+        expect.stringMatching(/from "documents".*in \(\$1\).*order by.*for no key update/i),
+      ])
     } finally {
       held.release()
       // Both requests done before the test tears its server down, even where

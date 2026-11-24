@@ -3255,14 +3255,18 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
       [withTypedWord]: 0,
       [fromDevice]: 0,
     })
-    expect(
-      (
-        await admin.query(
-          'select designation from document_lines where document_id = $1 and emergency_surcharge',
-          [given],
-        )
-      ).rows,
-    ).toEqual([{ designation: 'Notdienstzuschlag Nacht' }])
+    // On both the position of the surcharge, not the heading next to it.
+    for (const document of [given, withHeading]) {
+      expect(
+        (
+          await admin.query(
+            'select designation from document_lines where document_id = $1 and emergency_surcharge',
+            [document],
+          )
+        ).rows,
+        document,
+      ).toEqual([{ designation: 'Notdienstzuschlag Nacht' }])
+    }
 
     for (const table of [
       'document_lines',

@@ -1522,19 +1522,29 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     const writing = holdQuery((text) => text.startsWith('insert into "jobs"'))
     const changing = transmit()
 
-    await held.reached
-    await sent(
-      changed('document_lines', from.hour, { documentId: { from: from.invoice, to: to.invoice } }),
-    )
+    try {
+      await held.reached
+      await sent(
+        changed('document_lines', from.hour, {
+          documentId: { from: from.invoice, to: to.invoice },
+        }),
+      )
+    } catch (error) {
+      held.release()
+      writing.release()
+      await Promise.allSettled([changing])
+      throw error
+    }
 
     return { to, write, transmit, held, writing, changing }
   }
 
   it('locks the draft a line went to meanwhile before it writes', async () => {
     const { to, held, writing, changing } = await aLineMovedMeanwhile()
-    const other = await begun()
+    let other: PoolClient | undefined
 
     try {
+      other = await begun()
       held.release()
       await writing.reached
 
@@ -1547,8 +1557,8 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     } finally {
       held.release()
       writing.release()
-      await other.query('rollback').catch(() => undefined)
-      other.release()
+      await other?.query('rollback').catch(() => undefined)
+      other?.release()
       await Promise.allSettled([changing])
     }
 
@@ -1557,10 +1567,11 @@ describe('the line of the surcharge on a draft (#1087)', () => {
 
   it('waits for no draft it comes to late, and goes through when sent again', async () => {
     const { to, write, transmit, held, writing, changing } = await aLineMovedMeanwhile()
-    const issuing = await lockedForIssuing(to.invoice)
+    let issuing: PoolClient | undefined
     let answered: unknown
 
     try {
+      issuing = await lockedForIssuing(to.invoice)
       writing.release()
       held.release()
       // Issuing holds the draft the hour went to: waiting for it out of the
@@ -1573,8 +1584,10 @@ describe('the line of the surcharge on a draft (#1087)', () => {
       await issuing.query("update jobs set description = 'Zähler prüfen' where id = $1", [to.job])
       await issuing.query('commit')
     } finally {
-      await issuing.query('rollback').catch(() => undefined)
-      issuing.release()
+      writing.release()
+      held.release()
+      await issuing?.query('rollback').catch(() => undefined)
+      issuing?.release()
       await Promise.allSettled([changing])
     }
 
@@ -1615,6 +1628,7 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     } finally {
       await transmission.query('rollback').catch(() => undefined)
       transmission.release()
+      await Promise.allSettled([issuing])
     }
 
     expect(await issuing).toBe(201)
@@ -1641,6 +1655,7 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     } finally {
       await removing.query('rollback').catch(() => undefined)
       removing.release()
+      await Promise.allSettled([refreshing])
     }
 
     await refreshing
@@ -2172,6 +2187,7 @@ describe('the line of the surcharge on a draft, after the settings (#1087)', () 
       } finally {
         await issuing.query('rollback').catch(() => undefined)
         issuing.release()
+        await Promise.allSettled([changing])
       }
 
       const answer = await changing
@@ -2230,6 +2246,7 @@ describe('the line of the surcharge on a draft, after the settings (#1087)', () 
     } finally {
       await issuing.query('rollback').catch(() => undefined)
       issuing.release()
+      await Promise.allSettled([signing])
     }
 
     expect(await signing).toEqual({ status: 201, outcomes: ['applied', 'applied'] })
