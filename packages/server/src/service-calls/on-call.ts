@@ -190,14 +190,16 @@ const surchargeFields = [
  * Whether a change takes the line of the surcharge over from the server
  * (#1087): its document, text, quantity, unit, price or article set to
  * something else than it holds. Its place among the lines and its rate of
- * tax are no change of the surcharge.
+ * tax are no change of the surcharge. Compared as text: the line route takes
+ * a number written as text, which the column stores as the number, so the
+ * same value sent that way changes nothing.
  */
 export function takesOverSurcharge(
   values: Readonly<Record<string, unknown>>,
   current: Readonly<Record<string, unknown>>,
 ): boolean {
   return surchargeFields.some(
-    (field) => values[field] !== undefined && values[field] !== current[field],
+    (field) => values[field] !== undefined && String(values[field]) !== String(current[field]),
   )
 }
 

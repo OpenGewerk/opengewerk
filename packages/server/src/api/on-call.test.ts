@@ -1182,6 +1182,19 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 2000 })
   })
 
+  it('stays the server’s when the office sends its values unchanged, a number as text included', async () => {
+    const { invoice, hour } = await draftOf()
+    const line = (await surchargeOf(invoice)).id
+
+    await patch(`/documents/${invoice}/lines/${line}`, { quantityMilli: '1000', unit: 'flat_rate' })
+    await price(invoice, hour, 10_000)
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      net_cents: 5000,
+      emergency_surcharge: true,
+    })
+  })
+
   it('belongs to the office once its text or amount is changed by hand, in the office or on a device', async () => {
     const inOffice = await draftOf()
     const line = (await surchargeOf(inOffice.invoice)).id
