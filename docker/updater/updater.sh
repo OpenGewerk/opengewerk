@@ -293,7 +293,10 @@ take_request() {
       say "Docker meldete einen Fehler, der Lauf $id läuft aber: $(tail -n 1 "$temp/run.log")"
     else
       say "Der Lauf ließ sich nicht starten: $(tail -n 1 "$temp/run.log")"
-      record --arg at "$(now)" '. + {state: "failed", reason: "docker", finished_at: $at}'
+      # Only while it still says it is under way: a container that ran and
+      # went (--rm) before the question wrote how it ended, and that stays.
+      record --arg at "$(now)" \
+        'if .state == "running" then . + {state: "failed", reason: "docker", finished_at: $at} else . end'
     fi
   fi
 }

@@ -193,19 +193,32 @@ function addressesIn(said: string): string[] {
   return found
 }
 
+/** A local part nodemailer sends as it is: atoms of the characters RFC 5322 allows, joined by dots. */
+const dotAtom = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/
+
 /**
  * An address in angle brackets as a server may name it in an answer: as it
- * is stored, and with its domain as the A-label nodemailer sends,
- * `xn--mller-elektro-wob.de` for `müller-elektro.de`. Small letters both.
+ * is stored, and as nodemailer sends it, with its domain as the A-label,
+ * `xn--mller-elektro-wob.de` for `müller-elektro.de`, and a local part that
+ * is no dot-atom in quotes, `"a(b)"`. Small letters all; the stored form
+ * first.
  */
 function bracketed(address: string): readonly [string, ...string[]] {
   const stored = address.toLowerCase()
   const at = stored.lastIndexOf('@')
-  const domain = at < 0 ? '' : stored.slice(at + 1)
-  const label = domain === '' ? '' : domainToASCII(domain)
-  const sent = label === '' || label === domain ? stored : `${stored.slice(0, at)}@${label}`
 
-  return sent === stored ? [`<${stored}>`] : [`<${stored}>`, `<${sent}>`]
+  if (at < 0) {
+    return [`<${stored}>`]
+  }
+
+  const local = stored.slice(0, at)
+  const domain = stored.slice(at + 1)
+  const label = domain === '' ? '' : domainToASCII(domain)
+  const domains = label === '' || label === domain ? [domain] : [domain, label]
+  const locals = dotAtom.test(local) ? [local] : [local, `"${local}"`]
+  const forms = locals.flatMap((part) => domains.map((name) => `<${part}@${name}>`))
+
+  return [`<${stored}>`, ...forms.filter((form) => form !== `<${stored}>`)]
 }
 
 function asDeliveryError(error: unknown, mail?: OutgoingMail): MailDeliveryError {

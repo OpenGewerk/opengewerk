@@ -71,7 +71,14 @@ case "$*" in
   'ps --filter label=com.docker.compose.project='*) [ -z "${FAKE_APP_VERSION:-}" ] || printf '%s\n' "$FAKE_APP_VERSION" ;;
   'run --rm --network none '*' stat -c %d:%i '*) stat -c '%d:%i' "$last" ;;
   'ps --quiet --filter label=opengewerk.update.id='*) [ -z "${FAKE_RUN_ANYWAY:-}" ] || printf 'c0ffee\n' ;;
-  'run --detach '*) exit "${FAKE_RUN_FAILS:-0}" ;;
+  'run --detach '*)
+    # A container that ran to its end before the answer of Docker came back.
+    if [ -n "${FAKE_RUN_ENDED:-}" ]; then
+      jq '.state = "succeeded"' "$UPDATE_STATUS_PATH/run.json" > "$UPDATE_STATUS_PATH/run.json.new"
+      mv "$UPDATE_STATUS_PATH/run.json.new" "$UPDATE_STATUS_PATH/run.json"
+    fi
+    exit "${FAKE_RUN_FAILS:-0}"
+    ;;
   compose*' --profile backup run --rm backup backup.sh') exit "${BACKUP_FAILS:-0}" ;;
   compose*' exec -T app node -e '*)
     [ -z "${HEALTH_HANGS:-}" ] || exec sleep 30
@@ -533,6 +540,9 @@ request 26262626-2222-4333-8444-555555555555 1.4.0
 round FAKE_RUN_FAILS=1 FAKE_RUN_ANYWAY=1
 [ "$(field .id "$run")" = 26262626-2222-4333-8444-555555555555 ] && [ "$(field .state "$run")" = running ] ||
   fail 'ein Lauf, den Docker trotz der Fehlermeldung hat, wurde als gescheitert vermerkt'
-check 'Start scheitert: Lauf gescheitert, außer Docker hat den Container doch'
+request 27272727-2222-4333-8444-555555555555 1.4.0
+round FAKE_RUN_FAILS=1 FAKE_RUN_ENDED=1
+[ "$(field .state "$run")" = succeeded ] || fail 'ein Lauf, der schon zu Ende war, wurde als gescheitert vermerkt'
+check 'Start scheitert: Lauf gescheitert, außer Docker hat den Container doch, oder er ist schon zu Ende'
 
 printf 'Dienst für Aktualisierungen: alles in Ordnung.\n'

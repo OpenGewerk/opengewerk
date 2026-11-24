@@ -183,6 +183,24 @@ describe('a message', () => {
     expect(failure).toMatchObject({ command: 'RCPT TO', refusedSender: false, permanent: true })
   })
 
+  it('knows a sender whose local part nodemailer sends in quotes, and still the recipient beside it (opengewerk#1102)', async () => {
+    const quoted = { ...letter, from: { ...letter.from, address: 'a(b)@nord.example.de' } }
+
+    server = await fakeSmtpServer({ refuseSendersAtRecipient: ['"a(b)"@nord.example.de'] })
+    const refusingSender = smtpTransport(settings(server.port), short)
+    const sender = await failureOf(refusingSender.send(quoted))
+    refusingSender.close()
+    await server.close()
+
+    server = await fakeSmtpServer({ refuseNamingBoth: ['berg@example.de'] })
+    const refusingRecipient = smtpTransport(settings(server.port), short)
+    const recipient = await failureOf(refusingRecipient.send(quoted))
+    refusingRecipient.close()
+
+    expect(sender).toMatchObject({ command: 'RCPT TO', refusedSender: true, permanent: false })
+    expect(recipient).toMatchObject({ command: 'RCPT TO', refusedSender: false, permanent: true })
+  })
+
   it('stays a refusal of the message when the answer names no address at all (opengewerk#1102)', async () => {
     server = await fakeSmtpServer({ refuseWithoutAddress: ['berg@example.de'] })
     const transport = smtpTransport(settings(server.port), short)
