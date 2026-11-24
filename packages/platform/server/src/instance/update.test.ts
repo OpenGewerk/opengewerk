@@ -260,6 +260,56 @@ describe('the notes of a release', () => {
     expect(shown[0]).toMatchObject({ title: 'Sicherheit', security: true })
   })
 
+  it('take a link as its words, an image as its description, and brackets that open no link as they stand', () => {
+    expect(
+      releaseNotes(
+        [
+          '### Neu',
+          '',
+          '- Siehe [die Hilfe](https://example.org/hilfe) und ![das Bild](bild.png).',
+          '- Ein [Hinweis] ohne Link, [a [b] c](u) und [offen(',
+          '*  Mit Stern',
+          '+\tMit Plus',
+          '-ohne Abstand gehört zum Punkt davor',
+          '#### Tiefer gehört auch dazu',
+        ].join('\n'),
+      ),
+    ).toEqual([
+      {
+        title: 'Neu',
+        security: false,
+        items: [
+          'Siehe die Hilfe und das Bild.',
+          'Ein [Hinweis] ohne Link, [a [b] c](u) und [offen(',
+          'Mit Stern',
+          'Mit Plus -ohne Abstand gehört zum Punkt davor #### Tiefer gehört auch dazu',
+        ],
+      },
+    ])
+  })
+
+  // Notes from a page on GitHub, read in time that grows with the line and
+  // not with its square (CodeQL, js/polynomial-redos).
+  it('read a line of nothing but brackets or white space at once', () => {
+    const long = 50_000
+    const shown = releaseNotes(
+      [
+        `### ${'\t'.repeat(long)}Lang`,
+        `- ${'['.repeat(long)}`,
+        `- ${'[]('.repeat(long)}`,
+        `- ${'![a]('.repeat(long)}`,
+      ].join('\n'),
+    )
+
+    expect(shown).toEqual([
+      {
+        title: 'Lang',
+        security: false,
+        items: ['['.repeat(1000), '[]('.repeat(334).slice(0, 1000), '![a]('.repeat(200)],
+      },
+    ])
+  }, 2000)
+
   it('compare their versions by number and not as text', () => {
     expect(laterVersion('0.10.0', '0.9.9')).toBe(true)
     expect(laterVersion('0.9.9', '0.10.0')).toBe(false)

@@ -102,13 +102,61 @@ function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | nul
     : null
 }
 
+/**
+ * A line of Markdown with its links as their words, an image as its
+ * description.
+ *
+ * Read by hand, once from left to right, and not with a pattern: the notes
+ * come from a page on GitHub, and a pattern of brackets and parentheses took
+ * time that grew with the square of a line made of nothing but `[`
+ * (CodeQL, js/polynomial-redos).
+ */
+function linkWords(line: string): string {
+  let words = ''
+  let at = 0
+
+  for (;;) {
+    const open = line.indexOf('[', at)
+    const close = open < 0 ? -1 : line.indexOf(']', open + 1)
+
+    if (close < 0) {
+      break
+    }
+
+    if (line[close + 1] !== '(') {
+      // No bracket between the two opens a link either: the first `]` after
+      // each of them is this one.
+      words += line.slice(at, close + 1)
+      at = close + 1
+      continue
+    }
+
+    const end = line.indexOf(')', close + 2)
+
+    if (end < 0) {
+      break
+    }
+
+    const start = open - 1 >= at && line[open - 1] === '!' ? open - 1 : open
+
+    words += line.slice(at, start) + line.slice(open + 1, close)
+    at = end + 1
+  }
+
+  return words + line.slice(at)
+}
+
 /** A line of Markdown as text: links as their words, without marks for bold, code or emphasis. */
 function plain(line: string): string {
-  return line
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+  return linkWords(line)
     .replace(/(\*\*|__|`)/g, '')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+/** Whether a character is white space, as `\s` takes it. */
+function blank(character: string | undefined): boolean {
+  return character !== undefined && character.trim() === ''
 }
 
 /**
@@ -128,10 +176,9 @@ export function releaseNotes(markdown: string): InstanceReleaseNotesSection[] {
       break
     }
 
-    const heading = /^###\s+(.+)$/.exec(line)
-
-    if (heading) {
-      current = { title: plain(heading[1] ?? ''), items: [] }
+    // By hand rather than with a pattern, for the same reason as `linkWords`.
+    if (line.startsWith('###') && blank(line[3])) {
+      current = { title: plain(line.slice(3)), items: [] }
       sections.push(current)
       continue
     }
@@ -140,10 +187,10 @@ export function releaseNotes(markdown: string): InstanceReleaseNotesSection[] {
       continue
     }
 
-    const item = /^\s*[-*+]\s+(.+)$/.exec(line)
+    const point = line.trimStart()
 
-    if (item) {
-      current.items.push(plain(item[1] ?? ''))
+    if (point.length > 1 && '-*+'.includes(point[0] ?? '') && blank(point[1])) {
+      current.items.push(plain(point.slice(1)))
     } else if (line.trim() !== '' && current.items.length > 0) {
       // A line that goes on with the point above it.
       const last = current.items.length - 1
