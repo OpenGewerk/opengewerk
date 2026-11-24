@@ -494,6 +494,13 @@ export interface Document extends Synced {
    * start of a period. Null for every other document.
    */
   readonly maintenanceContractId: MaintenanceContractId | null
+  /**
+   * Whether the server keeps the line of the emergency surcharge in step with
+   * the call of the job (#1097): set on the invoice out of a report and on a
+   * collective invoice, taken away once the line or a surcharge on the draft
+   * is the office's. Written by the server alone.
+   */
+  readonly followsCall: boolean
   /** When it was fixed. Null while it is a draft. */
   readonly issuedAt: Date | null
   /**

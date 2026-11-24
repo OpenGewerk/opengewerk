@@ -52,6 +52,7 @@ import { earlyStartArrival } from '../service-calls/instructions.js'
 import {
   onCallRefusal,
   refreshSurchargeLines,
+  stopFollowingCall,
   surchargeDraftsOf,
   surchargeFieldsOfJob,
   takesOverSurcharge,
@@ -867,7 +868,11 @@ async function lockDocumentsOf(
     (unseen.length === 0
       ? []
       : await tx
-          .select({ id: schema.documentLines.id, version: schema.documentLines.version })
+          .select({
+            id: schema.documentLines.id,
+            version: schema.documentLines.version,
+            documentId: schema.documentLines.documentId,
+          })
           .from(schema.documentLines)
           .where(
             and(
@@ -886,24 +891,33 @@ async function lockDocumentsOf(
               ),
             ),
           )
-    ).map((row) => [canonical(row.id), row.version]),
+    ).map((row) => [canonical(row.id), row]),
   )
-  const removed = unseen
-    .filter((operation) => {
-      const version = gone.get(canonical(operation.recordId))
+  const removed = unseen.flatMap((operation) => {
+    const line = gone.get(canonical(operation.recordId))
 
-      return (
-        version !== undefined &&
-        (operation.baseVersion === null || operation.baseVersion >= version - 1)
-      )
-    })
-    .map((operation) => operation.recordId as DocumentLineId)
+    return line !== undefined &&
+      (operation.baseVersion === null || operation.baseVersion >= line.version - 1)
+      ? [line]
+      : []
+  })
 
   if (removed.length > 0) {
     await tx
       .update(schema.documentLines)
       .set({ emergencySurcharge: false })
-      .where(inArray(schema.documentLines.id, removed))
+      .where(
+        inArray(
+          schema.documentLines.id,
+          removed.map((line) => line.id),
+        ),
+      )
+  }
+
+  // Their drafts no longer follow their call either (#1097): the surcharge was
+  // removed by hand, on a device, and does not come back.
+  for (const draft of new Set(removed.map((line) => line.documentId))) {
+    await stopFollowingCall(tx, draft)
   }
 
   noted.set(tx, {
@@ -991,12 +1005,24 @@ async function afterSurchargeWrite(
   noted.set(tx, note)
 
   if (operation.entity === 'document_lines') {
-    // Removed on a device, the line of the surcharge does not come back.
+    // Removed on a device, the line of the surcharge does not come back; and
+    // removed or changed by hand there, its draft no longer follows its call
+    // (#1097). The draft the line was on: a line moved to another draft is
+    // the surcharge of that one, which its own refresh finds typed in.
+    const takenOver =
+      current?.['emergencySurcharge'] === true &&
+      (operation.kind === 'delete' ||
+        (operation.kind === 'update' && values['emergencySurcharge'] === false))
+
     if (operation.kind === 'delete' && current?.['emergencySurcharge'] === true) {
       await tx
         .update(schema.documentLines)
         .set({ emergencySurcharge: false })
         .where(eq(schema.documentLines.id, operation.recordId as DocumentLineId))
+    }
+
+    if (takenOver && typeof current['documentId'] === 'string') {
+      await stopFollowingCall(tx, current['documentId'])
     }
 
     for (const draft of [values['documentId'], current?.['documentId']]) {

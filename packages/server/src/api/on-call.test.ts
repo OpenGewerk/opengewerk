@@ -265,6 +265,16 @@ afterAll(async () => {
   rmSync(storageRoot, { recursive: true, force: true })
 })
 
+/** Whether the draft follows its call (#1097). */
+async function followsCallOf(invoice: string): Promise<boolean> {
+  const { rows } = await admin.query<{ follows_call: boolean }>(
+    'select follows_call from documents where id = $1',
+    [invoice],
+  )
+
+  return rows[0]?.follows_call === true
+}
+
 describe('the on-call plan (#293)', () => {
   it('is kept in the office and listed by the span it overlaps', async () => {
     const answer = await http()
@@ -676,8 +686,10 @@ describe('the surcharge of an emergency call', () => {
         [invoice],
       )
 
-      // Its surcharge, or the one taken away at once, at that place as well.
-      expect(rows, emergencyAt).toEqual([{ position: 2_147_483_647 }])
+      // Its surcharge at that place as well; in the day there is none to make.
+      expect(rows, emergencyAt).toEqual(
+        emergencyAt === atNight ? [{ position: 2_147_483_647 }] : [],
+      )
     }
   })
 
@@ -1640,6 +1652,132 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     },
   )
 
+  it('comes on the invoice of a job that becomes an emergency call later, in the office and on a device (#1097)', async () => {
+    const inOffice = await draftOf({ emergencyAt: null })
+
+    expect(await followsCallOf(inOffice.invoice)).toBe(true)
+    expect(await marksOf(inOffice.invoice)).toBe(0)
+
+    await patch(`/jobs/${inOffice.job}`, { emergencyAt: atNight })
+
+    expect(await shownSurchargesOf(inOffice.invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Nacht', emergency_surcharge: true },
+    ])
+
+    const onDevice = await draftOf({ emergencyAt: null })
+
+    await sent(changed('jobs', onDevice.job, { emergencyAt: { from: null, to: atNight } }))
+
+    expect(await shownSurchargesOf(onDevice.invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Nacht', emergency_surcharge: true },
+    ])
+  })
+
+  it('takes whether it follows its call from the server alone, not from a device (#1097)', async () => {
+    const { invoice } = await draftOf()
+    const answer = await push(app, office(), [
+      changed('documents', invoice, { followsCall: { from: true, to: false } }),
+    ])
+
+    expect(
+      answer.receipts.map((receipt) => [receipt.outcome, receipt.reason, receipt.fields]),
+    ).toEqual([['conflict', 'set_by_server', ['followsCall']]])
+    expect(await followsCallOf(invoice)).toBe(true)
+  })
+
+  it('comes on a draft of another job moved to an emergency call (#1097)', async () => {
+    const { invoice } = await draftOf({ emergencyAt: null })
+    const call = aCall({ emergencyAt: atNight })
+
+    await push(app, office(), [call.operation])
+    await patch(`/documents/${invoice}`, { jobId: call.id })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Nacht', emergency_surcharge: true },
+    ])
+  })
+
+  it('no longer follows the call once the office or a device removed or changed the line, and nothing brings it back (#1097)', async () => {
+    const removedInOffice = await draftOf()
+
+    await removeInOffice(removedInOffice.invoice, (await surchargeOf(removedInOffice.invoice)).id)
+
+    const removedOnDevice = await draftOf()
+
+    await sent(deleted('document_lines', (await surchargeOf(removedOnDevice.invoice)).id))
+
+    const changedInOffice = await draftOf()
+
+    await patch(
+      `/documents/${changedInOffice.invoice}/lines/${(await surchargeOf(changedInOffice.invoice)).id}`,
+      { unitPriceCents: 1234 },
+    )
+
+    for (const draft of [removedInOffice, removedOnDevice, changedInOffice]) {
+      expect(await followsCallOf(draft.invoice)).toBe(false)
+
+      // Another kind of call, which would make a line of its own.
+      await patch(`/jobs/${draft.job}`, { emergencyAt: atNight })
+
+      expect(await marksOf(draft.invoice)).toBe(0)
+    }
+
+    expect(await shownSurchargesOf(removedInOffice.invoice)).toEqual([])
+    expect(await shownSurchargesOf(removedOnDevice.invoice)).toEqual([])
+    expect(await shownSurchargesOf(changedInOffice.invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Wochenende', emergency_surcharge: false },
+    ])
+  })
+
+  it('comes after the flat price of a maintenance contract, on the invoice of its report and on its collective invoice (#1096)', async () => {
+    const quote = (
+      await post('/documents', { customerId: customer, kind: 'quote', documentDate: '2026-10-01' })
+    ).id
+    const contract = newId<'maintenance-contract'>()
+
+    await writtenPastTheRoutes(
+      `insert into maintenance_contracts (id, tenant_id, number, designation, customer_id, quote_id,
+         starts_on, first_visit_on, interval_months, term_months, renewal, notice_months, price_kind, flat_cents)
+       values ($1, $2, 'WV-2026-1096', 'Wartung Elektroanlage', $3, $4, '2026-01-01', '2026-01-01', 12, 24,
+         'none', 3, 'flat', 48000)`,
+      [contract, north.id, customer, quote],
+    )
+
+    for (const collective of [false, true]) {
+      const call = aCall({ emergencyAt: atNight })
+
+      await push(app, office(), [call.operation])
+      await writtenPastTheRoutes(
+        `update jobs set maintenance_contract_id = $1, maintenance_due_on = $3 where id = $2`,
+        [contract, call.id, collective ? '2026-11-30' : '2026-10-31'],
+      )
+
+      const report = await aSignedReport(call.id)
+      const invoice = collective
+        ? (await post(`/documents/${report}/issue`, {}),
+          (await post(`/jobs/${call.id}/collective-invoice`, {})).id)
+        : (await post(`/documents/${report}/successors`, { kind: 'final_invoice' })).id
+      const { rows } = await admin.query<{
+        position: number
+        unit_price_cents: number
+        emergency_surcharge: boolean
+      }>(
+        `select position, unit_price_cents, emergency_surcharge from document_lines
+         where document_id = $1 and deleted_at is null order by position`,
+        [invoice],
+      )
+
+      expect(rows[0], `collective ${String(collective)}`).toMatchObject({
+        position: 1,
+        unit_price_cents: 48_000,
+        emergency_surcharge: false,
+      })
+      expect(rows.slice(1), `collective ${String(collective)}`).toMatchObject([
+        { position: 2, emergency_surcharge: true },
+      ])
+    }
+  })
+
   it('comes back next to a heading with the word in it', async () => {
     const { job, invoice } = await draftOf()
 
@@ -1943,6 +2081,7 @@ describe('the line of the surcharge on a draft (#1087)', () => {
         'update document_lines set deleted_at = now(), emergency_surcharge = false where document_id = $1 and emergency_surcharge',
         [invoice],
       )
+      await removing.query('update documents set follows_call = false where id = $1', [invoice])
       await removing.query('commit')
     } finally {
       await removing.query('rollback').catch(() => undefined)
@@ -2117,7 +2256,9 @@ describe('the line of the surcharge on a draft (#1087)', () => {
 
     const invoice = (await post(`/documents/${report}/successors`, { kind: 'final_invoice' })).id
 
-    expect(await marksOf(invoice)).toBe(1)
+    // No line, not even one taken away: the draft follows its call (#1097).
+    expect(await marksOf(invoice)).toBe(0)
+    expect(await followsCallOf(invoice)).toBe(true)
     expect(await shownSurchargesOf(invoice)).toEqual([])
 
     const refused = await http()

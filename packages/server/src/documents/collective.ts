@@ -20,7 +20,7 @@ import {
 import { articlePricesOn, pricedFromArticle } from './article-prices.js'
 import { choicesOf } from './instructions.js'
 import { contractFlatLineFor } from '../contracts/invoice.js'
-import { insertSurchargeLine, surchargeLineFor } from '../service-calls/on-call.js'
+import { followCall } from '../service-calls/on-call.js'
 
 type DocumentRow = typeof documents.$inferSelect
 type LineRow = typeof documentLines.$inferSelect
@@ -295,15 +295,9 @@ export async function makeCollectiveInvoice(
   }
 
   // An emergency call billed over its reports carries its surcharge once,
-  // as the last line (#293).
-  await insertSurchargeLine(
-    tx,
-    tenantId,
-    created.id,
-    copied.length + 1,
-    jobId,
-    await surchargeLineFor(tx, jobId, copied),
-  )
+  // as the last line (#293), after a flat price of a contract as well
+  // (#1096), and the collective invoice follows its call (#1097).
+  await followCall(tx, created.id)
 
   await tx.insert(documentSources).values(
     reports.map((report, index) => ({

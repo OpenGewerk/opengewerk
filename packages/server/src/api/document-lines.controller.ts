@@ -38,7 +38,11 @@ import {
 import { and, asc, count, eq, isNull } from 'drizzle-orm'
 
 import { documentLines, documents } from '../database/schema/index.js'
-import { refreshSurchargeLine, takesOverSurcharge } from '../service-calls/on-call.js'
+import {
+  refreshSurchargeLine,
+  stopFollowingCall,
+  takesOverSurcharge,
+} from '../service-calls/on-call.js'
 import { RequiresPermission } from './authorization.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
 import { requireReferences } from './references.js'
@@ -307,18 +311,22 @@ export class DocumentLinesController {
       // sum per 100 (#456).
       knownPriceBase(values, existing)
 
+      // Changed by hand, the line of the surcharge is the office's (#1087),
+      // and the draft no longer follows its call (#1097).
+      const takenOver = existing.emergencySurcharge && takesOverSurcharge(values, existing)
       const [updated] = await tx
         .update(documentLines)
         .set({
           ...(values as Partial<typeof documentLines.$inferInsert>),
           netCents: totalOf(values, existing),
-          // Changed by hand, the line of the surcharge is the office's (#1087).
-          ...(existing.emergencySurcharge && takesOverSurcharge(values, existing)
-            ? { emergencySurcharge: false }
-            : {}),
+          ...(takenOver ? { emergencySurcharge: false } : {}),
         })
         .where(eq(documentLines.id, lineId as DocumentLineId))
         .returning()
+
+      if (takenOver) {
+        await stopFollowingCall(tx, documentId)
+      }
 
       await refreshSurchargeLine(tx, documentId)
 
@@ -343,6 +351,17 @@ export class DocumentLinesController {
     return await this.database.forTenant(identity, async (tx) => {
       await this.draftOf(tx, documentId)
 
+      const [wasSurcharge] = await tx
+        .select({ emergencySurcharge: documentLines.emergencySurcharge })
+        .from(documentLines)
+        .where(
+          and(
+            eq(documentLines.id, lineId as DocumentLineId),
+            eq(documentLines.documentId, documentId as DocumentId),
+            isNull(documentLines.deletedAt),
+          ),
+        )
+
       // Marked, not removed, like everything a device knows about. A row that
       // is gone is a row a device that was offline never hears about again.
       const [removed] = await tx
@@ -360,6 +379,12 @@ export class DocumentLinesController {
 
       if (!removed) {
         throw new NotFoundException()
+      }
+
+      // The line of the surcharge removed: the draft no longer follows its
+      // call either (#1097), and the surcharge does not come back.
+      if (wasSurcharge?.emergencySurcharge) {
+        await stopFollowingCall(tx, documentId)
       }
 
       await refreshSurchargeLine(tx, documentId)

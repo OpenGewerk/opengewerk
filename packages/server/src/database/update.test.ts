@@ -3281,6 +3281,126 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
 })
 
 /**
+ * Whether a draft follows its call (0156, opengewerk#1097). One from before
+ * does where it has a marked line, came out of a report or is a collective
+ * invoice, unless the office typed a surcharge on it; an invoice made by hand
+ * and an issued one do not. Under FORCE, as an installation migrates.
+ */
+describe('the drafts from before 0156 that follow their call', () => {
+  const before = () =>
+    readMigrationIndex().findIndex((entry) => entry.tag === '0156_document_follows_call')
+  const customer = newId<'customer'>()
+  const job = newId<'job'>()
+  // One report per invoice made out of one: a report has one successor.
+  const reports = [
+    newId<'document'>(),
+    newId<'document'>(),
+    newId<'document'>(),
+    newId<'document'>(),
+  ]
+  const fromReport = newId<'document'>()
+  const collective = newId<'document'>()
+  const marked = newId<'document'>()
+  const typed = newId<'document'>()
+  const byHand = newId<'document'>()
+  const issued = newId<'document'>()
+
+  it('is set where the draft follows and nowhere else', async () => {
+    expect(before()).toBeGreaterThan(0)
+
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), releaseFolder(before()))
+    await admin.query('insert into tenants (id, name) values ($1, $2)', [tenant.id, tenant.name])
+    await admin.query(
+      "insert into customers (id, tenant_id, kind, name) values ($1, $2, 'private', 'Familie Arslan')",
+      [customer, tenant.id],
+    )
+    await admin.query(
+      `insert into jobs (id, tenant_id, customer_id, kind, status, designation)
+       values ($1, $2, $3, 'service', 'active', 'Heizung ohne Strom')`,
+      [job, tenant.id, customer],
+    )
+    for (const [index, report] of reports.entries()) {
+      await admin.query(
+        `insert into documents (id, tenant_id, customer_id, kind, document_date, job_id)
+         values ($1, $2, $3, 'time_and_material_report', '2026-10-28', $4)`,
+        [report, tenant.id, customer, job],
+      )
+      await admin.query(
+        `update documents set status = 'issued', number = $2, issued_at = now() where id = $1`,
+        [report, `RB-2026-000${String(index + 1)}`],
+      )
+    }
+
+    await admin.query(
+      `insert into documents (id, tenant_id, customer_id, kind, document_date, job_id, predecessor_document_id)
+       values ($1, $7, $8, 'final_invoice', '2026-10-28', $9, $10),
+              ($2, $7, $8, 'final_invoice', '2026-10-28', $9, null),
+              ($3, $7, $8, 'final_invoice', '2026-10-28', $9, null),
+              ($4, $7, $8, 'final_invoice', '2026-10-28', $9, $11),
+              ($5, $7, $8, 'final_invoice', '2026-10-28', $9, null),
+              ($6, $7, $8, 'final_invoice', '2026-10-28', $9, $12)`,
+      [
+        fromReport,
+        collective,
+        marked,
+        typed,
+        byHand,
+        issued,
+        tenant.id,
+        customer,
+        job,
+        reports[0],
+        reports[1],
+        reports[2],
+      ],
+    )
+    await admin.query(
+      `insert into document_sources (tenant_id, document_id, source_document_id, position)
+       values ($1, $2, $3, 1)`,
+      [tenant.id, collective, reports[3]],
+    )
+    // A line of the server, taken away, on an invoice made by hand; a surcharge
+    // the office typed on one out of the report.
+    await admin.query(
+      `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit,
+         unit_price_cents, net_cents, emergency_surcharge, deleted_at)
+       values ($1, $2, 1, 'Notdienstzuschlag Nacht', 1000, 'flat_rate', 4500, 4500, true, now()),
+              ($1, $3, 1, 'Notdienstzuschlag Nacht', 1000, 'flat_rate', 4500, 4500, false, null)`,
+      [tenant.id, marked, typed],
+    )
+    await admin.query(
+      `update documents set status = 'issued', number = 'RE-2026-0001', issued_at = now() where id = $1`,
+      [issued],
+    )
+
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+
+    const { rows } = await admin.query<{ id: string; follows_call: boolean }>(
+      "select id, follows_call from documents where kind = 'final_invoice'",
+    )
+
+    expect(Object.fromEntries(rows.map((row) => [row.id, row.follows_call]))).toEqual({
+      [fromReport]: true,
+      [collective]: true,
+      [marked]: true,
+      [typed]: false,
+      [byHand]: false,
+      [issued]: false,
+    })
+
+    for (const table of ['documents', 'document_lines', 'document_sources']) {
+      const { rows: forced } = await admin.query<{ forced: boolean }>(
+        'select relrowsecurity and relforcerowsecurity as forced from pg_class where relname = $1',
+        [table],
+      )
+
+      expect(forced[0]?.forced, table).toBe(true)
+    }
+  })
+})
+
+/**
  * The rollback of 0128 (#313): an entry in the history is what somebody said
  * or noted. The rollback deletes none; while there is one, it stops.
  */

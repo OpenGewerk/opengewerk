@@ -72,11 +72,7 @@ import {
 import { articlePricesOn, type PriceOfDay, pricedFromArticle } from '../documents/article-prices.js'
 import { contentAndGapsOf, issuerOf, withStoredLogo } from '../documents/content.js'
 import { contractFlatLineFor } from '../contracts/invoice.js'
-import {
-  insertSurchargeLine,
-  refreshSurchargeLine,
-  surchargeLineFor,
-} from '../service-calls/on-call.js'
+import { followCall, refreshSurchargeLine } from '../service-calls/on-call.js'
 import { deductionsFor, paymentsOfADraft, showsReceivedPayments } from '../documents/deductions.js'
 import { choicesOf } from '../documents/instructions.js'
 import { proposedTreatment } from '../documents/treatment.js'
@@ -753,6 +749,11 @@ export class DocumentsController {
           .insert(documentLines)
           .values({ tenantId: identity.tenantId, documentId: created.id, position: 1, ...flat })
 
+        // An emergency call under such a contract carries its surcharge as
+        // well, as the collective invoice of its job does (#1096); in percent
+        // it counts the hours of the draft, of which a flat price has none.
+        await followCall(tx, created.id)
+
         return created
       }
 
@@ -796,17 +797,12 @@ export class DocumentsController {
         )
       }
 
-      // The invoice out of the report of an emergency call carries the
-      // surcharge the business set for its kind (#293), as the last line.
+      // The invoice out of a report follows its call (#1097): the report of
+      // an emergency call gives it the surcharge the business set for its
+      // kind (#293), as the last line, and one whose job becomes an emergency
+      // call later gets it then.
       if (predecessor.kind === 'time_and_material_report') {
-        await insertSurchargeLine(
-          tx,
-          identity.tenantId,
-          created.id,
-          priced.reduce((last, line) => Math.max(last, line.position), 0) + 1,
-          predecessor.jobId,
-          await surchargeLineFor(tx, predecessor.jobId, priced),
-        )
+        await followCall(tx, created.id)
       }
 
       return created

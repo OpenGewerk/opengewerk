@@ -189,6 +189,7 @@ export const auditTables: Readonly<Record<string, AuditTableWords>> = {
     label: 'Beleg',
     fields: {
       predecessor_document_id: 'Vorgänger',
+      follows_call: 'Notdienstzuschlag folgt dem Anruf',
       number: 'Nummer',
       document_date: 'Belegdatum',
       issued_at: 'Festgeschrieben am',
