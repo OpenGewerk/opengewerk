@@ -1231,7 +1231,8 @@ describe('the line of the surcharge on a draft (#1087)', () => {
   async function shownSurchargesOf(invoice: string) {
     const { rows } = await admin.query<{ designation: string; emergency_surcharge: boolean }>(
       `select designation, emergency_surcharge from document_lines
-       where document_id = $1 and designation like 'Notdienstzuschlag %' and deleted_at is null`,
+       where document_id = $1 and deleted_at is null
+         and (designation = 'Notdienstzuschlag' or designation like 'Notdienstzuschlag %')`,
       [invoice],
     )
 

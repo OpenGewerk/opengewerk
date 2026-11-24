@@ -1050,6 +1050,7 @@ describe('issuing next to a transmission from a device (opengewerk#1094)', () =>
       .send({})
       .then((answer) => answer.status)
     let pdf: Promise<number> | undefined
+    let throughBeforeIssuing = false
 
     try {
       await held.reached
@@ -1058,11 +1059,17 @@ describe('issuing next to a transmission from a device (opengewerk#1094)', () =>
         .get(`/documents/${quote.id}/pdf`)
         .set('x-test-identity', office())
         .then((answer) => answer.status)
-      await pdf
+      // Through while issuing still holds the chain, or given up on after a
+      // while: a PDF that waits for issuing would wait here for ever.
+      throughBeforeIssuing = await Promise.race([
+        pdf.then(() => true),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), 3000)),
+      ])
     } finally {
       held.release()
     }
 
+    expect(throughBeforeIssuing).toBe(true)
     expect({ issue: await issuing, pdf: await pdf }).toEqual({ issue: 201, pdf: 200 })
   })
 })
