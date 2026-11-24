@@ -131,6 +131,14 @@ self_project() {
   docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$self"
 }
 
+# The version the application of this installation runs: the label the
+# release puts on its image, on the running container of the service app.
+# Empty without such a container, or for an image built from the source.
+running_version() {
+  docker ps --filter "label=com.docker.compose.project=$1" --filter 'label=com.docker.compose.service=app' \
+    --format '{{.Label "org.opencontainers.image.version"}}' 2>/dev/null | head -n 1
+}
+
 # Whether an update of this installation runs now, in a container of its own.
 # Without an answer from Docker it counts as running: nothing starts then.
 update_running() {

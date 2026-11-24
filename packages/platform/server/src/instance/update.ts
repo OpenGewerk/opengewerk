@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
@@ -153,14 +153,17 @@ export function releaseNotes(markdown: string): InstanceReleaseNotesSection[] {
 
   const kept = sections
     .filter((section) => section.title !== '' && section.items.length > 0)
-    .slice(0, 12)
     .map((section) => ({
       title: section.title.slice(0, 80),
       security: section.title.toLowerCase() === 'sicherheit',
       items: section.items.slice(0, 50).map((item) => item.slice(0, 1000)),
     }))
 
-  return [...kept.filter((section) => section.security), ...kept.filter((s) => !s.security)]
+  // Sicherheit first and then cut, so that it is never the part cut off.
+  return [...kept.filter((section) => section.security), ...kept.filter((s) => !s.security)].slice(
+    0,
+    12,
+  )
 }
 
 function runOf(json: Json | null): InstanceUpdateRun | null {
@@ -329,25 +332,47 @@ export async function requestInstanceUpdate(
   return id
 }
 
-/** Whether the end of the update with this ID was told already. */
-export async function updateTold(updates: InstanceUpdates, id: string): Promise<boolean> {
-  if (!uuid.test(id)) {
-    return true
-  }
-
-  return stat(join(updates.requestsPath, `told-${id}`)).then(
-    () => true,
-    () => false,
-  )
+/**
+ * Who was told of the end of an update: the addresses, lower case, and
+ * whether everybody was, or given up on for good.
+ */
+export interface UpdateTold {
+  readonly done: boolean
+  readonly to: readonly string[]
 }
 
-/** Marks the end of the update with this ID as told. The marks of earlier updates go. */
-export async function markUpdateTold(updates: InstanceUpdates, id: string): Promise<void> {
+/** Who was told of the end of the update with this ID. */
+export async function updateTold(updates: InstanceUpdates, id: string): Promise<UpdateTold> {
+  if (!uuid.test(id)) {
+    return { done: true, to: [] }
+  }
+
+  const json = await readJson(join(updates.requestsPath, `told-${id}`))
+
+  return {
+    done: json?.['done'] === true,
+    to: Array.isArray(json?.['to'])
+      ? (json['to'] as unknown[]).filter(
+          (address): address is string => typeof address === 'string',
+        )
+      : [],
+  }
+}
+
+/** Keeps who was told of the end of this update, whole or not at all. The records of earlier updates go. */
+export async function markUpdateTold(
+  updates: InstanceUpdates,
+  id: string,
+  told: UpdateTold,
+): Promise<void> {
   if (!uuid.test(id)) {
     return
   }
 
-  await writeFile(join(updates.requestsPath, `told-${id}`), '')
+  const draft = join(updates.requestsPath, `.told-${id}-${randomUUID()}`)
+
+  await writeFile(draft, JSON.stringify(told), { encoding: 'utf8', flag: 'wx' })
+  await rename(draft, join(updates.requestsPath, `told-${id}`))
 
   for (const name of await readdir(updates.requestsPath)) {
     if (name.startsWith('told-') && name !== `told-${id}`) {

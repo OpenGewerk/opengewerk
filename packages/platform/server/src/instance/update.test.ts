@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { type AddressInfo, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -246,6 +247,17 @@ describe('the notes of a release', () => {
     ])
   })
 
+  it('keep the part Sicherheit when there are more parts than are shown', () => {
+    const many = Array.from({ length: 14 }, (_, index) => `### Teil ${String(index)}\n\n- Punkt`)
+
+    const shown = releaseNotes(
+      [...many, '### Sicherheit', '', '- Eine Lücke geschlossen.'].join('\n'),
+    )
+
+    expect(shown).toHaveLength(12)
+    expect(shown[0]).toMatchObject({ title: 'Sicherheit', security: true })
+  })
+
   it('compare their versions by number and not as text', () => {
     expect(laterVersion('0.10.0', '0.9.9')).toBe(true)
     expect(laterVersion('0.9.9', '0.10.0')).toBe(false)
@@ -449,6 +461,26 @@ describe('telling how an update ended', () => {
 
     await expect(reportFinishedUpdate({ ...reporting(), mail: down })).rejects.toThrow()
     expect(toldOf().length).toBe(before)
+
+    // A server that answers, and says at once that it is not available now.
+    const closing = createServer((socket) => {
+      socket.end('421 4.3.2 Service not available, closing transmission channel\r\n')
+    })
+
+    await new Promise<void>((resolve) => closing.listen(0, '127.0.0.1', resolve))
+
+    try {
+      const busy: MailContext = {
+        ...mail,
+        connect: (configuration) =>
+          smtpTransport({ ...configuration, port: (closing.address() as AddressInfo).port }),
+      }
+
+      await expect(reportFinishedUpdate({ ...reporting(), mail: busy })).rejects.toThrow()
+      expect(toldOf().length).toBe(before)
+    } finally {
+      await new Promise((resolve) => closing.close(resolve))
+    }
 
     expect(await reportFinishedUpdate(reporting())).toBe(true)
     expect(await reportFinishedUpdate(reporting())).toBe(false)

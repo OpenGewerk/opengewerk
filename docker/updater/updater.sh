@@ -187,17 +187,22 @@ take_request() {
   [ "$version" = "$latest" ] || { refuse version; return 0; }
   # The version the instance runs is not always the one of its files: an
   # update that stopped after it unpacked the kit leaves the files of its
-  # version and the instance on the one before, which that run names. From
+  # version, and the instance on the one before or, once somebody started
+  # it, on the new one. Docker says which runs. Without an answer, the
+  # version the stopped run started from, else the one of the files. From
   # there a new try for the same version goes, or one for a later; never one
-  # for an earlier, and the run names the version it starts from.
-  from=$installed
-  stopped_from=$(jq -r --arg installed "$installed" \
-    'if .state == "failed" and .version == $installed then .from // "" else "" end' \
-    "$status_path/run.json" 2>/dev/null) || stopped_from=''
-  if version_valid "$stopped_from"; then
-    from=$stopped_from
+  # older than the files, and the run names the version it starts from.
+  from=$(running_version "$project")
+  if ! version_valid "$from"; then
+    from=$installed
+    stopped_from=$(jq -r --arg installed "$installed" \
+      'if .state == "failed" and .version == $installed then .from // "" else "" end' \
+      "$status_path/run.json" 2>/dev/null) || stopped_from=''
+    if version_valid "$stopped_from"; then
+      from=$stopped_from
+    fi
   fi
-  if ! newer "$version" "$from"; then
+  if ! newer "$version" "$from" || newer "$installed" "$version"; then
     refuse current
     return 0
   fi

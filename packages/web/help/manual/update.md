@@ -2,11 +2,11 @@
 
 Unter **Aktualisierung** im Bereich der Instanz steht, welche Fassung läuft und ob es eine neuere gibt. Die Instanz sieht dafür einmal am Tag auf GitHub nach. Aktualisiert wird nur, wenn du den Knopf drückst und mit Passwort und Code bestätigst. Dann sichert die Instanz zuerst Datenbank und Dateispeicher, lädt die neue Fassung, prüft ihre Signatur, holt die Abbilder, migriert und startet neu. Für etwa eine Minute ist sie dabei nicht erreichbar. Wie es ausging, steht danach auf der Seite, und alle Betreiber bekommen eine E-Mail.
 
-Das geht auf einem Linux-Server mit einem Paket aus einem Release. Unter Docker Desktop auf Windows oder macOS und in einem Checkout des Quelltexts aktualisierst du von Hand, so wie unten beschrieben.
+Das geht auf einem Linux-Server mit einem Paket aus einem Release. Unter Docker Desktop auf Windows oder macOS und in einem Checkout des Quelltexts aktualisierst du von Hand, so wie unten beschrieben, in derselben Shell, in der du die Instanz eingerichtet hast (unter Windows also in WSL).
 
 ## Von Hand
 
-In einem Checkout des Quelltexts holst du die neue Fassung mit `git pull` und startest mit `sh docker/start.sh`; er baut die Abbilder dann selbst. Die Schritte unten gelten für eine Installation aus einem Paket.
+In einem Checkout des Quelltexts sicherst du zuerst wie in Schritt 1 unten. Dann holst du die neue Fassung mit `git pull`, oder, wenn der Checkout auf einem Tag steht, mit `git fetch --tags` und `git checkout v<fassung>`, und startest mit `sh docker/start.sh`; er baut die Abbilder dann selbst. Die Schritte unten gelten für eine Installation aus einem Paket.
 
 Vorher sichern, das neue Paket an dieselbe Stelle entpacken und derselbe Befehl wie beim ersten Start. Die Datei `.env` bleibt, wie sie ist. Die Befehle gehen von einer Installation in `/opt/opengewerk` aus und laufen als root; als anderer Benutzer wirst du vorher mit `sudo -i` zu root.
 

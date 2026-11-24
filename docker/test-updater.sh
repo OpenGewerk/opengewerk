@@ -68,6 +68,7 @@ case "$*" in
   inspect*/var/run/docker.sock*) printf '/var/run/docker.sock\n' ;;
   inspect*update-status*) printf 'opengewerk_update-status\n' ;;
   'ps --quiet --filter label=opengewerk.update.project='*) [ -z "${FAKE_RUNNING:-}" ] || printf 'c0ffee\n' ;;
+  'ps --filter label=com.docker.compose.project='*) [ -z "${FAKE_APP_VERSION:-}" ] || printf '%s\n' "$FAKE_APP_VERSION" ;;
   'run --rm --network none '*' stat -c %d:%i '*) stat -c '%d:%i' "$last" ;;
   'run --detach '*) exit "${FAKE_RUN_FAILS:-0}" ;;
   compose*' --profile backup run --rm backup backup.sh') exit "${BACKUP_FAILS:-0}" ;;
@@ -421,5 +422,27 @@ stopped_run
 release v1.1.0
 refused 19191919-2222-4333-8444-555555555555 1.1.0 current
 check 'Nach einem Abbruch: neuere Fassung von der laufenden aus, ältere als die Dateien nie'
+
+# 18. Which version runs, Docker says where it can: after a stop in the
+# restart, started by hand since, the instance runs the version of the files,
+# and an update to a later one starts from that one, not from the version the
+# stopped run started from.
+pack 1.1.0
+cp -R "$work/pack/opengewerk/." "$work/install/"
+stopped_run
+release v1.2.0
+request 20202020-2222-4333-8444-555555555555 1.2.0
+round FAKE_APP_VERSION=1.1.0
+started || fail 'die neuere Fassung startete nicht'
+[ "$(field .from "$run")" = 1.1.0 ] || fail "der Lauf nennt $(field .from "$run") statt der Fassung, die Docker meldet"
+stopped_run
+release v1.1.0
+refused 21212121-2222-4333-8444-555555555555 1.1.0 current FAKE_APP_VERSION=1.1.0
+# Docker naming an older version than the files lets no version start that
+# is older than the files: their database may be on the new state.
+pack 1.2.0
+cp -R "$work/pack/opengewerk/." "$work/install/"
+refused 22222222-3333-4333-8444-555555555555 1.1.0 current FAKE_APP_VERSION=1.0.0
+check 'Laufende Fassung von Docker: Ausgangspunkt eines neuen Laufs, dieselbe Fassung gilt als aktuell, nie älter als die Dateien'
 
 printf 'Dienst für Aktualisierungen: alles in Ordnung.\n'

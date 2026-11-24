@@ -1016,8 +1016,9 @@ docker compose -f docker/compose.yaml up -d
 ```
 
 In einem Checkout kommt die neue Fassung mit `git pull`, und statt zu holen
-baut der Befehl vorher Anwendung und Sicherung aus dem Quelltext
-(`docker compose -f docker/compose.yaml build migrate backup-schedule`).
+baut der Befehl vorher Anwendung, Sicherung und den Dienst für Aktualisierungen
+aus dem Quelltext
+(`docker compose -f docker/compose.yaml build migrate backup-schedule updater`).
 
 Läuft die Migration durch, tauscht der zweite Aufruf die Container, und nach
 wenigen Sekunden antwortet die Instanz wieder. Schlägt sie fehl, bricht der

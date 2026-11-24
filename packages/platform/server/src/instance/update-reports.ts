@@ -1,6 +1,6 @@
 import type { Database } from '../database/database.js'
 import type { MailContext } from '../mail/context.js'
-import { failsServerWide } from '../mail/worker.js'
+import { failsForGood, failsServerWide } from '../mail/worker.js'
 import { type RepeatingJob, startRepeating } from '../start/repeat.js'
 import type { AccountMessages } from './account-mail.js'
 import { instanceMailConnection } from './mail-server.js'
@@ -16,12 +16,12 @@ import { type InstanceUpdates, markUpdateTold, readInstanceUpdate, updateTold } 
  * Told by whichever version of the application runs once the update ended:
  * the new one after an update that went through, the one before after an
  * update that stopped before the restart. A mark in the folder of the
- * requests says it was told, so that it is told once. It is set once every
- * mail was handed to the server: a question to the database before, or a
- * failure of the server itself (no connection, no answer, no sign in), sets
- * none, and the next look a minute later tries again. A mail the server
- * turns away for its address alone is said in the log and not tried again,
- * as with every notice to an account.
+ * requests keeps who was told, so that everybody is told once. A mail the
+ * server takes counts, and so does one it turns away for good (an address
+ * nobody can deliver to), which is said in the log. Anything else, a
+ * question to the database, a server that cannot be reached or says it is
+ * not available now, leaves the rest for the next look a minute later; who
+ * got the mail by then does not get it again.
  *
  * Only an update that ended within the last day, so that an instance whose
  * mail server is set up a week later does not tell of an old one. Without a
@@ -60,7 +60,9 @@ export async function reportFinishedUpdate(
     return false
   }
 
-  if (await updateTold(updates, run.id)) {
+  const told = await updateTold(updates, run.id)
+
+  if (told.done) {
     return false
   }
 
@@ -71,10 +73,18 @@ export async function reportFinishedUpdate(
   }
 
   const operators = await listOperators(database)
+  const reached = new Set(told.to)
+  let missed: unknown = null
   const transport = mail.connect(connection.configuration)
 
   try {
     for (const operator of operators) {
+      const address = operator.email.toLowerCase()
+
+      if (reached.has(address)) {
+        continue
+      }
+
       const text = words({
         name: operator.name,
         version: run.version,
@@ -96,22 +106,36 @@ export async function reportFinishedUpdate(
           text: text.body,
           attachments: [],
         })
+        reached.add(address)
       } catch (error) {
-        if (failsServerWide(error)) {
-          throw error
+        if (failsForGood(error)) {
+          console.error(
+            'Die Nachricht über die Aktualisierung der Instanz ging an eine Adresse nicht hinaus.',
+            error,
+          )
+          reached.add(address)
+          continue
         }
 
-        console.error(
-          'Die Nachricht über die Aktualisierung der Instanz ging an eine Adresse nicht hinaus.',
-          error,
-        )
+        missed = error
+
+        // The server, not the address: the others would only wait for it.
+        if (failsServerWide(error)) {
+          break
+        }
       }
     }
   } finally {
     transport.close()
   }
 
-  await markUpdateTold(updates, run.id)
+  const done = operators.every((operator) => reached.has(operator.email.toLowerCase()))
+
+  await markUpdateTold(updates, run.id, { done, to: [...reached] })
+
+  if (!done) {
+    throw missed ?? new Error('Nicht jeder Betreiber hat die Nachricht bekommen.')
+  }
 
   return true
 }

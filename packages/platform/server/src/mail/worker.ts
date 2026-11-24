@@ -95,6 +95,11 @@ export function failsServerWide(error: unknown): boolean {
   return failure.code !== null && serverWide.has(failure.code)
 }
 
+/** Whether trying the message again cannot help (`MailDeliveryError.permanent`). */
+export function failsForGood(error: unknown): boolean {
+  return asFailure(error).permanent
+}
+
 function outgoing(
   message: OutboxMessage,
   from: string,
