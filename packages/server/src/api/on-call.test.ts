@@ -81,7 +81,7 @@ async function lockedForIssuing(invoice: string): Promise<PoolClient> {
   const client = await begun()
 
   try {
-    await client.query('select id from documents where id = $1 for update', [invoice])
+    await client.query('select id from documents where id = $1 for no key update', [invoice])
 
     return client
   } catch (error) {
@@ -1999,6 +1999,38 @@ describe('the line of the surcharge on a draft (#1087)', () => {
 
     expect(rows).toEqual([])
     expect(await transmit()).toEqual({ status: 201, outcomes: ['applied', 'applied'] })
+  })
+
+  it('lets a reference to the invoice or its report be checked while the invoice is issued (#1095)', async () => {
+    const { invoice } = await draftOf()
+    const { rows } = await admin.query<{ report: string }>(
+      'select predecessor_document_id as report from documents where id = $1',
+      [invoice],
+    )
+    // Held the way the check of a foreign key holds the row it points at, as
+    // keeping the first PDF of a document does.
+    const checking = await begun()
+
+    try {
+      await checking.query('select id from documents where id = any($1) for key share', [
+        [invoice, rows[0]?.report],
+      ])
+
+      const issued = http()
+        .post(`/documents/${invoice}/issue`)
+        .set('x-test-identity', office())
+        .send({})
+        .then((answer) => answer.status)
+      const outcome = await Promise.race([
+        issued,
+        new Promise((resolve) => setTimeout(() => resolve('waits'), 5000)),
+      ])
+
+      expect(outcome).toBe(201)
+    } finally {
+      await checking.query('rollback').catch(() => undefined)
+      checking.release()
+    }
   })
 
   it('locks an invoice with its report in the order of their ids, as a transmission does', async () => {

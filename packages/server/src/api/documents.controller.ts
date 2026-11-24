@@ -472,14 +472,18 @@ export class DocumentsController {
         .for('no key update')
 
       // Locked before anything is read that the snapshot freezes: a line
-      // route, a change to the head and the trigger on the lines wait for
-      // this row, so the snapshot holds what the document says when it is
-      // issued, and a write that comes later finds it fixed.
+      // route (`no key update`), a change to the head (an update) and the
+      // trigger on the lines (`for share`) wait for this row, so the snapshot
+      // holds what the document says when it is issued, and a write that
+      // comes later finds it fixed. Not `for update` (#1095): that would hold
+      // up every check of a foreign key that points here, the first PDF of the
+      // document kept meanwhile among them, which takes the chain of the log
+      // first and so would wait in a circle with this transaction.
       const [existing] = await tx
         .select()
         .from(documents)
         .where(and(eq(documents.id, id as DocumentId), isNull(documents.deletedAt)))
-        .for('update')
+        .for('no key update')
 
       if (!existing) {
         throw new NotFoundException()
@@ -499,7 +503,7 @@ export class DocumentsController {
           .select()
           .from(documents)
           .where(and(eq(documents.id, existing.predecessorDocumentId), isNull(documents.deletedAt)))
-          .for('update')
+          .for('no key update')
 
         if (predecessor && isSignedReport(predecessor)) {
           await fixDocument(tx, identity, predecessor)
