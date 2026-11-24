@@ -1786,11 +1786,11 @@ describe('the line of the surcharge on a draft (#1087)', () => {
 
     try {
       issuing = await lockedForIssuing(to.invoice)
-      writing.release()
       held.release()
       // Issuing holds the draft the hour went to: waiting for it out of the
       // order of the ids could wait in a circle, so the transmission gives up
-      // before it writes, and a device sends it again.
+      // before it writes, and a device sends it again. Its first write stays
+      // held meanwhile: one that came to it would wait there, not answer.
       answered = await Promise.race([
         changing,
         new Promise((resolve) => setTimeout(() => resolve('waited'), 3000)),
