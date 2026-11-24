@@ -6,16 +6,17 @@
 #
 #   0  a backup, before anything changes; a failed one ends the run there
 #   1  the kit of the new version, its signature checked against the release
-#      workflow of exactly that tag, unpacked over the installation
-#   2  start.sh of the new version: the signatures of its images checked and
-#      the images pulled,
+#      workflow of exactly that tag, unpacked into a folder of its own
+#   2  the kit laid over the installation, file by file (opengewerk#1106),
+#      then start.sh of the new version: the signatures of its images checked
+#      and the images pulled,
 #   3  the migration on its own,
-#   4  and only after it the services, this one's service among them
+#   4  and once it went through the services, this one's service among them
 #   5  the version the application answers with, held to the one asked for
 #
-# Steps 2 to 4 are start.sh as it is, and run.json follows the sentences it
-# says. What start.sh promises holds here too: a migration that fails leaves
-# the instance answering on the version before.
+# From step 2 on, after the files, start.sh runs as it is, and run.json
+# follows the sentences it says. What start.sh promises holds here too: a
+# migration that fails leaves the instance answering on the version before.
 #
 #   update.sh <id> <version>
 
