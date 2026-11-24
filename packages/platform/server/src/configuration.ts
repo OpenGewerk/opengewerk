@@ -503,6 +503,16 @@ function setupCode(environment: Environment): string | null {
   return code
 }
 
+/** Both folders for updates, or neither: one without the other is no way to talk. */
+function updateFolders(
+  environment: Environment,
+): { readonly requestsPath: string; readonly statusPath: string } | null {
+  const requestsPath = environment['UPDATE_REQUESTS_PATH']?.trim()
+  const statusPath = environment['UPDATE_STATUS_PATH']?.trim()
+
+  return requestsPath && statusPath ? { requestsPath, statusPath } : null
+}
+
 /**
  * The version of this installation, from the variable the application names
  * (#259).
@@ -514,16 +524,6 @@ function setupCode(environment: Environment): string | null {
  * in never shows a word that means nothing to whoever reads it; anything else
  * is no version, and never a reason not to start.
  */
-/** Both folders for updates, or neither: one without the other is no way to talk. */
-function updateFolders(
-  environment: Environment,
-): { readonly requestsPath: string; readonly statusPath: string } | null {
-  const requestsPath = environment['UPDATE_REQUESTS_PATH']?.trim()
-  const statusPath = environment['UPDATE_STATUS_PATH']?.trim()
-
-  return requestsPath && statusPath ? { requestsPath, statusPath } : null
-}
-
 function releaseVersion(application: ServerApplication, environment: Environment): string | null {
   const raw = environment[application.versionVariable]?.trim() ?? ''
 

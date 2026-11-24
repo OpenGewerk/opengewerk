@@ -201,6 +201,41 @@ describe('a message', () => {
     expect(recipient).toMatchObject({ command: 'RCPT TO', refusedSender: false, permanent: true })
   })
 
+  it('stays a refusal of a recipient that went out as the address of the sender (opengewerk#1102)', async () => {
+    // nodemailer drops the control character and sends both as "a(b)"@...
+    const recipient = `${String.fromCharCode(1)}a(b)@nord.example.de`
+    server = await fakeSmtpServer({ refuse: ['"a(b)"@nord.example.de'] })
+    const transport = smtpTransport(settings(server.port), short)
+
+    const failure = await failureOf(
+      transport.send({
+        ...letter,
+        from: { ...letter.from, address: 'a(b)@nord.example.de' },
+        to: { name: null, address: recipient },
+      }),
+    )
+    transport.close()
+
+    expect(failure).toMatchObject({ command: 'RCPT TO', refusedSender: false, permanent: true })
+  })
+
+  it('knows a sender whose local part nodemailer sends escaped (opengewerk#1102)', async () => {
+    server = await fakeSmtpServer({
+      refuseSendersAtRecipient: [String.raw`"a\\b"@nord.example.de`],
+    })
+    const transport = smtpTransport(settings(server.port), short)
+
+    const failure = await failureOf(
+      transport.send({
+        ...letter,
+        from: { ...letter.from, address: String.raw`a\b@nord.example.de` },
+      }),
+    )
+    transport.close()
+
+    expect(failure).toMatchObject({ command: 'RCPT TO', refusedSender: true, permanent: false })
+  })
+
   it('stays a refusal of the message when the answer names no address at all (opengewerk#1102)', async () => {
     server = await fakeSmtpServer({ refuseWithoutAddress: ['berg@example.de'] })
     const transport = smtpTransport(settings(server.port), short)

@@ -1,6 +1,5 @@
-import { domainToASCII } from 'node:url'
-
 import { createTransport } from 'nodemailer'
+import MailComposer from 'nodemailer/lib/mail-composer'
 
 import type { MailConfiguration } from './configuration.js'
 
@@ -120,40 +119,68 @@ export interface MailTransport {
   close(): void
 }
 
+/** The addresses of a message as nodemailer sends them after `MAIL FROM` and `RCPT TO`. */
+interface SentEnvelope {
+  readonly from: string
+  readonly to: readonly string[]
+}
+
+/**
+ * The envelope nodemailer makes out of the same fields the message is sent
+ * with. It puts a local part in quotes, escapes what needs it, drops what it
+ * does not send and writes a domain as an A-label or a U-label; doing that
+ * again here went wrong for more than one address (opengewerk#1102). Null
+ * where it cannot make one, and then the message never reached a server.
+ */
+function sentEnvelope(addresses: {
+  readonly from: { readonly name: string; readonly address: string }
+  readonly to: { readonly name: string; readonly address: string }
+}): SentEnvelope | null {
+  try {
+    const envelope = new MailComposer(addresses).compile().getEnvelope()
+
+    return {
+      from: typeof envelope.from === 'string' ? envelope.from.trim() : '',
+      to: envelope.to.map((address) => address.trim()),
+    }
+  } catch {
+    return null
+  }
+}
+
 /**
  * Whether a refusal is about the sender of the mail (opengewerk#1102). At
  * `MAIL FROM` it is. At `RCPT TO` it is where every address the answer names
- * in angle brackets is the sender, as Postfix answers: "553 5.7.1
- * <post@nord.example.de>: Sender address rejected". A recipient it refuses
- * it names as well, in the form nodemailer sent it, which need not be the one
- * stored: `"max..mustermann"@example.de`. So an answer that names any other
- * address stays a refusal of the message. Where sender and recipient are one
- * mailbox, the words of the answer outside the addresses say which side it
- * means, since an address may hold either word itself.
+ * in angle brackets is the sender as it was sent, as Postfix answers: "553
+ * 5.7.1 <post@nord.example.de>: Sender address rejected". A recipient it
+ * refuses it names as well, in the form nodemailer sent it, which need not be
+ * the one stored: `"max..mustermann"@example.de`. So an answer that names any
+ * other address stays a refusal of the message. Where sender and recipient
+ * went out as one address, the words of the answer outside the addresses say
+ * which side it means, since an address may hold either word itself.
  */
 function aboutTheSender(
   command: string | null,
   answer: string,
-  mail: OutgoingMail | undefined,
+  envelope: SentEnvelope | null,
 ): boolean {
   if (command === 'MAIL FROM') {
     return true
   }
 
-  if (command !== 'RCPT TO' || mail === undefined) {
+  if (command !== 'RCPT TO' || envelope === null) {
     return false
   }
 
   const said = answer.toLowerCase()
   const named = addressesIn(said)
-  const sender = bracketed(mail.from.address)
-  const recipient = bracketed(mail.to.address)
+  const sender = `<${envelope.from.toLowerCase()}>`
 
-  if (named.length === 0 || !named.every((address) => sender.includes(address))) {
+  if (named.length === 0 || !named.every((address) => address === sender)) {
     return false
   }
 
-  if (sender.some((form) => recipient.includes(form))) {
+  if (envelope.to.some((address) => `<${address.toLowerCase()}>` === sender)) {
     const words = said.replace(/<[^<>]*>/g, ' ')
 
     return words.includes('sender') && !words.includes('recipient')
@@ -193,35 +220,7 @@ function addressesIn(said: string): string[] {
   return found
 }
 
-/** A local part nodemailer sends as it is: atoms of the characters RFC 5322 allows, joined by dots. */
-const dotAtom = /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/
-
-/**
- * An address in angle brackets as a server may name it in an answer: as it
- * is stored, and as nodemailer sends it, with its domain as the A-label,
- * `xn--mller-elektro-wob.de` for `müller-elektro.de`, and a local part that
- * is no dot-atom in quotes, `"a(b)"`. Small letters all; the stored form
- * first.
- */
-function bracketed(address: string): readonly [string, ...string[]] {
-  const stored = address.toLowerCase()
-  const at = stored.lastIndexOf('@')
-
-  if (at < 0) {
-    return [`<${stored}>`]
-  }
-
-  const local = stored.slice(0, at)
-  const domain = stored.slice(at + 1)
-  const label = domain === '' ? '' : domainToASCII(domain)
-  const domains = label === '' || label === domain ? [domain] : [domain, label]
-  const locals = dotAtom.test(local) ? [local] : [local, `"${local}"`]
-  const forms = locals.flatMap((part) => domains.map((name) => `<${part}@${name}>`))
-
-  return [`<${stored}>`, ...forms.filter((form) => form !== `<${stored}>`)]
-}
-
-function asDeliveryError(error: unknown, mail?: OutgoingMail): MailDeliveryError {
+function asDeliveryError(error: unknown, envelope: SentEnvelope | null = null): MailDeliveryError {
   if (error instanceof MailDeliveryError) {
     return error
   }
@@ -241,7 +240,7 @@ function asDeliveryError(error: unknown, mail?: OutgoingMail): MailDeliveryError
     message,
     typeof detail.code === 'string' ? detail.code : null,
     typeof detail.responseCode === 'number' ? detail.responseCode : null,
-    { command, refusedSender: aboutTheSender(command, answer, mail) },
+    { command, refusedSender: aboutTheSender(command, answer, envelope) },
   )
 }
 
@@ -317,6 +316,14 @@ export function smtpTransport(
       // still delivers: a message of a few hundred kilobytes has mostly left
       // right after the server asked for it, and a server that takes it then
       // has it, although the outbox counts it as not sent.
+      // Objects, with an empty name where there is none: a bare text
+      // nodemailer reads with its parser, which takes `a(b)@example.de` for
+      // `a@example.de`, and the same address reached another mailbox without
+      // a name than with one (opengewerk#1104).
+      const addresses = {
+        from: { name: mail.from.name, address: mail.from.address },
+        to: { name: mail.to.name ?? '', address: mail.to.address },
+      }
       const deadline = new AbortController()
       const timer = setTimeout(() => {
         deadline.abort()
@@ -324,13 +331,9 @@ export function smtpTransport(
 
       try {
         await transport.sendMail({
-          from: { name: mail.from.name, address: mail.from.address },
-          // Objects, with an empty name where there is none: a bare text
-          // nodemailer reads with its parser, which takes `a(b)@example.de`
-          // for `a@example.de`, and the same address reached another
-          // mailbox without a name than with one (opengewerk#1104).
+          from: addresses.from,
           replyTo: mail.replyTo ? { name: '', address: mail.replyTo } : undefined,
-          to: { name: mail.to.name ?? '', address: mail.to.address },
+          to: addresses.to,
           subject: mail.subject,
           text: mail.text,
           attachments: mail.attachments.map((attachment) => ({
@@ -349,7 +352,7 @@ export function smtpTransport(
           )
         }
 
-        throw asDeliveryError(error, mail)
+        throw asDeliveryError(error, sentEnvelope(addresses))
       } finally {
         clearTimeout(timer)
       }
