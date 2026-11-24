@@ -87,6 +87,18 @@ const privateText: SyncCheck<Courier> = ({ operation, values }) => {
   return null
 }
 
+/**
+ * A note "Regal anlegen" makes a shelf as it is written: a check that writes,
+ * as an application draws a number in the same transaction.
+ */
+const shelfAlong: SyncCheck<Courier> = async ({ tx, tenantId, operation, values }) => {
+  if (operation.entity === 'notes' && values['text'] === 'Regal anlegen') {
+    await tx.insert(shelves).values({ id: newId<'shelf'>(), tenantId, label: 'Aus einer Notiz' })
+  }
+
+  return null
+}
+
 /** Who sent a note, written into nothing but this list, so that a test can see the sender arrive. */
 const senders: string[] = []
 
@@ -152,6 +164,7 @@ const sync = serverSync<Courier>({
     },
     closedShelf,
     privateText,
+    shelfAlong,
   ],
   complete: ({ operation, values, current, sender }) => {
     if (operation.entity === 'letter_seals') {
@@ -1314,7 +1327,8 @@ describe('two transmissions to the same record (opengewerk#1074)', () => {
     )
 
     try {
-      await holding
+      // A change that fails ends the test with its error, not with a wait.
+      await Promise.race([holding, changing])
 
       const late = transmission()
 
@@ -1382,12 +1396,83 @@ describe('two transmissions to the same record (opengewerk#1074)', () => {
     ).toEqual([{ quantity: 4, price: 5, total: 20 }])
   })
 
+  it('takes back what a check wrote in a try that found the record changed, and keeps it of the try that wrote', async () => {
+    const { noteId } = await records()
+
+    const receipts = await whileChanging(
+      (tx) =>
+        tx
+          .update(notes)
+          .set({ tags: ['eilig'] })
+          .where(eq(notes.id, noteId)),
+      () =>
+        send(north.id, [
+          operation({
+            entity: 'notes',
+            recordId: noteId,
+            kind: 'update',
+            patches: [{ field: 'text', from: 'Zähler ablesen', to: 'Regal anlegen' }],
+          }),
+        ]),
+    )
+
+    expect(outcomes(receipts)).toEqual([{ outcome: 'applied', reason: null, fields: [] }])
+    expect(
+      await inTenant(north.id, (tx) =>
+        tx.select({ id: shelves.id }).from(shelves).where(eq(shelves.label, 'Aus einer Notiz')),
+      ),
+    ).toHaveLength(1)
+  })
+
+  it('sends a transmission back whose record went to another parent while it was written, and takes it the next time', async () => {
+    const { lineId } = await records()
+    const otherLetter = newId<'letter'>()
+
+    await send(north.id, [
+      operation({
+        entity: 'letters',
+        recordId: otherLetter,
+        patches: [{ field: 'subject', to: 'Nachtrag' }],
+      }),
+    ])
+
+    const change = () =>
+      send(north.id, [
+        operation({
+          entity: 'letter_lines',
+          recordId: lineId,
+          kind: 'update',
+          patches: [{ field: 'quantity', from: 3, to: 4 }],
+        }),
+      ])
+
+    // The lock of the first letter is held: waiting for the second as well
+    // could wait in a circle with a transmission that holds it.
+    await expect(
+      whileChanging(
+        (tx) =>
+          tx.update(letterLines).set({ letterId: otherLetter }).where(eq(letterLines.id, lineId)),
+        change,
+      ),
+    ).rejects.toThrow()
+
+    expect(outcomes(await change())).toEqual([{ outcome: 'applied', reason: null, fields: [] }])
+    expect(
+      await inTenant(north.id, (tx) =>
+        tx
+          .select({ letterId: letterLines.letterId, quantity: letterLines.quantity })
+          .from(letterLines),
+      ),
+    ).toEqual([{ letterId: otherLetter, quantity: 4 }])
+  })
+
   it('lands two transmissions with a parent and its child in opposite order, each on what the other left', async () => {
     const { letterId, lineId } = await records()
     const transmit = (deviceId: string, operations: readonly Operation[]) =>
       inTenant(north.id, (tx) => sync.applyOperations(tx, north.id, operations, courier), deviceId)
     const holder = await admin.connect()
     let settled: PromiseSettledResult<readonly OperationReceipt[]>[]
+    let ended = false
 
     try {
       await holder.query('begin')
@@ -1430,8 +1515,15 @@ describe('two transmissions to the same record (opengewerk#1074)', () => {
 
       await standingInLine(admin, 2)
       await holder.query('commit')
+      ended = true
       settled = await Promise.allSettled(both)
     } finally {
+      // Never back into the pool with the lock still held: the transmissions
+      // would wait for it, and the tests after this one with them.
+      if (!ended) {
+        await holder.query('rollback').catch(() => undefined)
+      }
+
       holder.release()
     }
 

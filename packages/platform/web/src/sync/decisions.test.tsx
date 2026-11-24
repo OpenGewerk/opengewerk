@@ -568,6 +568,33 @@ describe('the version of the device of a circuit (opengewerk#1072)', () => {
     },
   )
 
+  it('queues nothing a form changed on a circuit that the change of another device would leave broken, and says why', async () => {
+    // The form opened with a type of RCD; another device took it away since.
+    // Selective on its own would leave a selective RCD without a type, which
+    // the server refuses for the whole transmission.
+    const started = await withCircuit({
+      ...circuit,
+      rcdType: null,
+      rcdSelective: false,
+      version: 5,
+    })
+    const opened = { designation: 'F3', rcdType: 'a', rcdSelective: false }
+    const saved = await started.update(
+      'circuits',
+      'sk-1',
+      { ...opened, rcdSelective: true },
+      opened,
+    )
+
+    expect(saved).toMatchObject({
+      outcome: 'refused',
+      message: 'Selektiv ist nur ein RCD mit Typ. Bitte zuerst den Typ wählen.',
+    })
+    expect(started.status().pending).toBe(0)
+    await started.synchronise()
+    expect(server.operations()).toEqual([])
+  })
+
   it.each<{
     readonly what: string
     readonly held: RecordState

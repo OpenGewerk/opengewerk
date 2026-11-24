@@ -2247,6 +2247,68 @@ describe('an exchange with the server', () => {
     expect(client.get('notes', 'n-1')?.['kind']).toBe('task')
   })
 
+  it('takes what the form opened with as what the person saw, and refuses where another device changed the same field (opengewerk#1057)', async () => {
+    const client = await start(transport)
+
+    await holding(client, transport, {
+      entity: 'notes',
+      rows: [row({ id: 'n-1', title: 'Shelf by the door', kind: 'remark' })],
+    })
+
+    const opened = { title: 'Shelf by the door', kind: 'remark' }
+
+    await holding(client, transport, {
+      entity: 'notes',
+      rows: [
+        row({
+          id: 'n-1',
+          title: 'Shelf by the stairs',
+          kind: 'remark',
+          version: 2,
+          changeSequence: 2,
+        }),
+      ],
+    })
+
+    const sent = transport.sent.length
+    const saved = await client.update(
+      'notes',
+      'n-1',
+      { title: 'Shelf by the window', kind: 'remark' },
+      opened,
+    )
+
+    expect(saved).toMatchObject({
+      outcome: 'refused',
+      reason: 'changed_elsewhere',
+      fields: ['title'],
+    })
+    expect(client.status().pending).toBe(0)
+    expect(transport.sent.length).toBe(sent)
+    expect(client.get('notes', 'n-1')?.['title']).toBe('Shelf by the stairs')
+  })
+
+  it('raises no conflict where the form wrote the value it opened with another way (opengewerk#1057)', async () => {
+    const client = await start(transport)
+
+    await holding(client, transport, {
+      entity: 'notes',
+      rows: [row({ id: 'n-1', title: 'Shelf by the door', boards: 5 })],
+    })
+
+    await client.update(
+      'notes',
+      'n-1',
+      { title: 'Shelf by the door', boards: '6' },
+      {
+        title: 'Shelf by the door',
+        boards: '5',
+      },
+    )
+
+    expect(transport.sent.at(-1)?.[0]?.patches).toEqual([{ field: 'boards', from: 5, to: '6' }])
+  })
+
   it('removes master data at its own route as well', async () => {
     const client = await start(transport)
 

@@ -1,4 +1,5 @@
 import {
+  circuitAlong,
   type ConflictReason,
   type FieldPatch,
   inOutboxOrder,
@@ -7,6 +8,7 @@ import {
   type OperationKind,
   type OperationReceipt,
   type RecordState,
+  structureProblem,
   type SyncConflict,
   type SyncRules,
   type SyncValue,
@@ -55,6 +57,14 @@ function asHeld(handed: unknown): SyncValue {
 /** Whether a value a form hands in is the one the device holds. */
 function sameAsHeld(held: SyncValue | undefined, handed: unknown): boolean {
   return Object.is(held ?? null, asHeld(handed))
+}
+
+/**
+ * Whether two values are the same but for how they are written: 5 and "5",
+ * true and "true". Null is only null.
+ */
+function sameButWritten(left: SyncValue, right: SyncValue): boolean {
+  return left === null || right === null ? left === right : String(left) === String(right)
 }
 
 /**
@@ -230,7 +240,9 @@ export type EditResult =
       readonly fields: readonly string[]
       /**
        * The server's own sentence, when it turned a direct write down with
-       * one. Absent when the device decided, or nobody answered.
+       * one, or the sentence of the rule a part of the structure would not
+       * stand by (`structureProblem`). Absent when the device decided
+       * otherwise, or nobody answered.
        */
       readonly message?: string
     }
@@ -862,7 +874,7 @@ export class SyncClient {
 
     return this.needsConnection(entity)
       ? this.writeDirectly(entity, id, changed)
-      : this.edit(entity, id, 'update', changed)
+      : this.edit(entity, id, 'update', changed, opened)
   }
 
   remove(entity: string, id: string): Promise<EditResult> {
@@ -971,9 +983,10 @@ export class SyncClient {
     id: string,
     kind: OperationKind,
     values: Draft,
+    opened?: Draft,
   ): Promise<EditResult> {
     const current = kind === 'create' ? null : this.get(entity, id)
-    const patches = this.patchesFor(entity, current, values)
+    const patches = this.patchesFor(entity, current, values, opened)
 
     if (kind === 'update' && patches.length === 0) {
       // Nothing changed. Queueing it would put an operation in front of the
@@ -981,12 +994,18 @@ export class SyncClient {
       return { outcome: 'queued', id }
     }
 
+    // A change that says it saw another value than the device holds, the
+    // one its form opened with (opengewerk#1057), claims no version: the
+    // version held came after what the person saw, and with it the merge
+    // would take the shortcut past the comparison of each field.
+    const sawOther = patches.some((patch) => !sameValue(patch.from, current?.[patch.field] ?? null))
     const operation: Operation = {
       id: uuidv7() as OperationId,
       entity,
       recordId: id,
       kind,
-      baseVersion: typeof current?.['version'] === 'number' ? current['version'] : null,
+      baseVersion:
+        !sawOther && typeof current?.['version'] === 'number' ? current['version'] : null,
       patches,
       recordedAt: new Date(),
       deviceId: this.deviceId,
@@ -1000,6 +1019,22 @@ export class SyncClient {
 
     if (decision.outcome === 'skip') {
       return { outcome: 'queued', id }
+    }
+
+    // A part of the structure, judged as it would stand afterwards by the rule
+    // the server asks (opengewerk#1072). A version no form checked, as one
+    // kept in a conflict, or what a form changed on a circuit another device
+    // changed meanwhile, can come to a whole the server takes for a mistake
+    // of the device: it would refuse the whole transmission, and the outbox
+    // would hang until somebody threw the change away. The merge alone does
+    // not see it.
+    if (kind !== 'delete') {
+      const written = Object.fromEntries(patches.map((patch) => [patch.field, patch.to]))
+      const problem = structureProblem(entity, circuitAlong(entity, written, current), current)
+
+      if (problem !== null) {
+        return { outcome: 'refused', reason: 'changed_elsewhere', fields: [], message: problem }
+      }
     }
 
     const queued = await this.store.queue(operation)
@@ -1026,6 +1061,7 @@ export class SyncClient {
     entity: string,
     current: RecordState | null,
     values: Draft,
+    opened?: Draft,
   ): readonly FieldPatch[] {
     const patches: FieldPatch[] = []
 
@@ -1038,7 +1074,14 @@ export class SyncClient {
       }
 
       const to = toSyncValue(raw)
-      const from: SyncValue = current ? (current[field] ?? null) : null
+      const held: SyncValue = current ? (current[field] ?? null) : null
+      // What the person saw (opengewerk#1057): the value the form opened with,
+      // where it gives one, so that a field another device changed meanwhile
+      // is a conflict and not written over. Written the way the device holds
+      // it where the two differ only in that, so that a form handing a number
+      // as text raises no conflict nobody caused.
+      const saw = opened !== undefined && field in opened ? asHeld(opened[field]) : held
+      const from = sameButWritten(saw, held) ? held : saw
 
       if (!sameValue(from, to)) {
         patches.push({ field, from, to })

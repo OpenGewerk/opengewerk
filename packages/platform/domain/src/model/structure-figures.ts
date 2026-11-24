@@ -84,7 +84,8 @@ export function structureProblem(
       : 'Diese Art von Verteiler ist unbekannt.'
   }
 
-  const pv = pvFigures[entity]
+  // Its own entries only: `__proto__` is no part of the PV structure.
+  const pv = Object.hasOwn(pvFigures, entity) ? pvFigures[entity] : undefined
 
   if (pv) {
     return Object.values(pv(values))[0] ?? null
