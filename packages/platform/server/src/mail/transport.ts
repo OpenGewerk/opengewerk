@@ -122,13 +122,14 @@ export interface MailTransport {
 
 /**
  * Whether a refusal is about the sender of the mail (opengewerk#1102). At
- * `MAIL FROM` it is. At `RCPT TO` it is where the answer names the sender in
- * angle brackets and not the recipient, as Postfix does: "553 5.7.1
+ * `MAIL FROM` it is. At `RCPT TO` it is where every address the answer names
+ * in angle brackets is the sender, as Postfix answers: "553 5.7.1
  * <post@nord.example.de>: Sender address rejected". A recipient it refuses
- * it names as well, and that stays a refusal of the message. Where both are
- * one address, a mail of the instance to its own mailbox, the answer says
- * which side it means. An address with a domain in umlauts the server names
- * as nodemailer sent it, with the domain as its A-label.
+ * it names as well, in the form nodemailer sent it, which need not be the one
+ * stored: `"max..mustermann"@example.de`. So an answer that names any other
+ * address stays a refusal of the message. Where sender and recipient are one
+ * mailbox, the words of the answer outside the addresses say which side it
+ * means, since an address may hold either word itself.
  */
 function aboutTheSender(
   command: string | null,
@@ -144,24 +145,52 @@ function aboutTheSender(
   }
 
   const said = answer.toLowerCase()
+  const named = addressesIn(said)
   const sender = bracketed(mail.from.address)
   const recipient = bracketed(mail.to.address)
-  const names = (forms: readonly string[]) => forms.some((form) => said.includes(form))
 
-  if (!names(sender)) {
+  if (named.length === 0 || !named.every((address) => sender.includes(address))) {
     return false
   }
 
-  // One mailbox on both sides, in whatever form either is stored: the words
-  // of the answer outside the addresses say which side it means, since an
-  // address may hold either word itself.
-  if (sender.at(-1) === recipient.at(-1)) {
+  if (sender.some((form) => recipient.includes(form))) {
     const words = said.replace(/<[^<>]*>/g, ' ')
 
     return words.includes('sender') && !words.includes('recipient')
   }
 
-  return !names(recipient)
+  return true
+}
+
+/**
+ * The parts of an answer in angle brackets that hold an "@", each with its
+ * brackets. Read once from left to right, without a pattern: the answer comes
+ * from the server of a tenant.
+ */
+function addressesIn(said: string): string[] {
+  const found: string[] = []
+  let at = 0
+
+  for (;;) {
+    const open = said.indexOf('<', at)
+    const close = open < 0 ? -1 : said.indexOf('>', open + 1)
+
+    if (close < 0) {
+      break
+    }
+
+    // A bracket opened again before it closes starts the address: "<<a@b>".
+    const inner = said.lastIndexOf('<', close)
+    const part = said.slice(inner, close + 1)
+
+    if (part.includes('@')) {
+      found.push(part)
+    }
+
+    at = close + 1
+  }
+
+  return found
 }
 
 /**
@@ -283,8 +312,12 @@ export function smtpTransport(
       try {
         await transport.sendMail({
           from: { name: mail.from.name, address: mail.from.address },
-          replyTo: mail.replyTo ?? undefined,
-          to: mail.to.name ? { name: mail.to.name, address: mail.to.address } : mail.to.address,
+          // Objects, with an empty name where there is none: a bare text
+          // nodemailer reads with its parser, which takes `a(b)@example.de`
+          // for `a@example.de`, and the same address reached another
+          // mailbox without a name than with one (opengewerk#1104).
+          replyTo: mail.replyTo ? { name: '', address: mail.replyTo } : undefined,
+          to: { name: mail.to.name ?? '', address: mail.to.address },
           subject: mail.subject,
           text: mail.text,
           attachments: mail.attachments.map((attachment) => ({

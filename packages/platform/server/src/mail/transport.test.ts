@@ -171,6 +171,32 @@ describe('a message', () => {
     expect(failure).toMatchObject({ command: 'RCPT TO', refusedSender: false, permanent: true })
   })
 
+  it('stays a refusal of a recipient nodemailer sent in another form than stored, when the answer names the sender as well (opengewerk#1102)', async () => {
+    server = await fakeSmtpServer({ refuseNamingBoth: ['"max..mustermann"@example.de'] })
+    const transport = smtpTransport(settings(server.port), short)
+
+    const failure = await failureOf(
+      transport.send({ ...letter, to: { name: null, address: 'max..mustermann@example.de' } }),
+    )
+    transport.close()
+
+    expect(failure).toMatchObject({ command: 'RCPT TO', refusedSender: false, permanent: true })
+  })
+
+  it('reaches the same mailbox with a name as without one (opengewerk#1104)', async () => {
+    server = await fakeSmtpServer()
+    const transport = smtpTransport(settings(server.port), short)
+
+    await transport.send({ ...letter, to: { name: null, address: 'a(b)@example.de' } })
+    await transport.send({ ...letter, to: { name: 'Anna B', address: 'a(b)@example.de' } })
+    transport.close()
+
+    const [without, withName] = server.received
+
+    expect(without?.to).toEqual(withName?.to)
+    expect(without?.to).toEqual(['"a(b)"@example.de'])
+  })
+
   it('is refused for now when the server turns a recipient down for now (opengewerk#1103)', async () => {
     server = await fakeSmtpServer({ defer: ['berg@example.de'] })
     const transport = smtpTransport(settings(server.port), short)
