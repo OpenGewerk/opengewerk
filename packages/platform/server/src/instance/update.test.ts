@@ -544,6 +544,41 @@ describe('asking for an update', () => {
     expect(await view()).toMatchObject({ pending: null, refusal: { id, reason: 'elsewhere' } })
   })
 
+  it('takes one of two starts at once and turns the other away (CodeRabbit on #1101)', async () => {
+    const lead = userIds.get(lea.email) ?? ''
+    const second = await appointOperator(database, probeAccess.sentences.instance, lead, otto.email)
+
+    try {
+      serviceFound()
+      await visitors.reconfirm(lea.email, as(lea))
+      await visitors.reconfirm(otto.email, as(otto))
+
+      const answers = await Promise.all([
+        post('/instance/update', lea, { version: '0.3.1' }),
+        post('/instance/update', otto, { version: '0.3.1' }),
+      ])
+
+      expect(answers.map((answer) => answer.status).sort()).toEqual([202, 409])
+    } finally {
+      await removeOperator(database, probeAccess.sentences.instance, lead, second.userId)
+    }
+  })
+
+  it('starts nothing while the last run cannot be read, and keeps the confirmation (CodeRabbit on #1101)', async () => {
+    serviceFound()
+    written('run.json', '{ "id": ')
+    await visitors.reconfirm(lea.email, as(lea))
+
+    const answer = await post('/instance/update', lea, { version: '0.3.1' }).expect(409)
+
+    expect(message(answer)).toContain('nicht lesen')
+    expect(requestFile()).toBeNull()
+
+    cleared()
+    serviceFound()
+    await post('/instance/update', lea, { version: '0.3.1' }).expect(202)
+  })
+
   it('takes nothing but a version of the form 1.2.3', async () => {
     serviceFound()
     await visitors.reconfirm(lea.email, as(lea))
@@ -824,10 +859,15 @@ describe('telling how an update ended, when the mark of who was told fails', () 
     }
 
     let told = 0
+    let first = ''
     const stopping = {
       ...messages,
       instanceUpdated: (facts: Parameters<typeof words>[0]) => {
         told += 1
+
+        if (told === 1) {
+          first = facts.name === otto.name ? otto.email : lea.email
+        }
 
         // The second address stops the look, after the first got its mail.
         if (told === 2) {
@@ -843,7 +883,7 @@ describe('telling how an update ended, when the mark of who was told fails', () 
 
       await expect(reportFinishedUpdate({ ...reporting(), messages: stopping })).rejects.toThrow()
 
-      expect((await updateTold(updates, id)).to).toHaveLength(1)
+      expect((await updateTold(updates, id)).to).toEqual([first.toLowerCase()])
     } finally {
       await removeOperator(database, probeAccess.sentences.instance, lead, second.userId)
     }

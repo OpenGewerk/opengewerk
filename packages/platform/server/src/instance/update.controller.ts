@@ -21,6 +21,7 @@ import { listOperators } from './operators.js'
 import {
   INSTANCE_UPDATES,
   type InstanceUpdates,
+  lastRunUnreadable,
   readInstanceUpdate,
   requestInstanceUpdate,
   stillTelling,
@@ -30,6 +31,9 @@ import { recordFinishedUpdate } from './update-reports.js'
 
 const updateUnconfirmed =
   'Die Instanz wird erst nach der Bestätigung mit Passwort und Code aktualisiert.'
+
+const lastRunUnreadableSentence =
+  'Wie das letzte Update ausging, lässt sich nicht lesen. Ein neues startet erst, wenn das auf dem Server geklärt ist.'
 
 /**
  * The update of the instance in its area (opengewerk#1093): which version
@@ -48,6 +52,14 @@ export class InstanceUpdateController {
     @Inject(INSTANCE_UPDATES) private readonly updates: InstanceUpdates,
     @Inject(VERSION) private readonly version: string | null,
   ) {}
+
+  /**
+   * The start under way, if any: one at a time, from the look at the state to
+   * the request (CodeRabbit on #1101). Two at once both saw no request
+   * waiting, and the second wrote over the first; after the first, the second
+   * sees it and is turned away. The application runs as one process.
+   */
+  private starting: Promise<unknown> = Promise.resolve()
 
   @Get()
   @RequiresOperator()
@@ -77,11 +89,23 @@ export class InstanceUpdateController {
       throw new BadRequestException('Die Fassung fehlt, auf die aktualisiert werden soll.')
     }
 
+    const turn = this.starting.then(() => this.startNow(user, wanted))
+
+    this.starting = turn.catch(() => undefined)
+
+    return turn
+  }
+
+  private async startNow(user: SignedInUser, wanted: string): Promise<InstanceUpdateView> {
     const view = await readInstanceUpdate(this.updates, this.version)
     const refused = updateRefusedNow(view, wanted) ?? (await stillTelling(this.updates, view))
 
     if (refused !== null) {
       throw new ConflictException(refused)
+    }
+
+    if (await lastRunUnreadable(this.updates)) {
+      throw new ConflictException(lastRunUnreadableSentence)
     }
 
     // The run before goes into the logs first: the service writes the new

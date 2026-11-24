@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
@@ -437,6 +437,23 @@ async function placed(draft: string, path: string, body: string, mode?: number):
 
     throw error
   }
+}
+
+/**
+ * Whether the folder holds a last run that cannot be read: a file that is
+ * there and no run of its form (CodeRabbit on #1101). How it ended would then
+ * stay out of the logs, and a new request would take its place unwritten.
+ */
+export async function lastRunUnreadable(updates: InstanceUpdates): Promise<boolean> {
+  const path = join(updates.statusPath, 'run.json')
+
+  try {
+    await stat(path)
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT'
+  }
+
+  return runOf(await readJson(path)) === null
 }
 
 /**
