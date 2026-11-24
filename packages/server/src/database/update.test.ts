@@ -3094,7 +3094,7 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
 
   async function forced(table: string): Promise<boolean> {
     const { rows } = await admin.query<{ forced: boolean }>(
-      'select relforcerowsecurity as forced from pg_class where relname = $1',
+      'select relrowsecurity and relforcerowsecurity as forced from pg_class where relname = $1',
       [table],
     )
 

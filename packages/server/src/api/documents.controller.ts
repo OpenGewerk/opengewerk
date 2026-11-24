@@ -529,8 +529,8 @@ export class DocumentsController {
       if (surchargeWaits === 'too large') {
         throw new ConflictException(
           'Der Notdienstzuschlag wäre größer, als eine Position fassen kann. Die Stunden ' +
-            'prüfen; stimmen sie, die Zeile des Zuschlags von Hand ändern, dann rechnet sie ' +
-            'sich nicht mehr selbst.',
+            'prüfen; stimmen sie, den Zuschlag selbst eintragen: die Zeile des Zuschlags von ' +
+            'Hand ändern oder, steht keine da, eine Position „Notdienstzuschlag“ anlegen.',
         )
       }
 

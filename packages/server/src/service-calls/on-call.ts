@@ -26,7 +26,7 @@ import {
   whyFixed,
 } from '@opengewerk/domain'
 import { isUuid, type TenantTransaction } from '@opengewerk/platform-server'
-import { and, desc, eq, gt, inArray, isNotNull, isNull, lte } from 'drizzle-orm'
+import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lte } from 'drizzle-orm'
 
 import { holidaySettingOf } from '../absences/absences.js'
 import { parameterAt, parameterHistory } from '../database/parameters.js'
@@ -271,12 +271,6 @@ export async function refreshSurchargeLine(
     lines.filter((line) => line !== marked),
   )
 
-  // Out of hours a line holds each, a sum the column cannot: written, it would
-  // refuse whatever brought it, a transmission with no operation to blame.
-  if (surcharge !== null && tooLarge(surcharge)) {
-    return 'too large'
-  }
-
   if (!marked) {
     return surcharge === null
       ? null
@@ -296,6 +290,12 @@ export async function refreshSurchargeLine(
       .where(eq(documentLines.id, marked.id))
 
     return null
+  }
+
+  // Out of hours a line holds each, a sum the column cannot: written, it would
+  // refuse whatever brought it, a transmission with no operation to blame.
+  if (tooLarge(surcharge)) {
+    return 'too large'
   }
 
   const next = {
@@ -378,6 +378,10 @@ async function restoreSurchargeLine(
     return 'waits for room'
   }
 
+  if (tooLarge(surcharge)) {
+    return 'too large'
+  }
+
   await tx.update(documentLines).set({ emergencySurcharge: false }).where(gone)
   await tx.insert(documentLines).values({
     tenantId,
@@ -433,7 +437,22 @@ export async function insertSurchargeLine(
   jobId: string | null,
   due: SurchargeLine | null,
 ): Promise<void> {
-  const surcharge = due !== null && tooLarge(due) ? null : due
+  // A surcharge with no room on the invoice, copied full from its report, or
+  // more than a line holds waits taken away, as on a draft; issuing names it.
+  const [held] =
+    due === null
+      ? []
+      : await tx
+          .select({ lines: count() })
+          .from(documentLines)
+          .where(
+            and(
+              eq(documentLines.documentId, documentId as DocumentId),
+              isNull(documentLines.deletedAt),
+            ),
+          )
+  const surcharge =
+    due !== null && !tooLarge(due) && (held?.lines ?? 0) < lineLimits.lines ? due : null
 
   if (surcharge === null) {
     const [job] =

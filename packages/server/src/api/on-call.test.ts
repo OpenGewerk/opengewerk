@@ -1494,6 +1494,108 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000, deleted: false })
   })
 
+  it('lets a draft be issued whose surcharge the office typed, however large the hours', async () => {
+    const { job, invoice } = await draftOf()
+    const anHour = {
+      designation: 'Fahrzeit',
+      quantityMilli: 1000,
+      unit: 'hour',
+      unitPriceCents: 2_000_000_000,
+    }
+
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+    await post(`/documents/${invoice}/lines`, {
+      designation: 'Notdienstzuschlag',
+      quantityMilli: 1000,
+      unit: 'flat_rate',
+      unitPriceCents: 10_000,
+    })
+
+    for (let hours = 0; hours < 3; hours += 1) {
+      await post(`/documents/${invoice}/lines`, anHour)
+    }
+
+    // The Saturday again: 50 % of 60 million € would be too large, but the
+    // office has typed its own surcharge, and that is the draft's.
+    await patch(`/jobs/${job}`, { emergencyAt: saturday })
+    await post(`/documents/${invoice}/issue`, {})
+
+    expect(await marksOf(invoice)).toBe(0)
+  })
+
+  it('does not bring back a surcharge more than a line holds', async () => {
+    const { job, invoice } = await draftOf()
+
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+
+    for (let hours = 0; hours < 3; hours += 1) {
+      await post(`/documents/${invoice}/lines`, {
+        designation: 'Fahrzeit',
+        quantityMilli: 1000,
+        unit: 'hour',
+        unitPriceCents: 2_000_000_000,
+      })
+    }
+
+    // The Saturday again: 50 % of 60 million € do not fit a line; the change
+    // goes through, the surcharge stays away, and issuing says why.
+    await patch(`/jobs/${job}`, { emergencyAt: saturday })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([])
+
+    const refused = await http()
+      .post(`/documents/${invoice}/issue`)
+      .set('x-test-identity', office())
+      .send({})
+      .expect(409)
+
+    expect((refused.body as { message?: string }).message).toContain('größer')
+  })
+
+  it('makes the invoice out of a full report with its surcharge waiting for room', async () => {
+    const call = aCall({ emergencyAt: saturday })
+
+    await push(app, office(), [call.operation])
+
+    const report = (
+      await post('/documents', {
+        customerId: customer,
+        jobId: call.id,
+        kind: 'time_and_material_report',
+        documentDate: '2026-10-28',
+      })
+    ).id
+
+    await writtenPastTheRoutes(
+      `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents)
+       select $1, $2, n, 'Arbeitszeit', 1000, 'hour', 0, 0 from generate_series(1, 2000) n`,
+      [north.id, report],
+    )
+    await push(app, office(), [
+      created('document_signatures', newId<'document-signature'>(), {
+        documentId: report,
+        signerName: 'Ayse Arslan',
+        signedAt: new Date().toISOString(),
+        deviceInfo: null,
+        path: scribble,
+        contentFingerprint: await fingerprintAsHeld(admin, report),
+      }),
+    ])
+
+    const invoice = (await post(`/documents/${report}/successors`, { kind: 'final_invoice' })).id
+
+    expect(await marksOf(invoice)).toBe(1)
+    expect(await shownSurchargesOf(invoice)).toEqual([])
+
+    const refused = await http()
+      .post(`/documents/${invoice}/issue`)
+      .set('x-test-identity', office())
+      .send({})
+      .expect(409)
+
+    expect((refused.body as { message?: string }).message).toContain('kein Platz')
+  })
+
   it('leaves a surcharge more than a line holds off, and issuing says so', async () => {
     const { invoice, hour } = await draftOf()
     const twentyMillion = 2_000_000_000
