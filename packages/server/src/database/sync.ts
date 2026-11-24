@@ -843,12 +843,13 @@ const lockRounds = 4
 
 /**
  * The answer where lines of a transmission moved while it locked their
- * documents: before anything is written, and one a device sends again, as
- * it does when it has no connection (503).
+ * documents (503): before anything is written, so the device keeps every
+ * operation and sends them again with its next exchange, which the person
+ * starts with "Erneut versuchen" or the next change.
  */
 function documentsMoving(): ServiceUnavailableException {
   return new ServiceUnavailableException(
-    'Belege dieser Übertragung werden gerade woanders geändert. Das Gerät sendet sie gleich noch einmal.',
+    'Belege dieser Übertragung werden gerade woanders geändert. Bitte gleich noch einmal abgleichen.',
   )
 }
 
