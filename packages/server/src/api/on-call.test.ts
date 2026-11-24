@@ -1286,6 +1286,42 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(await shownSurchargesOf(invoice)).toEqual([])
   })
 
+  it('comes back as itself, so that a device removing what it held removes it for good', async () => {
+    const { job, invoice } = await draftOf()
+    const line = (await surchargeOf(invoice)).id
+
+    // Taken away and brought back before a device that held it sends anything.
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+    await patch(`/jobs/${job}`, { emergencyAt: saturday })
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      id: line,
+      deleted: false,
+      emergency_surcharge: true,
+    })
+
+    await sent(deleted('document_lines', line))
+
+    expect(await shownSurchargesOf(invoice)).toEqual([])
+    expect(await marksOf(invoice)).toBe(0)
+  })
+
+  it('takes no mark from the gone line of an issued invoice a device removes', async () => {
+    const { job, invoice, hour } = await draftOf()
+    const line = (await surchargeOf(invoice)).id
+
+    await price(invoice, hour, 10_000)
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+    await post(`/documents/${invoice}/issue`, {})
+
+    // Issued meanwhile: the removal is a conflict, and nothing of the
+    // transmission is written, the mark of the line that went included.
+    const answer = await push(app, office(), [deleted('document_lines', line)])
+
+    expect(answer.receipts.map((receipt) => receipt.outcome)).toEqual(['conflict'])
+    expect(await marksOf(invoice)).toBe(1)
+  })
+
   it('does not come back after the office typed a surcharge while the line was gone', async () => {
     const { job, invoice } = await draftOf()
 

@@ -26,7 +26,7 @@ import {
   whyFixed,
 } from '@opengewerk/domain'
 import { isUuid, type TenantTransaction } from '@opengewerk/platform-server'
-import { and, desc, eq, gt, inArray, isNotNull, isNull, lte } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lte, ne } from 'drizzle-orm'
 
 import { holidaySettingOf } from '../absences/absences.js'
 import { parameterAt, parameterHistory } from '../database/parameters.js'
@@ -245,7 +245,6 @@ export async function refreshSurchargeLine(
 
   const [document] = await tx
     .select({
-      tenantId: documents.tenantId,
       kind: documents.kind,
       status: documents.status,
       jobId: documents.jobId,
@@ -292,13 +291,7 @@ export async function refreshSurchargeLine(
 
     return surcharge === null
       ? null
-      : await restoreSurchargeLine(
-          tx,
-          document.tenantId,
-          documentId as DocumentId,
-          lines,
-          surcharge,
-        )
+      : await restoreSurchargeLine(tx, documentId as DocumentId, lines, surcharge)
   }
 
   // Next to a surcharge the office typed in, or one a device moved here from
@@ -351,9 +344,10 @@ export async function refreshSurchargeLine(
 
 /**
  * The surcharge back on a draft whose line the server took away while the
- * call had none (#1087): a new line, as the last one, with the rate of tax of
- * the line that went. The mark leaves the line that went, so that it comes
- * back once and a line removed later stays removed.
+ * call had none (#1087): the line that went, back as itself, as the last one,
+ * with its rate of tax. As itself, so that whoever still holds it and removes
+ * it removes the line that is there, and it stays removed (#1099). Any other
+ * line that went loses its mark.
  *
  * Only where a line that went still carries the mark: one the office removed
  * while this transaction waited for the draft lost it and stays removed. And
@@ -364,7 +358,6 @@ export async function refreshSurchargeLine(
  */
 async function restoreSurchargeLine(
   tx: TenantTransaction,
-  tenantId: TenantId,
   documentId: DocumentId,
   lines: readonly { readonly position: number }[],
   surcharge: SurchargeLine,
@@ -375,7 +368,7 @@ async function restoreSurchargeLine(
     isNotNull(documentLines.deletedAt),
   )
   const [last] = await tx
-    .select({ vatRate: documentLines.vatRate })
+    .select({ id: documentLines.id })
     .from(documentLines)
     .where(gone)
     .orderBy(desc(documentLines.deletedAt))
@@ -393,21 +386,23 @@ async function restoreSurchargeLine(
     return 'too large'
   }
 
-  await tx.update(documentLines).set({ emergencySurcharge: false }).where(gone)
-  await tx.insert(documentLines).values({
-    tenantId,
-    documentId,
-    kind: 'item',
-    position: lines.reduce((last, line) => Math.max(last, line.position), 0) + 1,
-    designation: surcharge.designation,
-    description: surcharge.description,
-    quantityMilli: surcharge.quantityMilli,
-    unit: surcharge.unit,
-    unitPriceCents: surcharge.unitPriceCents,
-    vatRate: last.vatRate,
-    netCents: surcharge.netCents,
-    emergencySurcharge: true,
-  })
+  await tx
+    .update(documentLines)
+    .set({ emergencySurcharge: false })
+    .where(and(gone, ne(documentLines.id, last.id)))
+  await tx
+    .update(documentLines)
+    .set({
+      deletedAt: null,
+      position: lines.reduce((highest, line) => Math.max(highest, line.position), 0) + 1,
+      designation: surcharge.designation,
+      description: surcharge.description,
+      quantityMilli: surcharge.quantityMilli,
+      unit: surcharge.unit,
+      unitPriceCents: surcharge.unitPriceCents,
+      netCents: surcharge.netCents,
+    })
+    .where(eq(documentLines.id, last.id))
 
   return null
 }
