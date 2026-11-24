@@ -48,12 +48,14 @@ write_json() {
 }
 
 # Each held to its pattern as a whole: grep alone takes a value of several
-# lines when one of them fits.
+# lines when one of them fits. A version without leading zeros, so that two
+# versions of the same numbers are the same text: sort -V would decide
+# between 01.0.0 and 1.0.0 by their text.
 version_valid() {
   case "$1" in
     '' | *[!0-9.]*) return 1 ;;
   esac
-  printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+  printf '%s' "$1" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 }
 
 id_valid() {

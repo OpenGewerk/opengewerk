@@ -72,7 +72,10 @@ case "$*" in
   'run --rm --network none '*' stat -c %d:%i '*) stat -c '%d:%i' "$last" ;;
   'run --detach '*) exit "${FAKE_RUN_FAILS:-0}" ;;
   compose*' --profile backup run --rm backup backup.sh') exit "${BACKUP_FAILS:-0}" ;;
-  compose*' exec -T app node -e '*) printf '%s\n' "${ANSWERED-1.1.0}" ;;
+  compose*' exec -T app node -e '*)
+    [ -z "${HEALTH_HANGS:-}" ] || exec sleep 30
+    printf '%s\n' "${ANSWERED-1.1.0}"
+    ;;
 esac
 FAKE
 
@@ -128,6 +131,7 @@ field() {
 
 release() {
   jq -n --arg tag "$1" '{tag_name: $tag, html_url: ("https://github.com/OpenGewerk/opengewerk/releases/tag/" + $tag),
+    url: "https://api.github.com/repos/OpenGewerk/opengewerk/releases/1",
     published_at: "2026-11-24T10:00:00Z", body: "### Sicherheit\n\n- Eine Lücke geschlossen.\n\n### Neu\n\n- Etwas Neues."}' > "$RELEASE"
 }
 
@@ -161,6 +165,21 @@ field .notes "$available" | grep -q 'Eine Lücke geschlossen' || fail 'Hinweise 
 [ -s "$work/status/alive" ] || fail 'kein Lebenszeichen'
 check 'neueste Fassung, Hinweise und Adresse übernommen, Installation bereit'
 
+# 1a. Versions: by number, and none with a leading zero, which the same numbers
+# would make another text.
+(
+  . "$source_dir/updater/common.sh"
+  newer 1.10.0 1.9.9 && ! newer 1.9.9 1.10.0 && ! newer 1.0.0 1.0.0 &&
+    version_valid 1.10.0 && ! version_valid 01.0.0 && ! version_valid 1.00.0 && ! version_valid 1.0.01
+) || fail 'Fassungen falsch verglichen oder mit führender Null angenommen'
+printf '{"tag_name": "v01.1.0"}' > "$RELEASE"
+round
+[ "$(field .latest "$available")" = 1.1.0 ] || fail 'ein Tag mit führender Null ersetzte die Fassung'
+[ "$(field .error "$available")" = invalid ] || fail 'ein Tag mit führender Null wurde nicht abgelehnt'
+release v1.1.0
+round
+check 'Fassungen nach Zahlen, ohne führende Null'
+
 # 2. An answer of GitHub without a version keeps what was found before, and
 # says so; so does no answer at all.
 printf '{"tag_name": "latest; rm -rf /"}' > "$RELEASE"
@@ -178,6 +197,10 @@ mkdir -p "$work/elsewhere/docker"
 cp "$work/install/docker/compose.yaml" "$work/elsewhere/docker/"
 round "INSTALL_DIRECTORY=$work/elsewhere"
 [ "$(field .reason "$available")" = elsewhere ] || fail 'ein anderer Ordner wurde nicht erkannt'
+# Looked at through a mount, which makes no folder that is gone.
+grep -qF -- "--mount type=bind,src=$work/elsewhere,dst=$work/elsewhere,readonly " "$CALLS" ||
+  fail 'der Pfad wurde nicht über einen Mount geprüft'
+if grep -qF -- "--volume $work/elsewhere" "$CALLS"; then fail 'der Pfad wurde als Volume geprüft'; fi
 round INSTALL_DIRECTORY=
 [ "$(field .reason "$available")" = directory ] || fail 'ein fehlender Pfad wurde nicht erkannt'
 round 'INSTALL_DIRECTORY=/srv/mit leerzeichen'
@@ -199,7 +222,7 @@ started || fail 'das Update startete nicht'
 line=$(grep '^docker|run --detach ' "$CALLS")
 for part in "--label opengewerk.update.project=opengewerk" "--cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER" \
   "--security-opt no-new-privileges:true --read-only --tmpfs /tmp:rw,size=512m" "--env UPDATE_INSTALL=$work/install" \
-  "--volume $work/install:$work/install" \
+  "--volume $work/install:$work/install" "--env COMPOSE_PROJECT_NAME=opengewerk" \
   "--volume /var/run/docker.sock:/var/run/docker.sock" "--volume opengewerk_update-status:/var/lib/opengewerk/update-status" \
   "sha256:updater update.sh $id 1.1.0"; do
   printf '%s' "$line" | grep -qF -- "$part" || fail "dem Start fehlt: $part"
@@ -366,7 +389,12 @@ restore
 update ffffffff-2222-4333-8444-555555555555 ANSWERED=1.0.0
 failed_in 5 'Fassung der Anwendung'
 field '.log | join("\n")' "$run" | grep -q 'meldet die Fassung 1.0.0' || fail 'das Protokoll nennt die gemeldete Fassung nicht'
-check 'start.sh scheitert bei Abbildern, Migration oder Neustart, falsche Fassung: Schritt 2, 3, 4 und 5'
+restore
+began=$(date +%s)
+update f0f0f0f0-2222-4333-8444-555555555555 HEALTH_HANGS=1 UPDATE_HEALTH_TIMEOUT=1
+failed_in 5 'Anwendung antwortet nicht'
+[ $(($(date +%s) - began)) -lt 20 ] || fail 'ein Versuch ohne Antwort hielt den Lauf auf'
+check 'start.sh scheitert bei Abbildern, Migration oder Neustart, falsche oder keine Fassung: Schritt 2, 3, 4 und 5'
 
 # 14. A run for another request than the one recorded writes nothing.
 restore
@@ -444,5 +472,15 @@ pack 1.2.0
 cp -R "$work/pack/opengewerk/." "$work/install/"
 refused 22222222-3333-4333-8444-555555555555 1.1.0 current FAKE_APP_VERSION=1.0.0
 check 'Laufende Fassung von Docker: Ausgangspunkt eines neuen Laufs, dieselbe Fassung gilt als aktuell, nie älter als die Dateien'
+
+# 19. A request a service took and then stopped, before it began or turned it
+# away, is taken again by the next.
+release v1.3.0
+request 23232323-2222-4333-8444-555555555555 1.3.0
+printf '23232323-2222-4333-8444-555555555555\n' > "$work/status/taken"
+round
+started || fail 'ein angenommener, nie begonnener Auftrag wurde nicht wieder aufgenommen'
+[ "$(field .id "$run")" = 23232323-2222-4333-8444-555555555555 ] || fail 'run.json nennt den wieder aufgenommenen Auftrag nicht'
+check 'Auftrag angenommen, Dienst gestoppt: der nächste nimmt ihn wieder auf'
 
 printf 'Dienst für Aktualisierungen: alles in Ordnung.\n'

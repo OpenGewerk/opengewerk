@@ -189,7 +189,9 @@ answered=''
 attempt=0
 while [ "$attempt" -lt "${UPDATE_HEALTH_ATTEMPTS:-30}" ]; do
   attempt=$((attempt + 1))
-  answered=$(compose exec -T app node -e 'fetch(`http://127.0.0.1:${process.env.PORT}/health`).then((answer) => answer.json()).then((body) => console.log(body.version ?? ""), () => console.log(""))' 2>/dev/null | tr -d '\r') || answered=''
+  # Each try with a time of its own: a call that does not come back would
+  # keep the run under way, and every later request turned away.
+  answered=$(timeout "${UPDATE_HEALTH_TIMEOUT:-20}" docker compose -f "$compose_file" exec -T app node -e 'fetch(`http://127.0.0.1:${process.env.PORT}/health`).then((answer) => answer.json()).then((body) => console.log(body.version ?? ""), () => console.log(""))' 2>/dev/null | tr -d '\r') || answered=''
   [ "$answered" != "$version" ] || break
   sleep 2
 done

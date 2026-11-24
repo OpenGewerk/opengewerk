@@ -51,8 +51,10 @@ export type InstanceUpdateStep = (typeof instanceUpdateSteps)[number]
 
 /** Whether version `a` comes after version `b`, both of the form 1.2.3, by number and not as text. */
 export function laterVersion(a: string, b: string): boolean {
-  const left = a.split('.').map(Number)
-  const right = b.split('.').map(Number)
+  const [leftCore, leftPre] = withPreRelease(a)
+  const [rightCore, rightPre] = withPreRelease(b)
+  const left = leftCore.split('.').map(Number)
+  const right = rightCore.split('.').map(Number)
 
   for (let index = 0; index < 3; index++) {
     const difference = (left[index] ?? 0) - (right[index] ?? 0)
@@ -62,7 +64,17 @@ export function laterVersion(a: string, b: string): boolean {
     }
   }
 
-  return false
+  // The same numbers: a release comes after a pre-release of it, 1.0.0 after
+  // 1.0.0-rc.1, as Semantic Versioning orders them. Two pre-releases of the
+  // same numbers count as none later; a release never names one.
+  return leftPre === null && rightPre !== null
+}
+
+/** A version as its numbers and what follows a hyphen, or null where nothing does. */
+function withPreRelease(version: string): readonly [string, string | null] {
+  const hyphen = version.indexOf('-')
+
+  return hyphen < 0 ? [version, null] : [version.slice(0, hyphen), version.slice(hyphen + 1)]
 }
 
 /** One part of the notes of a release, as its changelog heads it. */

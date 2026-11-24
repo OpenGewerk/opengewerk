@@ -85,8 +85,10 @@ assess() {
   fi
   # That the path names the folder this service was started from: the same
   # compose.yaml, seen through a mount of that path.
+  # A mount and not a volume: a path that is gone, the old one after a move,
+  # stays gone, where --volume would make it on the machine.
   probe=$(docker run --rm --network none --read-only --cap-drop ALL --cap-add DAC_READ_SEARCH \
-    --security-opt no-new-privileges:true --volume "$directory:$directory:ro" \
+    --security-opt no-new-privileges:true --mount "type=bind,src=$directory,dst=$directory,readonly" \
     "$image" stat -c '%d:%i' "$directory/docker/compose.yaml" 2>/dev/null) || probe=''
   here=$(identity_of "$install/docker/compose.yaml" 2>/dev/null) || here=''
   if [ -z "$probe" ] || [ "$probe" != "$here" ]; then
@@ -115,12 +117,26 @@ publish() {
       mode: $mode,
       reason: (if $reason == "" then null else $reason end),
       installed: (if $installed == "" then null else $installed end),
-      latest: (.latest // (.tag_name | text | if . != null and test("^v[0-9]+\\.[0-9]+\\.[0-9]+$") then .[1:] else null end)),
+      latest: (.latest // (.tag_name | text | if . != null and test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$") then .[1:] else null end)),
       published_at: ((.published_at | text) // null),
-      url: ((.url // .html_url) | text | if . != null and startswith("https://github.com/") then . else null end),
+      url: ((.html_url // .url) | text | if . != null and startswith("https://github.com/") then . else null end),
       notes: ((.notes // .body) | text | if . == null then "" else .[0:60000] end),
       error: (if $error == "" then null else $error end)
     }' "$release" | write_json "$status_path/available.json"
+}
+
+# available.json with what assess found now, and what GitHub said and when as
+# it was: after a run that ended, which asked GitHub nothing.
+reassessed() {
+  if [ ! -f "$status_path/available.json" ]; then
+    publish none ''
+    return
+  fi
+  jq --arg mode "$mode" --arg reason "$reason" --arg installed "$installed" '. + {
+    mode: $mode,
+    reason: (if $reason == "" then null else $reason end),
+    installed: (if $installed == "" then null else $installed end)
+  }' "$status_path/available.json" | write_json "$status_path/available.json"
 }
 
 # The newest release, from the API of GitHub. Drafts and pre-releases are
@@ -136,14 +152,15 @@ check_release() {
     publish none unreachable
     return 1
   fi
-  if ! jq -e '(.tag_name | type) == "string" and (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))' \
+  if ! jq -e '(.tag_name | type) == "string" and (.tag_name | test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))' \
     "$temp/release.json" > /dev/null 2>&1; then
     say 'Die Antwort von GitHub nennt keine Fassung der Form v1.2.3.'
     rm -f "$temp/release.json"
     publish none invalid
     return 1
   fi
-  publish "$temp/release.json" ''
+  # Not written is not found: the next try comes after an hour, not a day.
+  publish "$temp/release.json" '' || return 1
   say "Neueste Fassung: $(jq -r .latest "$status_path/available.json"), installiert: ${installed:-keine}."
 }
 
@@ -165,16 +182,35 @@ refuse() {
   }' | write_json "$status_path/refusal.json"
 }
 
+# A request taken by a service that stopped before it started the update or
+# turned the request away: taken again. Its ID is neither in run.json nor in
+# refusal.json; run.json names it before the container of the update starts,
+# so no container can run it.
+resume_taken() {
+  taken=$(cat "$status_path/taken" 2>/dev/null) || return 0
+  id_valid "$taken" || return 0
+  ran=$(jq -r '.id // ""' "$status_path/run.json" 2>/dev/null) || ran=''
+  refused=$(jq -r '.id // ""' "$status_path/refusal.json" 2>/dev/null) || refused=''
+  [ "$taken" != "$ran" ] && [ "$taken" != "$refused" ] || return 0
+  say "Aktualisierung $taken war angenommen, aber weder begonnen noch abgelehnt; sie wird neu geprüft."
+  rm -f "$status_path/taken"
+}
+
 # The request of the office, once per ID.
 take_request() {
-  request="$requests_path/request.json"
-  [ -f "$request" ] || return 0
+  [ -f "$requests_path/request.json" ] || return 0
+  # One copy, read once, with its time: the office may write the next request
+  # while this one is read, and ID, version and age would come from two.
+  cp -p "$requests_path/request.json" "$temp/request.json" 2>/dev/null || return 0
+  request="$temp/request.json"
   id=$(jq -r 'if (.id | type) == "string" then .id else "" end' "$request" 2>/dev/null) || return 0
   id_valid "$id" || return 0
   taken=$(cat "$status_path/taken" 2>/dev/null) || taken=''
   [ "$id" != "$taken" ] || return 0
   printf '%s\n' "$id" > "$temp/taken"
   mv "$temp/taken" "$status_path/taken"
+  # The installation as it is now, not as the last look found it.
+  assess
 
   version=$(jq -r 'if (.version | type) == "string" then .version else "" end' "$request")
   by=$(jq -r 'if (.by | type) == "string" then .by[0:200] else "" end' "$request")
@@ -234,6 +270,7 @@ take_request() {
     --log-driver local --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
     --security-opt no-new-privileges:true --read-only --tmpfs /tmp:rw,size=512m \
     --env HOME=/tmp --env "UPDATE_INSTALL=$directory" --env "UPDATE_STATUS_PATH=$status_mount" \
+    --env "COMPOSE_PROJECT_NAME=$project" \
     --volume "$socket:/var/run/docker.sock" --volume "$directory:$directory" \
     --volume "$volume:$status_mount" \
     "$image" update.sh "$id" "$version" > "$temp/run.log" 2>&1; then
@@ -262,6 +299,7 @@ watch_run() {
 
 assess
 say "Dienst für Aktualisierungen gestartet, Modus $mode${reason:+ ($reason)}."
+resume_taken
 next_check=0
 alive_at=0
 seen_finish=$(jq -r '.finished_at // ""' "$status_path/run.json" 2>/dev/null) || seen_finish=''
@@ -297,7 +335,7 @@ while :; do
   if [ "$finish" != "$seen_finish" ]; then
     seen_finish=$finish
     assess
-    publish none ''
+    reassessed
   fi
 
   if [ $((moment - alive_at)) -ge 60 ]; then

@@ -23,6 +23,7 @@ import {
   type InstanceUpdates,
   readInstanceUpdate,
   requestInstanceUpdate,
+  stillTelling,
   updateRefusedNow,
 } from './update.js'
 
@@ -75,7 +76,8 @@ export class InstanceUpdateController {
       throw new BadRequestException('Die Fassung fehlt, auf die aktualisiert werden soll.')
     }
 
-    const refused = updateRefusedNow(await readInstanceUpdate(this.updates, this.version), wanted)
+    const view = await readInstanceUpdate(this.updates, this.version)
+    const refused = updateRefusedNow(view, wanted) ?? (await stillTelling(this.updates, view))
 
     if (refused !== null) {
       throw new ConflictException(refused)

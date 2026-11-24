@@ -31,14 +31,22 @@ export interface OutgoingMail {
 export class MailDeliveryError extends Error {
   private readonly declaredPermanent: boolean
 
+  /**
+   * The command of the conversation the server answered with the refusal,
+   * `MAIL FROM` for a sender it does not take, `RCPT TO` for a recipient;
+   * null where none was under way.
+   */
+  readonly command: string | null
+
   constructor(
     message: string,
     readonly code: string | null,
     readonly responseCode: number | null,
-    options: { readonly permanent?: boolean } = {},
+    options: { readonly permanent?: boolean; readonly command?: string | null } = {},
   ) {
     super(message)
     this.declaredPermanent = options.permanent ?? false
+    this.command = options.command ?? null
   }
 
   /**
@@ -90,12 +98,18 @@ function asDeliveryError(error: unknown): MailDeliveryError {
     return error
   }
 
-  const detail = (error ?? {}) as { message?: unknown; code?: unknown; responseCode?: unknown }
+  const detail = (error ?? {}) as {
+    message?: unknown
+    code?: unknown
+    responseCode?: unknown
+    command?: unknown
+  }
 
   return new MailDeliveryError(
     typeof detail.message === 'string' ? detail.message : String(error),
     typeof detail.code === 'string' ? detail.code : null,
     typeof detail.responseCode === 'number' ? detail.responseCode : null,
+    { command: typeof detail.command === 'string' ? detail.command : null },
   )
 }
 

@@ -46,6 +46,11 @@ export const requestLifetimeMs = 10 * 60_000
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const versionPattern = /^\d+\.\d+\.\d+$/
+/**
+ * The version the application runs, as the configuration takes it: with a
+ * pre-release, which the service never updates to but which may run.
+ */
+const runningPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 const modes: readonly InstanceUpdateMode[] = ['ready', 'checkout', 'unsupported']
 const reasons: readonly InstanceUpdateReason[] = [
   'checkout',
@@ -286,7 +291,7 @@ export async function readInstanceUpdate(
 
   const run = runOf(runJson)
   const latest = available ? version(available['latest']) : null
-  const runningVersion = running !== null && versionPattern.test(running) ? running : null
+  const runningVersion = running !== null && runningPattern.test(running) ? running : null
   const url = available ? text(available['url'], 500) : null
   const refusal =
     refusalJson && request && refusalJson['id'] === request.id
@@ -359,6 +364,40 @@ export function updateRefusedNow(view: InstanceUpdateView, wanted: string): stri
   }
 
   return null
+}
+
+/**
+ * How long after an update ended a new one waits for the mail about it: the
+ * reports look every minute, the first time 20 seconds after a start.
+ */
+const tellingMs = 2 * 60_000
+
+/**
+ * Why a new update waits for the mail about the last one, as the sentence the
+ * screen shows, or null when it does not. A new run takes the place of the
+ * last in run.json, and an update that ended a moment ago would then be told
+ * of by nobody. Only for two minutes: without a mail server nothing is ever
+ * told, and nothing should wait for it.
+ */
+export async function stillTelling(
+  updates: InstanceUpdates,
+  view: InstanceUpdateView,
+  now: Date = new Date(),
+): Promise<string | null> {
+  const run = view.run
+
+  if (
+    run === null ||
+    run.state === 'running' ||
+    run.finishedAt === null ||
+    now.getTime() - new Date(run.finishedAt).getTime() >= tellingMs
+  ) {
+    return null
+  }
+
+  return (await updateTold(updates, run.id)).done
+    ? null
+    : 'Die Nachricht über die letzte Aktualisierung geht gerade noch hinaus. Bitte in zwei Minuten noch einmal.'
 }
 
 /**

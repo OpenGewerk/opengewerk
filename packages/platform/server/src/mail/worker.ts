@@ -95,6 +95,14 @@ export function failsServerWide(error: unknown): boolean {
   return failure.code !== null && serverWide.has(failure.code)
 }
 
+/**
+ * Whether the server turned the sender away: about the address the instance
+ * sends from, not about the one message or its recipient.
+ */
+export function refusesSender(error: unknown): boolean {
+  return asFailure(error).command === 'MAIL FROM'
+}
+
 /** Whether trying the message again cannot help (`MailDeliveryError.permanent`). */
 export function failsForGood(error: unknown): boolean {
   return asFailure(error).permanent

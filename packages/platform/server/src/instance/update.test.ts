@@ -28,9 +28,11 @@ import { saveInstanceMailServer } from './mail-server.js'
 import { appointOperator, removeOperator } from './operators.js'
 import {
   type InstanceUpdates,
+  markUpdateTold,
   readInstanceUpdate,
   releaseNotes,
   requestInstanceUpdate,
+  stillTelling,
 } from './update.js'
 import { reportFinishedUpdate } from './update-reports.js'
 
@@ -153,23 +155,42 @@ async function view(): Promise<InstanceUpdateView> {
   return (await get('/instance/update', lea).expect(200)).body as InstanceUpdateView
 }
 
+/** The request as written, null where there is none; one that is not whole fails the test. */
 function requestFile(): Record<string, unknown> | null {
+  let written: string
+
   try {
-    return JSON.parse(readFileSync(join(updates.requestsPath, 'request.json'), 'utf8')) as Record<
-      string,
-      unknown
-    >
-  } catch {
-    return null
+    written = readFileSync(join(updates.requestsPath, 'request.json'), 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null
+    }
+
+    throw error
   }
+
+  return JSON.parse(written) as Record<string, unknown>
 }
+
+/** What afterAll closes, each put here once it is open, and closed last first. */
+const opened: (() => unknown)[] = []
 
 beforeAll(async () => {
   foundation = await probeFoundation()
+  opened.push(() => {
+    foundation.remove()
+  })
   admin = await foundation.kit.connect()
+  opened.push(
+    () => admin.end(),
+    () => foundation.kit.resetSchema(admin),
+  )
   await foundation.empty()
 
   folders = mkdtempSync(join(tmpdir(), 'instance-update-'))
+  opened.push(() => {
+    rmSync(folders, { recursive: true, force: true })
+  })
   updates = { requestsPath: join(folders, 'requests'), statusPath: join(folders, 'status') }
   for (const path of [updates.requestsPath, updates.statusPath]) {
     mkdirSync(path)
@@ -178,14 +199,17 @@ beforeAll(async () => {
   const url = foundation.kit.applicationDatabaseUrl()
 
   smtp = await fakeSmtpServer({ credentials: { user: 'instanz', password: mailPassword } })
+  opened.push(() => smtp.close())
   mail = { origin, key, connect: (configuration) => smtpTransport(configuration) }
   database = Database.connect(url)
+  opened.push(() => database.close())
   instance = await probeInstance(url, {
     setupCode,
     mail,
     version: '0.3.0',
     instanceUpdates: updates,
   })
+  opened.push(() => instance.close())
   visitors = probeVisitors(instance, password)
 
   await instance
@@ -219,14 +243,22 @@ beforeAll(async () => {
   }
 }, 60_000)
 
+// Each on its own, so that one that fails, or a beforeAll that stopped half
+// way, leaves nothing else open.
 afterAll(async () => {
-  await instance.close()
-  await database.close()
-  await smtp.close()
-  await foundation.kit.resetSchema(admin)
-  await admin.end()
-  foundation.remove()
-  rmSync(folders, { recursive: true, force: true })
+  const failed: unknown[] = []
+
+  for (const close of opened.reverse()) {
+    try {
+      await close()
+    } catch (error) {
+      failed.push(error)
+    }
+  }
+
+  if (failed.length > 0) {
+    throw new AggregateError(failed, 'Nicht alles ließ sich nach den Tests schließen.')
+  }
 })
 
 beforeEach(() => {
@@ -330,6 +362,14 @@ describe('the notes of a release', () => {
     expect(laterVersion('0.9.9', '0.10.0')).toBe(false)
     expect(laterVersion('1.0.0', '1.0.0')).toBe(false)
   })
+
+  it('put a release after a pre-release of the same numbers, and before the next numbers', () => {
+    expect(laterVersion('0.3.0', '0.3.0-rc.1')).toBe(true)
+    expect(laterVersion('0.3.0-rc.1', '0.3.0')).toBe(false)
+    expect(laterVersion('0.3.1', '0.3.0-rc.1')).toBe(true)
+    expect(laterVersion('0.3.0-rc.1', '0.3.1')).toBe(false)
+    expect(laterVersion('0.3.0-rc.2', '0.3.0-rc.1')).toBe(false)
+  })
 })
 
 describe('what the screen reads', () => {
@@ -350,6 +390,20 @@ describe('what the screen reads', () => {
       refusal: null,
     })
     expect(read.notes.map((section) => section.title)).toEqual(['Sicherheit', 'Behoben'])
+  })
+
+  it('names a pre-release that runs, and a release of the next numbers as newer', async () => {
+    serviceFound()
+
+    expect(await readInstanceUpdate(updates, '0.3.0-rc.1')).toMatchObject({
+      running: '0.3.0-rc.1',
+      latest: '0.3.1',
+      newer: true,
+    })
+    expect(await readInstanceUpdate(updates, '0.3.0; reboot')).toMatchObject({
+      running: null,
+      newer: false,
+    })
   })
 
   it('leaves out what does not hold: a page that is not on GitHub, a version that is none, an unknown mode', async () => {
@@ -400,12 +454,15 @@ describe('asking for an update', () => {
 
   it('is refused before the confirmation is spent when it cannot be, and says why', async () => {
     const refusedFor = async (version: string, expected: string) => {
-      await visitors.reconfirm(lea.email, as(lea))
       const answer = await post('/instance/update', lea, { version }).expect(409)
 
       expect(message(answer)).toContain(expected)
       expect(requestFile()).toBeNull()
     }
+
+    // Once for all of them: a refusal that spent it would leave the last
+    // request without one.
+    await visitors.reconfirm(lea.email, as(lea))
 
     // The service never ran, and one that has been silent for ten minutes.
     await refusedFor('0.3.1', 'läuft nicht')
@@ -439,8 +496,32 @@ describe('asking for an update', () => {
     })
     await refusedFor('0.3.1', 'läuft schon')
 
-    // The confirmation was not spent by any of these.
-    rmSync(join(updates.statusPath, 'run.json'))
+    // An update that ended a moment ago, whose mail has not gone out: the
+    // next would take its place before anybody was told.
+    const ended = (finishedAt: Date) =>
+      written('run.json', {
+        id: '11111111-2222-4333-8444-555555555555',
+        version: '0.3.0',
+        from: '0.2.9',
+        by: 'Lea Leitung',
+        state: 'succeeded',
+        step: 5,
+        started_at: new Date(finishedAt.getTime() - 60_000).toISOString(),
+        finished_at: finishedAt.toISOString(),
+        log: [],
+      })
+
+    ended(new Date())
+    await refusedFor('0.3.1', 'geht gerade noch hinaus')
+
+    // Told, or two minutes later, the next may come: the confirmation was
+    // not spent by any of these.
+    await markUpdateTold(updates, '11111111-2222-4333-8444-555555555555', { done: true, to: [] })
+    const told = await readInstanceUpdate(updates, '0.3.0')
+
+    expect(await stillTelling(updates, told)).toBeNull()
+    rmSync(join(updates.requestsPath, 'told-11111111-2222-4333-8444-555555555555'))
+    ended(new Date(Date.now() - 3 * 60_000))
     await post('/instance/update', lea, { version: '0.3.1' }).expect(202)
   })
 
@@ -552,6 +633,34 @@ describe('telling how an update ended', () => {
     expect(await reportFinishedUpdate(reporting())).toBe(true)
     expect(await reportFinishedUpdate(reporting())).toBe(false)
     expect(toldOf().length).toBe(before + 1)
+  })
+
+  it('gives up on nobody when the server turns the sender away, and tells everybody once it takes it', async () => {
+    finished('failed')
+    const before = toldOf().length
+    const picky = await fakeSmtpServer({
+      credentials: { user: 'instanz', password: mailPassword },
+      refuseSenders: ['instanz@nord.example.de'],
+    })
+
+    try {
+      const refusing: MailContext = {
+        ...mail,
+        connect: (configuration) => smtpTransport({ ...configuration, port: picky.port }),
+      }
+
+      await expect(reportFinishedUpdate({ ...reporting(), mail: refusing })).rejects.toThrow()
+      expect(picky.received).toEqual([])
+    } finally {
+      await picky.close()
+    }
+
+    expect(await reportFinishedUpdate(reporting())).toBe(true)
+    expect(
+      toldOf()
+        .slice(before)
+        .map((sent) => sent.to),
+    ).toEqual([[lea.email]])
   })
 
   it('tells each operator once, tries an address again after a passing refusal and gives it up after a final one', async () => {

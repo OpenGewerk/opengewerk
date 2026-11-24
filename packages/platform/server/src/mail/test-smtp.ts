@@ -14,6 +14,8 @@ export interface FakeSmtpOptions {
   readonly silent?: boolean
   /** Recipients refused with a 550, the answer for a mailbox that does not exist. */
   readonly refuse?: readonly string[]
+  /** Senders refused with a 553, the answer for an address the login may not send from. */
+  readonly refuseSenders?: readonly string[]
   /** Takes a message and never says whether it took it, the way a server that hangs over one does. */
   readonly stallAfterData?: boolean
   /** Milliseconds it waits before it answers DATA, the way a server that is slow to take a message does. */
@@ -123,6 +125,8 @@ export async function fakeSmtpServer(options: FakeSmtpOptions = {}): Promise<Fak
         } else if (command === 'MAIL') {
           if (!signedIn) {
             say('530 5.7.0 Authentication required')
+          } else if (options.refuseSenders?.includes(/<([^>]*)>/.exec(line)?.[1] ?? '')) {
+            say('553 5.7.1 Sender address rejected: not owned by user')
           } else {
             from = /<([^>]*)>/.exec(line)?.[1] ?? ''
             to = []

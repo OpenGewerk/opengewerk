@@ -1,6 +1,6 @@
 import type { Database } from '../database/database.js'
 import type { MailContext } from '../mail/context.js'
-import { failsForGood, failsServerWide } from '../mail/worker.js'
+import { failsForGood, failsServerWide, refusesSender } from '../mail/worker.js'
 import { type RepeatingJob, startRepeating } from '../start/repeat.js'
 import type { AccountMessages } from './account-mail.js'
 import { instanceMailConnection } from './mail-server.js'
@@ -108,6 +108,15 @@ export async function reportFinishedUpdate(
         })
         reached.add(address)
       } catch (error) {
+        // A sender the server does not take is about the instance, for every
+        // address alike, and for good only until somebody corrects it: the
+        // rest waits for the next look, as for a server that cannot be
+        // reached, and nobody is given up on.
+        if (refusesSender(error)) {
+          missed = error
+          break
+        }
+
         if (failsForGood(error)) {
           console.error(
             'Die Nachricht über die Aktualisierung der Instanz ging an eine Adresse nicht hinaus.',
@@ -134,7 +143,7 @@ export async function reportFinishedUpdate(
   await markUpdateTold(updates, run.id, { done, to: [...reached] })
 
   if (!done) {
-    throw missed ?? new Error('Nicht jeder Betreiber hat die Nachricht bekommen.')
+    throw missed ?? new Error('Nicht jede Adresse hat die Nachricht bekommen.')
   }
 
   return true
