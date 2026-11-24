@@ -1344,8 +1344,10 @@ describe('two transmissions to the same record (opengewerk#1074)', () => {
       return await late
     } finally {
       release()
-      // A wait that failed lets the transmission end before the test does.
+      // A wait that failed lets the transmission and the change end before
+      // the test does, without hiding the failure that ended it.
       await late?.catch(() => undefined)
+      await changing.catch(() => undefined)
     }
   }
 

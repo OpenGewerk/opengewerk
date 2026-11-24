@@ -1002,7 +1002,28 @@ export class SyncClient {
    * here and collides at the server. That collision becomes a conflict, which
    * is the one thing this layer never resolves by itself.
    */
-  private async edit(
+  /**
+   * One change after the other on this device (CodeRabbit on #1074): two at
+   * once both read the same record before either was in the outbox, and each
+   * passed the check of the structure that their sum fails, a selective RCD
+   * without a type. A change that fails takes nothing down after it.
+   */
+  private editing: Promise<unknown> = Promise.resolve()
+
+  private edit(
+    entity: string,
+    id: string,
+    kind: OperationKind,
+    values: Draft,
+  ): Promise<EditResult> {
+    const turn = this.editing.then(() => this.editNow(entity, id, kind, values))
+
+    this.editing = turn.catch(() => undefined)
+
+    return turn
+  }
+
+  private async editNow(
     entity: string,
     id: string,
     kind: OperationKind,

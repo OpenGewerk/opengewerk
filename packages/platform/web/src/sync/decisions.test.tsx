@@ -608,6 +608,21 @@ describe('the version of the device of a circuit (opengewerk#1072)', () => {
     expect(sent.at(-1)?.patches).toContainEqual({ field: 'rcdSelective', from: false, to: true })
   })
 
+  it('judges a second change on the same circuit by the first, though both come at once (CodeRabbit on #1074)', async () => {
+    const started = await withCircuit({ ...circuit, rcdType: 'a', rcdSelective: false, version: 5 })
+
+    const [first, second] = await Promise.all([
+      started.update('circuits', 'sk-1', { rcdType: null }),
+      started.update('circuits', 'sk-1', { rcdSelective: true }),
+    ])
+
+    expect(first).toMatchObject({ outcome: 'queued' })
+    expect(second).toMatchObject({
+      outcome: 'refused',
+      message: 'Selektiv ist nur ein RCD mit Typ. Bitte zuerst den Typ wählen.',
+    })
+  })
+
   it('queues nothing a form changed on a circuit that the change of another device would leave broken, and says why', async () => {
     // The form opened with a type of RCD; another device took it away since.
     // Selective on its own would leave a selective RCD without a type, which
