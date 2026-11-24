@@ -102,19 +102,22 @@ assess() {
 
 # available.json anew: what assess found, with the release from the last
 # answer of GitHub, or from before when there is none now.
+# A third argument is the moment GitHub was asked; empty for none, left out
+# for now.
 publish() {
   release=$1
   error=$2
+  checked=${3-$(now)}
   if [ ! -f "$release" ]; then
     release="$status_path/available.json"
     [ -f "$release" ] || printf '{}' > "$temp/empty.json"
     [ -f "$release" ] || release="$temp/empty.json"
   fi
-  jq --arg checked "$(now)" --arg mode "$mode" --arg reason "$reason" \
+  jq --arg checked "$checked" --arg mode "$mode" --arg reason "$reason" \
     --arg installed "$installed" --arg error "$error" '
     def text: if type == "string" then . else null end;
     {
-      checked_at: $checked,
+      checked_at: (if $checked == "" then null else $checked end),
       mode: $mode,
       reason: (if $reason == "" then null else $reason end),
       installed: (if $installed == "" then null else $installed end),
@@ -130,7 +133,7 @@ publish() {
 # it was: after a run that ended, which asked GitHub nothing.
 reassessed() {
   if [ ! -f "$status_path/available.json" ]; then
-    publish none ''
+    publish none '' ''
     return
   fi
   jq --arg mode "$mode" --arg reason "$reason" --arg installed "$installed" '. + {
@@ -216,8 +219,10 @@ take_request() {
   [ "$id" != "$taken" ] || return 0
   printf '%s\n' "$id" > "$temp/taken"
   mv "$temp/taken" "$status_path/taken"
-  # The installation as it is now, not as the last look found it.
+  # The installation as it is now, not as the last look found it, and the
+  # page with it.
   assess
+  reassessed
 
   version=$(jq -r 'if (.version | type) == "string" then .version else "" end' "$request")
   by=$(jq -r 'if (.by | type) == "string" then .by[0:200] else "" end' "$request")
@@ -281,8 +286,14 @@ take_request() {
     --volume "$socket:/var/run/docker.sock" --volume "$directory:$directory" \
     --volume "$volume:$status_mount" \
     "$image" update.sh "$id" "$version" > "$temp/run.log" 2>&1; then
-    say "Der Lauf ließ sich nicht starten: $(tail -n 1 "$temp/run.log")"
-    record --arg at "$(now)" '. + {state: "failed", reason: "docker", finished_at: $at}'
+    # Docker may have taken the container and only the answer got lost: then
+    # the run is under way and says itself how it ends.
+    if docker ps --quiet --filter "label=opengewerk.update.id=$id" 2>/dev/null | grep -q .; then
+      say "Docker meldete einen Fehler, der Lauf $id läuft aber: $(tail -n 1 "$temp/run.log")"
+    else
+      say "Der Lauf ließ sich nicht starten: $(tail -n 1 "$temp/run.log")"
+      record --arg at "$(now)" '. + {state: "failed", reason: "docker", finished_at: $at}'
+    fi
   fi
 }
 
@@ -323,8 +334,12 @@ while :; do
   fi
   moment=$(date +%s)
   if [ "$moment" -ge "$next_check" ]; then
+    # Once a day the installation is looked at again as well: one repaired
+    # since shows as ready, one changed by hand as what it is now.
+    assess
     if [ "$mode" = unsupported ] && [ "$reason" = application ]; then
-      publish none ''
+      # GitHub is not asked: the moment of the last question stays.
+      reassessed
       next_check=$((moment + check_every))
     elif check_release; then
       next_check=$((moment + check_every))

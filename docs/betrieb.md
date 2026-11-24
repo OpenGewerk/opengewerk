@@ -1120,8 +1120,9 @@ er hat keinen Port und ein Netz für sich allein. Mit der Anwendung spricht er n
 nur sie darf dort schreiben; in `update-status` schreibt der Dienst, was er
 gefunden hat und wie der Lauf steht, und die Anwendung liest es nur. Die Fassung
 nimmt der Dienst nicht aus dem Auftrag. Es muss die neueste sein, die er selbst
-gefunden hat, neuer als die installierte, und der Auftrag darf höchstens zehn
-Minuten alt sein; ein Auftrag, der einen Stillstand des Dienstes überdauert hat,
+gefunden hat, neuer als die Fassung, die läuft, und nicht älter als die Dateien
+der Installation; nach einem Lauf, der nach dem Entpacken abbrach, geht so
+dieselbe Fassung noch einmal. Der Auftrag darf höchstens zehn Minuten alt sein; ein Auftrag, der einen Stillstand des Dienstes überdauert hat,
 startet so kein Update, mit dem niemand mehr rechnet.
 
 Das geht nur mit einem Paket aus einem Release, das seine Abbilder mit Digest

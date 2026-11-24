@@ -152,9 +152,16 @@ function aboutTheSender(
     return false
   }
 
-  return sender[0] === recipient[0]
-    ? said.includes('sender') && !said.includes('recipient')
-    : !names(recipient)
+  // One mailbox on both sides, in whatever form either is stored: the words
+  // of the answer outside the addresses say which side it means, since an
+  // address may hold either word itself.
+  if (sender.at(-1) === recipient.at(-1)) {
+    const words = said.replace(/<[^<>]*>/g, ' ')
+
+    return words.includes('sender') && !words.includes('recipient')
+  }
+
+  return !names(recipient)
 }
 
 /**

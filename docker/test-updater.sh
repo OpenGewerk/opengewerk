@@ -70,6 +70,7 @@ case "$*" in
   'ps --quiet --filter label=opengewerk.update.project='*) [ -z "${FAKE_RUNNING:-}" ] || printf 'c0ffee\n' ;;
   'ps --filter label=com.docker.compose.project='*) [ -z "${FAKE_APP_VERSION:-}" ] || printf '%s\n' "$FAKE_APP_VERSION" ;;
   'run --rm --network none '*' stat -c %d:%i '*) stat -c '%d:%i' "$last" ;;
+  'ps --quiet --filter label=opengewerk.update.id='*) [ -z "${FAKE_RUN_ANYWAY:-}" ] || printf 'c0ffee\n' ;;
   'run --detach '*) exit "${FAKE_RUN_FAILS:-0}" ;;
   compose*' --profile backup run --rm backup backup.sh') exit "${BACKUP_FAILS:-0}" ;;
   compose*' exec -T app node -e '*)
@@ -303,7 +304,9 @@ update() {
   begin "$1"
   identifier=$1
   shift
-  env "$@" UPDATE_HEALTH_ATTEMPTS=2 sh "$source_dir/updater/update.sh" "$identifier" 1.1.0 > "$work/update.log" 2>&1 || true
+  update_status=0
+  env "$@" UPDATE_HEALTH_ATTEMPTS=2 sh "$source_dir/updater/update.sh" "$identifier" 1.1.0 > "$work/update.log" 2>&1 ||
+    update_status=$?
 }
 
 unchanged() {
@@ -318,6 +321,7 @@ cp -R "$work/install" "$work/install.before"
 pack 1.1.0
 update 88888888-2222-4333-8444-555555555555
 [ "$(field .state "$run")" = succeeded ] || { cat "$work/update.log"; jq . "$run"; fail 'das Update ging nicht durch'; }
+[ "$update_status" = 0 ] || { cat "$work/update.log"; fail "update.sh endete nach dem Erfolg mit $update_status"; }
 [ "$(field .step "$run")" = 5 ] || fail 'das Update endete nicht im letzten Schritt'
 backup=$(grep -n 'backup.sh$' "$CALLS" | head -n 1 | cut -d: -f1)
 signature=$(grep -n '^cosign|verify-blob' "$CALLS" | head -n 1 | cut -d: -f1)
@@ -486,7 +490,7 @@ pack 1.2.0
 cp -R "$work/pack/opengewerk/." "$work/install/"
 rm -f "$work/status/alive" "$work/requests/request.json"
 : > "$CALLS"
-env UPDATE_ROUNDS=2 UPDATE_POLL_INTERVAL=3 sh "$source_dir/updater/updater.sh" > "$work/updater.log" 2>&1 &
+env UPDATE_ROUNDS=2 UPDATE_POLL_INTERVAL=8 sh "$source_dir/updater/updater.sh" > "$work/updater.log" 2>&1 &
 service=$!
 waited=0
 while [ ! -s "$work/status/alive" ] && [ "$waited" -lt 50 ]; do
@@ -513,5 +517,19 @@ round
 started || fail 'ein angenommener, nie begonnener Auftrag wurde nicht wieder aufgenommen'
 [ "$(field .id "$run")" = 23232323-2222-4333-8444-555555555555 ] || fail 'run.json nennt den wieder aufgenommenen Auftrag nicht'
 check 'Auftrag angenommen, Dienst gestoppt: der nächste nimmt ihn wieder auf'
+
+# 20. A start Docker reports as failed ends the run with the reason docker,
+# unless Docker has the container all the same: then that run says itself how
+# it ends.
+release v1.4.0
+request 25252525-2222-4333-8444-555555555555 1.4.0
+round FAKE_RUN_FAILS=1
+[ "$(field .state "$run")" = failed ] && [ "$(field .reason "$run")" = docker ] ||
+  fail 'ein gescheiterter Start wurde nicht als gescheitert vermerkt'
+request 26262626-2222-4333-8444-555555555555 1.4.0
+round FAKE_RUN_FAILS=1 FAKE_RUN_ANYWAY=1
+[ "$(field .id "$run")" = 26262626-2222-4333-8444-555555555555 ] && [ "$(field .state "$run")" = running ] ||
+  fail 'ein Lauf, den Docker trotz der Fehlermeldung hat, wurde als gescheitert vermerkt'
+check 'Start scheitert: Lauf gescheitert, außer Docker hat den Container doch'
 
 printf 'Dienst für Aktualisierungen: alles in Ordnung.\n'

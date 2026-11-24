@@ -181,6 +181,39 @@ describe('a message', () => {
     expect(failure).toMatchObject({ code: 'EENVELOPE', responseCode: 450, permanent: false })
   })
 
+  it.each([
+    [
+      'an address that holds the word of the other side',
+      'recipient@example.de',
+      'recipient@example.de',
+    ],
+    ['one mailbox in two forms', 'rechnung@müller-elektro.de', 'rechnung@xn--mller-elektro-wob.de'],
+  ] as const)(
+    'tells the sender from the recipient of one mailbox by the words outside the addresses: %s (opengewerk#1102)',
+    async (_case, from, to) => {
+      const toItself = {
+        ...letter,
+        from: { ...letter.from, address: from },
+        to: { name: null, address: to },
+      }
+      const sent = to.toLowerCase()
+
+      server = await fakeSmtpServer({ refuseSendersAtRecipient: [sent] })
+      const refusingSender = smtpTransport(settings(server.port), short)
+      const sender = await failureOf(refusingSender.send(toItself))
+      refusingSender.close()
+      await server.close()
+
+      server = await fakeSmtpServer({ refuse: [sent] })
+      const refusingRecipient = smtpTransport(settings(server.port), short)
+      const recipient = await failureOf(refusingRecipient.send(toItself))
+      refusingRecipient.close()
+
+      expect(sender).toMatchObject({ refusedSender: true, permanent: false })
+      expect(recipient).toMatchObject({ refusedSender: false, permanent: true })
+    },
+  )
+
   it('is refused for now when the server takes the connection and says nothing', async () => {
     server = await fakeSmtpServer({ silent: true })
     const transport = smtpTransport(settings(server.port), short)
