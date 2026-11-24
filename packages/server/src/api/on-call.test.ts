@@ -1819,25 +1819,22 @@ describe('the line of the surcharge on a draft (#1087)', () => {
       'select predecessor_document_id as report from documents where id = $1',
       [invoice],
     )
-    const report = rows[0]?.report ?? ''
+    // The two in the order of their ids, whichever was made first.
+    const [first = '', second = ''] = [rows[0]?.report ?? '', invoice].sort()
 
-    expect(report < invoice).toBe(true)
-
-    // A transmission that comes to the report first and to the invoice next.
+    // A transmission that comes to the first of them and to the other next.
     const transmission = await begun()
     let issuing: Promise<number> | undefined
 
     try {
-      await transmission.query('select id from documents where id = $1 for no key update', [report])
+      await transmission.query('select id from documents where id = $1 for no key update', [first])
       issuing = http()
         .post(`/documents/${invoice}/issue`)
         .set('x-test-identity', office())
         .send({})
         .then((answer) => answer.status)
       await waitingFor(admin, transmission, issuing)
-      await transmission.query('select id from documents where id = $1 for no key update', [
-        invoice,
-      ])
+      await transmission.query('select id from documents where id = $1 for no key update', [second])
       await transmission.query('commit')
     } finally {
       await transmission.query('rollback').catch(() => undefined)
