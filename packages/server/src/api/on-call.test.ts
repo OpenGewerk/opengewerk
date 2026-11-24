@@ -1201,7 +1201,9 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     const { invoice, hour } = await draftOf()
     const line = (await surchargeOf(invoice)).id
 
-    await patch(`/documents/${invoice}/lines/${line}`, { quantityMilli: '1000', unit: 'flat_rate' })
+    for (const quantityMilli of ['1000', ' 1000', '+1000', '01000']) {
+      await patch(`/documents/${invoice}/lines/${line}`, { quantityMilli, unit: 'flat_rate' })
+    }
     await price(invoice, hour, 10_000)
 
     expect(await surchargeOf(invoice)).toMatchObject({
