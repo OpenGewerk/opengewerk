@@ -1328,6 +1328,44 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(await marksOf(invoice)).toBe(0)
   })
 
+  it('takes no mark when a device sends a refused removal again after the line went', async () => {
+    const { job, invoice, hour } = await draftOf()
+    const line = (await surchargeOf(invoice)).id
+    const { rows } = await admin.query<{ version: number }>(
+      'select version from document_lines where id = $1',
+      [line],
+    )
+    const removal = { ...deleted('document_lines', line), baseVersion: rows[0]?.version ?? -1 }
+
+    // The office prices the hours, the server works the line out again, and
+    // the removal from the version the device held is a conflict.
+    await price(invoice, hour, 10_000)
+
+    const first = await push(app, office(), [removal])
+
+    expect(first.receipts.map((receipt) => [receipt.outcome, receipt.reason])).toEqual([
+      ['conflict', 'changed_elsewhere'],
+    ])
+
+    // The call was in the day after all; the device, which lost the answer,
+    // sends the same removal again.
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+
+    const again = await push(app, office(), [removal])
+
+    expect(again.receipts.map((receipt) => [receipt.outcome, receipt.reason])).toEqual([
+      ['conflict', 'already_seen'],
+    ])
+    expect(await marksOf(invoice)).toBe(1)
+
+    // The Saturday again: the surcharge comes back, as for a draft nobody removed it from.
+    await patch(`/jobs/${job}`, { emergencyAt: saturday })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Wochenende', emergency_surcharge: true },
+    ])
+  })
+
   it('takes no mark from the gone line of an issued invoice a device removes', async () => {
     const { job, invoice, hour } = await draftOf()
     const line = (await surchargeOf(invoice)).id

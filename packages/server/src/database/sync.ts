@@ -833,14 +833,33 @@ async function lockDocumentsOf(
   // Removed on a device after the server had taken it away, the line of the
   // surcharge is gone already: the delete is skipped, and `afterWrite` never
   // hears of it. Whoever removed it meant it to stay away all the same, so it
-  // loses its mark here, under the lock of its draft, on drafts only.
-  const removed = operations
-    .filter(
-      (operation) =>
-        operation.entity === 'document_lines' &&
-        operation.kind === 'delete' &&
-        isUuid(operation.recordId),
-    )
+  // loses its mark here, under the lock of its draft, on drafts only. Not for
+  // a removal sent before: it has its receipt, perhaps a refusal a person is
+  // to decide, and sent again it changes nothing.
+  const removals = operations.filter(
+    (operation) =>
+      operation.entity === 'document_lines' &&
+      operation.kind === 'delete' &&
+      isUuid(operation.recordId) &&
+      isUuid(operation.id),
+  )
+  const seenBefore = new Set(
+    removals.length === 0
+      ? []
+      : (
+          await tx
+            .select({ id: schema.syncOperations.id })
+            .from(schema.syncOperations)
+            .where(
+              inArray(
+                schema.syncOperations.id,
+                removals.map((operation) => operation.id),
+              ),
+            )
+        ).map((row) => canonical(row.id)),
+  )
+  const removed = removals
+    .filter((operation) => !seenBefore.has(canonical(operation.id)))
     .map((operation) => operation.recordId as DocumentLineId)
 
   if (removed.length > 0) {
