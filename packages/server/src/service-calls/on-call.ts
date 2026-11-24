@@ -395,7 +395,14 @@ async function restoreSurchargeLine(
     .update(documentLines)
     .set({
       deletedAt: null,
-      position: lines.reduce((highest, line) => Math.max(highest, line.position), 0) + 1,
+      // After the last line, and no further than the column reaches: places
+      // need not differ, and a line typed in at the very end would otherwise
+      // refuse whatever brought the surcharge back.
+      position:
+        Math.min(
+          lines.reduce((highest, line) => Math.max(highest, line.position), 0),
+          lastPosition - 1,
+        ) + 1,
       designation: surcharge.designation,
       description: surcharge.description,
       quantityMilli: surcharge.quantityMilli,
@@ -441,6 +448,9 @@ export type SurchargeWait = 'waits for room' | 'too large'
 
 /** The most cents a line holds: the largest integer of its columns. */
 const largestCents = 2_147_483_647
+
+/** The highest place a line takes, the largest integer of its column. */
+const lastPosition = 2_147_483_647
 
 function tooLarge(surcharge: SurchargeLine): boolean {
   return (
