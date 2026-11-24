@@ -73,6 +73,34 @@ function changedSince(opened: Draft, values: Draft): Draft {
 }
 
 /**
+ * The patches with what the server puts along with them, so that the device
+ * holds what the server will (CodeRabbit on #1074): a type of RCD taken away
+ * takes selective along (#1021). Left to the server alone, the device went on
+ * holding selective, and a later change that set it again sent nothing.
+ */
+function alongWith(
+  entity: string,
+  patches: readonly FieldPatch[],
+  current: RecordState | null,
+): readonly FieldPatch[] {
+  const written = Object.fromEntries(patches.map((patch) => [patch.field, patch.to]))
+  const added = Object.entries(circuitAlong(entity, written, current)).filter(
+    ([field]) => !(field in written),
+  )
+
+  return added.length === 0
+    ? patches
+    : [
+        ...patches,
+        ...added.map(([field, to]) => ({
+          field,
+          from: current?.[field] ?? null,
+          to: toSyncValue(to),
+        })),
+      ]
+}
+
+/**
  * The way a change that needs a connection reaches the server: at the route
  * that owns the record, not through the outbox.
  */
@@ -981,7 +1009,8 @@ export class SyncClient {
     values: Draft,
   ): Promise<EditResult> {
     const current = kind === 'create' ? null : this.get(entity, id)
-    const patches = this.patchesFor(entity, current, values)
+    const changed = this.patchesFor(entity, current, values)
+    const patches = kind === 'delete' ? changed : alongWith(entity, changed, current)
 
     if (kind === 'update' && patches.length === 0) {
       // Nothing changed. Queueing it would put an operation in front of the
@@ -1019,7 +1048,7 @@ export class SyncClient {
     // not see it.
     if (kind !== 'delete') {
       const written = Object.fromEntries(patches.map((patch) => [patch.field, patch.to]))
-      const problem = structureProblem(entity, circuitAlong(entity, written, current), current)
+      const problem = structureProblem(entity, written, current)
 
       if (problem !== null) {
         return { outcome: 'refused', reason: 'changed_elsewhere', fields: [], message: problem }

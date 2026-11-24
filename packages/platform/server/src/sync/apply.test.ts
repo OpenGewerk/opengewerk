@@ -1326,11 +1326,16 @@ describe('two transmissions to the same record (opengewerk#1074)', () => {
       'office',
     )
 
+    let late: Promise<Result> | null = null
+
     try {
       // A change that fails ends the test with its error, not with a wait.
       await Promise.race([holding, changing])
 
-      const late = transmission()
+      late = transmission()
+      // Handled from the start: one that fails before it waits is no
+      // rejection nobody took (CodeRabbit on #1074).
+      late.catch(() => undefined)
 
       await standingInLine(admin, 1)
       release()
@@ -1339,6 +1344,8 @@ describe('two transmissions to the same record (opengewerk#1074)', () => {
       return await late
     } finally {
       release()
+      // A wait that failed lets the transmission end before the test does.
+      await late?.catch(() => undefined)
     }
   }
 
@@ -1535,15 +1542,14 @@ describe('two transmissions to the same record (opengewerk#1074)', () => {
       }),
     ])
 
-    const change = () =>
-      send(north.id, [
-        operation({
-          entity: 'letter_lines',
-          recordId: lineId,
-          kind: 'update',
-          patches: [{ field: 'quantity', from: 3, to: 4 }],
-        }),
-      ])
+    // One operation, sent again as the device sends it: with its id.
+    const quantity = operation({
+      entity: 'letter_lines',
+      recordId: lineId,
+      kind: 'update',
+      patches: [{ field: 'quantity', from: 3, to: 4 }],
+    })
+    const change = () => send(north.id, [quantity])
 
     // The lock of the first letter is held: waiting for the second as well
     // could wait in a circle with a transmission that holds it.
@@ -1576,6 +1582,7 @@ describe('two transmissions to the same record (opengewerk#1074)', () => {
       inTenant(north.id, (tx) => sync.applyOperations(tx, north.id, operations, courier), deviceId)
     const holder = await admin.connect()
     let settled: PromiseSettledResult<readonly OperationReceipt[]>[]
+    let watched: Promise<PromiseSettledResult<readonly OperationReceipt[]>[]> | undefined
     let ended = false
 
     try {
@@ -1617,15 +1624,19 @@ describe('two transmissions to the same record (opengewerk#1074)', () => {
         ]),
       ]
 
+      // Taken from the start, and waited for when the wait fails.
+      watched = Promise.allSettled(both)
+
       await standingInLine(admin, 2)
       await holder.query('commit')
       ended = true
-      settled = await Promise.allSettled(both)
+      settled = await watched
     } finally {
       // Never back into the pool with the lock still held: the transmissions
       // would wait for it, and the tests after this one with them.
       if (!ended) {
         await holder.query('rollback').catch(() => undefined)
+        await watched
       }
 
       holder.release()

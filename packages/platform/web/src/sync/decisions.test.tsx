@@ -589,6 +589,25 @@ describe('the version of the device of a circuit (opengewerk#1072)', () => {
     })
   })
 
+  it('holds what the server puts along with a type taken away, so that selective set again goes out again (CodeRabbit on #1074)', async () => {
+    const started = await withCircuit({ ...circuit, rcdType: 'a', rcdSelective: true, version: 5 })
+
+    await started.update('circuits', 'sk-1', { rcdType: null })
+
+    expect(started.get('circuits', 'sk-1')?.['rcdSelective']).toBe(false)
+
+    await started.update('circuits', 'sk-1', { rcdType: 'a', rcdSelective: true })
+    await started.synchronise()
+
+    const sent = server.sent.flat()
+
+    expect(sent.at(-2)?.patches).toEqual([
+      { field: 'rcdType', from: 'a', to: null },
+      { field: 'rcdSelective', from: true, to: false },
+    ])
+    expect(sent.at(-1)?.patches).toContainEqual({ field: 'rcdSelective', from: false, to: true })
+  })
+
   it('queues nothing a form changed on a circuit that the change of another device would leave broken, and says why', async () => {
     // The form opened with a type of RCD; another device took it away since.
     // Selective on its own would leave a selective RCD without a type, which
@@ -634,8 +653,8 @@ describe('the version of the device of a circuit (opengewerk#1072)', () => {
       values: { tripCharacteristic: 'c' },
     },
     {
-      // The server takes the selective along with the type (#1021), and so
-      // does the judgement on the device.
+      // The server takes the selective along with the type (#1021), and the
+      // device sends it along itself, so that it holds what the server will.
       what: 'a type taken away from a selective RCD',
       held: { ...circuit, rcdSelective: true, version: 5 },
       part: {
@@ -644,7 +663,7 @@ describe('the version of the device of a circuit (opengewerk#1072)', () => {
         seen: { rcdType: 'a', rcdSelective: false },
         found: { rcdType: 'a', rcdSelective: true },
       },
-      values: { rcdType: null },
+      values: { rcdType: null, rcdSelective: false },
     },
   ])(
     'takes $what as an ordinary change, and closes the conflict',
