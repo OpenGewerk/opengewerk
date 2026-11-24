@@ -20,10 +20,12 @@ import { addStaffMember } from '../authentication/staff.js'
 import { Database } from '../database/database.js'
 import type { MailContext } from '../mail/context.js'
 import { type FakeSmtpServer, fakeSmtpServer } from '../mail/test-smtp.js'
-import { smtpTransport } from '../mail/transport.js'
+import { MailDeliveryError, smtpTransport } from '../mail/transport.js'
 import { SecretKey } from '../secrets/key.js'
+import { probeAccess } from '../authentication/probe-application.js'
 import type { AccountMessages } from './account-mail.js'
 import { saveInstanceMailServer } from './mail-server.js'
+import { appointOperator, removeOperator } from './operators.js'
 import {
   type InstanceUpdates,
   readInstanceUpdate,
@@ -485,6 +487,53 @@ describe('telling how an update ended', () => {
     expect(await reportFinishedUpdate(reporting())).toBe(true)
     expect(await reportFinishedUpdate(reporting())).toBe(false)
     expect(toldOf().length).toBe(before + 1)
+  })
+
+  it('tells each operator once, tries an address again after a passing refusal and gives it up after a final one', async () => {
+    const lead = userIds.get(lea.email) ?? ''
+    const second = await appointOperator(database, probeAccess.sentences.instance, lead, otto.email)
+
+    try {
+      finished('failed')
+      const before = toldOf().length
+      // The server of the instance, which turns the mail to Otto away: for
+      // now, then for good.
+      let ottoRefused = 451
+      const picky: MailContext = {
+        ...mail,
+        connect: (configuration) => {
+          const real = smtpTransport(configuration)
+
+          return {
+            send: (message) =>
+              message.to.address === otto.email
+                ? Promise.reject(new MailDeliveryError('Abgewiesen.', null, ottoRefused))
+                : real.send(message),
+            verify: () => real.verify(),
+            close: () => {
+              real.close()
+            },
+          }
+        },
+      }
+      const receivers = () =>
+        toldOf()
+          .slice(before)
+          .map((sent) => sent.to)
+
+      await expect(reportFinishedUpdate({ ...reporting(), mail: picky })).rejects.toThrow()
+      await expect(reportFinishedUpdate({ ...reporting(), mail: picky })).rejects.toThrow()
+
+      expect(receivers()).toEqual([[lea.email]])
+
+      ottoRefused = 550
+
+      expect(await reportFinishedUpdate({ ...reporting(), mail: picky })).toBe(true)
+      expect(await reportFinishedUpdate(reporting())).toBe(false)
+      expect(receivers()).toEqual([[lea.email]])
+    } finally {
+      await removeOperator(database, probeAccess.sentences.instance, lead, second.userId)
+    }
   })
 
   it('says nothing of an update under way, of one that ended more than a day ago, or without words for it', async () => {
