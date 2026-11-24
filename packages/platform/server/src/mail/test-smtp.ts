@@ -30,6 +30,8 @@ export interface FakeSmtpOptions {
   readonly defer?: readonly string[]
   /** Recipients refused with an answer that names no address, as Exim and Exchange answer. */
   readonly refuseWithoutAddress?: readonly string[]
+  /** Recipients refused with an answer that names the sender alone, as the one to ask. */
+  readonly refuseNamingSender?: readonly string[]
   /** Takes a message and never says whether it took it, the way a server that hangs over one does. */
   readonly stallAfterData?: boolean
   /** Milliseconds it waits before it answers DATA, the way a server that is slow to take a message does. */
@@ -157,6 +159,8 @@ export async function fakeSmtpServer(options: FakeSmtpOptions = {}): Promise<Fak
             )
           } else if (options.refuseWithoutAddress?.includes(recipient)) {
             say('550 5.1.1 User unknown')
+          } else if (options.refuseNamingSender?.includes(recipient)) {
+            say(`550 5.1.1 Recipient unknown; contact <${from}>`)
           } else if (options.defer?.includes(recipient)) {
             say(`450 4.2.0 <${recipient}>: Recipient address rejected: Greylisted, try again later`)
           } else if (options.refuse?.includes(recipient)) {

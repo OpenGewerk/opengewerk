@@ -920,8 +920,24 @@ describe('the logs of an update', () => {
     ended(id, 'failed', new Date(Date.now() - 3 * 60_000))
     await visitors.reconfirm(lea.email, as(lea))
 
+    // A log that cannot be written: no request, and the confirmation stays.
+    await admin.query('revoke insert on update_notices from opengewerk_app')
+
+    try {
+      // The filter answers the refused insert of the database with a 403.
+      const refused = await post('/instance/update', lea, { version: '0.3.1' })
+
+      expect(refused.status).toBe(403)
+      expect(message(refused)).not.toBe(unconfirmed)
+    } finally {
+      await admin.query('grant insert on update_notices to opengewerk_app')
+    }
+
+    expect(requestFile()).toBeNull()
+
     await post('/instance/update', lea, { version: '0.3.1' }).expect(202)
 
+    expect(requestFile()).toMatchObject({ version: '0.3.1' })
     expect((await inTheInstanceLog(id))['to_version']).toBe('0.3.1')
     expect(await inTheTenantLogs(id)).toHaveLength(2)
   })

@@ -112,6 +112,9 @@ export async function reportFinishedUpdate(
           attachments: [],
         })
         reached.add(address)
+        // Written before the next goes out (CodeRabbit on #1101): a mark that
+        // fails then costs one address a second mail, not all of them.
+        await markUpdateTold(updates, run.id, { done: false, to: [...reached] })
       } catch (error) {
         // A sender the server does not take is about the instance, for every
         // address alike, and for good only until somebody corrects it: the

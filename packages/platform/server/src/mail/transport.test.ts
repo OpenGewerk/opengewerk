@@ -236,6 +236,16 @@ describe('a message', () => {
     expect(failure).toMatchObject({ command: 'RCPT TO', refusedSender: true, permanent: false })
   })
 
+  it('stays a refusal of the recipient when the answer names the sender alone, as the one to ask (opengewerk#1102)', async () => {
+    server = await fakeSmtpServer({ refuseNamingSender: ['berg@example.de'] })
+    const transport = smtpTransport(settings(server.port), short)
+
+    const failure = await failureOf(transport.send(letter))
+    transport.close()
+
+    expect(failure).toMatchObject({ command: 'RCPT TO', refusedSender: false, permanent: true })
+  })
+
   it('stays a refusal of the message when the answer names no address at all (opengewerk#1102)', async () => {
     server = await fakeSmtpServer({ refuseWithoutAddress: ['berg@example.de'] })
     const transport = smtpTransport(settings(server.port), short)

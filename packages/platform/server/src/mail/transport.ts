@@ -155,9 +155,11 @@ function sentEnvelope(addresses: {
  * 5.7.1 <post@nord.example.de>: Sender address rejected". A recipient it
  * refuses it names as well, in the form nodemailer sent it, which need not be
  * the one stored: `"max..mustermann"@example.de`. So an answer that names any
- * other address stays a refusal of the message. Where sender and recipient
- * went out as one address, the words of the answer outside the addresses say
- * which side it means, since an address may hold either word itself.
+ * other address stays a refusal of the message, and so does one whose words
+ * outside the addresses speak of the recipient and not of the sender, as
+ * "550 5.1.1 Recipient unknown; contact <post@nord.example.de>" (CodeRabbit
+ * on #1101). Where sender and recipient went out as one address, those words
+ * say which side it means, since an address may hold either word itself.
  */
 function aboutTheSender(
   command: string | null,
@@ -180,10 +182,15 @@ function aboutTheSender(
     return false
   }
 
-  if (envelope.to.some((address) => `<${address.toLowerCase()}>` === sender)) {
-    const words = said.replace(/<[^<>]*>/g, ' ')
+  const words = said.replace(/<[^<>]*>/g, ' ')
+  const ofTheSender = words.includes('sender') && !words.includes('recipient')
 
-    return words.includes('sender') && !words.includes('recipient')
+  if (words.includes('recipient') && !words.includes('sender')) {
+    return false
+  }
+
+  if (envelope.to.some((address) => `<${address.toLowerCase()}>` === sender)) {
+    return ofTheSender
   }
 
   return true
