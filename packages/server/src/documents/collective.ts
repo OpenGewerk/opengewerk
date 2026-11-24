@@ -20,7 +20,7 @@ import {
 import { articlePricesOn, pricedFromArticle } from './article-prices.js'
 import { choicesOf } from './instructions.js'
 import { contractFlatLineFor } from '../contracts/invoice.js'
-import { surchargeLineFor } from '../service-calls/on-call.js'
+import { insertSurchargeLine, surchargeLineFor } from '../service-calls/on-call.js'
 
 type DocumentRow = typeof documents.$inferSelect
 type LineRow = typeof documentLines.$inferSelect
@@ -84,13 +84,15 @@ function underItsTitle(report: DocumentRow, lines: readonly LineRow[]): CopiedLi
 
 /**
  * The open reports of a job: issued, and neither continued by a successor
- * that counts nor collected in an invoice that counts. Locked, oldest first,
- * so that a successor or a second collective invoice made at the same moment
- * waits and then finds them taken.
+ * that counts nor collected in an invoice that counts. Locked, so that a
+ * successor or a second collective invoice made at the same moment waits and
+ * then finds them taken, in the order of their ids, as a transmission locks
+ * the documents it comes to (#1094): in any other order the two could wait
+ * for each other in a circle. Listed oldest first.
  */
 async function openReports(tx: TenantTransaction, jobId: JobId): Promise<DocumentRow[]> {
-  const reports = await tx
-    .select()
+  const locked = await tx
+    .select({ id: documents.id })
     .from(documents)
     .where(
       and(
@@ -100,12 +102,23 @@ async function openReports(tx: TenantTransaction, jobId: JobId): Promise<Documen
         isNull(documents.deletedAt),
       ),
     )
-    .orderBy(asc(documents.documentDate), asc(documents.number), asc(documents.id))
+    .orderBy(asc(documents.id))
     .for('update')
 
-  if (reports.length === 0) {
+  if (locked.length === 0) {
     return []
   }
+
+  const reports = await tx
+    .select()
+    .from(documents)
+    .where(
+      inArray(
+        documents.id,
+        locked.map((report) => report.id),
+      ),
+    )
+    .orderBy(asc(documents.documentDate), asc(documents.number), asc(documents.id))
 
   const ids = reports.map((report) => report.id)
   const continued = new Set(
@@ -283,23 +296,14 @@ export async function makeCollectiveInvoice(
 
   // An emergency call billed over its reports carries its surcharge once,
   // as the last line (#293).
-  const surcharge = await surchargeLineFor(tx, jobId, copied, prices)
-
-  if (surcharge) {
-    await tx.insert(documentLines).values({
-      tenantId,
-      documentId: created.id,
-      kind: 'item',
-      position: copied.length + 1,
-      designation: surcharge.designation,
-      description: surcharge.description,
-      quantityMilli: surcharge.quantityMilli,
-      unit: surcharge.unit,
-      unitPriceCents: surcharge.unitPriceCents,
-      vatRate: 'standard',
-      netCents: surcharge.netCents,
-    })
-  }
+  await insertSurchargeLine(
+    tx,
+    tenantId,
+    created.id,
+    copied.length + 1,
+    jobId,
+    await surchargeLineFor(tx, jobId, copied),
+  )
 
   await tx.insert(documentSources).values(
     reports.map((report, index) => ({

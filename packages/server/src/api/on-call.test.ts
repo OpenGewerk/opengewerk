@@ -6,16 +6,18 @@ import type { INestApplication } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import { addDays, berlinClock, type EmergencyTariff, type TenantId } from '@opengewerk/domain'
 import { Database, FileStore, newId, type Renderer } from '@opengewerk/platform-server'
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
+import { refreshSurchargeLine } from '../service-calls/on-call.js'
 import { ApiModule } from './api.module.js'
+import { holdQuery, waitingFor } from './test-hold.js'
 import { fingerprintAsHeld } from './test-signing.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { invoiceable, readyToInvoice } from './test-invoice.js'
-import { created, push } from './test-structure.js'
+import { changed, created, deleted, push } from './test-structure.js'
 
 /**
  * The on-call service (#293): the on-call plan kept in the office, the service
@@ -53,6 +55,93 @@ async function post(path: string, body: Record<string, unknown>, who = office(),
 
   return answer.body as { id: string; message?: string }
 }
+
+/** A transaction of the business as the application opens one, given back if it fails to open. */
+async function begun(): Promise<PoolClient> {
+  const client = await admin.connect()
+
+  try {
+    await client.query('begin')
+    await client.query("select set_config('app.tenant_id', $1, true)", [north.id])
+    await client.query("select set_config('app.user_id', 'lena', true)")
+
+    return client
+  } catch (error) {
+    await client.query('rollback').catch(() => undefined)
+    client.release()
+    throw error
+  }
+}
+
+/**
+ * A transaction of the business that has locked a draft the way issuing
+ * does, before it writes anything the log records.
+ */
+async function lockedForIssuing(invoice: string): Promise<PoolClient> {
+  const client = await begun()
+
+  try {
+    await client.query('select id from documents where id = $1 for update', [invoice])
+
+    return client
+  } catch (error) {
+    await client.query('rollback').catch(() => undefined)
+    client.release()
+    throw error
+  }
+}
+
+/** A change written past the routes, as a race would leave it, and committed. */
+async function writtenPastTheRoutes(text: string, values: unknown[]): Promise<void> {
+  const client = await begun()
+
+  try {
+    await client.query(text, values)
+    await client.query('commit')
+  } finally {
+    await client.query('rollback').catch(() => undefined)
+    client.release()
+  }
+}
+
+/**
+ * Waits until a statement waits for the database process `pid`, and fails
+ * when `work` is through first or nothing waits in time.
+ */
+async function waitedFor(pid: number, work: Promise<unknown>): Promise<void> {
+  let done = false
+
+  work.then(
+    () => {
+      done = true
+    },
+    () => {
+      done = true
+    },
+  )
+
+  for (let tries = 0; tries < 200; tries += 1) {
+    const { rows } = await admin.query<{ waiting: number }>(
+      'select count(*)::int as waiting from pg_stat_activity where $1 = any(pg_blocking_pids(pid))',
+      [pid],
+    )
+
+    if ((rows[0]?.waiting ?? 0) > 0) {
+      return
+    }
+
+    if (done) {
+      throw new Error('The work was through without waiting')
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+
+  throw new Error('Nothing waited in time')
+}
+
+const deviceOf = (who: string) =>
+  (JSON.parse(who) as { deviceId?: string }).deviceId ?? 'geraet-im-keller'
 
 function aCall(fields: Record<string, unknown> = {}) {
   const id = newId<'job'>()
@@ -105,13 +194,14 @@ async function aSignedReport(
   return report
 }
 
+/** The lines a document shows, a line taken away not among them. */
 async function linesOf(documentId: string) {
   const { rows } = await admin.query<{
     designation: string
     unit_price_cents: number
     unit: string
   }>(
-    'select designation, unit_price_cents, unit from document_lines where document_id = $1 order by position',
+    'select designation, unit_price_cents, unit from document_lines where document_id = $1 and deleted_at is null order by position',
     [documentId],
   )
 
@@ -564,6 +654,122 @@ describe('the surcharge of an emergency call', () => {
     expect(designations.filter((one) => one === 'Notdienstzuschlag Nacht')).toHaveLength(1)
     expect(designations.at(-1)).toBe('Notdienstzuschlag Nacht')
   })
+
+  it('makes the invoice of a report whose line stands at the last place the column holds', async () => {
+    for (const emergencyAt of [inTheDay, atNight]) {
+      const call = aCall({ emergencyAt })
+
+      await push(app, office(), [call.operation])
+
+      const report = await aSignedReport(call.id, [
+        {
+          designation: 'Arbeitszeit',
+          quantityMilli: 1000,
+          unit: 'hour',
+          unitPriceCents: 0,
+          position: 2_147_483_647,
+        },
+      ])
+      const invoice = (await post(`/documents/${report}/successors`, { kind: 'final_invoice' })).id
+      const { rows } = await admin.query<{ position: number }>(
+        'select position from document_lines where document_id = $1 and emergency_surcharge',
+        [invoice],
+      )
+
+      // Its surcharge, or the one taken away at once, at that place as well.
+      expect(rows, emergencyAt).toEqual([{ position: 2_147_483_647 }])
+    }
+  })
+
+  it('comes no second time where a report carries it as a position, on either invoice (#1098)', async () => {
+    const hour = {
+      designation: 'Arbeitszeit',
+      quantityMilli: 1000,
+      unit: 'hour',
+      unitPriceCents: 0,
+    }
+    const typed = {
+      designation: 'Notdienstzuschlag Nacht',
+      quantityMilli: 1000,
+      unit: 'flat_rate',
+      unitPriceCents: 4500,
+    }
+    const single = aCall()
+    const collected = aCall()
+
+    await push(app, office(), [single.operation, collected.operation])
+
+    const fromReport = (
+      await post(`/documents/${await aSignedReport(single.id, [hour, typed])}/successors`, {
+        kind: 'final_invoice',
+      })
+    ).id
+
+    for (const lines of [[hour, typed], [hour]]) {
+      await post(`/documents/${await aSignedReport(collected.id, lines)}/issue`, {})
+    }
+
+    const collective = (await post(`/jobs/${collected.id}/collective-invoice`, {})).id
+
+    for (const invoice of [fromReport, collective]) {
+      const { rows } = await admin.query<{ marks: number; shown: number; total: number }>(
+        `select count(*) filter (where emergency_surcharge)::int as marks,
+                count(*) filter (where deleted_at is null and designation like 'Notdienstzuschlag%')::int as shown,
+                count(*) filter (where designation like 'Notdienstzuschlag%')::int as total
+         from document_lines where document_id = $1`,
+        [invoice],
+      )
+
+      // The one the report carried, and no line of the server, not even one taken away.
+      expect(rows).toEqual([{ marks: 0, shown: 1, total: 1 }])
+    }
+  })
+
+  it('locks the reports of a collective invoice in the order of their ids, as a transmission does', async () => {
+    const call = aCall()
+
+    await push(app, office(), [call.operation])
+
+    const [first = '', second = ''] = [
+      await aSignedReport(call.id),
+      await aSignedReport(call.id),
+    ].sort()
+
+    // Issued the other way round: the smaller number on the larger id, so
+    // that the reports listed oldest first are not in the order of their ids.
+    await post(`/documents/${second}/issue`, {})
+    await post(`/documents/${first}/issue`, {})
+
+    const holding = await lockedForIssuing(first)
+    let collecting: Promise<number> | undefined
+
+    try {
+      collecting = http()
+        .post(`/jobs/${call.id}/collective-invoice`)
+        .set('x-test-identity', office())
+        .send({})
+        .then((answer) => answer.status)
+      await waitingFor(admin, holding, collecting)
+
+      // Waiting at the first, it holds none of them yet: the second is free.
+      const other = await begun()
+
+      try {
+        await other.query('select id from documents where id = $1 for update nowait', [second])
+      } finally {
+        await other.query('rollback').catch(() => undefined)
+        other.release()
+      }
+
+      await holding.query('commit')
+    } finally {
+      await holding.query('rollback').catch(() => undefined)
+      holding.release()
+      await Promise.allSettled([collecting])
+    }
+
+    expect(await collecting).toBe(201)
+  })
 })
 
 describe('the surcharge named before the order (#1081)', () => {
@@ -613,7 +819,7 @@ describe('the surcharge named before the order (#1081)', () => {
     const describedOn = async (jobId: string) =>
       (
         await admin.query<{ designation: string; description: string | null }>(
-          'select designation, description from document_lines where document_id = $1 order by position',
+          'select designation, description from document_lines where document_id = $1 and deleted_at is null order by position',
           [await invoiceOf(jobId)],
         )
       ).rows.map((line) => line.description ?? line.designation)
@@ -622,7 +828,7 @@ describe('the surcharge named before the order (#1081)', () => {
     expect(await describedOn(less.id)).toEqual(['Arbeitszeit', '30 % auf die Arbeitszeit'])
   })
 
-  it('takes a named flat amount against a percentage of the day while the hours have no price', async () => {
+  it('takes the percentage of the day on hours without a price yet, which costs nothing (#1087)', async () => {
     const flat = aCall({
       emergencyAt: '2026-10-24T08:00:00.000Z',
       emergencyNamedFlatCents: 3000,
@@ -631,9 +837,11 @@ describe('the surcharge named before the order (#1081)', () => {
 
     await push(app, office(), [flat.operation])
 
+    // 50 % on nothing is less than the 30,00 € named; the draft works it out
+    // again once the office prices the hours.
     expect((await linesOf(await invoiceOf(flat.id))).at(-1)).toEqual({
       designation: 'Notdienstzuschlag Wochenende',
-      unit_price_cents: 3000,
+      unit_price_cents: 0,
       unit: 'flat_rate',
     })
   })
@@ -805,6 +1013,1216 @@ describe('the surcharge named before the order (#1081)', () => {
   })
 })
 
+/**
+ * The line of the surcharge on a draft (#1087): worked out again from what it
+ * depends on whenever that changes, in the office and over the sync, until
+ * the office changes its text or amount by hand.
+ */
+describe('the line of the surcharge on a draft (#1087)', () => {
+  // Saturday 24.10.2026 at 10:00: the settings charge 50 % on the working time.
+  const saturday = '2026-10-24T08:00:00.000Z'
+
+  async function lineOf(invoice: string, designation: string): Promise<string> {
+    const { rows } = await admin.query<{ id: string }>(
+      'select id from document_lines where document_id = $1 and designation = $2 and deleted_at is null',
+      [invoice, designation],
+    )
+
+    return rows[0]?.id ?? ''
+  }
+
+  async function draftOf(fields: Record<string, unknown> = {}) {
+    const call = aCall({ emergencyAt: saturday, ...fields })
+
+    await push(app, office(), [call.operation])
+
+    const invoice = (
+      await post(`/documents/${await aSignedReport(call.id)}/successors`, {
+        kind: 'final_invoice',
+      })
+    ).id
+
+    return { job: call.id, invoice, hour: await lineOf(invoice, 'Arbeitszeit') }
+  }
+
+  async function surchargeOf(invoice: string) {
+    const { rows } = await admin.query<{
+      id: string
+      designation: string
+      description: string | null
+      net_cents: number
+      emergency_surcharge: boolean
+      deleted: boolean
+    }>(
+      `select id, designation, description, net_cents, emergency_surcharge, deleted_at is not null as deleted
+       from document_lines where document_id = $1 and designation like 'Notdienstzuschlag %'
+       order by deleted_at desc nulls first`,
+      [invoice],
+    )
+
+    // At most one on the draft; one that went before it came back stays below.
+    expect(rows.filter((row) => !row.deleted).length).toBeLessThanOrEqual(1)
+    expect(rows.length).toBeGreaterThanOrEqual(1)
+
+    return (
+      rows[0] ?? {
+        id: '',
+        designation: '',
+        description: null,
+        net_cents: -1,
+        emergency_surcharge: false,
+        deleted: true,
+      }
+    )
+  }
+
+  async function patch(path: string, body: Record<string, unknown>) {
+    await http().patch(path).set('x-test-identity', office()).send(body).expect(200)
+  }
+
+  async function sent(...operations: Parameters<typeof push>[2]) {
+    const answer = await push(app, office(), operations)
+
+    expect(answer.receipts.map((receipt) => receipt.outcome)).toEqual(
+      operations.map(() => 'applied'),
+    )
+  }
+
+  const price = (invoice: string, line: string, unitPriceCents: number) =>
+    patch(`/documents/${invoice}/lines/${line}`, { unitPriceCents })
+
+  const removeInOffice = async (invoice: string, line: string) => {
+    await http()
+      .delete(`/documents/${invoice}/lines/${line}`)
+      .set('x-test-identity', office())
+      .expect(200)
+  }
+
+  /** The lines of a draft that carry the mark, the ones gone included. */
+  async function marksOf(invoice: string) {
+    const { rows } = await admin.query<{ marks: number }>(
+      'select count(*)::int as marks from document_lines where document_id = $1 and emergency_surcharge',
+      [invoice],
+    )
+
+    return rows[0]?.marks
+  }
+
+  it('follows the hours the office prices, up to what was named before the order', async () => {
+    const { invoice, hour } = await draftOf({
+      emergencyNamedFlatCents: 3000,
+      emergencyNamedBasisPoints: 0,
+    })
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      designation: 'Notdienstzuschlag Wochenende',
+      description: '50 % auf die Arbeitszeit',
+      net_cents: 0,
+      emergency_surcharge: true,
+      deleted: false,
+    })
+
+    await price(invoice, hour, 1000)
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      description: '50 % auf die Arbeitszeit',
+      net_cents: 500,
+    })
+
+    // 50 % of 100,00 € is more than the 30,00 € named: the named amount.
+    await price(invoice, hour, 10_000)
+
+    expect(await surchargeOf(invoice)).toMatchObject({ description: null, net_cents: 3000 })
+  })
+
+  it('follows lines of hours the office adds and removes', async () => {
+    const { invoice } = await draftOf()
+    const added = await post(`/documents/${invoice}/lines`, {
+      designation: 'Fahrzeit',
+      quantityMilli: 1000,
+      unit: 'hour',
+      unitPriceCents: 2000,
+    })
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 1000 })
+
+    await http()
+      .delete(`/documents/${invoice}/lines/${added.id}`)
+      .set('x-test-identity', office())
+      .expect(200)
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 0 })
+  })
+
+  it('follows the hours a device changes, adds and removes', async () => {
+    const { invoice, hour } = await draftOf()
+    const added = newId<'document-line'>()
+
+    await sent(changed('document_lines', hour, { unitPriceCents: { from: 0, to: 4000 } }))
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 2000 })
+
+    await sent(
+      created('document_lines', added, {
+        documentId: invoice,
+        kind: 'item',
+        position: 9,
+        designation: 'Fahrzeit',
+        quantityMilli: 1000,
+        unit: 'hour',
+        unitPriceCents: 2000,
+        vatRate: 'standard',
+      }),
+    )
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 3000 })
+
+    await sent(deleted('document_lines', added))
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 2000 })
+  })
+
+  it('stays the server’s when a device names its own draft in capitals', async () => {
+    const { invoice, hour } = await draftOf()
+    const line = (await surchargeOf(invoice)).id
+
+    await sent(
+      changed('document_lines', line, {
+        documentId: { from: invoice, to: invoice.toUpperCase() },
+      }),
+    )
+    await price(invoice, hour, 10_000)
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      net_cents: 5000,
+      emergency_surcharge: true,
+    })
+  })
+
+  it('belongs to the office when it types the word null as the text below it', async () => {
+    // At night: a flat amount, with no text below the line.
+    const { invoice } = await draftOf({ emergencyAt: atNight })
+    const line = (await surchargeOf(invoice)).id
+
+    expect(await surchargeOf(invoice)).toMatchObject({ description: null })
+
+    await patch(`/documents/${invoice}/lines/${line}`, { description: 'null' })
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      description: 'null',
+      emergency_surcharge: false,
+    })
+  })
+
+  it('stays the server’s when the office sends its values unchanged, a number as text included', async () => {
+    const { invoice, hour } = await draftOf()
+    const line = (await surchargeOf(invoice)).id
+
+    for (const quantityMilli of ['1000', ' 1000', '+1000', '01000']) {
+      await patch(`/documents/${invoice}/lines/${line}`, { quantityMilli, unit: 'flat_rate' })
+    }
+    await price(invoice, hour, 10_000)
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      net_cents: 5000,
+      emergency_surcharge: true,
+    })
+  })
+
+  it('belongs to the office once its text or amount is changed by hand, in the office or on a device', async () => {
+    const inOffice = await draftOf()
+    const line = (await surchargeOf(inOffice.invoice)).id
+
+    // Moved down the list, it is still the server's.
+    await patch(`/documents/${inOffice.invoice}/lines/${line}`, { position: 9 })
+    await price(inOffice.invoice, inOffice.hour, 1000)
+
+    expect(await surchargeOf(inOffice.invoice)).toMatchObject({
+      net_cents: 500,
+      emergency_surcharge: true,
+    })
+
+    await patch(`/documents/${inOffice.invoice}/lines/${line}`, { unitPriceCents: 1234 })
+    await price(inOffice.invoice, inOffice.hour, 2000)
+
+    expect(await surchargeOf(inOffice.invoice)).toMatchObject({
+      net_cents: 1234,
+      emergency_surcharge: false,
+    })
+
+    const onDevice = await draftOf()
+    const its = (await surchargeOf(onDevice.invoice)).id
+
+    await sent(
+      changed('document_lines', its, {
+        designation: { from: 'Notdienstzuschlag Wochenende', to: 'Notdienstzuschlag Samstag' },
+      }),
+    )
+    await price(onDevice.invoice, onDevice.hour, 2000)
+
+    expect(await surchargeOf(onDevice.invoice)).toMatchObject({
+      designation: 'Notdienstzuschlag Samstag',
+      net_cents: 0,
+      emergency_surcharge: false,
+    })
+
+    // The mark is the server's: a device that sets it meets a conflict.
+    const answer = await push(app, office(), [
+      changed('document_lines', its, { emergencySurcharge: { from: false, to: true } }),
+    ])
+
+    expect(answer.receipts[0]).toMatchObject({
+      outcome: 'conflict',
+      reason: 'set_by_server',
+      fields: ['emergencySurcharge'],
+    })
+    expect(await surchargeOf(onDevice.invoice)).toMatchObject({ emergency_surcharge: false })
+  })
+
+  it('follows the call and the surcharge named for it, and goes where the call has none', async () => {
+    const { job, invoice, hour } = await draftOf()
+
+    await price(invoice, hour, 10_000)
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000 })
+
+    await patch(`/jobs/${job}`, { emergencyNamedFlatCents: 2000, emergencyNamedBasisPoints: 0 })
+
+    expect(await surchargeOf(invoice)).toMatchObject({ description: null, net_cents: 2000 })
+
+    await sent(changed('jobs', job, { emergencyNamedFlatCents: { from: 2000, to: 1500 } }))
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 1500 })
+
+    // Wednesday 28.10.2026 at 10:00 is no emergency.
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+
+    expect(await surchargeOf(invoice)).toMatchObject({ deleted: true, emergency_surcharge: true })
+
+    // The night before is one again, and the surcharge comes back, once.
+    await sent(changed('jobs', job, { emergencyAt: { from: inTheDay, to: atNight } }))
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      designation: 'Notdienstzuschlag Nacht',
+      net_cents: 1500,
+      emergency_surcharge: true,
+      deleted: false,
+    })
+    expect(await marksOf(invoice)).toBe(1)
+
+    // Removed by the office after it came back, it stays removed.
+    await removeInOffice(invoice, (await surchargeOf(invoice)).id)
+    await price(invoice, hour, 20_000)
+
+    expect(await surchargeOf(invoice)).toMatchObject({ deleted: true })
+    expect(await marksOf(invoice)).toBe(0)
+  })
+
+  it('stays removed once the office or a device removes it', async () => {
+    const inOffice = await draftOf()
+
+    await removeInOffice(inOffice.invoice, (await surchargeOf(inOffice.invoice)).id)
+    await price(inOffice.invoice, inOffice.hour, 1000)
+
+    expect(await surchargeOf(inOffice.invoice)).toMatchObject({
+      deleted: true,
+      emergency_surcharge: false,
+    })
+
+    const onDevice = await draftOf()
+
+    await sent(deleted('document_lines', (await surchargeOf(onDevice.invoice)).id))
+    await price(onDevice.invoice, onDevice.hour, 1000)
+
+    expect(await surchargeOf(onDevice.invoice)).toMatchObject({
+      deleted: true,
+      emergency_surcharge: false,
+    })
+  })
+
+  /** The version a line has now. */
+  async function versionOf(line: string): Promise<number> {
+    const { rows } = await admin.query<{ version: number }>(
+      'select version from document_lines where id = $1',
+      [line],
+    )
+
+    return rows[0]?.version ?? -1
+  }
+
+  it('stays removed when a device removes it after the server took it away', async () => {
+    const { job, invoice } = await draftOf()
+    const line = (await surchargeOf(invoice)).id
+    const held = await versionOf(line)
+
+    // The call was in the day after all: the server takes the line away.
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+
+    // A device that had not heard of it yet removes the line as it held it.
+    const answer = await push(app, office(), [
+      { ...deleted('document_lines', line), baseVersion: held },
+    ])
+
+    expect(answer.receipts.map((receipt) => receipt.outcome)).toEqual(['skipped'])
+    expect(await marksOf(invoice)).toBe(0)
+
+    // The night again: the line the device removed does not come back.
+    await patch(`/jobs/${job}`, { emergencyAt: saturday })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([])
+  })
+
+  it('comes back when a device removed it from before the server worked it out again', async () => {
+    const { job, invoice, hour } = await draftOf()
+    const line = (await surchargeOf(invoice)).id
+    const held = await versionOf(line)
+
+    // The device holds 0,00 €; the office prices the hours, the line comes to
+    // 50,00 €, and then the call was in the day after all.
+    await price(invoice, hour, 10_000)
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+
+    // The removal of the line at 0,00 € is no removal of the one at 50,00 €.
+    const answer = await push(app, office(), [
+      { ...deleted('document_lines', line), baseVersion: held },
+    ])
+
+    expect(answer.receipts.map((receipt) => receipt.outcome)).toEqual(['skipped'])
+    expect(await marksOf(invoice)).toBe(1)
+
+    await patch(`/jobs/${job}`, { emergencyAt: saturday })
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      id: line,
+      net_cents: 5000,
+      deleted: false,
+      emergency_surcharge: true,
+    })
+  })
+
+  it('comes back as itself, so that a device removing what it held comes to a conflict', async () => {
+    const { job, invoice } = await draftOf()
+    const line = (await surchargeOf(invoice)).id
+    const held = await versionOf(line)
+
+    // Taken away and brought back before a device that held it sends anything.
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+    await patch(`/jobs/${job}`, { emergencyAt: saturday })
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      id: line,
+      deleted: false,
+      emergency_surcharge: true,
+    })
+
+    // Removed from the version the device held: the server changed the line
+    // since, which a person decides, as any change in between. Not past a
+    // new line in silence.
+    const stale = await push(app, office(), [
+      { ...deleted('document_lines', line), baseVersion: held },
+    ])
+
+    expect(stale.receipts.map((receipt) => [receipt.outcome, receipt.reason])).toEqual([
+      ['conflict', 'changed_elsewhere'],
+    ])
+    expect(await shownSurchargesOf(invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Wochenende', emergency_surcharge: true },
+    ])
+
+    // Removed once more from the line as it is now, it stays away.
+    await sent({ ...deleted('document_lines', line), baseVersion: await versionOf(line) })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([])
+    expect(await marksOf(invoice)).toBe(0)
+  })
+
+  it('takes no mark when a device sends a refused removal again after the line went', async () => {
+    const { job, invoice, hour } = await draftOf()
+    const line = (await surchargeOf(invoice)).id
+    const { rows } = await admin.query<{ version: number }>(
+      'select version from document_lines where id = $1',
+      [line],
+    )
+    const removal = { ...deleted('document_lines', line), baseVersion: rows[0]?.version ?? -1 }
+
+    // The office prices the hours, the server works the line out again, and
+    // the removal from the version the device held is a conflict.
+    await price(invoice, hour, 10_000)
+
+    const first = await push(app, office(), [removal])
+
+    expect(first.receipts.map((receipt) => [receipt.outcome, receipt.reason])).toEqual([
+      ['conflict', 'changed_elsewhere'],
+    ])
+
+    // The call was in the day after all; the device, which lost the answer,
+    // sends the same removal again.
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+
+    const again = await push(app, office(), [removal])
+
+    expect(again.receipts.map((receipt) => [receipt.outcome, receipt.reason])).toEqual([
+      ['conflict', 'already_seen'],
+    ])
+    expect(await marksOf(invoice)).toBe(1)
+
+    // The Saturday again: the surcharge comes back, as for a draft nobody removed it from.
+    await patch(`/jobs/${job}`, { emergencyAt: saturday })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Wochenende', emergency_surcharge: true },
+    ])
+  })
+
+  it('comes back next to a line at the very last place the column holds', async () => {
+    const { job, invoice, hour } = await draftOf()
+    const line = (await surchargeOf(invoice)).id
+
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+    await patch(`/documents/${invoice}/lines/${hour}`, { position: 2_147_483_647 })
+    // Brought back: after that line as far as it goes, not past the column.
+    await patch(`/jobs/${job}`, { emergencyAt: saturday })
+
+    const { rows } = await admin.query<{ position: number; deleted: boolean }>(
+      'select position, deleted_at is not null as deleted from document_lines where id = $1',
+      [line],
+    )
+
+    expect(rows).toEqual([{ position: 2_147_483_647, deleted: false }])
+  })
+
+  it('takes no mark from the gone line of an issued invoice a device removes', async () => {
+    const { job, invoice, hour } = await draftOf()
+    const line = (await surchargeOf(invoice)).id
+
+    await price(invoice, hour, 10_000)
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+    await post(`/documents/${invoice}/issue`, {})
+
+    // Issued meanwhile: the removal is a conflict, and nothing of the
+    // transmission is written, the mark of the line that went included.
+    const answer = await push(app, office(), [deleted('document_lines', line)])
+
+    expect(answer.receipts.map((receipt) => receipt.outcome)).toEqual(['conflict'])
+    expect(await marksOf(invoice)).toBe(1)
+  })
+
+  it('does not come back after the office typed a surcharge while the line was gone', async () => {
+    const { job, invoice } = await draftOf()
+
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+
+    const typed = await post(`/documents/${invoice}/lines`, {
+      designation: 'Notdienstzuschlag',
+      quantityMilli: 1000,
+      unit: 'flat_rate',
+      unitPriceCents: 3000,
+    })
+
+    expect(await marksOf(invoice)).toBe(0)
+
+    // The office removes its own again, and the call is on the Saturday once more.
+    await removeInOffice(invoice, typed.id)
+    await patch(`/jobs/${job}`, { emergencyAt: saturday })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([])
+  })
+
+  it('moves with the draft to the job of another call, in the office and on a device', async () => {
+    const { job, invoice, hour } = await draftOf()
+    const night = aCall()
+
+    await push(app, office(), [night.operation])
+    await price(invoice, hour, 10_000)
+    await patch(`/documents/${invoice}`, { jobId: night.id })
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      designation: 'Notdienstzuschlag Nacht',
+      net_cents: 4500,
+    })
+
+    await sent(changed('documents', invoice, { jobId: { from: night.id, to: job } }))
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      designation: 'Notdienstzuschlag Wochenende',
+      net_cents: 5000,
+    })
+  })
+
+  it('comes on the collective invoice of the call and follows its hours', async () => {
+    const call = aCall({ emergencyAt: saturday })
+
+    await push(app, office(), [call.operation])
+    await post(`/documents/${await aSignedReport(call.id)}/issue`, {})
+
+    const invoice = (await post(`/jobs/${call.id}/collective-invoice`, {})).id
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 0, emergency_surcharge: true })
+
+    await price(invoice, await lineOf(invoice, 'Arbeitszeit'), 3000)
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 1500 })
+  })
+
+  it('stays as it was issued', async () => {
+    const { job, invoice, hour } = await draftOf()
+
+    await price(invoice, hour, 10_000)
+    await post(`/documents/${invoice}/issue`, {})
+    await patch(`/jobs/${job}`, { emergencyNamedFlatCents: 2000, emergencyNamedBasisPoints: 0 })
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000, deleted: false })
+
+    // Asked for directly, an issued invoice is found fixed and left as it is.
+    await database.forTenant({ tenantId: north.id }, (tx) => refreshSurchargeLine(tx, invoice))
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000, deleted: false })
+  })
+  /** The lines of a surcharge a draft shows. */
+  async function shownSurchargesOf(invoice: string) {
+    const { rows } = await admin.query<{ designation: string; emergency_surcharge: boolean }>(
+      `select designation, emergency_surcharge from document_lines
+       where document_id = $1 and deleted_at is null
+         and (designation = 'Notdienstzuschlag' or designation like 'Notdienstzuschlag %')`,
+      [invoice],
+    )
+
+    return rows
+  }
+
+  it('is no line at all, not one taken away, on an invoice of a job that is no emergency', async () => {
+    const { invoice } = await draftOf({ emergencyAt: null })
+    const { rows } = await admin.query<{ lines: number }>(
+      `select count(*)::int as lines from document_lines
+       where document_id = $1 and designation like 'Notdienstzuschlag%'`,
+      [invoice],
+    )
+
+    expect(rows).toEqual([{ lines: 0 }])
+  })
+
+  it('comes on a draft whose invoice had none, once the call has one', async () => {
+    // Wednesday 28.10.2026 at 10:00: no surcharge when the invoice is made.
+    const { job, invoice } = await draftOf({ emergencyAt: inTheDay })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([])
+
+    // The office learns the call came in the night before.
+    await patch(`/jobs/${job}`, { emergencyAt: atNight })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Nacht', emergency_surcharge: true },
+    ])
+  })
+
+  it.each(['Notdienstzuschlag Nacht', 'Notdienstzuschlag'])(
+    'does not come back next to a surcharge the office typed in as „%s“',
+    async (designation) => {
+      const { job, invoice } = await draftOf()
+
+      await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+      await post(`/documents/${invoice}/lines`, {
+        designation,
+        quantityMilli: 1000,
+        unit: 'flat_rate',
+        unitPriceCents: 4500,
+      })
+      await sent(changed('jobs', job, { emergencyAt: { from: inTheDay, to: atNight } }))
+
+      const { rows } = await admin.query<{ marked: number; shown: number }>(
+        `select count(*) filter (where emergency_surcharge)::int as marked, count(*)::int as shown
+         from document_lines where document_id = $1 and deleted_at is null and designation like 'Notdienstzuschlag%'`,
+        [invoice],
+      )
+
+      expect(rows).toEqual([{ marked: 0, shown: 1 }])
+      expect(await marksOf(invoice)).toBe(0)
+    },
+  )
+
+  it('comes back next to a heading with the word in it', async () => {
+    const { job, invoice } = await draftOf()
+
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+    await post(`/documents/${invoice}/lines`, {
+      kind: 'title',
+      designation: 'Notdienstzuschlag Hinweis',
+    })
+    await sent(changed('jobs', job, { emergencyAt: { from: inTheDay, to: atNight } }))
+
+    const { rows } = await admin.query<{ kind: string; designation: string }>(
+      `select kind, designation from document_lines
+       where document_id = $1 and deleted_at is null and emergency_surcharge`,
+      [invoice],
+    )
+
+    expect(rows).toEqual([{ kind: 'item', designation: 'Notdienstzuschlag Nacht' }])
+  })
+
+  it('follows an hour a device moves from one draft to another, on both', async () => {
+    const from = await draftOf()
+    const to = await draftOf()
+
+    await price(from.invoice, from.hour, 10_000)
+
+    expect(await surchargeOf(from.invoice)).toMatchObject({ net_cents: 5000 })
+
+    await sent(
+      changed('document_lines', from.hour, { documentId: { from: from.invoice, to: to.invoice } }),
+    )
+
+    expect(await surchargeOf(from.invoice)).toMatchObject({ net_cents: 0, deleted: false })
+    expect(await surchargeOf(to.invoice)).toMatchObject({ net_cents: 5000, deleted: false })
+  })
+
+  it('answers a move of its own line with the line as the refresh left it', async () => {
+    const { job, invoice, hour } = await draftOf()
+
+    await price(invoice, hour, 10_000)
+    // 20,00 € named, past the routes: the line still says 50,00 €.
+    await writtenPastTheRoutes(namedTwenty, [job])
+
+    const answer = await http()
+      .patch(`/documents/${invoice}/lines/${(await surchargeOf(invoice)).id}`)
+      .set('x-test-identity', office())
+      .send({ position: 9 })
+      .expect(200)
+
+    expect(answer.body).toMatchObject({ netCents: 2000, emergencySurcharge: true })
+  })
+
+  it('is no surcharge of a draft a device moves it to, and that draft charges it alone', async () => {
+    const from = await draftOf()
+    const to = await draftOf()
+    const moved = (await surchargeOf(from.invoice)).id
+
+    await sent(
+      changed('document_lines', moved, { documentId: { from: from.invoice, to: to.invoice } }),
+    )
+
+    const { rows } = await admin.query<{ id: string; emergency_surcharge: boolean }>(
+      `select id, emergency_surcharge from document_lines
+       where document_id = $1 and designation like 'Notdienstzuschlag %' and deleted_at is null
+       order by emergency_surcharge`,
+      [to.invoice],
+    )
+
+    // The draft's own line stepped back for good: one surcharge, not two.
+    expect(rows).toEqual([{ id: moved, emergency_surcharge: false }])
+    expect(await marksOf(to.invoice)).toBe(0)
+  })
+
+  it.each(['Notdienstzuschlag Nacht', 'Notdienstzuschlag'])(
+    'steps back for good next to a surcharge the office types in as „%s“',
+    async (designation) => {
+      const { job, invoice } = await draftOf()
+
+      await post(`/documents/${invoice}/lines`, {
+        designation,
+        quantityMilli: 1000,
+        unit: 'flat_rate',
+        unitPriceCents: 4500,
+      })
+
+      expect(await shownSurchargesOf(invoice)).toEqual([
+        { designation, emergency_surcharge: false },
+      ])
+      expect(await marksOf(invoice)).toBe(0)
+
+      // Nor does it come back with the next change of the call.
+      await patch(`/jobs/${job}`, { emergencyAt: atNight })
+
+      expect(await shownSurchargesOf(invoice)).toEqual([
+        { designation, emergency_surcharge: false },
+      ])
+    },
+  )
+
+  it('follows a call a device names in capitals', async () => {
+    const { job, invoice } = await draftOf()
+
+    await sent(
+      changed('jobs', job.toUpperCase(), { emergencyAt: { from: saturday, to: inTheDay } }),
+    )
+
+    expect(await surchargeOf(invoice)).toMatchObject({ deleted: true, emergency_surcharge: true })
+  })
+
+  /**
+   * Two drafts, a transmission that writes first and then changes the hour of
+   * the first, held at the lock of the documents it read, and the hour moved
+   * to the second draft by another device meanwhile.
+   */
+  async function aLineMovedMeanwhile() {
+    const from = await draftOf()
+    const to = await draftOf()
+    // Made first, so that it comes first in the outbox: it writes, and the
+    // transmission holds the log from then on.
+    const write = aCall().operation
+    const change = changed('document_lines', from.hour, {
+      description: { from: null, to: 'Anfahrt inbegriffen' },
+    })
+    const transmit = () =>
+      http()
+        .post('/sync')
+        .set('x-test-identity', office())
+        .send({ deviceId: deviceOf(office()), operations: [write, change] })
+        .then((answer) => ({
+          status: answer.status,
+          outcomes: ((answer.body as { receipts?: { outcome: string }[] }).receipts ?? []).map(
+            (receipt) => receipt.outcome,
+          ),
+        }))
+    // Held at the lock of the documents it read, before it locked them.
+    const held = holdQuery(
+      (text, values) =>
+        /from "documents".*order by.*for no key update/i.test(text) &&
+        values.includes(from.invoice),
+    )
+    // And at its first write, which takes the log.
+    const writing = holdQuery((text) => text.startsWith('insert into "jobs"'))
+    const changing = transmit()
+
+    try {
+      await held.reached
+      await sent(
+        changed('document_lines', from.hour, {
+          documentId: { from: from.invoice, to: to.invoice },
+        }),
+      )
+    } catch (error) {
+      held.release()
+      writing.release()
+      await Promise.allSettled([changing])
+      throw error
+    }
+
+    return { to, write, transmit, held, writing, changing }
+  }
+
+  it('locks the draft a line went to meanwhile before it writes', async () => {
+    const { to, held, writing, changing } = await aLineMovedMeanwhile()
+    let other: PoolClient | undefined
+
+    try {
+      other = await begun()
+      held.release()
+      await writing.reached
+
+      // About to write, the transmission holds the draft the hour is on now.
+      await expect(
+        other.query('select id from documents where id = $1 for no key update nowait', [
+          to.invoice,
+        ]),
+      ).rejects.toMatchObject({ code: '55P03' })
+    } finally {
+      held.release()
+      writing.release()
+      await other?.query('rollback').catch(() => undefined)
+      other?.release()
+      await Promise.allSettled([changing])
+    }
+
+    expect(await changing).toEqual({ status: 201, outcomes: ['applied', 'applied'] })
+  })
+
+  it('waits for no draft it comes to late, and goes through when sent again', async () => {
+    const { to, write, transmit, held, writing, changing } = await aLineMovedMeanwhile()
+    let issuing: PoolClient | undefined
+    let answered: unknown
+
+    try {
+      issuing = await lockedForIssuing(to.invoice)
+      held.release()
+      // Issuing holds the draft the hour went to: waiting for it out of the
+      // order of the ids could wait in a circle, so the transmission gives up
+      // before it writes, and a device sends it again. Its first write stays
+      // held meanwhile: one that came to it would wait there, not answer.
+      answered = await Promise.race([
+        changing,
+        new Promise((resolve) => setTimeout(() => resolve('waited'), 3000)),
+      ])
+
+      // Before issuing writes on: a transmission still waiting would have it
+      // wait in the circle this test is about.
+      expect(answered).toEqual({ status: 503, outcomes: [] })
+
+      await issuing.query("update jobs set description = 'Zähler prüfen' where id = $1", [to.job])
+      await issuing.query('commit')
+    } finally {
+      writing.release()
+      held.release()
+      await issuing?.query('rollback').catch(() => undefined)
+      issuing?.release()
+      await Promise.allSettled([changing])
+    }
+
+    const { rows } = await admin.query('select id from jobs where id = $1', [write.recordId])
+
+    expect(rows).toEqual([])
+    expect(await transmit()).toEqual({ status: 201, outcomes: ['applied', 'applied'] })
+  })
+
+  it('locks an invoice with its report in the order of their ids, as a transmission does', async () => {
+    const { invoice } = await draftOf()
+    const { rows } = await admin.query<{ report: string }>(
+      'select predecessor_document_id as report from documents where id = $1',
+      [invoice],
+    )
+    // The two in the order of their ids, whichever was made first.
+    const [first = '', second = ''] = [rows[0]?.report ?? '', invoice].sort()
+
+    // A transmission that comes to the first of them and to the other next.
+    const transmission = await begun()
+    let issuing: Promise<number> | undefined
+
+    try {
+      await transmission.query('select id from documents where id = $1 for no key update', [first])
+      issuing = http()
+        .post(`/documents/${invoice}/issue`)
+        .set('x-test-identity', office())
+        .send({})
+        .then((answer) => answer.status)
+      await waitingFor(admin, transmission, issuing)
+      await transmission.query('select id from documents where id = $1 for no key update', [second])
+      await transmission.query('commit')
+    } finally {
+      await transmission.query('rollback').catch(() => undefined)
+      transmission.release()
+      await Promise.allSettled([issuing])
+    }
+
+    expect(await issuing).toBe(201)
+  })
+
+  it('checks a named surcharge against a call taken away while it waited for the draft', async () => {
+    const { job, invoice } = await draftOf()
+    // Another change of the call, holding the draft as its route does, takes
+    // the call away and has not committed yet.
+    const removing = await begun()
+    let naming: Promise<number> | undefined
+
+    try {
+      await removing.query('select id from documents where id = $1 for no key update', [invoice])
+      await removing.query(
+        `update jobs set emergency_at = null, emergency_named_flat_cents = null,
+           emergency_named_basis_points = null where id = $1`,
+        [job],
+      )
+      naming = http()
+        .patch(`/jobs/${job}`)
+        .set('x-test-identity', office())
+        .send({ emergencyNamedFlatCents: 2000, emergencyNamedBasisPoints: 0 })
+        .then((answer) => answer.status)
+      await waitingFor(admin, removing, naming)
+      await removing.query('commit')
+    } finally {
+      await removing.query('rollback').catch(() => undefined)
+      removing.release()
+      await Promise.allSettled([naming])
+    }
+
+    // Checked against the call as the other change left it: there is none.
+    expect(await naming).toBe(422)
+  })
+
+  it('stays removed when the office removes it while a refresh waits for the draft', async () => {
+    const { invoice, hour } = await draftOf()
+
+    await price(invoice, hour, 10_000)
+
+    // The office holds the draft, as its line route does, and removes the line.
+    const removing = await lockedForIssuing(invoice)
+    const refreshing = database.forTenant({ tenantId: north.id }, (tx) =>
+      refreshSurchargeLine(tx, invoice),
+    )
+
+    try {
+      await waitingFor(admin, removing, refreshing)
+      await removing.query(
+        'update document_lines set deleted_at = now(), emergency_surcharge = false where document_id = $1 and emergency_surcharge',
+        [invoice],
+      )
+      await removing.query('commit')
+    } finally {
+      await removing.query('rollback').catch(() => undefined)
+      removing.release()
+      await Promise.allSettled([refreshing])
+    }
+
+    await refreshing
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      deleted: true,
+      emergency_surcharge: false,
+    })
+  })
+
+  const namedTwenty =
+    'update jobs set emergency_named_flat_cents = 2000, emergency_named_basis_points = 0 where id = $1'
+
+  it('is worked out once more when the invoice is issued', async () => {
+    const { job, invoice, hour } = await draftOf()
+
+    await price(invoice, hour, 10_000)
+    // 20,00 € named, past the routes as a race would leave it: the draft still says 50,00 €.
+    await writtenPastTheRoutes(namedTwenty, [job])
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000 })
+
+    await post(`/documents/${invoice}/issue`, {})
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 2000, deleted: false })
+
+    const { rows } = await admin.query<{ frozen: boolean }>(
+      `select jsonb_path_exists(content, '$.** ? (@.designation starts with "Notdienstzuschlag" && @.netCents == 2000)') as frozen
+       from document_snapshots where document_id = $1`,
+      [invoice],
+    )
+
+    expect(rows).toEqual([{ frozen: true }])
+  })
+
+  it('waits for issuing that has read the lines, and leaves the issued line as it was frozen', async () => {
+    const { job, invoice, hour } = await draftOf()
+
+    await price(invoice, hour, 10_000)
+
+    // The report first, so that issuing the invoice writes nothing before its number.
+    const { rows } = await admin.query<{ report: string }>(
+      'select predecessor_document_id as report from documents where id = $1',
+      [invoice],
+    )
+
+    await post(`/documents/${rows[0]?.report ?? ''}/issue`, {})
+
+    // Issuing has locked the draft, worked its line out, read its lines and
+    // draws its number next.
+    const held = holdQuery((text) => text.startsWith('insert into "number_ranges"'))
+    const issuing = http()
+      .post(`/documents/${invoice}/issue`)
+      .set('x-test-identity', office())
+      .send({})
+      .then((answer) => answer.status)
+    let refreshing: Promise<unknown> | undefined
+
+    try {
+      await held.reached
+      // A refresh that did not wait would write 20,00 € into the line issuing froze at 50,00 €.
+      await writtenPastTheRoutes(namedTwenty, [job])
+      refreshing = database.forTenant({ tenantId: north.id }, (tx) =>
+        refreshSurchargeLine(tx, invoice),
+      )
+      await waitedFor(held.holder(), refreshing)
+    } finally {
+      held.release()
+      // Both done before the next test, even where the wait above failed.
+      await Promise.allSettled([issuing, refreshing])
+    }
+
+    expect(await issuing).toBe(201)
+
+    await refreshing
+
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 5000, deleted: false })
+  })
+
+  it('lets a draft be issued whose surcharge the office typed, however large the hours', async () => {
+    const { job, invoice } = await draftOf()
+    const anHour = {
+      designation: 'Fahrzeit',
+      quantityMilli: 1000,
+      unit: 'hour',
+      unitPriceCents: 2_000_000_000,
+    }
+
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+    await post(`/documents/${invoice}/lines`, {
+      designation: 'Notdienstzuschlag',
+      quantityMilli: 1000,
+      unit: 'flat_rate',
+      unitPriceCents: 10_000,
+    })
+
+    for (let hours = 0; hours < 3; hours += 1) {
+      await post(`/documents/${invoice}/lines`, anHour)
+    }
+
+    // The Saturday again: 50 % of 60 million € would be too large, but the
+    // office has typed its own surcharge, and that is the draft's.
+    await patch(`/jobs/${job}`, { emergencyAt: saturday })
+    await post(`/documents/${invoice}/issue`, {})
+
+    expect(await marksOf(invoice)).toBe(0)
+  })
+
+  it('does not bring back a surcharge more than a line holds', async () => {
+    const { job, invoice } = await draftOf()
+
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+
+    for (let hours = 0; hours < 3; hours += 1) {
+      await post(`/documents/${invoice}/lines`, {
+        designation: 'Fahrzeit',
+        quantityMilli: 1000,
+        unit: 'hour',
+        unitPriceCents: 2_000_000_000,
+      })
+    }
+
+    // The Saturday again: 50 % of 60 million € do not fit a line; the change
+    // goes through, the surcharge stays away, and issuing says why.
+    await patch(`/jobs/${job}`, { emergencyAt: saturday })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([])
+
+    const refused = await http()
+      .post(`/documents/${invoice}/issue`)
+      .set('x-test-identity', office())
+      .send({})
+      .expect(409)
+
+    expect((refused.body as { message?: string }).message).toContain('größer')
+  })
+
+  it('makes the invoice out of a full report with its surcharge waiting for room', async () => {
+    const call = aCall({ emergencyAt: saturday })
+
+    await push(app, office(), [call.operation])
+
+    const report = (
+      await post('/documents', {
+        customerId: customer,
+        jobId: call.id,
+        kind: 'time_and_material_report',
+        documentDate: '2026-10-28',
+      })
+    ).id
+
+    await writtenPastTheRoutes(
+      `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents)
+       select $1, $2, n, 'Arbeitszeit', 1000, 'hour', 0, 0 from generate_series(1, 2000) n`,
+      [north.id, report],
+    )
+    await push(app, office(), [
+      created('document_signatures', newId<'document-signature'>(), {
+        documentId: report,
+        signerName: 'Ayse Arslan',
+        signedAt: new Date().toISOString(),
+        deviceInfo: null,
+        path: scribble,
+        contentFingerprint: await fingerprintAsHeld(admin, report),
+      }),
+    ])
+
+    const invoice = (await post(`/documents/${report}/successors`, { kind: 'final_invoice' })).id
+
+    expect(await marksOf(invoice)).toBe(1)
+    expect(await shownSurchargesOf(invoice)).toEqual([])
+
+    const refused = await http()
+      .post(`/documents/${invoice}/issue`)
+      .set('x-test-identity', office())
+      .send({})
+      .expect(409)
+
+    expect((refused.body as { message?: string }).message).toContain('kein Platz')
+  })
+
+  it('leaves a surcharge more than a line holds off, and issuing says so', async () => {
+    const { invoice, hour } = await draftOf()
+    const twentyMillion = 2_000_000_000
+    const anHour = {
+      designation: 'Fahrzeit',
+      quantityMilli: 1000,
+      unit: 'hour',
+      unitPriceCents: twentyMillion,
+    }
+
+    await price(invoice, hour, twentyMillion)
+    await post(`/documents/${invoice}/lines`, anHour)
+
+    // 50 % of 40 million € fit a line.
+    expect(await surchargeOf(invoice)).toMatchObject({
+      net_cents: 2_000_000_000,
+      deleted: false,
+      emergency_surcharge: true,
+    })
+
+    // 50 % of 60 million € do not: the line is written, the surcharge stays.
+    await post(`/documents/${invoice}/lines`, anHour)
+    await sent(
+      created('document_lines', newId<'document-line'>(), {
+        documentId: invoice,
+        kind: 'item',
+        position: 20,
+        ...anHour,
+        vatRate: 'standard',
+      }),
+    )
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      net_cents: 2_000_000_000,
+      deleted: false,
+      emergency_surcharge: true,
+    })
+
+    const refused = await http()
+      .post(`/documents/${invoice}/issue`)
+      .set('x-test-identity', office())
+      .send({})
+      .expect(409)
+
+    expect((refused.body as { message?: string }).message).toContain('größer')
+  })
+
+  it('waits on a full draft until the office makes room', async () => {
+    const { job, invoice } = await draftOf()
+
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+
+    expect(await surchargeOf(invoice)).toMatchObject({ deleted: true, emergency_surcharge: true })
+
+    const { rows } = await admin.query<{ lines: number }>(
+      'select count(*)::int as lines from document_lines where document_id = $1 and deleted_at is null',
+      [invoice],
+    )
+
+    await writtenPastTheRoutes(
+      `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents)
+       select $1, $2, 100 + n, 'Kleinmaterial', 1000, 'piece', 0, 0 from generate_series(1, $3::int) n`,
+      [north.id, invoice, 2000 - (rows[0]?.lines ?? 0)],
+    )
+
+    // The night again: the change goes through, and the line waits.
+    await patch(`/jobs/${job}`, { emergencyAt: atNight })
+
+    expect(await surchargeOf(invoice)).toMatchObject({ deleted: true, emergency_surcharge: true })
+
+    // Issued now, the invoice would go out without the surcharge that is due.
+    const refused = await http()
+      .post(`/documents/${invoice}/issue`)
+      .set('x-test-identity', office())
+      .send({})
+      .expect(409)
+
+    expect((refused.body as { message?: string }).message).toContain('Notdienstzuschlag')
+
+    const { rows: room } = await admin.query<{ id: string }>(
+      "select id from document_lines where document_id = $1 and designation = 'Kleinmaterial' limit 1",
+      [invoice],
+    )
+
+    await removeInOffice(invoice, room[0]?.id ?? '')
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      designation: 'Notdienstzuschlag Nacht',
+      emergency_surcharge: true,
+      deleted: false,
+    })
+  })
+})
+
 describe('the tariffs of an emergency call (#1024)', () => {
   const today = berlinClock(new Date()).day
 
@@ -899,5 +2317,238 @@ describe('the tariffs of an emergency call (#1024)', () => {
 
     expect(answer.length).toBeGreaterThan(0)
     expect(answer.every((one) => one.vatBasisPoints === null)).toBe(true)
+  })
+})
+
+/**
+ * Last in this file, because it changes the settings of every call after it:
+ * a draft follows a new value of a surcharge and the public holidays (#1087).
+ */
+describe('the line of the surcharge on a draft, after the settings (#1087)', () => {
+  it('follows a setting of the surcharges and the public holidays of the business', async () => {
+    // Saturday 31.10.2026 at 10:00, Reformation Day in Lower Saxony.
+    const call = aCall({ emergencyAt: '2026-10-31T09:00:00.000Z' })
+
+    await push(app, office(), [call.operation])
+
+    const invoice = (
+      await post(`/documents/${await aSignedReport(call.id)}/successors`, {
+        kind: 'final_invoice',
+      })
+    ).id
+    const surcharge = async () =>
+      (
+        await admin.query<{ designation: string; net_cents: number }>(
+          `select designation, net_cents from document_lines
+           where document_id = $1 and emergency_surcharge and deleted_at is null`,
+          [invoice],
+        )
+      ).rows
+    const { rows } = await admin.query<{ id: string }>(
+      "select id from document_lines where document_id = $1 and designation = 'Arbeitszeit'",
+      [invoice],
+    )
+
+    await http()
+      .patch(`/documents/${invoice}/lines/${rows[0]?.id ?? ''}`)
+      .set('x-test-identity', office())
+      .send({ unitPriceCents: 10_000 })
+      .expect(200)
+
+    expect(await surcharge()).toEqual([
+      { designation: 'Notdienstzuschlag Wochenende', net_cents: 5000 },
+    ])
+
+    await post(
+      '/settings/parameters',
+      { key: 'emergency.weekend_basis_points', from: '2026-10-31', value: 2500, note: null },
+      owner(),
+    )
+
+    expect(await surcharge()).toEqual([
+      { designation: 'Notdienstzuschlag Wochenende', net_cents: 2500 },
+    ])
+
+    await setting('emergency.holiday_flat_cents', 2000)
+    await http()
+      .put('/holidays')
+      .set('x-test-identity', owner())
+      .send({ state: 'DE-NI', local: [] })
+      .expect(200)
+
+    expect(await surcharge()).toEqual([
+      { designation: 'Notdienstzuschlag Feiertag', net_cents: 2000 },
+    ])
+  })
+
+  /** A draft out of the signed report of a call on Saturday 24.10.2026 at 10:00. */
+  async function aDraft() {
+    const call = aCall({ emergencyAt: '2026-10-24T08:00:00.000Z' })
+
+    await push(app, office(), [call.operation])
+
+    const invoice = (
+      await post(`/documents/${await aSignedReport(call.id)}/successors`, {
+        kind: 'final_invoice',
+      })
+    ).id
+
+    const { rows } = await admin.query<{ id: string }>(
+      "select id from document_lines where document_id = $1 and designation = 'Arbeitszeit'",
+      [invoice],
+    )
+
+    return { job: call.id, invoice, hour: rows[0]?.id ?? '' }
+  }
+
+  /** One transmission of the office's device, answered as it comes. */
+  const transmitted = (operations: unknown[]) =>
+    http()
+      .post('/sync')
+      .set('x-test-identity', office())
+      .send({ deviceId: deviceOf(office()), operations })
+
+  const toTheNight = (job: string) =>
+    changed('jobs', job, { emergencyAt: { from: '2026-10-24T08:00:00.000Z', to: atNight } })
+
+  type Draft = Awaited<ReturnType<typeof aDraft>>
+
+  it.each([
+    [
+      'the office changes the call',
+      ({ job }: Draft) =>
+        http()
+          .patch(`/jobs/${job}`)
+          .set('x-test-identity', office())
+          .send({ emergencyNamedFlatCents: 2000, emergencyNamedBasisPoints: 0 }),
+      200,
+      [],
+    ],
+    [
+      'a device changes the call',
+      ({ job }: Draft) => transmitted([toTheNight(job)]),
+      201,
+      ['applied'],
+    ],
+    [
+      // The first operation writes, and the transmission holds the log from then on.
+      'a device changes the call after another write',
+      ({ job }: Draft) => transmitted([aCall().operation, toTheNight(job)]),
+      201,
+      ['applied', 'applied'],
+    ],
+    [
+      'a device prices a line of the draft after another write',
+      ({ hour }: Draft) =>
+        transmitted([
+          aCall().operation,
+          changed('document_lines', hour, { unitPriceCents: { from: 0, to: 1000 } }),
+        ]),
+      201,
+      ['applied', 'applied'],
+    ],
+    [
+      'a setting of the surcharges',
+      (_draft: Draft) =>
+        http().post('/settings/parameters').set('x-test-identity', owner()).send({
+          key: 'emergency.weekend_basis_points',
+          from: '2026-11-02',
+          value: 3000,
+          note: null,
+        }),
+      201,
+      [],
+    ],
+    [
+      'the public holidays',
+      (_draft: Draft) =>
+        http().put('/holidays').set('x-test-identity', owner()).send({ state: 'DE-NI', local: [] }),
+      200,
+      [],
+    ],
+  ] as const)(
+    '%s waits for a draft that is being issued, and does not deadlock',
+    async (_, change, status, outcomes) => {
+      const draft = await aDraft()
+      const issuing = await lockedForIssuing(draft.invoice)
+      const changing = change(draft).then((answer) => ({
+        status: answer.status,
+        receipts: (answer.body as { receipts?: { outcome: string }[] }).receipts ?? [],
+      }))
+
+      try {
+        await waitingFor(admin, issuing, changing)
+        // Issuing writes now, as it does after its lock.
+        await issuing.query(
+          "update documents set subject = coalesce(subject, 'Rechnung') where id = $1",
+          [draft.invoice],
+        )
+        await issuing.query('commit')
+      } finally {
+        await issuing.query('rollback').catch(() => undefined)
+        issuing.release()
+        await Promise.allSettled([changing])
+      }
+
+      const answer = await changing
+
+      expect(answer.status).toBe(status)
+      // A transmission gets a receipt for every operation, each applied.
+      expect(answer.receipts.map((receipt) => receipt.outcome)).toEqual(outcomes)
+    },
+  )
+
+  it('signs a report after another write while the report is being issued, without a deadlock', async () => {
+    const call = aCall({ emergencyAt: '2026-10-24T08:00:00.000Z' })
+
+    await push(app, office(), [call.operation])
+
+    const report = (
+      await post('/documents', {
+        customerId: customer,
+        jobId: call.id,
+        kind: 'time_and_material_report',
+        documentDate: '2026-10-28',
+      })
+    ).id
+
+    await post(`/documents/${report}/lines`, {
+      designation: 'Arbeitszeit',
+      quantityMilli: 1000,
+      unit: 'hour',
+      unitPriceCents: 0,
+    })
+
+    // Made first, so that it comes first in the outbox: it writes, and the
+    // transmission holds the log from then on.
+    const write = aCall().operation
+    const signature = created('document_signatures', newId<'document-signature'>(), {
+      documentId: report,
+      signerName: 'Ayse Arslan',
+      signedAt: new Date().toISOString(),
+      deviceInfo: null,
+      path: scribble,
+      contentFingerprint: await fingerprintAsHeld(admin, report),
+    })
+    const issuing = await lockedForIssuing(report)
+    const signing = transmitted([write, signature]).then((answer) => ({
+      status: answer.status,
+      outcomes: ((answer.body as { receipts?: { outcome: string }[] }).receipts ?? []).map(
+        (receipt) => receipt.outcome,
+      ),
+    }))
+
+    try {
+      await waitingFor(admin, issuing, signing)
+      // A logged write that leaves what the signature covers as it is.
+      await issuing.query("update jobs set description = 'Zähler prüfen' where id = $1", [call.id])
+      await issuing.query('commit')
+    } finally {
+      await issuing.query('rollback').catch(() => undefined)
+      issuing.release()
+      await Promise.allSettled([signing])
+    }
+
+    expect(await signing).toEqual({ status: 201, outcomes: ['applied', 'applied'] })
   })
 })

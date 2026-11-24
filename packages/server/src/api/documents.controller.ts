@@ -33,6 +33,7 @@ import {
   isCancellable,
   isInvoice,
   type IsoDate,
+  lineLimits,
   type MissingDetail,
   missingDetails,
   noInstructionChoices,
@@ -71,7 +72,11 @@ import {
 import { articlePricesOn, type PriceOfDay, pricedFromArticle } from '../documents/article-prices.js'
 import { contentAndGapsOf, issuerOf, withStoredLogo } from '../documents/content.js'
 import { contractFlatLineFor } from '../contracts/invoice.js'
-import { surchargeLineFor } from '../service-calls/on-call.js'
+import {
+  insertSurchargeLine,
+  refreshSurchargeLine,
+  surchargeLineFor,
+} from '../service-calls/on-call.js'
 import { deductionsFor, paymentsOfADraft, showsReceivedPayments } from '../documents/deductions.js'
 import { choicesOf } from '../documents/instructions.js'
 import { proposedTreatment } from '../documents/treatment.js'
@@ -361,6 +366,11 @@ export class DocumentsController {
         .returning()
 
       if (updated) {
+        // A draft moved to another job has the surcharge of that call (#1087).
+        if (values.jobId !== undefined) {
+          await refreshSurchargeLine(tx, updated.id)
+        }
+
         return updated
       }
 
@@ -425,6 +435,46 @@ export class DocumentsController {
     @Body() body: unknown,
   ) {
     return this.database.forTenant(identity, async (tx) => {
+      // The document and its whole chain upwards, locked together before
+      // anything is written, in the order of their ids, the order a
+      // transmission from a device locks the documents it comes to
+      // (opengewerk#1094). The predecessor is fixed below and the deductions
+      // read every link above it; locked one after the other, or after a
+      // write, issuing could hold one the transmission waits for and wait
+      // for one it holds. The links are made with each document and never
+      // change (#129), so the chain is walked without a lock first. The lock
+      // a transmission takes, and no stronger: a key share, as the first file
+      // of a document above takes it for its reference, goes through.
+      const chain: DocumentId[] = [id as DocumentId]
+
+      for (let link: DocumentId | null = id as DocumentId; link !== null;) {
+        const [found] = await tx
+          .select({ predecessorDocumentId: documents.predecessorDocumentId })
+          .from(documents)
+          .where(eq(documents.id, link))
+
+        // A document not to be seen yet, one being made right now, is not
+        // there to issue: its chain could not be locked whole.
+        if (!found && chain.length === 1) {
+          throw new NotFoundException()
+        }
+
+        const next: DocumentId | null = found?.predecessorDocumentId ?? null
+
+        link = next !== null && !chain.includes(next) ? next : null
+
+        if (link !== null) {
+          chain.push(link)
+        }
+      }
+
+      await tx
+        .select({ id: documents.id })
+        .from(documents)
+        .where(inArray(documents.id, chain))
+        .orderBy(documents.id)
+        .for('no key update')
+
       // Locked before anything is read that the snapshot freezes: a line
       // route, a change to the head and the trigger on the lines wait for
       // this row, so the snapshot holds what the document says when it is
@@ -458,6 +508,30 @@ export class DocumentsController {
         if (predecessor && isSignedReport(predecessor)) {
           await fixDocument(tx, identity, predecessor)
         }
+      }
+
+      // The line of the surcharge as everything stands now, once more before
+      // it is frozen (#1087): a change that raced the draft into being, or
+      // one that came before its line, shows here at the latest. After the
+      // locks above, in their order. A surcharge that is due and is not on
+      // the draft, for want of room or for its size, is not left off in
+      // silence.
+      const surchargeWaits = await refreshSurchargeLine(tx, existing.id)
+
+      if (surchargeWaits === 'waits for room') {
+        throw new ConflictException(
+          'Für den Notdienstzuschlag ist kein Platz mehr: Ein Beleg hat höchstens ' +
+            `${lineLimits.lines.toLocaleString('de-DE')} Positionen. Sobald eine entfernt ist, ` +
+            'kommt er dazu, dann lässt sich der Beleg festschreiben.',
+        )
+      }
+
+      if (surchargeWaits === 'too large') {
+        throw new ConflictException(
+          'Der Notdienstzuschlag wäre größer, als eine Position fassen kann. Die Stunden ' +
+            'prüfen; stimmen sie, den Zuschlag selbst eintragen: die Zeile des Zuschlags von ' +
+            'Hand ändern oder, steht keine da, eine Position „Notdienstzuschlag“ anlegen.',
+        )
       }
 
       // One moment for the date and the issuing, so that an invoice issued
@@ -725,23 +799,14 @@ export class DocumentsController {
       // The invoice out of the report of an emergency call carries the
       // surcharge the business set for its kind (#293), as the last line.
       if (predecessor.kind === 'time_and_material_report') {
-        const surcharge = await surchargeLineFor(tx, predecessor.jobId, priced, prices)
-
-        if (surcharge) {
-          await tx.insert(documentLines).values({
-            tenantId: identity.tenantId,
-            documentId: created.id,
-            kind: 'item',
-            position: priced.reduce((last, line) => Math.max(last, line.position), 0) + 1,
-            designation: surcharge.designation,
-            description: surcharge.description,
-            quantityMilli: surcharge.quantityMilli,
-            unit: surcharge.unit,
-            unitPriceCents: surcharge.unitPriceCents,
-            vatRate: 'standard',
-            netCents: surcharge.netCents,
-          })
-        }
+        await insertSurchargeLine(
+          tx,
+          identity.tenantId,
+          created.id,
+          priced.reduce((last, line) => Math.max(last, line.position), 0) + 1,
+          predecessor.jobId,
+          await surchargeLineFor(tx, predecessor.jobId, priced),
+        )
       }
 
       return created

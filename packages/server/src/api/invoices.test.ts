@@ -20,8 +20,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { applicationDatabaseUrl, connect, resetToMigrated } from '../database/test-database.js'
 import { ApiModule } from './api.module.js'
 import { binary } from './test-binary.js'
+import { holdQuery } from './test-hold.js'
 import { as, testIdentities as identities } from './test-identity.js'
 import { invoiceable, readyToInvoice } from './test-invoice.js'
+import { changed, created } from './test-structure.js'
 
 /**
  * The end of the chain, #74: the final invoice out of what the work was agreed
@@ -941,5 +943,144 @@ describe('a chain that does not branch', () => {
       .catch((error: unknown) => error)
 
     expect(refusal).toMatchObject({ code: '23505', constraint: 'documents_one_successor' })
+  })
+})
+
+describe('issuing next to a transmission from a device (opengewerk#1094)', () => {
+  it('locks the whole chain before it writes, so a transmission that comes to the quote waits', async () => {
+    const quote = await draft('quote', { subject: 'Angebot Kette' })
+
+    await add(quote.id, { ...cable, quantityMilli: 1000 })
+    await issue(quote.id)
+
+    const confirmation = await successor(quote.id, 'order_confirmation')
+
+    await issue(confirmation.id)
+
+    const invoice = await successor(confirmation.id, 'final_invoice')
+
+    // A draft of an earlier day: issuing dates it, a logged write, before it
+    // reads the deductions up the chain.
+    await admin.query(
+      "update documents set document_date = '2026-10-01', service_from = '2026-09-30' where id = $1",
+      [invoice.id],
+    )
+
+    // Held at the first deduction it reads, after it wrote.
+    const held = holdQuery((text) => /for share/i.test(text))
+    const issuing = http()
+      .post(`/documents/${invoice.id}/issue`)
+      .set('x-test-identity', office())
+      .send({})
+      .then((answer) => answer.status)
+    let sent: Promise<{ status: number; outcomes: string[] }> | undefined
+
+    try {
+      await held.reached
+
+      // A transmission: first a write, then a stale change of the issued quote.
+      const write = created('jobs', newId<'job'>(), {
+        customerId,
+        kind: 'service',
+        status: 'active',
+        designation: 'Sicherung',
+      })
+
+      await new Promise((resolve) => setTimeout(resolve, 5))
+
+      const stale = changed('documents', quote.id, {
+        subject: { from: 'Angebot Kette', to: 'Angebot neu' },
+      })
+
+      sent = http()
+        .post('/sync')
+        .set('x-test-identity', office())
+        .send({ deviceId: 'geraet-im-keller', operations: [write, stale] })
+        .then((answer) => ({
+          status: answer.status,
+          outcomes: ((answer.body as { receipts?: { outcome: string }[] }).receipts ?? []).map(
+            (receipt) => receipt.outcome,
+          ),
+        }))
+
+      // Until the transmission waits for issuing: at the lock of the quote,
+      // before it wrote anything, and not at the log behind a write.
+      let waitingAt: string[] = []
+
+      for (let tries = 0; tries < 100 && waitingAt.length === 0; tries += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+
+        const { rows } = await admin.query<{ query: string }>(
+          'select query from pg_stat_activity where $1 = any(pg_blocking_pids(pid))',
+          [held.holder()],
+        )
+
+        waitingAt = rows.map((row) => row.query)
+      }
+
+      // The lock taken before the first operation, of one document: the quote,
+      // the only one the transmission comes to.
+      expect(waitingAt).toEqual([
+        expect.stringMatching(/from "documents".*in \(\$1\).*order by.*for no key update/i),
+      ])
+    } finally {
+      held.release()
+      // Both requests done before the test tears its server down, even where
+      // an expectation above failed.
+      await Promise.allSettled([issuing, sent])
+    }
+
+    // The job is written, the change of the quote issued meanwhile is a conflict.
+    expect({ issue: await issuing, sync: await sent }).toEqual({
+      issue: 201,
+      sync: { status: 201, outcomes: ['applied', 'conflict'] },
+    })
+  })
+
+  it('lets the first file of a quote above through while its final invoice is being issued', async () => {
+    const quote = await draft('quote')
+
+    await add(quote.id, { ...cable, quantityMilli: 1000 })
+    await issue(quote.id)
+
+    const confirmation = await successor(quote.id, 'order_confirmation')
+
+    await issue(confirmation.id)
+
+    const invoice = await successor(confirmation.id, 'final_invoice')
+
+    // Held after the lock of its chain, at the lock of the invoice itself.
+    const held = holdQuery(
+      (text, values) =>
+        /for update/i.test(text) && !/order by/i.test(text) && values.includes(invoice.id),
+    )
+    const issuing = http()
+      .post(`/documents/${invoice.id}/issue`)
+      .set('x-test-identity', office())
+      .send({})
+      .then((answer) => answer.status)
+    let pdf: Promise<number> | undefined
+    let throughBeforeIssuing: boolean | undefined
+
+    try {
+      await held.reached
+      // The first PDF of the quote: its file refers to the quote (a key share).
+      pdf = http()
+        .get(`/documents/${quote.id}/pdf`)
+        .set('x-test-identity', office())
+        .then((answer) => answer.status)
+      // Through while issuing still holds the chain, or given up on after a
+      // while: a PDF that waits for issuing would wait here for ever.
+      throughBeforeIssuing = await Promise.race([
+        pdf.then(() => true),
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), 3000)),
+      ])
+    } finally {
+      held.release()
+      await Promise.allSettled([issuing, pdf])
+    }
+
+    expect(throughBeforeIssuing).toBe(true)
+    expect({ issue: await issuing, pdf: await pdf }).toEqual({ issue: 201, pdf: 200 })
   })
 })

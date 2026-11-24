@@ -6,7 +6,7 @@ import {
   type TenantId,
 } from '@opengewerk/platform-domain'
 import { probePolicies } from '@opengewerk/platform-domain/testing'
-import { eq, sql } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import type { Pool } from 'pg'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
@@ -618,6 +618,93 @@ describe('applying what a device queued up', () => {
     expect(await inTenant(north.id, (tx) => tx.select().from(notes))).toMatchObject([
       { text: '(privat)' },
     ])
+  })
+
+  it('shows an application every operation of a transmission before the first one writes (opengewerk#1094)', async () => {
+    const first = newId<'note'>()
+    const second = newId<'note'>()
+    const seen: { readonly records: string[]; readonly written: number }[] = []
+    const after: number[] = []
+    const locking = serverSync<Courier>({
+      rules: probeSyncRules,
+      tables: syncTables({ shelves, notes, letters, letterLines }),
+      beforeOperations: async ({ tx, operations }) => {
+        seen.push({
+          records: operations.map((given) => given.recordId).sort(),
+          written: (
+            await tx
+              .select()
+              .from(notes)
+              .where(inArray(notes.id, [first, second]))
+          ).length,
+        })
+      },
+      afterOperations: async ({ tx }) => {
+        after.push(
+          (
+            await tx
+              .select()
+              .from(notes)
+              .where(inArray(notes.id, [first, second]))
+          ).length,
+        )
+      },
+    })
+
+    await inTenant(north.id, (tx) =>
+      locking.applyOperations(
+        tx,
+        north.id,
+        [
+          operation({
+            entity: 'notes',
+            recordId: first,
+            patches: [{ field: 'text', to: 'Zähler ablesen' }],
+          }),
+          operation({
+            entity: 'notes',
+            recordId: second,
+            patches: [{ field: 'text', to: 'Sicherung prüfen' }],
+          }),
+        ],
+        courier,
+      ),
+    )
+
+    expect(seen).toEqual([{ records: [first, second].sort(), written: 0 }])
+    // And once more after the last one wrote (opengewerk#1087).
+    expect(after).toEqual([2])
+  })
+
+  it('shows an application after a transmission only what it wrote, and nothing of one sent again (opengewerk#1087)', async () => {
+    const shown: string[][] = []
+    const following = serverSync<Courier>({
+      rules: probeSyncRules,
+      tables: syncTables({ shelves, notes, letters, letterLines }),
+      afterOperations: ({ operations }) => {
+        shown.push(operations.map((given) => given.recordId))
+      },
+    })
+    const note = newId<'note'>()
+    const transmission = [
+      operation({
+        entity: 'notes',
+        recordId: note,
+        patches: [{ field: 'text', to: 'Zähler ablesen' }],
+      }),
+      // Kept as a conflict: nothing was written for it.
+      operation({ entity: 'cellars', recordId: newId<'note'>() }),
+    ]
+
+    await inTenant(north.id, (tx) => following.applyOperations(tx, north.id, transmission, courier))
+
+    expect(shown).toEqual([[note]])
+
+    // Sent again, as by a device that lost the connection after the server
+    // committed: every operation seen before.
+    await inTenant(north.id, (tx) => following.applyOperations(tx, north.id, transmission, courier))
+
+    expect(shown).toEqual([[note]])
   })
 
   it('marks a deleted record instead of removing it, so that a device that was away hears of it', async () => {

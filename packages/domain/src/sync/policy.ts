@@ -131,7 +131,9 @@ export const syncPolicies: Readonly<Record<string, SyncPolicy>> = {
     create: true,
     change: 'merge',
     gateFrom: { reference: 'documentId', entity: 'documents', field: 'status', values: ['draft'] },
-    reserved: ['netCents'],
+    // The mark of the surcharge's line (#1087) is the server's: it sets it on
+    // the invoice out of a report and takes it away at a change by hand.
+    reserved: ['netCents', 'emergencySurcharge'],
   },
   /**
    * A customer's signature, given on site and so made offline, and after that

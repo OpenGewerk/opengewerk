@@ -9,6 +9,7 @@ import {
 import { tenantColumn } from '@opengewerk/platform-server/schema'
 import { sql } from 'drizzle-orm'
 import {
+  boolean,
   check,
   foreignKey,
   index,
@@ -85,6 +86,13 @@ export const documentLines = pgTable(
      * A pointer and nothing more: text, unit and price are the line's own.
      */
     articleId: reference<'article'>('article_id'),
+    /**
+     * The line of the surcharge of an emergency call (#293) as the invoice
+     * got it, which the server works out again from the hours of the draft
+     * whenever they change (#1087). A change of its text or amount by hand
+     * takes the mark away: from then on the office holds the line.
+     */
+    emergencySurcharge: boolean('emergency_surcharge').notNull().default(false),
     ...timestamps,
     ...syncColumns,
   },

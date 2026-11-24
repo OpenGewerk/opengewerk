@@ -4,6 +4,7 @@ import {
   chargeableSurcharge,
   type ConflictReason,
   defaultNight,
+  type DocumentId,
   emergencyKindAt,
   type EmergencyKind,
   emergencyKinds,
@@ -15,19 +16,21 @@ import {
   holidaysIn,
   type IsoDate,
   type JobId,
+  lineLimits,
   type LineUnit,
   longestOnCallDays,
   shippedRules,
   type SurchargeLine,
   tariffStarts,
+  type TenantId,
+  whyFixed,
 } from '@opengewerk/domain'
 import { isUuid, type TenantTransaction } from '@opengewerk/platform-server'
-import { and, eq, gt, isNull, lte } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lte, ne } from 'drizzle-orm'
 
 import { holidaySettingOf } from '../absences/absences.js'
-import { hasPriceOfDay, type PriceOfDay } from '../documents/article-prices.js'
 import { parameterAt, parameterHistory } from '../database/parameters.js'
-import { jobs, onCallShifts } from '../database/schema/index.js'
+import { documentLines, documents, jobs, onCallShifts } from '../database/schema/index.js'
 
 /**
  * How far ahead of the server's clock a device may put the moment of a call:
@@ -117,18 +120,14 @@ const hourUnits: readonly LineUnit[] = ['hour']
  * of its reports, or null: for a job without a moment of a call, for a call
  * in ordinary hours, and for a kind the business set no surcharge for on the
  * day of the call. The public holidays are those of the business on that day.
+ *
+ * Every hour counts at the price it has (#1087), an hour without one yet at
+ * nothing; the draft works the line out again when the office prices it.
  */
 export async function surchargeLineFor(
   tx: TenantTransaction,
   jobId: string | null,
-  lines: readonly {
-    readonly kind: string
-    readonly articleId: string | null
-    readonly unit: LineUnit
-    readonly unitPriceCents: number
-    readonly netCents: number
-  }[],
-  prices: ReadonlyMap<string, PriceOfDay>,
+  lines: readonly { readonly unit: LineUnit; readonly netCents: number }[],
 ): Promise<SurchargeLine | null> {
   if (jobId === null || !isUuid(jobId)) {
     return null
@@ -158,19 +157,482 @@ export async function surchargeLineFor(
     return null
   }
 
-  const hours = lines.filter((line) => hourUnits.includes(line.unit))
-  const hourNetCents = hours.reduce((sum, line) => sum + line.netCents, 0)
-  // Hours without a price yet, as a report has them, decide nothing between a
-  // flat amount and a percentage (#1081); no hours at all cost nothing. An
-  // hour given free at 0,00 € has its price, and so has one priced by hand.
-  const priced = hours.every((line) => line.unitPriceCents > 0 || hasPriceOfDay(line, prices))
+  const hourNetCents = lines
+    .filter((line) => hourUnits.includes(line.unit))
+    .reduce((sum, line) => sum + line.netCents, 0)
 
   return emergencySurchargeLine(
     kind,
-    chargeableSurcharge(tariff.surcharges[kind], namedOf(job), priced ? hourNetCents : null),
+    chargeableSurcharge(tariff.surcharges[kind], namedOf(job), hourNetCents),
     hourNetCents,
   )
 }
+
+/**
+ * What of the line of the surcharge the server works out, and a change of
+ * which by hand takes it over (#1087), with the document it is on: a line a
+ * device moves to another draft is no surcharge of that draft's call, and
+ * that draft may have its own.
+ */
+const surchargeFields = [
+  'documentId',
+  'kind',
+  'designation',
+  'description',
+  'quantityMilli',
+  'unit',
+  'unitPriceCents',
+  'priceBase',
+  'articleId',
+] as const
+
+/** The fields of the surcharge that hold an id. */
+const idFields: readonly string[] = ['documentId', 'articleId']
+
+/**
+ * Whether a change takes the line of the surcharge over from the server
+ * (#1087): its document, text, quantity, unit, price or article set to
+ * something else than it holds. Its place among the lines and its rate of
+ * tax are no change of the surcharge. A number compared as a number: the
+ * line route takes one written as text, " 1000" or "01000" alike, which the
+ * column stores as the number, so the same value sent that way changes
+ * nothing. An id alike in capitals, which a device may send and a column of
+ * uuids takes all the same. Nothing compared on its own: the word "null"
+ * typed as a text is a text, not nothing.
+ */
+export function takesOverSurcharge(
+  values: Readonly<Record<string, unknown>>,
+  current: Readonly<Record<string, unknown>>,
+): boolean {
+  const differs = (field: string, sent: unknown, held: unknown) =>
+    sent === null || held === null
+      ? sent !== held
+      : typeof held === 'number'
+        ? Number(sent) !== held
+        : idFields.includes(field)
+          ? String(sent).toLowerCase() !== String(held).toLowerCase()
+          : String(sent) !== String(held)
+
+  return surchargeFields.some(
+    (field) => values[field] !== undefined && differs(field, values[field], current[field]),
+  )
+}
+
+/**
+ * The line of the surcharge of a draft worked out again from what it depends
+ * on as it stands now (#1087): the hours of the draft at the price they have,
+ * the job of the draft with its call and the surcharge named before the
+ * order, the settings of the day of the call. Only the marked line changes; a
+ * draft without one, a fixed document and a line the office took over stay
+ * as they are. The line goes where the call no longer has a surcharge, as on
+ * a draft moved to a job that is no emergency, and keeps its mark while it is
+ * gone: once the call has a surcharge again, the same line comes back, under
+ * its own id. A line the office or a device removes loses its mark as it goes.
+ * Answers whether a surcharge that is due waits for room on a full draft, or
+ * is more than a line holds, in which case the line stays as it was.
+ *
+ * Locked like a line written in the office, so that it waits for a
+ * transaction that is issuing the document and then finds it fixed.
+ */
+export async function refreshSurchargeLine(
+  tx: TenantTransaction,
+  documentId: string,
+): Promise<SurchargeWait | null> {
+  if (!isUuid(documentId)) {
+    return null
+  }
+
+  // Most lines are on a document without one, a report above all: asked
+  // first, before the document is locked. A mark on a line that is gone
+  // counts, it is the surcharge the draft may get back.
+  const [mark] = await tx
+    .select({ id: documentLines.id })
+    .from(documentLines)
+    .where(
+      and(
+        eq(documentLines.documentId, documentId as DocumentId),
+        eq(documentLines.emergencySurcharge, true),
+      ),
+    )
+    .limit(1)
+
+  if (!mark) {
+    return null
+  }
+
+  const [document] = await tx
+    .select({
+      kind: documents.kind,
+      status: documents.status,
+      jobId: documents.jobId,
+    })
+    .from(documents)
+    .where(and(eq(documents.id, documentId as DocumentId), isNull(documents.deletedAt)))
+    .for('no key update')
+
+  if (!document || whyFixed(document) !== null) {
+    return null
+  }
+
+  const lines = await tx
+    .select()
+    .from(documentLines)
+    .where(
+      and(eq(documentLines.documentId, documentId as DocumentId), isNull(documentLines.deletedAt)),
+    )
+  const marked = lines.find((line) => line.emergencySurcharge)
+  const surcharge = await surchargeLineFor(
+    tx,
+    document.jobId,
+    lines.filter((line) => line !== marked),
+  )
+
+  if (!marked) {
+    // A surcharge the office typed in while the line was gone is the draft's
+    // surcharge, whether one is due now or not: the line that went loses its
+    // mark for good, as it would next to a line still there.
+    if (typedSurchargeIn(lines)) {
+      await tx
+        .update(documentLines)
+        .set({ emergencySurcharge: false })
+        .where(
+          and(
+            eq(documentLines.documentId, documentId as DocumentId),
+            eq(documentLines.emergencySurcharge, true),
+            isNotNull(documentLines.deletedAt),
+          ),
+        )
+
+      return null
+    }
+
+    return surcharge === null
+      ? null
+      : await restoreSurchargeLine(tx, documentId as DocumentId, lines, surcharge)
+  }
+
+  // Next to a surcharge the office typed in, or one a device moved here from
+  // another draft, the line of the server steps back for good, as one the
+  // office removed: a draft charges one surcharge.
+  if (typedSurchargeIn(lines)) {
+    await tx
+      .update(documentLines)
+      .set({ deletedAt: new Date(), emergencySurcharge: false })
+      .where(eq(documentLines.id, marked.id))
+
+    return null
+  }
+
+  if (surcharge === null) {
+    await tx
+      .update(documentLines)
+      .set({ deletedAt: new Date() })
+      .where(eq(documentLines.id, marked.id))
+
+    return null
+  }
+
+  // Out of hours a line holds each, a sum the column cannot: written, it would
+  // refuse whatever brought it, a transmission with no operation to blame.
+  if (tooLarge(surcharge)) {
+    return 'too large'
+  }
+
+  const next = {
+    designation: surcharge.designation,
+    description: surcharge.description,
+    quantityMilli: surcharge.quantityMilli,
+    unit: surcharge.unit,
+    unitPriceCents: surcharge.unitPriceCents,
+    netCents: surcharge.netCents,
+  }
+
+  // Unchanged, the line keeps its version: a device holds nothing new.
+  if (
+    Object.entries(next).every(([field, value]) => marked[field as keyof typeof next] === value)
+  ) {
+    return null
+  }
+
+  await tx.update(documentLines).set(next).where(eq(documentLines.id, marked.id))
+
+  return null
+}
+
+/**
+ * The surcharge back on a draft whose line the server took away while the
+ * call had none (#1087): the line that went, back as itself, as the last one,
+ * with its rate of tax. As itself, so that whoever still holds it and removes
+ * it comes to the line that is there (#1099): as a conflict to decide, since
+ * the server changed it meanwhile, and not past a new line in silence. Any
+ * other line that went loses its mark.
+ *
+ * Only where a line that went still carries the mark: one the office removed
+ * while this transaction waited for the draft lost it and stays removed. And
+ * only where the draft has room: on a full one the line waits, marked, until
+ * the office removes another, instead of refusing the change that brought it.
+ * Never next to a surcharge the office typed in, which the caller has asked
+ * about before.
+ */
+async function restoreSurchargeLine(
+  tx: TenantTransaction,
+  documentId: DocumentId,
+  lines: readonly { readonly position: number }[],
+  surcharge: SurchargeLine,
+): Promise<SurchargeWait | null> {
+  const gone = and(
+    eq(documentLines.documentId, documentId),
+    eq(documentLines.emergencySurcharge, true),
+    isNotNull(documentLines.deletedAt),
+  )
+  const [last] = await tx
+    .select({ id: documentLines.id })
+    .from(documentLines)
+    .where(gone)
+    .orderBy(desc(documentLines.deletedAt))
+    .limit(1)
+
+  if (!last) {
+    return null
+  }
+
+  if (lines.length >= lineLimits.lines) {
+    return 'waits for room'
+  }
+
+  if (tooLarge(surcharge)) {
+    return 'too large'
+  }
+
+  await tx
+    .update(documentLines)
+    .set({ emergencySurcharge: false })
+    .where(and(gone, ne(documentLines.id, last.id)))
+  await tx
+    .update(documentLines)
+    .set({
+      deletedAt: null,
+      // After the last line, and no further than the column reaches: places
+      // need not differ, and a line typed in at the very end would otherwise
+      // refuse whatever brought the surcharge back.
+      position:
+        Math.min(
+          lines.reduce((highest, line) => Math.max(highest, line.position), 0),
+          lastPosition - 1,
+        ) + 1,
+      designation: surcharge.designation,
+      description: surcharge.description,
+      quantityMilli: surcharge.quantityMilli,
+      unit: surcharge.unit,
+      unitPriceCents: surcharge.unitPriceCents,
+      netCents: surcharge.netCents,
+    })
+    .where(eq(documentLines.id, last.id))
+
+  return null
+}
+
+/** The word every line of a surcharge begins with (`emergencySurchargeLine`). */
+const surchargeDesignation = 'Notdienstzuschlag'
+
+/**
+ * Whether a draft holds a surcharge of its own besides the server's line
+ * (#1087, #1098): a position the office typed as one, copied from a report or
+ * moved here by a device, by its word alone or with its kind after it. A
+ * heading or a text with the word is none.
+ */
+function typedSurchargeIn(
+  lines: readonly {
+    readonly kind: string
+    readonly designation: string
+    readonly emergencySurcharge?: boolean
+  }[],
+): boolean {
+  return lines.some(
+    (line) =>
+      line.emergencySurcharge !== true &&
+      line.kind === 'item' &&
+      (line.designation === surchargeDesignation ||
+        line.designation.startsWith(`${surchargeDesignation} `)),
+  )
+}
+
+/**
+ * Why a surcharge that is due is not on its draft (#1087): the draft has no
+ * room left, or the surcharge is more than a line holds.
+ */
+export type SurchargeWait = 'waits for room' | 'too large'
+
+/** The most cents a line holds: the largest integer of its columns. */
+const largestCents = 2_147_483_647
+
+/** The highest place a line takes, the largest integer of its column. */
+const lastPosition = 2_147_483_647
+
+function tooLarge(surcharge: SurchargeLine): boolean {
+  return (
+    Math.abs(surcharge.netCents) > largestCents || Math.abs(surcharge.unitPriceCents) > largestCents
+  )
+}
+
+/**
+ * The line of the surcharge of an invoice made out of the reports of a job
+ * (#293), marked as the server's (#1087), as its last line. Where the call
+ * has no surcharge now, the line is made and taken away at once, marked: the
+ * draft follows its call all the same and gets the surcharge once there is
+ * one, as a draft does whose line the server took away. Only for a job that
+ * is an emergency call: an invoice of any other job holds no line of a
+ * surcharge, not even one taken away, and its log names none. A surcharge
+ * more than a line holds is made taken away as well; issuing names it. None
+ * at all where a report gave the invoice its surcharge as a position of its
+ * own (#1098): that one is the invoice's surcharge.
+ */
+export async function insertSurchargeLine(
+  tx: TenantTransaction,
+  tenantId: TenantId,
+  documentId: string,
+  position: number,
+  jobId: string | null,
+  due: SurchargeLine | null,
+): Promise<void> {
+  // What the invoice holds already, copied from its report or its reports.
+  const held = await tx
+    .select({ kind: documentLines.kind, designation: documentLines.designation })
+    .from(documentLines)
+    .where(
+      and(eq(documentLines.documentId, documentId as DocumentId), isNull(documentLines.deletedAt)),
+    )
+
+  if (typedSurchargeIn(held)) {
+    return
+  }
+
+  // A surcharge with no room on the invoice, copied full from its report, or
+  // more than a line holds waits taken away, as on a draft; issuing names it.
+  const surcharge = due !== null && !tooLarge(due) && held.length < lineLimits.lines ? due : null
+
+  if (surcharge === null) {
+    const [job] =
+      jobId === null || !isUuid(jobId)
+        ? []
+        : await tx
+            .select({ emergencyAt: jobs.emergencyAt })
+            .from(jobs)
+            .where(and(eq(jobs.id, jobId as JobId), isNull(jobs.deletedAt)))
+
+    if (!job?.emergencyAt) {
+      return
+    }
+  }
+
+  await tx.insert(documentLines).values({
+    tenantId,
+    documentId: documentId as DocumentId,
+    kind: 'item',
+    // No further than the column reaches, as a line brought back (places
+    // need not differ): a report with a line at the very end still gives its
+    // invoice.
+    position: Math.min(position, lastPosition),
+    designation: surcharge?.designation ?? surchargeDesignation,
+    description: surcharge?.description ?? null,
+    quantityMilli: surcharge?.quantityMilli ?? 1000,
+    unit: surcharge?.unit ?? 'flat_rate',
+    unitPriceCents: surcharge?.unitPriceCents ?? 0,
+    vatRate: 'standard',
+    netCents: surcharge?.netCents ?? 0,
+    emergencySurcharge: true,
+    ...(surcharge === null ? { deletedAt: new Date() } : {}),
+  })
+}
+
+/**
+ * The drafts that have a line of the surcharge, of one job or of all of them
+ * (#1087), locked in the order of their ids. A marked line that is gone
+ * counts: its draft may get the surcharge back.
+ *
+ * Taken before the first write of a transaction that works them out again
+ * afterwards. Issuing locks its document before it writes anything the log
+ * records; a transaction that wrote first and locked the draft afterwards
+ * would wait for it in a circle, and PostgreSQL would end one of the two.
+ */
+export async function lockSurchargeDrafts(
+  tx: TenantTransaction,
+  jobId: string | null = null,
+): Promise<readonly string[]> {
+  if (jobId !== null && !isUuid(jobId)) {
+    return []
+  }
+
+  const drafts = await surchargeDrafts(tx, jobId === null ? null : [jobId]).for('no key update')
+
+  return drafts.map((draft) => draft.id)
+}
+
+/**
+ * The drafts with a line of the surcharge of these jobs, without a lock: for
+ * a transmission that locks them with every other document it comes to,
+ * in one order (#1087).
+ */
+export async function surchargeDraftsOf(
+  tx: TenantTransaction,
+  jobIds: readonly string[],
+): Promise<readonly { readonly id: string; readonly jobId: string | null }[]> {
+  const valid = jobIds.filter((jobId) => isUuid(jobId))
+
+  if (valid.length === 0) {
+    return []
+  }
+
+  return await surchargeDrafts(tx, valid)
+}
+
+/** The drafts with a line of the surcharge, a line gone included, of these jobs or of all. */
+function surchargeDrafts(tx: TenantTransaction, jobIds: readonly string[] | null) {
+  return tx
+    .select({ id: documents.id, jobId: documents.jobId })
+    .from(documents)
+    .where(
+      and(
+        eq(documents.status, 'draft'),
+        isNull(documents.deletedAt),
+        ...(jobIds === null ? [] : [inArray(documents.jobId, jobIds as JobId[])]),
+        inArray(
+          documents.id,
+          tx
+            .select({ id: documentLines.documentId })
+            .from(documentLines)
+            .where(eq(documentLines.emergencySurcharge, true)),
+        ),
+      ),
+    )
+    .orderBy(documents.id)
+}
+
+/**
+ * The lines of the surcharge of the drafts `lockSurchargeDrafts` locked
+ * before the caller wrote, worked out again (#1087): of the drafts of one
+ * job, after its call or the surcharge named for it changed, or of all of
+ * them, after a setting of the surcharges or the public holidays changed.
+ * Only those: a draft that came to the job since was worked out by whoever
+ * moved it, and locking it now, after the write, would be the circle the
+ * lock before avoids. Issuing works every draft out once more.
+ */
+export async function refreshSurchargeLines(
+  tx: TenantTransaction,
+  drafts: readonly string[],
+): Promise<void> {
+  // One after the other: a transaction is one connection.
+  for (const draft of drafts) {
+    await refreshSurchargeLine(tx, draft)
+  }
+}
+
+/** The fields of a job the surcharge of its call depends on (#1087). */
+export const surchargeFieldsOfJob: readonly string[] = [
+  'emergencyAt',
+  'emergencyNamedFlatCents',
+  'emergencyNamedBasisPoints',
+]
 
 /** The surcharge named before the order of a call (#1081), or null where nobody recorded one. */
 function namedOf(job: {
@@ -232,8 +694,11 @@ export async function emergencyTariffOn(
   }
 }
 
-/** The settings a tariff reads, so that a new value of one of them begins a new tariff. */
-const tariffSettings: ReadonlySet<string> = new Set([
+/**
+ * The settings a tariff reads, so that a new value of one of them begins a
+ * new tariff, and the lines of the surcharge of the drafts follow it (#1087).
+ */
+export const tariffSettings: ReadonlySet<string> = new Set([
   ...emergencyKinds.flatMap((kind) => [
     `emergency.${kind}_flat_cents`,
     `emergency.${kind}_basis_points`,

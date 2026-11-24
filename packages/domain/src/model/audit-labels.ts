@@ -166,6 +166,7 @@ export const auditTables: Readonly<Record<string, AuditTableWords>> = {
       vat_rate: 'Steuersatz',
       net_cents: 'Nettobetrag',
       article_id: 'Artikel',
+      emergency_surcharge: 'Notdienstzuschlag nach den Stunden',
     },
   },
   document_signatures: {

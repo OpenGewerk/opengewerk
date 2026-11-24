@@ -134,6 +134,37 @@ export interface SyncApplication<Sender> {
    * check.
    */
   readonly afterWrite?: (context: SyncCheckContext<Sender>) => Promise<void> | void
+  /**
+   * What the application locks before the first operation of a transmission
+   * writes anything (opengewerk#1094), shown every operation of it: the rows
+   * its operations will lock or write further down, where another
+   * transaction locks such a row first and writes after. Every logged write
+   * takes the counter of the sync and the chain of the log, so a
+   * transmission that wrote first and came to such a row afterwards would
+   * wait for that transaction in a circle, and PostgreSQL would end one of
+   * the two. Locked in the order of their ids.
+   */
+  readonly beforeOperations?: (context: SyncTransmissionContext<Sender>) => Promise<void> | void
+  /**
+   * What the application does once every operation of a transmission is
+   * written, in the same transaction (opengewerk#1087): work that follows
+   * many operations alike, done once for all of them instead of after each.
+   * Shown only the operations this transmission wrote, and not asked where it
+   * wrote none: a transmission sent again finds every operation seen before,
+   * and nothing follows it twice. What it throws refuses the transmission
+   * like any other error.
+   */
+  readonly afterOperations?: (context: SyncTransmissionContext<Sender>) => Promise<void> | void
+}
+
+/** A transmission as a whole, before its first operation or after its last. */
+export interface SyncTransmissionContext<Sender> {
+  readonly tx: TenantTransaction
+  readonly tenantId: TenantId
+  /** Every operation of it, in the order they are applied. */
+  readonly operations: readonly Operation[]
+  /** Whoever sent the transmission, in the words of the application. */
+  readonly sender: Sender
 }
 
 export interface ChangedRows {
@@ -588,8 +619,13 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
 
     async applyOperations(tx, tenantId, operations, sender) {
       const receipts: OperationReceipt[] = []
+      const ordered = inOutboxOrder(operations)
 
-      for (const operation of inOutboxOrder(operations)) {
+      if (application.beforeOperations) {
+        await application.beforeOperations({ tx, tenantId, operations: ordered, sender })
+      }
+
+      for (const operation of ordered) {
         try {
           receipts.push(await applyOne(tx, tenantId, operation, sender))
         } catch (error) {
@@ -597,6 +633,17 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
           // one it was travels with it, so that the answer can say.
           throw new OperationRefused(operation.id, error)
         }
+      }
+
+      // Written now, not seen before or kept as a conflict.
+      const written = ordered.filter((_, index) => {
+        const receipt = receipts[index]
+
+        return receipt?.outcome === 'applied' && receipt.reason !== 'already_seen'
+      })
+
+      if (application.afterOperations && written.length > 0) {
+        await application.afterOperations({ tx, tenantId, operations: written, sender })
       }
 
       return receipts

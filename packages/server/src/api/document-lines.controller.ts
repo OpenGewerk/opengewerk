@@ -38,6 +38,7 @@ import {
 import { and, asc, count, eq, isNull } from 'drizzle-orm'
 
 import { documentLines, documents } from '../database/schema/index.js'
+import { refreshSurchargeLine, takesOverSurcharge } from '../service-calls/on-call.js'
 import { RequiresPermission } from './authorization.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
 import { requireReferences } from './references.js'
@@ -261,6 +262,8 @@ export class DocumentLinesController {
         })
         .returning()
 
+      await refreshSurchargeLine(tx, documentId)
+
       return created
     })
   }
@@ -309,11 +312,24 @@ export class DocumentLinesController {
         .set({
           ...(values as Partial<typeof documentLines.$inferInsert>),
           netCents: totalOf(values, existing),
+          // Changed by hand, the line of the surcharge is the office's (#1087).
+          ...(existing.emergencySurcharge && takesOverSurcharge(values, existing)
+            ? { emergencySurcharge: false }
+            : {}),
         })
         .where(eq(documentLines.id, lineId as DocumentLineId))
         .returning()
 
-      return updated
+      await refreshSurchargeLine(tx, documentId)
+
+      // As the refresh left it: the line of the surcharge itself, moved in
+      // the list, may have been worked out again with it (#1087).
+      const [now] = await tx
+        .select()
+        .from(documentLines)
+        .where(eq(documentLines.id, lineId as DocumentLineId))
+
+      return now ?? updated
     })
   }
 
@@ -331,7 +347,8 @@ export class DocumentLinesController {
       // is gone is a row a device that was offline never hears about again.
       const [removed] = await tx
         .update(documentLines)
-        .set({ deletedAt: new Date() })
+        // Removed by hand, the line of the surcharge does not come back (#1087).
+        .set({ deletedAt: new Date(), emergencySurcharge: false })
         .where(
           and(
             eq(documentLines.id, lineId as DocumentLineId),
@@ -344,6 +361,8 @@ export class DocumentLinesController {
       if (!removed) {
         throw new NotFoundException()
       }
+
+      await refreshSurchargeLine(tx, documentId)
 
       return { removed: removed.id }
     })

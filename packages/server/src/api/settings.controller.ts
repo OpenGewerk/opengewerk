@@ -9,6 +9,11 @@ import { Database, ParameterError } from '@opengewerk/platform-server'
 
 import { parameterAt, parameterHistory, setParameter } from '../database/parameters.js'
 import { SellingPrices } from '../pricing/selling-prices.js'
+import {
+  lockSurchargeDrafts,
+  refreshSurchargeLines,
+  tariffSettings,
+} from '../service-calls/on-call.js'
 import { RequiresPermission } from './authorization.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
 
@@ -112,12 +117,20 @@ export class SettingsController {
           })
         }
 
-        return setParameter(tx, identity.tenantId, {
+        // The drafts of emergency calls follow a setting of their surcharge
+        // (#1087), locked before the setting is written, as issuing locks first.
+        const drafts = tariffSettings.has(key) ? await lockSurchargeDrafts(tx) : []
+
+        const stored = await setParameter(tx, identity.tenantId, {
           key,
           from,
           value: value as number,
           note: typeof note === 'string' ? note : null,
         })
+
+        await refreshSurchargeLines(tx, drafts)
+
+        return stored
       })
 
       if (markup) {

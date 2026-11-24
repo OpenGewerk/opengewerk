@@ -40,6 +40,7 @@ import {
 } from '../absences/absences.js'
 import type { Notification } from '../notifications/notify.js'
 import { notifyPush } from '../notifications/occasions.js'
+import { lockSurchargeDrafts, refreshSurchargeLines } from '../service-calls/on-call.js'
 import { todayInGermany, yearInGermany } from '../today.js'
 import { RequiresMembership, RequiresPermission } from './authorization.js'
 import { CurrentIdentity, type RequestIdentity } from './identity.js'
@@ -366,7 +367,16 @@ export class HolidaysController {
     const values = pick(body, ['state', 'local'] as const)
 
     return answering(() =>
-      this.database.forTenant(identity, (tx) => setHolidays(tx, identity.tenantId, values)),
+      this.database.forTenant(identity, async (tx) => {
+        // The drafts with a line of the surcharge follow the holidays (#1087),
+        // locked before the holidays are written, as issuing locks first.
+        const drafts = await lockSurchargeDrafts(tx)
+        const set = await setHolidays(tx, identity.tenantId, values)
+
+        await refreshSurchargeLines(tx, drafts)
+
+        return set
+      }),
     )
   }
 }

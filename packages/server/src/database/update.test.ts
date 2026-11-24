@@ -3066,6 +3066,221 @@ describe('the rollback of the declined offers', () => {
 })
 
 /**
+ * The mark of the line of the surcharge (0155, opengewerk#1087). An
+ * installation migrates as the owner of the tables, under FORCE: a draft
+ * from before gets it on the line its invoice was given, as long as nobody
+ * changed that line, it is the only surcharge on the draft and the draft's
+ * job is an emergency call. Every other line stays the office's.
+ */
+describe('the line of the surcharge on the drafts from before 0155', () => {
+  const before = () =>
+    readMigrationIndex().findIndex(
+      (entry) => entry.tag === '0155_document_line_emergency_surcharge',
+    )
+  const customer = newId<'customer'>()
+  const call = newId<'job'>()
+  const plain = newId<'job'>()
+  const given = newId<'document'>()
+  const changedByHand = newId<'document'>()
+  const noCall = newId<'document'>()
+  const twice = newId<'document'>()
+  const typedLater = newId<'document'>()
+  const report = newId<'document'>()
+  const source = newId<'document'>()
+  const copied = newId<'document'>()
+  const collected = newId<'document'>()
+  const withHeading = newId<'document'>()
+  const withTypedWord = newId<'document'>()
+  const fromDevice = newId<'document'>()
+
+  async function forced(table: string): Promise<boolean> {
+    const { rows } = await admin.query<{ forced: boolean }>(
+      'select relrowsecurity and relforcerowsecurity as forced from pg_class where relname = $1',
+      [table],
+    )
+
+    return rows[0]?.forced ?? false
+  }
+
+  it('is set on the line the invoice was given and on no other', async () => {
+    expect(before()).toBeGreaterThan(0)
+
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), releaseFolder(before()))
+    await admin.query('insert into tenants (id, name) values ($1, $2)', [tenant.id, tenant.name])
+    await admin.query(
+      "insert into customers (id, tenant_id, kind, name) values ($1, $2, 'private', 'Familie Arslan')",
+      [customer, tenant.id],
+    )
+    await admin.query(
+      `insert into jobs (id, tenant_id, customer_id, kind, status, designation, emergency_at)
+       values ($1, $3, $4, 'service', 'active', 'Heizung ohne Strom', '2026-10-28T01:14:00Z'),
+              ($2, $3, $4, 'service', 'active', 'Steckdose lose', null)`,
+      [call, plain, tenant.id, customer],
+    )
+    await admin.query(
+      `insert into documents (id, tenant_id, customer_id, kind, document_date, job_id)
+       values ($1, $5, $6, 'final_invoice', '2026-10-28', $7),
+              ($2, $5, $6, 'final_invoice', '2026-10-28', $7),
+              ($3, $5, $6, 'final_invoice', '2026-10-28', $8),
+              ($4, $5, $6, 'final_invoice', '2026-10-28', $7),
+              ($9, $5, $6, 'final_invoice', '2026-10-28', $7)`,
+      [given, changedByHand, noCall, twice, tenant.id, customer, call, plain, typedLater],
+    )
+
+    // Two more given their surcharge: one with a heading of the word, one
+    // with a surcharge the office typed as the word alone. And one a device
+    // sent with its lines in one transmission, so at the same moment.
+    await admin.query(
+      `insert into documents (id, tenant_id, customer_id, kind, document_date, job_id)
+       values ($1, $3, $4, 'final_invoice', '2026-10-28', $5),
+              ($2, $3, $4, 'final_invoice', '2026-10-28', $5),
+              ($6, $3, $4, 'final_invoice', '2026-10-28', $5)`,
+      [withHeading, withTypedWord, tenant.id, customer, call, fromDevice],
+    )
+
+    // Two reports that carry the surcharge as a line of their own: the
+    // invoice made out of the first copied that line in its transaction, and
+    // so did a collective invoice over the second.
+    await admin.query(
+      `insert into documents (id, tenant_id, customer_id, kind, document_date, job_id)
+       values ($1, $3, $4, 'time_and_material_report', '2026-10-28', $5),
+              ($2, $3, $4, 'time_and_material_report', '2026-10-28', $5)`,
+      [report, source, tenant.id, customer, call],
+    )
+
+    for (const reportId of [report, source]) {
+      await admin.query(
+        `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents)
+         values ($1, $2, 1, 'Notdienstzuschlag Nacht', 1000, 'flat_rate', 4500, 4500)`,
+        [tenant.id, reportId],
+      )
+    }
+
+    await admin.query(
+      `update documents set status = 'issued', number = 'RB-2026-0001', issued_at = now()
+       where id = $1`,
+      [source],
+    )
+    await admin.query(
+      `insert into documents (id, tenant_id, customer_id, kind, document_date, job_id, predecessor_document_id)
+       values ($1, $3, $4, 'final_invoice', '2026-10-28', $5, $6),
+              ($2, $3, $4, 'final_invoice', '2026-10-28', $5, null)`,
+      [copied, collected, tenant.id, customer, call, report],
+    )
+    await admin.query(
+      `insert into document_sources (tenant_id, document_id, source_document_id, position)
+       values ($1, $2, $3, 1)`,
+      [tenant.id, collected, source],
+    )
+
+    // Given with the invoice, so in its transaction and with its moment; the
+    // last one typed by the office later, in a transaction of its own.
+    for (const [document, lines, withTheInvoice] of [
+      [given, 1, true],
+      [changedByHand, 1, true],
+      [noCall, 1, true],
+      [twice, 2, true],
+      [typedLater, 1, false],
+      [copied, 1, true],
+      [collected, 1, true],
+      [withHeading, 1, true],
+      [withTypedWord, 1, true],
+      [fromDevice, 1, true],
+    ] as const) {
+      await admin.query(
+        `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents, created_at)
+         values ($1, $2, 1, 'Arbeitszeit', 1000, 'hour', 0, 0, (select created_at from documents where id = $2))`,
+        [tenant.id, document],
+      )
+
+      for (let line = 0; line < lines; line += 1) {
+        await admin.query(
+          `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents, created_at)
+           values ($1, $2, $3, 'Notdienstzuschlag Nacht', 1000, 'flat_rate', 4500, 4500,
+             case when $4::boolean then (select created_at from documents where id = $2) else now() end)`,
+          [tenant.id, document, line + 2, withTheInvoice],
+        )
+      }
+    }
+
+    await admin.query(
+      `insert into document_lines (tenant_id, document_id, kind, position, designation, quantity_milli, unit, unit_price_cents, net_cents)
+       values ($1, $2, 'title', 8, 'Notdienstzuschlag Hinweis', 0, 'piece', 0, 0),
+              ($1, $3, 'item', 9, 'Notdienstzuschlag', 1000, 'flat_rate', 3000, 3000)`,
+      [tenant.id, withHeading, withTypedWord],
+    )
+
+    // What the device sent stands in the operations of the sync. A change of
+    // the line the given invoice got, refused as a conflict, left it as it
+    // was, and it is the server's all the same.
+    await admin.query(
+      `insert into sync_operations (id, tenant_id, entity, record_id, outcome, device_id)
+       select gen_random_uuid(), tenant_id, 'document_lines', id, 'conflict', 'geraet-im-keller'
+       from document_lines where document_id = $1 and unit = 'flat_rate'`,
+      [given],
+    )
+    await admin.query(
+      `insert into sync_operations (id, tenant_id, entity, record_id, outcome, device_id)
+       select gen_random_uuid(), tenant_id, 'document_lines', id, 'applied', 'geraet-im-keller'
+       from document_lines where document_id = $1`,
+      [fromDevice],
+    )
+
+    // The office lowered the surcharge of this one by hand.
+    await admin.query(
+      `update document_lines set unit_price_cents = 4000, net_cents = 4000
+       where document_id = $1 and unit = 'flat_rate'`,
+      [changedByHand],
+    )
+
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+
+    const { rows } = await admin.query<{ document_id: string; marked: number }>(
+      `select document_id, count(*) filter (where emergency_surcharge)::int as marked
+       from document_lines group by document_id`,
+    )
+
+    expect(Object.fromEntries(rows.map((row) => [row.document_id, row.marked]))).toEqual({
+      [given]: 1,
+      [changedByHand]: 0,
+      [noCall]: 0,
+      [twice]: 0,
+      [typedLater]: 0,
+      [report]: 0,
+      [source]: 0,
+      [copied]: 0,
+      [collected]: 0,
+      [withHeading]: 1,
+      [withTypedWord]: 0,
+      [fromDevice]: 0,
+    })
+    // On both the position of the surcharge, not the heading next to it.
+    for (const document of [given, withHeading]) {
+      expect(
+        (
+          await admin.query(
+            'select designation from document_lines where document_id = $1 and emergency_surcharge',
+            [document],
+          )
+        ).rows,
+        document,
+      ).toEqual([{ designation: 'Notdienstzuschlag Nacht' }])
+    }
+
+    for (const table of [
+      'document_lines',
+      'documents',
+      'jobs',
+      'document_sources',
+      'sync_operations',
+    ]) {
+      expect(await forced(table), table).toBe(true)
+    }
+  })
+})
+
+/**
  * The rollback of 0128 (#313): an entry in the history is what somebody said
  * or noted. The rollback deletes none; while there is one, it stops.
  */

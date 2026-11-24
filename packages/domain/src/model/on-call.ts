@@ -141,7 +141,9 @@ export interface SurchargeLine {
  * the business set none for its kind. A flat amount is one flat rate at that
  * amount; a percentage comes on the net of the lines in hours, rounded to the
  * cent. Lines in hours without a price yet give a surcharge of nothing,
- * which the office prices with them.
+ * which the office prices with them, and so do lines in hours that come to
+ * less than nothing (#1099): a surcharge is never a credit, and a smaller
+ * percentage of them would come to the larger amount.
  */
 export function emergencySurchargeLine(
   kind: EmergencyKind,
@@ -162,7 +164,7 @@ export function emergencySurchargeLine(
   }
 
   if (surcharge.basisPoints > 0) {
-    const cents = Math.round((hourNetCents * surcharge.basisPoints) / 10_000)
+    const cents = Math.round((Math.max(0, hourNetCents) * surcharge.basisPoints) / 10_000)
     const percent = (surcharge.basisPoints / 100).toLocaleString('de-DE', {
       maximumFractionDigits: 2,
     })

@@ -1,6 +1,8 @@
 import {
   chosenPhotos,
   type CustomerId,
+  type DocumentId,
+  type DocumentLineId,
   type DocumentStatus,
   type EarlyStartWording,
   formRecordProblem,
@@ -20,6 +22,7 @@ import {
   type RecordState,
   sameApplianceFacts,
   signaturePathIsValid,
+  syncPolicies,
   type TenantId,
   tradeContacts,
 } from '@opengewerk/domain'
@@ -28,6 +31,7 @@ import {
   attachmentVersionPlace,
   circuitAlong,
   contactWithoutParent,
+  databaseCode,
   isUuid,
   serverSync,
   type SyncCheck,
@@ -38,12 +42,20 @@ import {
   type TenantTransaction,
 } from '@opengewerk/platform-server'
 
-import { eq, inArray, sql } from 'drizzle-orm'
+import { ServiceUnavailableException } from '@nestjs/common'
+import { and, eq, getTableColumns, inArray, isNotNull, sql } from 'drizzle-orm'
+import type { PgColumn } from 'drizzle-orm/pg-core'
 
 import type { FoundIdentity } from '../api/identity.js'
 import { signatureRefusal } from '../documents/signing.js'
 import { earlyStartArrival } from '../service-calls/instructions.js'
-import { onCallRefusal } from '../service-calls/on-call.js'
+import {
+  onCallRefusal,
+  refreshSurchargeLines,
+  surchargeDraftsOf,
+  surchargeFieldsOfJob,
+  takesOverSurcharge,
+} from '../service-calls/on-call.js'
 import { consentGiven, correctionRefusal } from '../time/entries.js'
 import { proposedTreatment } from '../documents/treatment.js'
 import { pvLinkRefusal } from '../electrical/structure.js'
@@ -668,6 +680,351 @@ function withLineTotal(
 }
 
 /**
+ * The line of the surcharge changed by hand on a device (#1087): from then on
+ * it is the office's, and the server no longer works it out from the hours.
+ */
+function withSurchargeTakenOver(
+  operation: Operation,
+  values: Record<string, unknown>,
+  current: RecordState | null,
+): Record<string, unknown> {
+  return operation.kind === 'update' &&
+    operation.entity === 'document_lines' &&
+    current?.['emergencySurcharge'] === true &&
+    takesOverSurcharge(values, current)
+    ? { ...values, emergencySurcharge: false }
+    : values
+}
+
+/** The tables of the sync by entity. */
+const tables = syncTables(schema)
+
+/**
+ * The entities that hang on a document, with the field that names it
+ * (`gateFrom`): an operation on one of them locks that document when it is
+ * applied, so a transmission locks it before its first write instead
+ * (opengewerk#1094). Read from the policies, so that no entity is missed.
+ */
+const onADocument: ReadonlyMap<string, string> = new Map(
+  Object.entries(syncPolicies).flatMap(([entity, policy]) =>
+    policy.gateFrom?.entity === 'documents' ? [[entity, policy.gateFrom.reference] as const] : [],
+  ),
+)
+
+/**
+ * What a transmission notes on its way through (#1087), kept with its
+ * transaction, which every hook is shown and which takes it along when it
+ * ends.
+ */
+interface Noted {
+  /**
+   * The drafts of each operation on a job whose call changes, by the id of
+   * the operation, as `lockDocumentsOf` found and locked them: a draft found
+   * after the first write would be locked after it.
+   */
+  readonly drafts: ReadonlyMap<string, readonly string[]>
+  /** The drafts its operations touched, worked out once at its end. */
+  readonly touched: Set<string>
+}
+
+const noted = new WeakMap<TenantTransaction, Noted>()
+
+/**
+ * The documents a transmission comes to, locked before its first operation
+ * writes (opengewerk#1094). Issuing locks its document and writes after; a
+ * transmission that wrote first and came to the document later would wait
+ * for it in a circle. A document written itself, the document of whatever
+ * hangs on one (a line, a signature), the one it leaves and the one it goes
+ * to, and the drafts of a call whose moment or named surcharge changes
+ * (#1087), all in one statement in the order of their ids.
+ */
+async function lockDocumentsOf(
+  tx: TenantTransaction,
+  operations: readonly Operation[],
+): Promise<void> {
+  const named = new Set<string>()
+  const onDocuments = new Map<string, string[]>()
+  const calls: Operation[] = []
+
+  for (const operation of operations) {
+    const reference = onADocument.get(operation.entity)
+
+    if (operation.entity === 'documents') {
+      named.add(canonical(operation.recordId))
+    } else if (reference !== undefined) {
+      const records = onDocuments.get(operation.entity) ?? []
+
+      records.push(operation.recordId)
+      onDocuments.set(operation.entity, records)
+
+      const to = operation.patches.find((patch) => patch.field === reference)?.to
+
+      if (typeof to === 'string') {
+        named.add(canonical(to))
+      }
+    } else if (
+      operation.entity === 'jobs' &&
+      operation.kind === 'update' &&
+      operation.patches.some((patch) => surchargeFieldsOfJob.includes(patch.field))
+    ) {
+      calls.push(operation)
+    }
+  }
+
+  const locked = new Set<string>()
+  let draftsOfJobs = new Map<string, string[]>()
+
+  // Read once more under the locks: a line another transmission moved between
+  // the reading and the locking is on a document not locked yet, and would be
+  // locked by its operation, after the first write. Once the document it is
+  // on is locked, nothing moves it further, since a move locks the document a
+  // line leaves. What turns up late comes out of the order of the ids, so it
+  // is taken only where it is free: waiting for it, this transmission could
+  // wait in a circle with one that holds it and waits for a document this one
+  // holds. Taken or not, nothing is written yet, and a transmission sent
+  // again finds the lines where they are now.
+  for (let round = 0; ; round += 1) {
+    const wanted = new Set([...named, ...(await documentsOf(tx, onDocuments))])
+
+    draftsOfJobs = new Map()
+
+    for (const draft of await surchargeDraftsOf(
+      tx,
+      calls.map((call) => call.recordId),
+    )) {
+      const job = canonical(draft.jobId ?? '')
+      const drafts = draftsOfJobs.get(job) ?? []
+
+      drafts.push(draft.id)
+      draftsOfJobs.set(job, drafts)
+      wanted.add(draft.id)
+    }
+
+    const fresh = [...wanted].filter((id) => isUuid(id) && !locked.has(id))
+
+    if (fresh.length === 0) {
+      break
+    }
+
+    if (round === lockRounds) {
+      throw documentsMoving()
+    }
+
+    const lock = tx
+      .select({ id: schema.documents.id })
+      .from(schema.documents)
+      .where(inArray(schema.documents.id, fresh as DocumentId[]))
+      .orderBy(schema.documents.id)
+
+    if (round === 0) {
+      await lock.for('no key update')
+    } else {
+      await lock.for('no key update', { noWait: true }).catch((error: unknown) => {
+        // `lock_not_available`: another transaction holds it.
+        throw databaseCode(error) === '55P03' ? documentsMoving() : error
+      })
+    }
+
+    for (const id of fresh) {
+      locked.add(id)
+    }
+  }
+
+  // Removed on a device after the server had taken it away, the line of the
+  // surcharge is gone already: the delete is skipped, and `afterWrite` never
+  // hears of it. Whoever removed it meant it to stay away all the same, so it
+  // loses its mark here, under the lock of its draft, on drafts only. Not for
+  // a removal sent before: it has its receipt, perhaps a refusal a person is
+  // to decide, and sent again it changes nothing. Nor for one from before the
+  // server worked the line out again: it removed what the line was then, and
+  // a skipped delete compares no version, so the line keeps its mark and comes
+  // back with the surcharge. Taking it away is the one change of a line that
+  // went (its version once more), and a removal that missed only that counts.
+  const removals = operations.filter(
+    (operation) =>
+      operation.entity === 'document_lines' &&
+      operation.kind === 'delete' &&
+      isUuid(operation.recordId) &&
+      isUuid(operation.id),
+  )
+  const seenBefore = new Set(
+    removals.length === 0
+      ? []
+      : (
+          await tx
+            .select({ id: schema.syncOperations.id })
+            .from(schema.syncOperations)
+            .where(
+              inArray(
+                schema.syncOperations.id,
+                removals.map((operation) => operation.id),
+              ),
+            )
+        ).map((row) => canonical(row.id)),
+  )
+  const unseen = removals.filter((operation) => !seenBefore.has(canonical(operation.id)))
+  const gone = new Map(
+    (unseen.length === 0
+      ? []
+      : await tx
+          .select({ id: schema.documentLines.id, version: schema.documentLines.version })
+          .from(schema.documentLines)
+          .where(
+            and(
+              inArray(
+                schema.documentLines.id,
+                unseen.map((operation) => operation.recordId as DocumentLineId),
+              ),
+              eq(schema.documentLines.emergencySurcharge, true),
+              isNotNull(schema.documentLines.deletedAt),
+              inArray(
+                schema.documentLines.documentId,
+                tx
+                  .select({ id: schema.documents.id })
+                  .from(schema.documents)
+                  .where(eq(schema.documents.status, 'draft')),
+              ),
+            ),
+          )
+    ).map((row) => [canonical(row.id), row.version]),
+  )
+  const removed = unseen
+    .filter((operation) => {
+      const version = gone.get(canonical(operation.recordId))
+
+      return (
+        version !== undefined &&
+        (operation.baseVersion === null || operation.baseVersion >= version - 1)
+      )
+    })
+    .map((operation) => operation.recordId as DocumentLineId)
+
+  if (removed.length > 0) {
+    await tx
+      .update(schema.documentLines)
+      .set({ emergencySurcharge: false })
+      .where(inArray(schema.documentLines.id, removed))
+  }
+
+  noted.set(tx, {
+    drafts: new Map(
+      calls.map((call) => [call.id, draftsOfJobs.get(canonical(call.recordId)) ?? []]),
+    ),
+    touched: new Set(),
+  })
+}
+
+/** How often `lockDocumentsOf` locks what it found before it gives up. */
+const lockRounds = 4
+
+/**
+ * The answer where lines of a transmission moved while it locked their
+ * documents (503): before anything is written, so the device keeps every
+ * operation and sends them again with its next exchange, which the person
+ * starts with "Erneut versuchen" or the next change.
+ */
+function documentsMoving(): ServiceUnavailableException {
+  return new ServiceUnavailableException(
+    'Belege dieser Übertragung werden gerade woanders geändert. Bitte gleich noch einmal abgleichen.',
+  )
+}
+
+/**
+ * An id as the database gives it back: a device may send one in capitals,
+ * which a column of uuids takes all the same.
+ */
+function canonical(id: string): string {
+  return id.toLowerCase()
+}
+
+/** The document each of these records is on, as the server holds it now. */
+async function documentsOf(
+  tx: TenantTransaction,
+  onDocuments: ReadonlyMap<string, readonly string[]>,
+): Promise<string[]> {
+  const found: string[] = []
+
+  for (const [entity, records] of onDocuments) {
+    const table = tables.get(entity)
+    const known = records.filter((record) => isUuid(record))
+
+    if (table === undefined || known.length === 0) {
+      continue
+    }
+
+    const columns = getTableColumns(table) as Record<string, PgColumn | undefined>
+    const reference = columns[onADocument.get(entity) ?? '']
+    const id = columns['id']
+
+    if (reference === undefined || id === undefined) {
+      continue
+    }
+
+    for (const row of await tx
+      .select({ documentId: reference })
+      .from(table)
+      .where(inArray(id, known))) {
+      if (typeof row.documentId === 'string') {
+        found.push(row.documentId)
+      }
+    }
+  }
+
+  return found
+}
+
+/**
+ * What follows a write on a device for the line of the surcharge of a draft
+ * (#1087): a line of the draft, the job of the draft, the call or the
+ * surcharge named for it changed, so the draft is noted to be worked out
+ * again once the transmission is through (`refreshTouchedDrafts`), once
+ * however many of its lines changed.
+ */
+async function afterSurchargeWrite(
+  tx: TenantTransaction,
+  operation: Operation,
+  values: Record<string, unknown>,
+  current: RecordState | null,
+): Promise<void> {
+  const note = noted.get(tx) ?? { drafts: new Map(), touched: new Set<string>() }
+
+  noted.set(tx, note)
+
+  if (operation.entity === 'document_lines') {
+    // Removed on a device, the line of the surcharge does not come back.
+    if (operation.kind === 'delete' && current?.['emergencySurcharge'] === true) {
+      await tx
+        .update(schema.documentLines)
+        .set({ emergencySurcharge: false })
+        .where(eq(schema.documentLines.id, operation.recordId as DocumentLineId))
+    }
+
+    for (const draft of [values['documentId'], current?.['documentId']]) {
+      if (typeof draft === 'string') {
+        note.touched.add(canonical(draft))
+      }
+    }
+  } else if (operation.kind !== 'update') {
+    return
+  } else if (operation.entity === 'documents' && values['jobId'] !== undefined) {
+    note.touched.add(canonical(operation.recordId))
+  } else if (operation.entity === 'jobs') {
+    for (const draft of note.drafts.get(operation.id) ?? []) {
+      note.touched.add(draft)
+    }
+  }
+}
+
+/**
+ * The drafts a transmission touched, worked out once now that every one of
+ * its operations is written (#1087), in the order of their ids. Locked before
+ * its first write (`lockDocumentsOf`).
+ */
+async function refreshTouchedDrafts(tx: TenantTransaction): Promise<void> {
+  await refreshSurchargeLines(tx, [...(noted.get(tx)?.touched ?? [])].sort())
+}
+
+/**
  * The tax treatment of a document made on a device, proposed here as the
  * route proposes it for one made in the office.
  *
@@ -748,7 +1105,7 @@ export const sync = serverSync<FoundIdentity>({
   rules: offlineRules,
   // The tables of the schema module itself. A map beside it would be one more
   // place to remember on the next table.
-  tables: syncTables(schema),
+  tables,
   checks: [
     signature,
     earlyStart,
@@ -789,8 +1146,12 @@ export const sync = serverSync<FoundIdentity>({
             operation,
             withLineTotal(
               operation.entity,
-              // As the check judged them: a type taken away takes the selective along (#1021).
-              { ...circuitAlong(operation.entity, values, current) },
+              withSurchargeTakenOver(
+                operation,
+                // As the check judged them: a type taken away takes the selective along (#1021).
+                { ...circuitAlong(operation.entity, values, current) },
+                current,
+              ),
               current,
             ),
             sender,
@@ -798,6 +1159,10 @@ export const sync = serverSync<FoundIdentity>({
         ),
       ),
     ),
+  afterWrite: async ({ tx, operation, values, current }) =>
+    await afterSurchargeWrite(tx, operation, values, current),
+  beforeOperations: async ({ tx, operations }) => await lockDocumentsOf(tx, operations),
+  afterOperations: async ({ tx }) => await refreshTouchedDrafts(tx),
 })
 
 export const { changesSince } = sync

@@ -147,6 +147,12 @@ export interface DocumentLine extends Synced {
    * invoice gives a line from a report, which has none.
    */
   readonly articleId: ArticleId | null
+  /**
+   * The line of the surcharge of an emergency call as the invoice got it
+   * (#293). The server works it out again whenever the hours of the draft
+   * change (#1087), until the office changes its text or amount by hand.
+   */
+  readonly emergencySurcharge: boolean
 }
 
 /**
