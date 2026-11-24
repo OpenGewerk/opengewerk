@@ -512,7 +512,10 @@ export async function insertSurchargeLine(
     tenantId,
     documentId: documentId as DocumentId,
     kind: 'item',
-    position,
+    // No further than the column reaches, as a line brought back (places
+    // need not differ): a report with a line at the very end still gives its
+    // invoice.
+    position: Math.min(position, lastPosition),
     designation: surcharge?.designation ?? surchargeDesignation,
     description: surcharge?.description ?? null,
     quantityMilli: surcharge?.quantityMilli ?? 1000,

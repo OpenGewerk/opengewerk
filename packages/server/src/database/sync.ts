@@ -835,7 +835,11 @@ async function lockDocumentsOf(
   // hears of it. Whoever removed it meant it to stay away all the same, so it
   // loses its mark here, under the lock of its draft, on drafts only. Not for
   // a removal sent before: it has its receipt, perhaps a refusal a person is
-  // to decide, and sent again it changes nothing.
+  // to decide, and sent again it changes nothing. Nor for one from before the
+  // server worked the line out again: it removed what the line was then, and
+  // a skipped delete compares no version, so the line keeps its mark and comes
+  // back with the surcharge. Taking it away is the one change of a line that
+  // went (its version once more), and a removal that missed only that counts.
   const removals = operations.filter(
     (operation) =>
       operation.entity === 'document_lines' &&
@@ -858,28 +862,48 @@ async function lockDocumentsOf(
             )
         ).map((row) => canonical(row.id)),
   )
-  const removed = removals
-    .filter((operation) => !seenBefore.has(canonical(operation.id)))
+  const unseen = removals.filter((operation) => !seenBefore.has(canonical(operation.id)))
+  const gone = new Map(
+    (unseen.length === 0
+      ? []
+      : await tx
+          .select({ id: schema.documentLines.id, version: schema.documentLines.version })
+          .from(schema.documentLines)
+          .where(
+            and(
+              inArray(
+                schema.documentLines.id,
+                unseen.map((operation) => operation.recordId as DocumentLineId),
+              ),
+              eq(schema.documentLines.emergencySurcharge, true),
+              isNotNull(schema.documentLines.deletedAt),
+              inArray(
+                schema.documentLines.documentId,
+                tx
+                  .select({ id: schema.documents.id })
+                  .from(schema.documents)
+                  .where(eq(schema.documents.status, 'draft')),
+              ),
+            ),
+          )
+    ).map((row) => [canonical(row.id), row.version]),
+  )
+  const removed = unseen
+    .filter((operation) => {
+      const version = gone.get(canonical(operation.recordId))
+
+      return (
+        version !== undefined &&
+        (operation.baseVersion === null || operation.baseVersion >= version - 1)
+      )
+    })
     .map((operation) => operation.recordId as DocumentLineId)
 
   if (removed.length > 0) {
     await tx
       .update(schema.documentLines)
       .set({ emergencySurcharge: false })
-      .where(
-        and(
-          inArray(schema.documentLines.id, removed),
-          eq(schema.documentLines.emergencySurcharge, true),
-          isNotNull(schema.documentLines.deletedAt),
-          inArray(
-            schema.documentLines.documentId,
-            tx
-              .select({ id: schema.documents.id })
-              .from(schema.documents)
-              .where(eq(schema.documents.status, 'draft')),
-          ),
-        ),
-      )
+      .where(inArray(schema.documentLines.id, removed))
   }
 
   noted.set(tx, {

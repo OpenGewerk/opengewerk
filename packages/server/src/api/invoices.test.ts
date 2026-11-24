@@ -1050,7 +1050,10 @@ describe('issuing next to a transmission from a device (opengewerk#1094)', () =>
     const invoice = await successor(confirmation.id, 'final_invoice')
 
     // Held after the lock of its chain, at the lock of the invoice itself.
-    const held = holdQuery((text) => /for update/i.test(text) && !/order by/i.test(text))
+    const held = holdQuery(
+      (text, values) =>
+        /for update/i.test(text) && !/order by/i.test(text) && values.includes(invoice.id),
+    )
     const issuing = http()
       .post(`/documents/${invoice.id}/issue`)
       .set('x-test-identity', office())
