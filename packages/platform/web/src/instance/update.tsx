@@ -163,6 +163,14 @@ export function InstanceUpdateScreen() {
     readonly attempt: number
   } | null>(null)
   const attempt = useRef(0)
+
+  // A confirmation that comes back once the page is left sends nothing either.
+  useEffect(
+    () => () => {
+      attempt.current += 1
+    },
+    [],
+  )
   const [trouble, setTrouble] = useState<string | null>(null)
   const loadedWith = useRef<string | null | undefined>(undefined)
   const running = update.data?.running
