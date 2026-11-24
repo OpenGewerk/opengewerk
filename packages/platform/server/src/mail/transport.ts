@@ -118,7 +118,9 @@ export interface MailTransport {
  * `MAIL FROM` it is. At `RCPT TO` it is where the answer names the sender in
  * angle brackets and not the recipient, as Postfix does: "553 5.7.1
  * <post@nord.example.de>: Sender address rejected". A recipient it refuses
- * it names as well, and that stays a refusal of the message.
+ * it names as well, and that stays a refusal of the message. Where both are
+ * one address, a mail of the instance to its own mailbox, the answer says
+ * which side it means.
  */
 function aboutTheSender(
   command: string | null,
@@ -134,11 +136,16 @@ function aboutTheSender(
   }
 
   const said = answer.toLowerCase()
+  const sender = `<${mail.from.address.toLowerCase()}>`
+  const recipient = `<${mail.to.address.toLowerCase()}>`
 
-  return (
-    said.includes(`<${mail.from.address.toLowerCase()}>`) &&
-    !said.includes(`<${mail.to.address.toLowerCase()}>`)
-  )
+  if (!said.includes(sender)) {
+    return false
+  }
+
+  return sender === recipient
+    ? said.includes('sender') && !said.includes('recipient')
+    : !said.includes(recipient)
 }
 
 function asDeliveryError(error: unknown, mail?: OutgoingMail): MailDeliveryError {

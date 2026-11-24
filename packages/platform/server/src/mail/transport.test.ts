@@ -126,6 +126,24 @@ describe('a message', () => {
     },
   )
 
+  it('tells the sender from the recipient by what the server says, where both are one address (opengewerk#1102)', async () => {
+    const toItself = { ...letter, to: { name: null, address: 'rechnung@nord.example.de' } }
+
+    server = await fakeSmtpServer({ refuseSendersAtRecipient: ['rechnung@nord.example.de'] })
+    const refusingSender = smtpTransport(settings(server.port), short)
+    const sender = await failureOf(refusingSender.send(toItself))
+    refusingSender.close()
+    await server.close()
+
+    server = await fakeSmtpServer({ refuse: ['rechnung@nord.example.de'] })
+    const refusingRecipient = smtpTransport(settings(server.port), short)
+    const recipient = await failureOf(refusingRecipient.send(toItself))
+    refusingRecipient.close()
+
+    expect(sender).toMatchObject({ refusedSender: true, permanent: false })
+    expect(recipient).toMatchObject({ refusedSender: false, permanent: true })
+  })
+
   it('is refused for now when the server takes the connection and says nothing', async () => {
     server = await fakeSmtpServer({ silent: true })
     const transport = smtpTransport(settings(server.port), short)
