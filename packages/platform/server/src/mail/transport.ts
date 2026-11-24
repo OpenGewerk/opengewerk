@@ -1,3 +1,5 @@
+import { domainToASCII } from 'node:url'
+
 import { createTransport } from 'nodemailer'
 
 import type { MailConfiguration } from './configuration.js'
@@ -81,9 +83,14 @@ export class MailDeliveryError extends Error {
       return false
     }
 
+    // An envelope the server turned down for now, with a four hundred, is
+    // tried again: greylisting, a mailbox that is full this hour
+    // (opengewerk#1103).
+    const forNow = this.responseCode !== null && this.responseCode >= 400 && this.responseCode < 500
+
     if (
       this.declaredPermanent ||
-      this.code === 'EENVELOPE' ||
+      (this.code === 'EENVELOPE' && !forNow) ||
       this.code === 'EINVITATION' ||
       this.code === 'EDESTINATION'
     ) {
@@ -120,7 +127,8 @@ export interface MailTransport {
  * <post@nord.example.de>: Sender address rejected". A recipient it refuses
  * it names as well, and that stays a refusal of the message. Where both are
  * one address, a mail of the instance to its own mailbox, the answer says
- * which side it means.
+ * which side it means. An address with a domain in umlauts the server names
+ * as nodemailer sent it, with the domain as its A-label.
  */
 function aboutTheSender(
   command: string | null,
@@ -136,16 +144,32 @@ function aboutTheSender(
   }
 
   const said = answer.toLowerCase()
-  const sender = `<${mail.from.address.toLowerCase()}>`
-  const recipient = `<${mail.to.address.toLowerCase()}>`
+  const sender = bracketed(mail.from.address)
+  const recipient = bracketed(mail.to.address)
+  const names = (forms: readonly string[]) => forms.some((form) => said.includes(form))
 
-  if (!said.includes(sender)) {
+  if (!names(sender)) {
     return false
   }
 
-  return sender === recipient
+  return sender[0] === recipient[0]
     ? said.includes('sender') && !said.includes('recipient')
-    : !said.includes(recipient)
+    : !names(recipient)
+}
+
+/**
+ * An address in angle brackets as a server may name it in an answer: as it
+ * is stored, and with its domain as the A-label nodemailer sends,
+ * `xn--mller-elektro-wob.de` for `müller-elektro.de`. Small letters both.
+ */
+function bracketed(address: string): readonly [string, ...string[]] {
+  const stored = address.toLowerCase()
+  const at = stored.lastIndexOf('@')
+  const domain = at < 0 ? '' : stored.slice(at + 1)
+  const label = domain === '' ? '' : domainToASCII(domain)
+  const sent = label === '' || label === domain ? stored : `${stored.slice(0, at)}@${label}`
+
+  return sent === stored ? [`<${stored}>`] : [`<${stored}>`, `<${sent}>`]
 }
 
 function asDeliveryError(error: unknown, mail?: OutgoingMail): MailDeliveryError {

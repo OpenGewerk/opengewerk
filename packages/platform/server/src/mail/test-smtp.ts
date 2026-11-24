@@ -21,6 +21,13 @@ export interface FakeSmtpOptions {
    * restriction waits for the recipient (`smtpd_delay_reject`).
    */
   readonly refuseSendersAtRecipient?: readonly string[]
+  /**
+   * Recipients refused with an answer that names the sender as well, as an
+   * access rule of a server may.
+   */
+  readonly refuseNamingBoth?: readonly string[]
+  /** Recipients turned down for now with a 450, the answer of greylisting. */
+  readonly defer?: readonly string[]
   /** Takes a message and never says whether it took it, the way a server that hangs over one does. */
   readonly stallAfterData?: boolean
   /** Milliseconds it waits before it answers DATA, the way a server that is slow to take a message does. */
@@ -142,6 +149,12 @@ export async function fakeSmtpServer(options: FakeSmtpOptions = {}): Promise<Fak
 
           if (options.refuseSendersAtRecipient?.includes(from)) {
             say(`553 5.7.1 <${from}>: Sender address rejected: not owned by user`)
+          } else if (options.refuseNamingBoth?.includes(recipient)) {
+            say(
+              `554 5.7.1 <${recipient}>: Recipient address rejected: Access denied; from=<${from}> to=<${recipient}>`,
+            )
+          } else if (options.defer?.includes(recipient)) {
+            say(`450 4.2.0 <${recipient}>: Recipient address rejected: Greylisted, try again later`)
           } else if (options.refuse?.includes(recipient)) {
             say(`550 5.1.1 <${recipient}>: Recipient address rejected: User unknown`)
           } else {

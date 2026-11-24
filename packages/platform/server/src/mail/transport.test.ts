@@ -144,6 +144,43 @@ describe('a message', () => {
     expect(recipient).toMatchObject({ refusedSender: false, permanent: true })
   })
 
+  it('knows a sender with a domain in umlauts in the form it was sent in (opengewerk#1102)', async () => {
+    server = await fakeSmtpServer({
+      refuseSendersAtRecipient: ['rechnung@xn--mller-elektro-wob.de'],
+    })
+    const transport = smtpTransport(settings(server.port), short)
+
+    const failure = await failureOf(
+      transport.send({
+        ...letter,
+        from: { ...letter.from, address: 'rechnung@müller-elektro.de' },
+      }),
+    )
+    transport.close()
+
+    expect(failure).toMatchObject({ command: 'RCPT TO', refusedSender: true, permanent: false })
+  })
+
+  it('stays a refusal of the recipient when the answer names the sender as well (opengewerk#1102)', async () => {
+    server = await fakeSmtpServer({ refuseNamingBoth: ['berg@example.de'] })
+    const transport = smtpTransport(settings(server.port), short)
+
+    const failure = await failureOf(transport.send(letter))
+    transport.close()
+
+    expect(failure).toMatchObject({ command: 'RCPT TO', refusedSender: false, permanent: true })
+  })
+
+  it('is refused for now when the server turns a recipient down for now (opengewerk#1103)', async () => {
+    server = await fakeSmtpServer({ defer: ['berg@example.de'] })
+    const transport = smtpTransport(settings(server.port), short)
+
+    const failure = await failureOf(transport.send(letter))
+    transport.close()
+
+    expect(failure).toMatchObject({ code: 'EENVELOPE', responseCode: 450, permanent: false })
+  })
+
   it('is refused for now when the server takes the connection and says nothing', async () => {
     server = await fakeSmtpServer({ silent: true })
     const transport = smtpTransport(settings(server.port), short)
