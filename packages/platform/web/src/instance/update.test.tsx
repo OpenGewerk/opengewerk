@@ -63,12 +63,38 @@ async function page(view: InstanceUpdateView) {
     />
   )
 
-  await inFrame(frame, {
+  const shown = await inFrame(frame, {
     at: '/instanz/aktualisierung',
-    screens: { '/instanz/aktualisierung': () => <InstanceUpdateScreen /> },
+    screens: {
+      '/instanz/aktualisierung': () => <InstanceUpdateScreen />,
+      '/instanz/einstellungen': () => <h1>Einstellungen</h1>,
+    },
   })
 
+  router = shown.router
+
   return userEvent.setup()
+}
+
+let router: Awaited<ReturnType<typeof inFrame>>['router']
+
+/** Holds the answer to the confirmation back until the test lets it go. */
+function heldConfirmation(): () => void {
+  let release: () => void = () => undefined
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const through = globalThis.fetch
+
+  vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input instanceof Request ? input.url : input).includes('/api/auth/reconfirm')) {
+      await held
+    }
+
+    return through(input, init)
+  })
+
+  return release
 }
 
 function sent(method: string, path: string): unknown[] {
@@ -128,6 +154,34 @@ describe('the update of the instance', () => {
     expect(await screen.findByText('Die Instanz wird auf 0.3.1 aktualisiert.')).toBeTruthy()
     expect(sent('POST', '/instance/update')).toEqual([{ version: '0.3.1' }])
   })
+
+  it.each(['leaves the page', 'closes the dialog'])(
+    'sends nothing for a confirmation that comes back after the operator %s',
+    async (how) => {
+      const user = await page(newer)
+      const release = heldConfirmation()
+
+      await user.click(await screen.findByRole('button', { name: 'Auf 0.3.1 aktualisieren' }))
+      const dialog = screen.getByRole('dialog', { name: 'Auf 0.3.1 aktualisieren?' })
+
+      await user.type(within(dialog).getByLabelText('Passwort'), 'ein-ordentlich-langes-passwort')
+      await user.click(within(dialog).getByRole('button', { name: 'Aktualisieren' }))
+
+      if (how === 'leaves the page') {
+        await router.navigate({ to: '/instanz/einstellungen' })
+        expect(await screen.findByRole('heading', { name: 'Einstellungen' })).toBeTruthy()
+      } else {
+        await user.keyboard('{Escape}')
+        expect(screen.queryByRole('dialog')).toBeNull()
+      }
+
+      release()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      expect(sent('POST', '/api/auth/reconfirm')).toHaveLength(1)
+      expect(sent('POST', '/instance/update')).toEqual([])
+    },
+  )
 
   it('has no button for an instance from a checkout, and says how it is updated', async () => {
     await page({ ...newer, running: null, mode: 'checkout', reason: 'checkout', newer: false })
