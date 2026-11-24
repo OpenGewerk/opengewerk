@@ -414,10 +414,29 @@ export async function requestInstanceUpdate(
   const draft = join(updates.requestsPath, `.request-${id}.json`)
   const body = JSON.stringify({ id, version: wanted, by: by.slice(0, 200), at: now.toISOString() })
 
-  await writeFile(draft, body, { encoding: 'utf8', mode: 0o644, flag: 'wx' })
-  await rename(draft, join(updates.requestsPath, 'request.json'))
+  await placed(draft, join(updates.requestsPath, 'request.json'), body, 0o644)
 
   return id
+}
+
+/**
+ * Writes `body` under `draft` and gives it the name `path`. A draft that could
+ * not take its place is taken away again (CodeRabbit on #1101): on a disk that
+ * ran full, a mark tried every minute would leave one each time.
+ */
+async function placed(draft: string, path: string, body: string, mode?: number): Promise<void> {
+  try {
+    await writeFile(draft, body, {
+      encoding: 'utf8',
+      flag: 'wx',
+      ...(mode === undefined ? {} : { mode }),
+    })
+    await rename(draft, path)
+  } catch (error) {
+    await rm(draft, { force: true }).catch(() => undefined)
+
+    throw error
+  }
 }
 
 /**
@@ -459,8 +478,7 @@ export async function markUpdateTold(
 
   const draft = join(updates.requestsPath, `.told-${id}-${randomUUID()}`)
 
-  await writeFile(draft, JSON.stringify(told), { encoding: 'utf8', flag: 'wx' })
-  await rename(draft, join(updates.requestsPath, `told-${id}`))
+  await placed(draft, join(updates.requestsPath, `told-${id}`), JSON.stringify(told))
 
   for (const name of await readdir(updates.requestsPath)) {
     if (name.startsWith('told-') && name !== `told-${id}`) {

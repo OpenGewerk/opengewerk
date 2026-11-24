@@ -807,6 +807,10 @@ describe('telling how an update ended, when the mark of who was told fails', () 
     expect(toLea() - before).toBe(1)
     // Nothing that did not go out is said: everybody has the mail.
     expect(looks).toEqual(['ended', 'ended', 'ended'])
+    // And no draft of a mark that could not take its place is left behind.
+    expect(readdirSync(updates.requestsPath).filter((name) => name.startsWith('.told-'))).toEqual(
+      [],
+    )
   })
 
   it('marks each address as it is told, so that a look that stops leaves who got the mail (CodeRabbit on #1101)', async () => {
