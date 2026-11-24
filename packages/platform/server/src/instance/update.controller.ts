@@ -69,9 +69,13 @@ export class InstanceUpdateController {
 
   /**
    * Asks the service for an update to the version given, which has to be the
-   * newest it found. The state is checked before the confirmation is spent,
-   * so that nobody enters password and code for a request that would be
-   * turned away; the service checks it again when it takes the request.
+   * newest it found. Everything that turns a request away is asked before
+   * the confirmation is spent, so that a refusal does not spend it: the next
+   * try goes without entering password and code again. The page offers the
+   * button by what it reads; a refusal it cannot see coming, a last run that
+   * cannot be read or a mail about the last one still going out, comes after
+   * the confirmation was entered, and says why. The service checks the
+   * request again when it takes it.
    */
   @Post()
   @HttpCode(HttpStatus.ACCEPTED)
