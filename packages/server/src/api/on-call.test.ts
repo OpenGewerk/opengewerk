@@ -1795,6 +1795,11 @@ describe('the line of the surcharge on a draft (#1087)', () => {
         changing,
         new Promise((resolve) => setTimeout(() => resolve('waited'), 3000)),
       ])
+
+      // Before issuing writes on: a transmission still waiting would have it
+      // wait in the circle this test is about.
+      expect(answered).toEqual({ status: 503, outcomes: [] })
+
       await issuing.query("update jobs set description = 'Zähler prüfen' where id = $1", [to.job])
       await issuing.query('commit')
     } finally {
@@ -1804,8 +1809,6 @@ describe('the line of the surcharge on a draft (#1087)', () => {
       issuing?.release()
       await Promise.allSettled([changing])
     }
-
-    expect(answered).toEqual({ status: 503, outcomes: [] })
 
     const { rows } = await admin.query('select id from jobs where id = $1', [write.recordId])
 
