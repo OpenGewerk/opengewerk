@@ -1021,6 +1021,9 @@ describe('issuing next to a transmission from a device (opengewerk#1094)', () =>
       expect(waitingAt).toEqual([expect.stringMatching(/from "documents".*for no key update/i)])
     } finally {
       held.release()
+      // Both requests done before the test tears its server down, even where
+      // an expectation above failed.
+      await Promise.allSettled([issuing, sent])
     }
 
     // The job is written, the change of the quote issued meanwhile is a conflict.
@@ -1067,6 +1070,7 @@ describe('issuing next to a transmission from a device (opengewerk#1094)', () =>
       ])
     } finally {
       held.release()
+      await Promise.allSettled([issuing, pdf])
     }
 
     expect(throughBeforeIssuing).toBe(true)

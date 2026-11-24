@@ -84,13 +84,15 @@ function underItsTitle(report: DocumentRow, lines: readonly LineRow[]): CopiedLi
 
 /**
  * The open reports of a job: issued, and neither continued by a successor
- * that counts nor collected in an invoice that counts. Locked, oldest first,
- * so that a successor or a second collective invoice made at the same moment
- * waits and then finds them taken.
+ * that counts nor collected in an invoice that counts. Locked, so that a
+ * successor or a second collective invoice made at the same moment waits and
+ * then finds them taken, in the order of their ids, as a transmission locks
+ * the documents it comes to (#1094): in any other order the two could wait
+ * for each other in a circle. Listed oldest first.
  */
 async function openReports(tx: TenantTransaction, jobId: JobId): Promise<DocumentRow[]> {
-  const reports = await tx
-    .select()
+  const locked = await tx
+    .select({ id: documents.id })
     .from(documents)
     .where(
       and(
@@ -100,12 +102,23 @@ async function openReports(tx: TenantTransaction, jobId: JobId): Promise<Documen
         isNull(documents.deletedAt),
       ),
     )
-    .orderBy(asc(documents.documentDate), asc(documents.number), asc(documents.id))
+    .orderBy(asc(documents.id))
     .for('update')
 
-  if (reports.length === 0) {
+  if (locked.length === 0) {
     return []
   }
+
+  const reports = await tx
+    .select()
+    .from(documents)
+    .where(
+      inArray(
+        documents.id,
+        locked.map((report) => report.id),
+      ),
+    )
+    .orderBy(asc(documents.documentDate), asc(documents.number), asc(documents.id))
 
   const ids = reports.map((report) => report.id)
   const continued = new Set(

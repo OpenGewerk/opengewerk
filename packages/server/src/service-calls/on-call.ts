@@ -26,7 +26,7 @@ import {
   whyFixed,
 } from '@opengewerk/domain'
 import { isUuid, type TenantTransaction } from '@opengewerk/platform-server'
-import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lte } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lte } from 'drizzle-orm'
 
 import { holidaySettingOf } from '../absences/absences.js'
 import { parameterAt, parameterHistory } from '../database/parameters.js'
@@ -283,6 +283,18 @@ export async function refreshSurchargeLine(
         )
   }
 
+  // Next to a surcharge the office typed in, or one a device moved here from
+  // another draft, the line of the server steps back for good, as one the
+  // office removed: a draft charges one surcharge.
+  if (typedSurchargeIn(lines)) {
+    await tx
+      .update(documentLines)
+      .set({ deletedAt: new Date(), emergencySurcharge: false })
+      .where(eq(documentLines.id, marked.id))
+
+    return null
+  }
+
   if (surcharge === null) {
     await tx
       .update(documentLines)
@@ -359,16 +371,7 @@ async function restoreSurchargeLine(
     return null
   }
 
-  // A position the office typed as a surcharge, by its word alone or with
-  // its kind after it; a heading or a text with the word is none.
-  const typed = lines.some(
-    (line) =>
-      line.kind === 'item' &&
-      (line.designation === surchargeDesignation ||
-        line.designation.startsWith(`${surchargeDesignation} `)),
-  )
-
-  if (typed) {
+  if (typedSurchargeIn(lines)) {
     await tx.update(documentLines).set({ emergencySurcharge: false }).where(gone)
 
     return null
@@ -405,6 +408,28 @@ async function restoreSurchargeLine(
 const surchargeDesignation = 'Notdienstzuschlag'
 
 /**
+ * Whether a draft holds a surcharge of its own besides the server's line
+ * (#1087, #1098): a position the office typed as one, copied from a report or
+ * moved here by a device, by its word alone or with its kind after it. A
+ * heading or a text with the word is none.
+ */
+function typedSurchargeIn(
+  lines: readonly {
+    readonly kind: string
+    readonly designation: string
+    readonly emergencySurcharge?: boolean
+  }[],
+): boolean {
+  return lines.some(
+    (line) =>
+      line.emergencySurcharge !== true &&
+      line.kind === 'item' &&
+      (line.designation === surchargeDesignation ||
+        line.designation.startsWith(`${surchargeDesignation} `)),
+  )
+}
+
+/**
  * Why a surcharge that is due is not on its draft (#1087): the draft has no
  * room left, or the surcharge is more than a line holds.
  */
@@ -427,7 +452,9 @@ function tooLarge(surcharge: SurchargeLine): boolean {
  * one, as a draft does whose line the server took away. Only for a job that
  * is an emergency call: an invoice of any other job holds no line of a
  * surcharge, not even one taken away, and its log names none. A surcharge
- * more than a line holds is made taken away as well; issuing names it.
+ * more than a line holds is made taken away as well; issuing names it. None
+ * at all where a report gave the invoice its surcharge as a position of its
+ * own (#1098): that one is the invoice's surcharge.
  */
 export async function insertSurchargeLine(
   tx: TenantTransaction,
@@ -437,22 +464,21 @@ export async function insertSurchargeLine(
   jobId: string | null,
   due: SurchargeLine | null,
 ): Promise<void> {
+  // What the invoice holds already, copied from its report or its reports.
+  const held = await tx
+    .select({ kind: documentLines.kind, designation: documentLines.designation })
+    .from(documentLines)
+    .where(
+      and(eq(documentLines.documentId, documentId as DocumentId), isNull(documentLines.deletedAt)),
+    )
+
+  if (typedSurchargeIn(held)) {
+    return
+  }
+
   // A surcharge with no room on the invoice, copied full from its report, or
   // more than a line holds waits taken away, as on a draft; issuing names it.
-  const [held] =
-    due === null
-      ? []
-      : await tx
-          .select({ lines: count() })
-          .from(documentLines)
-          .where(
-            and(
-              eq(documentLines.documentId, documentId as DocumentId),
-              isNull(documentLines.deletedAt),
-            ),
-          )
-  const surcharge =
-    due !== null && !tooLarge(due) && (held?.lines ?? 0) < lineLimits.lines ? due : null
+  const surcharge = due !== null && !tooLarge(due) && held.length < lineLimits.lines ? due : null
 
   if (surcharge === null) {
     const [job] =

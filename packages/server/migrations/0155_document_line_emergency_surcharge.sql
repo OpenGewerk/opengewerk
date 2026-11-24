@@ -10,15 +10,19 @@
 -- transaction that made the invoice, so with its `created_at`, which is the
 -- start of that transaction. Not a line copied in that transaction from the
 -- report or a source of the collective invoice, which has a line of the same
--- name there, nor one of an article. A line the office changed or typed itself
--- stays the office's, even one that looks like it. An installation migrates as
--- the owner of the tables, under FORCE, where the update would meet no row:
--- the four tables go without FORCE for it and get it back right after.
+-- name there, nor one of an article. Nor one a device sent: a device may send
+-- an invoice and its lines in one transmission, with the same moment, and
+-- every line a device made stands in `sync_operations`, which keeps every
+-- operation it was sent. A line the office changed or typed itself stays the
+-- office's, even one that looks like it. An installation migrates as the owner
+-- of the tables, under FORCE, where the update would meet no row: the five
+-- tables go without FORCE for it and get it back right after.
 ALTER TABLE "document_lines" ADD COLUMN "emergency_surcharge" boolean DEFAULT false NOT NULL;--> statement-breakpoint
 ALTER TABLE "document_lines" NO FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "documents" NO FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "jobs" NO FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "document_sources" NO FORCE ROW LEVEL SECURITY;--> statement-breakpoint
+ALTER TABLE "sync_operations" NO FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 SELECT set_config('app.reason', 'migration', true);--> statement-breakpoint
 UPDATE "document_lines" l
 	SET "emergency_surcharge" = true
@@ -30,6 +34,10 @@ UPDATE "document_lines" l
 		AND l.deleted_at IS NULL AND l.version = 1 AND l.kind = 'item' AND l.unit = 'flat_rate'
 		AND l.created_at = d.created_at
 		AND l.article_id IS NULL
+		AND NOT EXISTS (
+			SELECT 1 FROM "sync_operations" so
+			WHERE so.tenant_id = l.tenant_id AND so.entity = 'document_lines' AND so.record_id = l.id
+		)
 		AND NOT EXISTS (
 			SELECT 1 FROM "document_lines" p
 			WHERE p.tenant_id = l.tenant_id AND p.deleted_at IS NULL AND p.designation = l.designation
@@ -50,6 +58,7 @@ UPDATE "document_lines" l
 				AND (o.designation = 'Notdienstzuschlag' OR o.designation LIKE 'Notdienstzuschlag %')
 		) = 1;--> statement-breakpoint
 SELECT set_config('app.reason', '', true);--> statement-breakpoint
+ALTER TABLE "sync_operations" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "document_sources" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "jobs" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "documents" FORCE ROW LEVEL SECURITY;--> statement-breakpoint

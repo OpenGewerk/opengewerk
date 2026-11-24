@@ -654,6 +654,95 @@ describe('the surcharge of an emergency call', () => {
     expect(designations.filter((one) => one === 'Notdienstzuschlag Nacht')).toHaveLength(1)
     expect(designations.at(-1)).toBe('Notdienstzuschlag Nacht')
   })
+
+  it('comes no second time where a report carries it as a position, on either invoice (#1098)', async () => {
+    const hour = {
+      designation: 'Arbeitszeit',
+      quantityMilli: 1000,
+      unit: 'hour',
+      unitPriceCents: 0,
+    }
+    const typed = {
+      designation: 'Notdienstzuschlag Nacht',
+      quantityMilli: 1000,
+      unit: 'flat_rate',
+      unitPriceCents: 4500,
+    }
+    const single = aCall()
+    const collected = aCall()
+
+    await push(app, office(), [single.operation, collected.operation])
+
+    const fromReport = (
+      await post(`/documents/${await aSignedReport(single.id, [hour, typed])}/successors`, {
+        kind: 'final_invoice',
+      })
+    ).id
+
+    for (const lines of [[hour, typed], [hour]]) {
+      await post(`/documents/${await aSignedReport(collected.id, lines)}/issue`, {})
+    }
+
+    const collective = (await post(`/jobs/${collected.id}/collective-invoice`, {})).id
+
+    for (const invoice of [fromReport, collective]) {
+      const { rows } = await admin.query<{ marks: number; shown: number }>(
+        `select count(*) filter (where emergency_surcharge)::int as marks,
+                count(*) filter (where deleted_at is null and designation like 'Notdienstzuschlag%')::int as shown
+         from document_lines where document_id = $1`,
+        [invoice],
+      )
+
+      // The one the report carried, and no line of the server, not even one taken away.
+      expect(rows).toEqual([{ marks: 0, shown: 1 }])
+    }
+  })
+
+  it('locks the reports of a collective invoice in the order of their ids, as a transmission does', async () => {
+    const call = aCall()
+
+    await push(app, office(), [call.operation])
+
+    const [first = '', second = ''] = [
+      await aSignedReport(call.id),
+      await aSignedReport(call.id),
+    ].sort()
+
+    // Issued the other way round: the smaller number on the larger id, so
+    // that the reports listed oldest first are not in the order of their ids.
+    await post(`/documents/${second}/issue`, {})
+    await post(`/documents/${first}/issue`, {})
+
+    const holding = await lockedForIssuing(first)
+    let collecting: Promise<number> | undefined
+
+    try {
+      collecting = http()
+        .post(`/jobs/${call.id}/collective-invoice`)
+        .set('x-test-identity', office())
+        .send({})
+        .then((answer) => answer.status)
+      await waitingFor(admin, holding, collecting)
+
+      // Waiting at the first, it holds none of them yet: the second is free.
+      const other = await begun()
+
+      try {
+        await other.query('select id from documents where id = $1 for update nowait', [second])
+      } finally {
+        await other.query('rollback').catch(() => undefined)
+        other.release()
+      }
+
+      await holding.query('commit')
+    } finally {
+      await holding.query('rollback').catch(() => undefined)
+      holding.release()
+      await Promise.allSettled([collecting])
+    }
+
+    expect(await collecting).toBe(201)
+  })
 })
 
 describe('the surcharge named before the order (#1081)', () => {
@@ -1340,7 +1429,7 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(answer.body).toMatchObject({ netCents: 2000, emergencySurcharge: true })
   })
 
-  it('is no surcharge of a draft a device moves it to', async () => {
+  it('is no surcharge of a draft a device moves it to, and that draft charges it alone', async () => {
     const from = await draftOf()
     const to = await draftOf()
     const moved = (await surchargeOf(from.invoice)).id
@@ -1356,10 +1445,97 @@ describe('the line of the surcharge on a draft (#1087)', () => {
       [to.invoice],
     )
 
-    expect(rows).toEqual([
-      { id: moved, emergency_surcharge: false },
-      { id: expect.any(String) as string, emergency_surcharge: true },
-    ])
+    // The draft's own line stepped back for good: one surcharge, not two.
+    expect(rows).toEqual([{ id: moved, emergency_surcharge: false }])
+    expect(await marksOf(to.invoice)).toBe(0)
+  })
+
+  it.each(['Notdienstzuschlag Nacht', 'Notdienstzuschlag'])(
+    'steps back for good next to a surcharge the office types in as „%s“',
+    async (designation) => {
+      const { job, invoice } = await draftOf()
+
+      await post(`/documents/${invoice}/lines`, {
+        designation,
+        quantityMilli: 1000,
+        unit: 'flat_rate',
+        unitPriceCents: 4500,
+      })
+
+      expect(await shownSurchargesOf(invoice)).toEqual([
+        { designation, emergency_surcharge: false },
+      ])
+      expect(await marksOf(invoice)).toBe(0)
+
+      // Nor does it come back with the next change of the call.
+      await patch(`/jobs/${job}`, { emergencyAt: atNight })
+
+      expect(await shownSurchargesOf(invoice)).toEqual([
+        { designation, emergency_surcharge: false },
+      ])
+    },
+  )
+
+  it('follows a call a device names in capitals', async () => {
+    const { job, invoice } = await draftOf()
+
+    await sent(
+      changed('jobs', job.toUpperCase(), { emergencyAt: { from: saturday, to: inTheDay } }),
+    )
+
+    expect(await surchargeOf(invoice)).toMatchObject({ deleted: true, emergency_surcharge: true })
+  })
+
+  it('locks the draft a line went to meanwhile before it writes, without a deadlock', async () => {
+    const from = await draftOf()
+    const to = await draftOf()
+    // Made first, so that it comes first in the outbox: it writes, and the
+    // transmission holds the log from then on.
+    const write = aCall().operation
+    const change = changed('document_lines', from.hour, {
+      description: { from: null, to: 'Anfahrt inbegriffen' },
+    })
+    // Held at the lock of the documents it read, before it locked them.
+    const held = holdQuery(
+      (text, values) =>
+        /from "documents".*order by.*for no key update/i.test(text) &&
+        values.includes(from.invoice),
+    )
+    const changing = http()
+      .post('/sync')
+      .set('x-test-identity', office())
+      .send({ deviceId: deviceOf(office()), operations: [write, change] })
+      .then((answer) => ({
+        status: answer.status,
+        outcomes: ((answer.body as { receipts?: { outcome: string }[] }).receipts ?? []).map(
+          (receipt) => receipt.outcome,
+        ),
+      }))
+    let issuing: PoolClient | undefined
+
+    try {
+      await held.reached
+      // Meanwhile another device moves the hour to the other draft, and
+      // issuing locks that one.
+      await sent(
+        changed('document_lines', from.hour, {
+          documentId: { from: from.invoice, to: to.invoice },
+        }),
+      )
+      issuing = await lockedForIssuing(to.invoice)
+      held.release()
+      await waitingFor(admin, issuing, changing)
+      // A logged write, as issuing does after its lock.
+      await issuing.query("update jobs set description = 'Zähler prüfen' where id = $1", [to.job])
+      await issuing.query('commit')
+    } finally {
+      held.release()
+      await issuing?.query('rollback').catch(() => undefined)
+      issuing?.release()
+      await Promise.allSettled([changing])
+    }
+
+    expect(await changing).toEqual({ status: 201, outcomes: ['applied', 'applied'] })
   })
 
   it('locks an invoice with its report in the order of their ids, as a transmission does', async () => {

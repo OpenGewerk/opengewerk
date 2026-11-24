@@ -740,7 +740,7 @@ async function lockDocumentsOf(
   tx: TenantTransaction,
   operations: readonly Operation[],
 ): Promise<void> {
-  const ids = new Set<string>()
+  const named = new Set<string>()
   const onDocuments = new Map<string, string[]>()
   const calls: Operation[] = []
 
@@ -748,17 +748,17 @@ async function lockDocumentsOf(
     const reference = onADocument.get(operation.entity)
 
     if (operation.entity === 'documents') {
-      ids.add(operation.recordId)
+      named.add(canonical(operation.recordId))
     } else if (reference !== undefined) {
-      onDocuments.set(operation.entity, [
-        ...(onDocuments.get(operation.entity) ?? []),
-        operation.recordId,
-      ])
+      const records = onDocuments.get(operation.entity) ?? []
+
+      records.push(operation.recordId)
+      onDocuments.set(operation.entity, records)
 
       const to = operation.patches.find((patch) => patch.field === reference)?.to
 
       if (typeof to === 'string') {
-        ids.add(to)
+        named.add(canonical(to))
       }
     } else if (
       operation.entity === 'jobs' &&
@@ -769,7 +769,73 @@ async function lockDocumentsOf(
     }
   }
 
-  // The document each of them is on as the server holds it.
+  const locked = new Set<string>()
+  let draftsOfJobs = new Map<string, string[]>()
+
+  // Read once more under the locks: a line another transmission moved between
+  // the reading and the locking is on a document not locked yet, and would be
+  // locked by its operation, after the first write. Once the document it is
+  // on is locked, nothing moves it further, since a move locks the document a
+  // line leaves. What turns up late is locked after the rest, out of the
+  // order of the ids, and only where two moves met. A few rounds at most.
+  for (let round = 0; round < 4; round += 1) {
+    const wanted = new Set([...named, ...(await documentsOf(tx, onDocuments))])
+
+    draftsOfJobs = new Map()
+
+    for (const draft of await surchargeDraftsOf(
+      tx,
+      calls.map((call) => call.recordId),
+    )) {
+      const job = canonical(draft.jobId ?? '')
+      const drafts = draftsOfJobs.get(job) ?? []
+
+      drafts.push(draft.id)
+      draftsOfJobs.set(job, drafts)
+      wanted.add(draft.id)
+    }
+
+    const fresh = [...wanted].filter((id) => isUuid(id) && !locked.has(id))
+
+    if (fresh.length === 0) {
+      break
+    }
+
+    await tx
+      .select({ id: schema.documents.id })
+      .from(schema.documents)
+      .where(inArray(schema.documents.id, fresh as DocumentId[]))
+      .orderBy(schema.documents.id)
+      .for('no key update')
+
+    for (const id of fresh) {
+      locked.add(id)
+    }
+  }
+
+  noted.set(tx, {
+    drafts: new Map(
+      calls.map((call) => [call.id, draftsOfJobs.get(canonical(call.recordId)) ?? []]),
+    ),
+    touched: new Set(),
+  })
+}
+
+/**
+ * An id as the database gives it back: a device may send one in capitals,
+ * which a column of uuids takes all the same.
+ */
+function canonical(id: string): string {
+  return id.toLowerCase()
+}
+
+/** The document each of these records is on, as the server holds it now. */
+async function documentsOf(
+  tx: TenantTransaction,
+  onDocuments: ReadonlyMap<string, readonly string[]>,
+): Promise<string[]> {
+  const found: string[] = []
+
   for (const [entity, records] of onDocuments) {
     const table = tables.get(entity)
     const known = records.filter((record) => isUuid(record))
@@ -791,40 +857,12 @@ async function lockDocumentsOf(
       .from(table)
       .where(inArray(id, known))) {
       if (typeof row.documentId === 'string') {
-        ids.add(row.documentId)
+        found.push(row.documentId)
       }
     }
   }
 
-  const drafts = await surchargeDraftsOf(
-    tx,
-    calls.map((call) => call.recordId),
-  )
-
-  for (const draft of drafts) {
-    ids.add(draft.id)
-  }
-
-  noted.set(tx, {
-    drafts: new Map(
-      calls.map((call) => [
-        call.id,
-        drafts.filter((draft) => draft.jobId === call.recordId).map((draft) => draft.id),
-      ]),
-    ),
-    touched: new Set(),
-  })
-
-  const locked = [...ids].filter((id) => isUuid(id))
-
-  if (locked.length > 0) {
-    await tx
-      .select({ id: schema.documents.id })
-      .from(schema.documents)
-      .where(inArray(schema.documents.id, locked as DocumentId[]))
-      .orderBy(schema.documents.id)
-      .for('no key update')
-  }
+  return found
 }
 
 /**
@@ -855,13 +893,13 @@ async function afterSurchargeWrite(
 
     for (const draft of [values['documentId'], current?.['documentId']]) {
       if (typeof draft === 'string') {
-        note.touched.add(draft)
+        note.touched.add(canonical(draft))
       }
     }
   } else if (operation.kind !== 'update') {
     return
   } else if (operation.entity === 'documents' && values['jobId'] !== undefined) {
-    note.touched.add(operation.recordId)
+    note.touched.add(canonical(operation.recordId))
   } else if (operation.entity === 'jobs') {
     for (const draft of note.drafts.get(operation.id) ?? []) {
       note.touched.add(draft)

@@ -149,7 +149,10 @@ export interface SyncApplication<Sender> {
    * What the application does once every operation of a transmission is
    * written, in the same transaction (opengewerk#1087): work that follows
    * many operations alike, done once for all of them instead of after each.
-   * What it throws refuses the transmission like any other error.
+   * Shown only the operations this transmission wrote, and not asked where it
+   * wrote none: a transmission sent again finds every operation seen before,
+   * and nothing follows it twice. What it throws refuses the transmission
+   * like any other error.
    */
   readonly afterOperations?: (context: SyncTransmissionContext<Sender>) => Promise<void> | void
 }
@@ -632,8 +635,15 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
         }
       }
 
-      if (application.afterOperations) {
-        await application.afterOperations({ tx, tenantId, operations: ordered, sender })
+      // Written now, not seen before or kept as a conflict.
+      const written = ordered.filter((_, index) => {
+        const receipt = receipts[index]
+
+        return receipt?.outcome === 'applied' && receipt.reason !== 'already_seen'
+      })
+
+      if (application.afterOperations && written.length > 0) {
+        await application.afterOperations({ tx, tenantId, operations: written, sender })
       }
 
       return receipts

@@ -82,6 +82,12 @@ describe('the surcharge line', () => {
   it('is none where the business set nothing for the kind', () => {
     expect(emergencySurchargeLine('holiday', { flatCents: 0, basisPoints: 0 }, 6800)).toBeNull()
   })
+
+  it('comes to nothing on hours that come to less than nothing (#1099)', () => {
+    expect(
+      emergencySurchargeLine('weekend', { flatCents: 0, basisPoints: 2500 }, -10_000),
+    ).toMatchObject({ unitPriceCents: 0, netCents: 0 })
+  })
 })
 
 describe('the surcharge the customer hears before the order (#1024)', () => {

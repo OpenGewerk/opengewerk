@@ -676,6 +676,34 @@ describe('applying what a device queued up', () => {
     expect(after).toEqual([2])
   })
 
+  it('shows an application after a transmission only what it wrote, and nothing of one sent again (opengewerk#1087)', async () => {
+    const shown: string[][] = []
+    const following = serverSync<Courier>({
+      rules: probeSyncRules,
+      tables: syncTables({ shelves, notes, letters, letterLines }),
+      afterOperations: ({ operations }) => {
+        shown.push(operations.map((given) => given.recordId))
+      },
+    })
+    const note = newId<'note'>()
+    const transmission = [
+      operation({
+        entity: 'notes',
+        recordId: note,
+        patches: [{ field: 'text', to: 'Zähler ablesen' }],
+      }),
+      // Kept as a conflict: nothing was written for it.
+      operation({ entity: 'cellars', recordId: newId<'note'>() }),
+    ]
+
+    await inTenant(north.id, (tx) => following.applyOperations(tx, north.id, transmission, courier))
+    // Sent again, as by a device that lost the connection after the server
+    // committed: every operation seen before.
+    await inTenant(north.id, (tx) => following.applyOperations(tx, north.id, transmission, courier))
+
+    expect(shown).toEqual([[note]])
+  })
+
   it('marks a deleted record instead of removing it, so that a device that was away hears of it', async () => {
     const noteId = newId<'note'>()
 

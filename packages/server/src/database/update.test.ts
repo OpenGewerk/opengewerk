@@ -3091,6 +3091,7 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
   const collected = newId<'document'>()
   const withHeading = newId<'document'>()
   const withTypedWord = newId<'document'>()
+  const fromDevice = newId<'document'>()
 
   async function forced(table: string): Promise<boolean> {
     const { rows } = await admin.query<{ forced: boolean }>(
@@ -3128,12 +3129,14 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
     )
 
     // Two more given their surcharge: one with a heading of the word, one
-    // with a surcharge the office typed as the word alone.
+    // with a surcharge the office typed as the word alone. And one a device
+    // sent with its lines in one transmission, so at the same moment.
     await admin.query(
       `insert into documents (id, tenant_id, customer_id, kind, document_date, job_id)
        values ($1, $3, $4, 'final_invoice', '2026-10-28', $5),
-              ($2, $3, $4, 'final_invoice', '2026-10-28', $5)`,
-      [withHeading, withTypedWord, tenant.id, customer, call],
+              ($2, $3, $4, 'final_invoice', '2026-10-28', $5),
+              ($6, $3, $4, 'final_invoice', '2026-10-28', $5)`,
+      [withHeading, withTypedWord, tenant.id, customer, call, fromDevice],
     )
 
     // Two reports that carry the surcharge as a line of their own: the
@@ -3183,6 +3186,7 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
       [collected, 1, true],
       [withHeading, 1, true],
       [withTypedWord, 1, true],
+      [fromDevice, 1, true],
     ] as const) {
       await admin.query(
         `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit, unit_price_cents, net_cents, created_at)
@@ -3205,6 +3209,14 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
        values ($1, $2, 'title', 8, 'Notdienstzuschlag Hinweis', 0, 'piece', 0, 0),
               ($1, $3, 'item', 9, 'Notdienstzuschlag', 1000, 'flat_rate', 3000, 3000)`,
       [tenant.id, withHeading, withTypedWord],
+    )
+
+    // What the device sent stands in the operations of the sync.
+    await admin.query(
+      `insert into sync_operations (id, tenant_id, entity, record_id, outcome, device_id)
+       select gen_random_uuid(), tenant_id, 'document_lines', id, 'applied', 'geraet-im-keller'
+       from document_lines where document_id = $1`,
+      [fromDevice],
     )
 
     // The office lowered the surcharge of this one by hand.
@@ -3233,6 +3245,7 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
       [collected]: 0,
       [withHeading]: 1,
       [withTypedWord]: 0,
+      [fromDevice]: 0,
     })
     expect(
       (
@@ -3243,7 +3256,13 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
       ).rows,
     ).toEqual([{ designation: 'Notdienstzuschlag Nacht' }])
 
-    for (const table of ['document_lines', 'documents', 'jobs', 'document_sources']) {
+    for (const table of [
+      'document_lines',
+      'documents',
+      'jobs',
+      'document_sources',
+      'sync_operations',
+    ]) {
       expect(await forced(table), table).toBe(true)
     }
   })
