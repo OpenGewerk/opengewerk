@@ -12,8 +12,9 @@
 -- report or a source of the collective invoice, which has a line of the same
 -- name there, nor one of an article. Nor one a device sent: a device may send
 -- an invoice and its lines in one transmission, with the same moment, and
--- every line a device made stands in `sync_operations`, which keeps every
--- operation it was sent. A line the office changed or typed itself stays the
+-- every line a device made stands in `sync_operations` as applied, which
+-- keeps every operation it was sent; a change refused as a conflict left the
+-- line as it was. A line the office changed or typed itself stays the
 -- office's, even one that looks like it. An installation migrates as the owner
 -- of the tables, under FORCE, where the update would meet no row: the five
 -- tables go without FORCE for it and get it back right after.
@@ -37,6 +38,7 @@ UPDATE "document_lines" l
 		AND NOT EXISTS (
 			SELECT 1 FROM "sync_operations" so
 			WHERE so.tenant_id = l.tenant_id AND so.entity = 'document_lines' AND so.record_id = l.id
+				AND so.outcome = 'applied'
 		)
 		AND NOT EXISTS (
 			SELECT 1 FROM "document_lines" p

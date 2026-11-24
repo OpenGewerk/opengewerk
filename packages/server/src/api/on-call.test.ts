@@ -686,15 +686,16 @@ describe('the surcharge of an emergency call', () => {
     const collective = (await post(`/jobs/${collected.id}/collective-invoice`, {})).id
 
     for (const invoice of [fromReport, collective]) {
-      const { rows } = await admin.query<{ marks: number; shown: number }>(
+      const { rows } = await admin.query<{ marks: number; shown: number; total: number }>(
         `select count(*) filter (where emergency_surcharge)::int as marks,
-                count(*) filter (where deleted_at is null and designation like 'Notdienstzuschlag%')::int as shown
+                count(*) filter (where deleted_at is null and designation like 'Notdienstzuschlag%')::int as shown,
+                count(*) filter (where designation like 'Notdienstzuschlag%')::int as total
          from document_lines where document_id = $1`,
         [invoice],
       )
 
       // The one the report carried, and no line of the server, not even one taken away.
-      expect(rows).toEqual([{ marks: 0, shown: 1 }])
+      expect(rows).toEqual([{ marks: 0, shown: 1, total: 1 }])
     }
   })
 
@@ -1486,7 +1487,12 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(await surchargeOf(invoice)).toMatchObject({ deleted: true, emergency_surcharge: true })
   })
 
-  it('locks the draft a line went to meanwhile before it writes, without a deadlock', async () => {
+  /**
+   * Two drafts, a transmission that writes first and then changes the hour of
+   * the first, held at the lock of the documents it read, and the hour moved
+   * to the second draft by another device meanwhile.
+   */
+  async function aLineMovedMeanwhile() {
     const from = await draftOf()
     const to = await draftOf()
     // Made first, so that it comes first in the outbox: it writes, and the
@@ -1495,47 +1501,89 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     const change = changed('document_lines', from.hour, {
       description: { from: null, to: 'Anfahrt inbegriffen' },
     })
+    const transmit = () =>
+      http()
+        .post('/sync')
+        .set('x-test-identity', office())
+        .send({ deviceId: deviceOf(office()), operations: [write, change] })
+        .then((answer) => ({
+          status: answer.status,
+          outcomes: ((answer.body as { receipts?: { outcome: string }[] }).receipts ?? []).map(
+            (receipt) => receipt.outcome,
+          ),
+        }))
     // Held at the lock of the documents it read, before it locked them.
     const held = holdQuery(
       (text, values) =>
         /from "documents".*order by.*for no key update/i.test(text) &&
         values.includes(from.invoice),
     )
-    const changing = http()
-      .post('/sync')
-      .set('x-test-identity', office())
-      .send({ deviceId: deviceOf(office()), operations: [write, change] })
-      .then((answer) => ({
-        status: answer.status,
-        outcomes: ((answer.body as { receipts?: { outcome: string }[] }).receipts ?? []).map(
-          (receipt) => receipt.outcome,
-        ),
-      }))
-    let issuing: PoolClient | undefined
+    // And at its first write, which takes the log.
+    const writing = holdQuery((text) => text.startsWith('insert into "jobs"'))
+    const changing = transmit()
+
+    await held.reached
+    await sent(
+      changed('document_lines', from.hour, { documentId: { from: from.invoice, to: to.invoice } }),
+    )
+
+    return { to, write, transmit, held, writing, changing }
+  }
+
+  it('locks the draft a line went to meanwhile before it writes', async () => {
+    const { to, held, writing, changing } = await aLineMovedMeanwhile()
+    const other = await begun()
 
     try {
-      await held.reached
-      // Meanwhile another device moves the hour to the other draft, and
-      // issuing locks that one.
-      await sent(
-        changed('document_lines', from.hour, {
-          documentId: { from: from.invoice, to: to.invoice },
-        }),
-      )
-      issuing = await lockedForIssuing(to.invoice)
       held.release()
-      await waitingFor(admin, issuing, changing)
-      // A logged write, as issuing does after its lock.
-      await issuing.query("update jobs set description = 'Zähler prüfen' where id = $1", [to.job])
-      await issuing.query('commit')
+      await writing.reached
+
+      // About to write, the transmission holds the draft the hour is on now.
+      await expect(
+        other.query('select id from documents where id = $1 for no key update nowait', [
+          to.invoice,
+        ]),
+      ).rejects.toMatchObject({ code: '55P03' })
     } finally {
       held.release()
-      await issuing?.query('rollback').catch(() => undefined)
-      issuing?.release()
+      writing.release()
+      await other.query('rollback').catch(() => undefined)
+      other.release()
       await Promise.allSettled([changing])
     }
 
     expect(await changing).toEqual({ status: 201, outcomes: ['applied', 'applied'] })
+  })
+
+  it('waits for no draft it comes to late, and goes through when sent again', async () => {
+    const { to, write, transmit, held, writing, changing } = await aLineMovedMeanwhile()
+    const issuing = await lockedForIssuing(to.invoice)
+    let answered: unknown
+
+    try {
+      writing.release()
+      held.release()
+      // Issuing holds the draft the hour went to: waiting for it out of the
+      // order of the ids could wait in a circle, so the transmission gives up
+      // before it writes, and a device sends it again.
+      answered = await Promise.race([
+        changing,
+        new Promise((resolve) => setTimeout(() => resolve('waited'), 3000)),
+      ])
+      await issuing.query("update jobs set description = 'Zähler prüfen' where id = $1", [to.job])
+      await issuing.query('commit')
+    } finally {
+      await issuing.query('rollback').catch(() => undefined)
+      issuing.release()
+      await Promise.allSettled([changing])
+    }
+
+    expect(answered).toEqual({ status: 503, outcomes: [] })
+
+    const { rows } = await admin.query('select id from jobs where id = $1', [write.recordId])
+
+    expect(rows).toEqual([])
+    expect(await transmit()).toEqual({ status: 201, outcomes: ['applied', 'applied'] })
   })
 
   it('locks an invoice with its report in the order of their ids, as a transmission does', async () => {
@@ -1661,6 +1709,8 @@ describe('the line of the surcharge on a draft (#1087)', () => {
       await waitedFor(held.holder(), refreshing)
     } finally {
       held.release()
+      // Both done before the next test, even where the wait above failed.
+      await Promise.allSettled([issuing, refreshing])
     }
 
     expect(await issuing).toBe(201)

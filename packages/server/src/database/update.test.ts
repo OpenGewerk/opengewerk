@@ -3211,7 +3211,15 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
       [tenant.id, withHeading, withTypedWord],
     )
 
-    // What the device sent stands in the operations of the sync.
+    // What the device sent stands in the operations of the sync. A change of
+    // the line the given invoice got, refused as a conflict, left it as it
+    // was, and it is the server's all the same.
+    await admin.query(
+      `insert into sync_operations (id, tenant_id, entity, record_id, outcome, device_id)
+       select gen_random_uuid(), tenant_id, 'document_lines', id, 'conflict', 'geraet-im-keller'
+       from document_lines where document_id = $1 and unit = 'flat_rate'`,
+      [given],
+    )
     await admin.query(
       `insert into sync_operations (id, tenant_id, entity, record_id, outcome, device_id)
        select gen_random_uuid(), tenant_id, 'document_lines', id, 'applied', 'geraet-im-keller'

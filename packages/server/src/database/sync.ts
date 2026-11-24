@@ -31,6 +31,7 @@ import {
   attachmentVersionPlace,
   circuitAlong,
   contactWithoutParent,
+  databaseCode,
   isUuid,
   serverSync,
   type SyncCheck,
@@ -41,6 +42,7 @@ import {
   type TenantTransaction,
 } from '@opengewerk/platform-server'
 
+import { ServiceUnavailableException } from '@nestjs/common'
 import { eq, getTableColumns, inArray, sql } from 'drizzle-orm'
 import type { PgColumn } from 'drizzle-orm/pg-core'
 
@@ -776,9 +778,12 @@ async function lockDocumentsOf(
   // the reading and the locking is on a document not locked yet, and would be
   // locked by its operation, after the first write. Once the document it is
   // on is locked, nothing moves it further, since a move locks the document a
-  // line leaves. What turns up late is locked after the rest, out of the
-  // order of the ids, and only where two moves met. A few rounds at most.
-  for (let round = 0; round < 4; round += 1) {
+  // line leaves. What turns up late comes out of the order of the ids, so it
+  // is taken only where it is free: waiting for it, this transmission could
+  // wait in a circle with one that holds it and waits for a document this one
+  // holds. Taken or not, nothing is written yet, and a transmission sent
+  // again finds the lines where they are now.
+  for (let round = 0; ; round += 1) {
     const wanted = new Set([...named, ...(await documentsOf(tx, onDocuments))])
 
     draftsOfJobs = new Map()
@@ -801,12 +806,24 @@ async function lockDocumentsOf(
       break
     }
 
-    await tx
+    if (round === lockRounds) {
+      throw documentsMoving()
+    }
+
+    const lock = tx
       .select({ id: schema.documents.id })
       .from(schema.documents)
       .where(inArray(schema.documents.id, fresh as DocumentId[]))
       .orderBy(schema.documents.id)
-      .for('no key update')
+
+    if (round === 0) {
+      await lock.for('no key update')
+    } else {
+      await lock.for('no key update', { noWait: true }).catch((error: unknown) => {
+        // `lock_not_available`: another transaction holds it.
+        throw databaseCode(error) === '55P03' ? documentsMoving() : error
+      })
+    }
 
     for (const id of fresh) {
       locked.add(id)
@@ -819,6 +836,20 @@ async function lockDocumentsOf(
     ),
     touched: new Set(),
   })
+}
+
+/** How often `lockDocumentsOf` locks what it found before it gives up. */
+const lockRounds = 4
+
+/**
+ * The answer where lines of a transmission moved while it locked their
+ * documents: before anything is written, and one a device sends again, as
+ * it does when it has no connection (503).
+ */
+function documentsMoving(): ServiceUnavailableException {
+  return new ServiceUnavailableException(
+    'Belege dieser Übertragung werden gerade woanders geändert. Das Gerät sendet sie gleich noch einmal.',
+  )
 }
 
 /**
