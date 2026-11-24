@@ -60,14 +60,6 @@ function sameAsHeld(held: SyncValue | undefined, handed: unknown): boolean {
 }
 
 /**
- * Whether two values are the same but for how they are written: 5 and "5",
- * true and "true". Null is only null.
- */
-function sameButWritten(left: SyncValue, right: SyncValue): boolean {
-  return left === null || right === null ? left === right : String(left) === String(right)
-}
-
-/**
  * The fields of what a form hands in that it changed against what it handed
  * when it was opened (opengewerk#1057). A field the opening did not have
  * counts as changed.
@@ -870,11 +862,15 @@ export class SyncClient {
     // (opengewerk#1057). With `opened`, what the form handed when it was
     // opened, in the shape it hands values, only the fields changed in the
     // form are written; what another device changed in the others stays.
+    // A changed field goes out from what the device holds, as every change
+    // does: the form shows a value shaped for the person, a choice where
+    // nothing was chosen yet, a number as text, and that is no value another
+    // device wrote.
     const changed = opened === undefined ? values : changedSince(opened, values)
 
     return this.needsConnection(entity)
       ? this.writeDirectly(entity, id, changed)
-      : this.edit(entity, id, 'update', changed, opened)
+      : this.edit(entity, id, 'update', changed)
   }
 
   remove(entity: string, id: string): Promise<EditResult> {
@@ -983,10 +979,9 @@ export class SyncClient {
     id: string,
     kind: OperationKind,
     values: Draft,
-    opened?: Draft,
   ): Promise<EditResult> {
     const current = kind === 'create' ? null : this.get(entity, id)
-    const patches = this.patchesFor(entity, current, values, opened)
+    const patches = this.patchesFor(entity, current, values)
 
     if (kind === 'update' && patches.length === 0) {
       // Nothing changed. Queueing it would put an operation in front of the
@@ -994,18 +989,12 @@ export class SyncClient {
       return { outcome: 'queued', id }
     }
 
-    // A change that says it saw another value than the device holds, the
-    // one its form opened with (opengewerk#1057), claims no version: the
-    // version held came after what the person saw, and with it the merge
-    // would take the shortcut past the comparison of each field.
-    const sawOther = patches.some((patch) => !sameValue(patch.from, current?.[patch.field] ?? null))
     const operation: Operation = {
       id: uuidv7() as OperationId,
       entity,
       recordId: id,
       kind,
-      baseVersion:
-        !sawOther && typeof current?.['version'] === 'number' ? current['version'] : null,
+      baseVersion: typeof current?.['version'] === 'number' ? current['version'] : null,
       patches,
       recordedAt: new Date(),
       deviceId: this.deviceId,
@@ -1061,7 +1050,6 @@ export class SyncClient {
     entity: string,
     current: RecordState | null,
     values: Draft,
-    opened?: Draft,
   ): readonly FieldPatch[] {
     const patches: FieldPatch[] = []
 
@@ -1074,20 +1062,9 @@ export class SyncClient {
       }
 
       const to = toSyncValue(raw)
-      const held: SyncValue = current ? (current[field] ?? null) : null
-      // What the person saw (opengewerk#1057): the value the form opened with,
-      // where it gives one, so that a field another device changed meanwhile
-      // is a conflict and not written over. Written the way the device holds
-      // it where the two differ only in that, so that a form handing a number
-      // as text raises no conflict nobody caused.
-      const saw = opened !== undefined && field in opened ? asHeld(opened[field]) : held
-      const from = sameButWritten(saw, held) ? held : saw
+      const from: SyncValue = current ? (current[field] ?? null) : null
 
-      // A value the device holds already is no change: another device made
-      // the same one. Sent with what the person saw, it would take the
-      // version of the change away, and with it a check of the server that
-      // asks the version (`selectiveRefusal`).
-      if (!sameValue(from, to) && !sameValue(held, to)) {
+      if (!sameValue(from, to)) {
         patches.push({ field, from, to })
       }
     }

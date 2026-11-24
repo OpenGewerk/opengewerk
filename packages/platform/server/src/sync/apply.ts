@@ -564,6 +564,15 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
     // the old one did not take.
     let firstParent: string | null = null
 
+    // Whether the record changed since it was read at the start of a try.
+    const changedSinceRead = async (db: TenantTransaction, read: RecordState): Promise<boolean> =>
+      (await versionNow(db, operation.entity, operation.recordId)) !== read['version']
+    const changedEveryTime = (cause?: unknown) =>
+      new Error(
+        `The record ${operation.recordId} changed under every one of ${String(mostAttempts)} attempts`,
+        cause === undefined ? undefined : { cause },
+      )
+
     for (let attempt = 1; ; attempt += 1) {
       // Without a condition on `deletedAt`, unlike a route, and that is the
       // point: a deleted row has to be found here. It is what turns a repeated
@@ -588,11 +597,22 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
         )
       }
 
-      const decision = rules.decideMerge(
-        operation,
-        current,
-        await parentFor(tx, operation, current),
-      )
+      const parentRecord = await parentFor(tx, operation, current)
+
+      // The lock of the parent may have been waited for, and under read
+      // committed the record, read before it, is then older than the parent
+      // read after it: a line read in one letter, judged by the letter it has
+      // left since (CodeRabbit on #1074). A record that changed meanwhile is
+      // read again.
+      if (parentRecord !== null && current !== null && (await changedSinceRead(tx, current))) {
+        if (attempt >= mostAttempts) {
+          throw changedEveryTime()
+        }
+
+        continue
+      }
+
+      const decision = rules.decideMerge(operation, current, parentRecord)
 
       if (decision.outcome === 'skip') {
         return await record(tx, tenantId, operation, {
@@ -650,6 +670,13 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
             continue
           }
 
+          // A refusal judged on the record as it was read (CodeRabbit on
+          // #1074): one another transaction changed since is read and checked
+          // again, and a change that holds on what it left is not turned away.
+          if (current !== null && (await changedSinceRead(db, current))) {
+            throw new ChangedMeanwhile()
+          }
+
           if (refusal.kind === 'client') {
             throw new UnknownFieldError(refusal.message)
           }
@@ -704,10 +731,7 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
           await tx.execute(sql`rollback to savepoint opengewerk_sync_try`)
 
           if (attempt >= mostAttempts) {
-            throw new Error(
-              `The record ${operation.recordId} changed under every one of ${String(mostAttempts)} attempts`,
-              { cause: error },
-            )
+            throw changedEveryTime(error)
           }
 
           continue

@@ -1424,6 +1424,105 @@ describe('two transmissions to the same record (opengewerk#1074)', () => {
     ).toHaveLength(1)
   })
 
+  it('checks a record again that changed after it was read, instead of refusing it on what it was (CodeRabbit on #1074)', async () => {
+    const { noteId } = await records()
+    const judged: string[] = []
+    let between: (() => Promise<unknown>) | null = () =>
+      inTenant(
+        north.id,
+        (tx) => tx.update(notes).set({ text: 'Zähler frei' }).where(eq(notes.id, noteId)),
+        'office',
+      )
+    const watching = serverSync<Courier>({
+      rules: probeSyncRules,
+      tables: syncTables({ shelves, notes, letters, letterLines }),
+      checks: [
+        async ({ operation, current }) => {
+          if (operation.entity !== 'notes' || operation.kind !== 'update') {
+            return null
+          }
+
+          const read = String(current?.['text'] ?? '')
+          judged.push(read)
+
+          // Another transaction changes the note and commits, after this one
+          // read it and before it judges it.
+          if (between) {
+            const change = between
+            between = null
+            await change()
+          }
+
+          return read === 'Zähler ablesen'
+            ? { kind: 'conflict', reason: 'record_is_fixed', fields: ['marks'] }
+            : null
+        },
+      ],
+    })
+
+    const receipts = await inTenant(north.id, (tx) =>
+      watching.applyOperations(
+        tx,
+        north.id,
+        [
+          operation({
+            entity: 'notes',
+            recordId: noteId,
+            kind: 'update',
+            patches: [{ field: 'marks', from: '[]', to: '["Keller"]' }],
+          }),
+        ],
+        courier,
+      ),
+    )
+
+    expect(outcomes(receipts)).toEqual([{ outcome: 'applied', reason: null, fields: [] }])
+    expect(judged).toEqual(['Zähler ablesen', 'Zähler frei'])
+  })
+
+  it('judges a line by the letter it is in once the lock of its letter came, not the one it was read in (CodeRabbit on #1074)', async () => {
+    const { letterId, lineId } = await records()
+    const otherLetter = newId<'letter'>()
+
+    await send(north.id, [
+      operation({
+        entity: 'letters',
+        recordId: otherLetter,
+        patches: [{ field: 'subject', to: 'Nachtrag' }],
+      }),
+    ])
+
+    // The letter is sealed and the line moved out of it in one transaction,
+    // which holds the letter while the transmission waits for it.
+    const receipts = whileChanging(
+      async (tx) => {
+        await tx.update(letters).set({ status: 'sealed' }).where(eq(letters.id, letterId))
+        await tx
+          .update(letterLines)
+          .set({ letterId: otherLetter })
+          .where(eq(letterLines.id, lineId))
+      },
+      () =>
+        send(north.id, [
+          operation({
+            entity: 'letter_lines',
+            recordId: lineId,
+            kind: 'update',
+            patches: [{ field: 'quantity', from: 3, to: 4 }],
+          }),
+        ]),
+    )
+
+    // Not refused for the sealed letter it has left: sent back, as a line that
+    // went to another parent while it was written.
+    await expect(receipts).rejects.toThrow(OperationRefused)
+    await expect(receipts.catch((error: unknown) => (error as Error).cause)).resolves.toMatchObject(
+      {
+        message: expect.stringContaining('went to another parent'),
+      },
+    )
+  })
+
   it('sends a transmission back whose record went to another parent while it was written, and takes it the next time', async () => {
     const { lineId } = await records()
     const otherLetter = newId<'letter'>()
@@ -1448,13 +1547,18 @@ describe('two transmissions to the same record (opengewerk#1074)', () => {
 
     // The lock of the first letter is held: waiting for the second as well
     // could wait in a circle with a transmission that holds it.
-    await expect(
-      whileChanging(
-        (tx) =>
-          tx.update(letterLines).set({ letterId: otherLetter }).where(eq(letterLines.id, lineId)),
-        change,
-      ),
-    ).rejects.toThrow()
+    const sentBack = whileChanging(
+      (tx) =>
+        tx.update(letterLines).set({ letterId: otherLetter }).where(eq(letterLines.id, lineId)),
+      change,
+    )
+
+    await expect(sentBack).rejects.toThrow(OperationRefused)
+    await expect(sentBack.catch((error: unknown) => (error as Error).cause)).resolves.toMatchObject(
+      {
+        message: expect.stringContaining('went to another parent'),
+      },
+    )
 
     expect(outcomes(await change())).toEqual([{ outcome: 'applied', reason: null, fields: [] }])
     expect(

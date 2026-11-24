@@ -2247,45 +2247,25 @@ describe('an exchange with the server', () => {
     expect(client.get('notes', 'n-1')?.['kind']).toBe('task')
   })
 
-  it('takes what the form opened with as what the person saw, and refuses where another device changed the same field (opengewerk#1057)', async () => {
+  it('sends a field the form changed from what the device holds, with its version, however the form showed it (opengewerk#1057)', async () => {
     const client = await start(transport)
 
+    // Held from before the field was there: the form shows its default.
     await holding(client, transport, {
       entity: 'notes',
-      rows: [row({ id: 'n-1', title: 'Shelf by the door', kind: 'remark' })],
+      rows: [row({ id: 'n-1', title: 'Shelf by the door', version: 4 })],
     })
 
-    const opened = { title: 'Shelf by the door', kind: 'remark' }
-
-    await holding(client, transport, {
-      entity: 'notes',
-      rows: [
-        row({
-          id: 'n-1',
-          title: 'Shelf by the stairs',
-          kind: 'remark',
-          version: 2,
-          changeSequence: 2,
-        }),
-      ],
-    })
-
-    const sent = transport.sent.length
     const saved = await client.update(
       'notes',
       'n-1',
-      { title: 'Shelf by the window', kind: 'remark' },
-      opened,
+      { title: 'Shelf by the door', kind: 'warning' },
+      { title: 'Shelf by the door', kind: 'remark' },
     )
 
-    expect(saved).toMatchObject({
-      outcome: 'refused',
-      reason: 'changed_elsewhere',
-      fields: ['title'],
-    })
-    expect(client.status().pending).toBe(0)
-    expect(transport.sent.length).toBe(sent)
-    expect(client.get('notes', 'n-1')?.['title']).toBe('Shelf by the stairs')
+    expect(saved).toEqual({ outcome: 'queued', id: 'n-1' })
+    expect(client.status().pending).toBe(1)
+    expect(client.get('notes', 'n-1')?.['kind']).toBe('warning')
   })
 
   it('raises no conflict where the form wrote the value it opened with another way (opengewerk#1057)', async () => {
