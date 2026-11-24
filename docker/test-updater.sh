@@ -271,14 +271,14 @@ if started; then fail 'ein alter Auftrag startete'; fi
 [ "$(field .reason "$refusal")" = expired ] || fail 'ein alter Auftrag wurde nicht als zu alt abgelehnt'
 refused 55555555-2222-4333-8444-555555555555 1.1.0 running FAKE_RUNNING=1
 refused 66666666-2222-4333-8444-555555555555 1.1.0 elsewhere "INSTALL_DIRECTORY=$work/elsewhere"
+# A request turned away stays turned away, also for a service that starts
+# again once the path is right: it would start an update nobody asked for
+# any more, though the same request with another ID would start now.
+round
+if started; then fail 'ein abgelehnter Auftrag startete nach dem Berichtigen des Pfads'; fi
+if grep -q 'abgelehnt' "$work/updater.log"; then fail 'ein abgelehnter Auftrag wurde noch einmal geprüft'; fi
 release v1.0.0
 refused 77777777-2222-4333-8444-555555555555 1.0.0 current
-# A request turned away stays turned away, also for a service that starts
-# again: after the .env was corrected, say, it would start an update nobody
-# asked for again.
-round
-if started; then fail 'ein abgelehnter Auftrag startete beim nächsten Start'; fi
-if grep -q 'abgelehnt' "$work/updater.log"; then fail 'ein abgelehnter Auftrag wurde noch einmal geprüft'; fi
 release v1.1.0
 check 'andere oder keine Fassung, alter Auftrag, laufendes Update, anderer Ordner, schon aktuell: abgelehnt, run.json bleibt'
 
@@ -383,9 +383,12 @@ check 'Paket mit Verweis oder Pfad außerhalb seines Ordners: nicht entpackt'
 restore
 pack 1.2.0
 cp "$work/kits/opengewerk-1.2.0.tar.gz" "$work/kits/opengewerk-1.1.0.tar.gz"
+cp "$work/install/docker/compose.yaml" "$work/compose.before"
 update dddddddd-2222-4333-8444-555555555555
 failed_in 1 'andere Fassung im Paket'
-check 'Paket einer anderen Fassung: abgelehnt'
+[ ! -e "$work/install/docker/only-in-1.2.0.txt" ] || fail 'das Paket einer anderen Fassung wurde entpackt'
+cmp -s "$work/compose.before" "$work/install/docker/compose.yaml" || fail 'compose.yaml wurde verändert'
+check 'Paket einer anderen Fassung: abgelehnt, nichts entpackt'
 
 # 13. start.sh failing in each of its steps, and an application that answers
 # with another version: each ends in its own step.
@@ -490,7 +493,7 @@ pack 1.2.0
 cp -R "$work/pack/opengewerk/." "$work/install/"
 rm -f "$work/status/alive" "$work/requests/request.json"
 : > "$CALLS"
-env UPDATE_ROUNDS=2 UPDATE_POLL_INTERVAL=8 sh "$source_dir/updater/updater.sh" > "$work/updater.log" 2>&1 &
+env UPDATE_ROUNDS=2 UPDATE_POLL_INTERVAL=20 sh "$source_dir/updater/updater.sh" > "$work/updater.log" 2>&1 &
 service=$!
 waited=0
 while [ ! -s "$work/status/alive" ] && [ "$waited" -lt 50 ]; do

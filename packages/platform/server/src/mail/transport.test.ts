@@ -204,7 +204,13 @@ describe('a message', () => {
     const failure = await failureOf(transport.send(letter))
     transport.close()
 
-    expect(failure).toMatchObject({ code: 'EENVELOPE', responseCode: 450, permanent: false })
+    // For now and about the recipient: the other mails of the pass go on.
+    expect(failure).toMatchObject({
+      code: 'EENVELOPE',
+      responseCode: 450,
+      permanent: false,
+      refusedSender: false,
+    })
   })
 
   it.each([
