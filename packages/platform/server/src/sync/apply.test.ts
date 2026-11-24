@@ -697,6 +697,9 @@ describe('applying what a device queued up', () => {
     ]
 
     await inTenant(north.id, (tx) => following.applyOperations(tx, north.id, transmission, courier))
+
+    expect(shown).toEqual([[note]])
+
     // Sent again, as by a device that lost the connection after the server
     // committed: every operation seen before.
     await inTenant(north.id, (tx) => following.applyOperations(tx, north.id, transmission, courier))

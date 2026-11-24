@@ -194,6 +194,14 @@ export class JobsController {
     const [updated] = await this.database.forTenant(identity, async (tx) => {
       await requireReferences(tx, jobs, values, false)
 
+      // The drafts of the call follow its moment and its named surcharge
+      // (#1087), locked before the job is written, as issuing locks first.
+      // And before the job is read: a change of the call that holds them is
+      // waited for, and the terms are checked against what it left.
+      const drafts = surchargeFieldsOfJob.some((field) => field in values)
+        ? await lockSurchargeDrafts(tx, id)
+        : []
+
       const [current] = await tx
         .select()
         .from(jobs)
@@ -204,12 +212,6 @@ export class JobsController {
       if (current) {
         await requireFollowUp(tx, id, values, current)
       }
-
-      // The drafts of the call follow its moment and its named surcharge
-      // (#1087), locked before the job is written, as issuing locks first.
-      const drafts = surchargeFieldsOfJob.some((field) => field in values)
-        ? await lockSurchargeDrafts(tx, id)
-        : []
 
       const written = await tx
         .update(jobs)

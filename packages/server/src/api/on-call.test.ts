@@ -1182,6 +1182,23 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(await surchargeOf(invoice)).toMatchObject({ net_cents: 2000 })
   })
 
+  it('stays the server’s when a device names its own draft in capitals', async () => {
+    const { invoice, hour } = await draftOf()
+    const line = (await surchargeOf(invoice)).id
+
+    await sent(
+      changed('document_lines', line, {
+        documentId: { from: invoice, to: invoice.toUpperCase() },
+      }),
+    )
+    await price(invoice, hour, 10_000)
+
+    expect(await surchargeOf(invoice)).toMatchObject({
+      net_cents: 5000,
+      emergency_surcharge: true,
+    })
+  })
+
   it('belongs to the office when it types the word null as the text below it', async () => {
     // At night: a flat amount, with no text below the line.
     const { invoice } = await draftOf({ emergencyAt: atNight })
@@ -1876,6 +1893,37 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     }
 
     expect(await issuing).toBe(201)
+  })
+
+  it('checks a named surcharge against a call taken away while it waited for the draft', async () => {
+    const { job, invoice } = await draftOf()
+    // Another change of the call, holding the draft as its route does, takes
+    // the call away and has not committed yet.
+    const removing = await begun()
+    let naming: Promise<number> | undefined
+
+    try {
+      await removing.query('select id from documents where id = $1 for no key update', [invoice])
+      await removing.query(
+        `update jobs set emergency_at = null, emergency_named_flat_cents = null,
+           emergency_named_basis_points = null where id = $1`,
+        [job],
+      )
+      naming = http()
+        .patch(`/jobs/${job}`)
+        .set('x-test-identity', office())
+        .send({ emergencyNamedFlatCents: 2000, emergencyNamedBasisPoints: 0 })
+        .then((answer) => answer.status)
+      await waitingFor(admin, removing, naming)
+      await removing.query('commit')
+    } finally {
+      await removing.query('rollback').catch(() => undefined)
+      removing.release()
+      await Promise.allSettled([naming])
+    }
+
+    // Checked against the call as the other change left it: there is none.
+    expect(await naming).toBe(422)
   })
 
   it('stays removed when the office removes it while a refresh waits for the draft', async () => {
