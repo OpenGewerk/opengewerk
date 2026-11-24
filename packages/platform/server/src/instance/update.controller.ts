@@ -21,10 +21,10 @@ import { listOperators } from './operators.js'
 import {
   INSTANCE_UPDATES,
   type InstanceUpdates,
-  lastRunUnreadable,
   readInstanceUpdate,
   requestInstanceUpdate,
   stillTelling,
+  UnreadableLastRun,
   updateRefusedNow,
 } from './update.js'
 import { recordFinishedUpdate } from './update-reports.js'
@@ -104,15 +104,32 @@ export class InstanceUpdateController {
       throw new ConflictException(refused)
     }
 
-    if (await lastRunUnreadable(this.updates)) {
-      throw new ConflictException(lastRunUnreadableSentence)
+    // Only the newest version the service found passes the check above. The
+    // request names that one, as the service wrote it, and nothing of what
+    // came over the network.
+    const latest = view.latest
+
+    if (latest === null) {
+      throw new ConflictException(
+        'Aktualisiert wird nur auf die neueste Fassung, und das ist eine andere. Bitte die Seite neu laden.',
+      )
     }
 
     // The run before goes into the logs first: the service writes the new
     // one where it stood, and it would stay out of them (opengewerk#1093).
     // Before the confirmation is spent, so that a log that cannot be written
     // costs nobody a second one.
-    await recordFinishedUpdate(this.database, this.updates)
+    // One read of the last run decides both: a run that cannot be read stops
+    // the request (CodeRabbit on #1101).
+    try {
+      await recordFinishedUpdate(this.database, this.updates)
+    } catch (error) {
+      if (error instanceof UnreadableLastRun) {
+        throw new ConflictException(lastRunUnreadableSentence)
+      }
+
+      throw error
+    }
 
     if (!(await claimReconfirmation(this.database, user.sessionId))) {
       throw new ForbiddenException(updateUnconfirmed)
@@ -122,7 +139,7 @@ export class InstanceUpdateController {
       (operator) => operator.userId === user.userId,
     )
 
-    await requestInstanceUpdate(this.updates, wanted, asking?.name || asking?.email || '')
+    await requestInstanceUpdate(this.updates, latest, asking?.name || asking?.email || '')
 
     return readInstanceUpdate(this.updates, this.version)
   }

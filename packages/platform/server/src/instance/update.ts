@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
@@ -440,20 +440,49 @@ async function placed(draft: string, path: string, body: string, mode?: number):
 }
 
 /**
- * Whether the folder holds a last run that cannot be read: a file that is
- * there and no run of its form (CodeRabbit on #1101). How it ended would then
- * stay out of the logs, and a new request would take its place unwritten.
+ * A last run that cannot be read: a file that is there and no run of its form
+ * (CodeRabbit on #1101). How it ended would stay out of the logs, and a new
+ * request would take its place unwritten.
  */
-export async function lastRunUnreadable(updates: InstanceUpdates): Promise<boolean> {
-  const path = join(updates.statusPath, 'run.json')
+export class UnreadableLastRun extends Error {}
+
+/**
+ * The last run, read once: null where there is none, `UnreadableLastRun`
+ * where the file is there and holds no run of its form. The screen reads it
+ * leniently (`readInstanceUpdate`); what writes the logs and what starts the
+ * next run read it here, so that one read decides both.
+ */
+export async function readLastRun(updates: InstanceUpdates): Promise<InstanceUpdateRun | null> {
+  let written: string
 
   try {
-    await stat(path)
+    written = await readFile(join(updates.statusPath, 'run.json'), 'utf8')
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== 'ENOENT'
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null
+    }
+
+    throw new UnreadableLastRun('Der letzte Lauf ließ sich nicht lesen.', { cause: error })
   }
 
-  return runOf(await readJson(path)) === null
+  let parsed: unknown
+
+  try {
+    parsed = JSON.parse(written)
+  } catch {
+    parsed = null
+  }
+
+  const run =
+    typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? runOf(parsed as Json)
+      : null
+
+  if (run === null) {
+    throw new UnreadableLastRun('Der letzte Lauf ist kein Lauf, wie der Dienst ihn schreibt.')
+  }
+
+  return run
 }
 
 /**

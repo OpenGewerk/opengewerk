@@ -859,15 +859,10 @@ describe('telling how an update ended, when the mark of who was told fails', () 
     }
 
     let told = 0
-    let first = ''
     const stopping = {
       ...messages,
       instanceUpdated: (facts: Parameters<typeof words>[0]) => {
         told += 1
-
-        if (told === 1) {
-          first = facts.name === otto.name ? otto.email : lea.email
-        }
 
         // The second address stops the look, after the first got its mail.
         if (told === 2) {
@@ -880,10 +875,17 @@ describe('telling how an update ended, when the mark of who was told fails', () 
 
     try {
       finished(id)
+      const before = smtp.received.length
 
       await expect(reportFinishedUpdate({ ...reporting(), messages: stopping })).rejects.toThrow()
 
-      expect((await updateTold(updates, id)).to).toEqual([first.toLowerCase()])
+      // The one the server took, as it took it.
+      const sent = smtp.received.slice(before).flatMap((mail) => mail.to)
+
+      expect(sent).toHaveLength(1)
+      expect((await updateTold(updates, id)).to).toEqual(
+        sent.map((address) => address.toLowerCase()),
+      )
     } finally {
       await removeOperator(database, probeAccess.sentences.instance, lead, second.userId)
     }

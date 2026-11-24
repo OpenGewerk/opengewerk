@@ -10,7 +10,14 @@ import type { AccountMessages } from './account-mail.js'
 import { instanceMailConnection } from './mail-server.js'
 import { listOperators } from './operators.js'
 import { updateNotices, instanceUpdates } from '../schema.js'
-import { type InstanceUpdates, markUpdateTold, readInstanceUpdate, updateTold } from './update.js'
+import {
+  type InstanceUpdates,
+  markUpdateTold,
+  readInstanceUpdate,
+  readLastRun,
+  UnreadableLastRun,
+  updateTold,
+} from './update.js'
 
 /**
  * Everybody who runs the instance learns by mail how an update from its area
@@ -214,13 +221,14 @@ export async function reportFinishedUpdate(
  * However long ago the run ended: an update that left the instance down
  * until somebody mended it on the server is the one the logs need most. A
  * new request writes the last run first (`update.controller.ts`), so that it
- * does not take its place in the folder unwritten.
+ * does not take its place in the folder unwritten. A last run that cannot be
+ * read throws `UnreadableLastRun`, which stops such a request.
  */
 export async function recordFinishedUpdate(
   database: Database,
   updates: InstanceUpdates,
 ): Promise<boolean> {
-  const { run } = await readInstanceUpdate(updates, null)
+  const run = await readLastRun(updates)
 
   if (!run || run.state === 'running' || run.finishedAt === null) {
     return false
@@ -281,7 +289,16 @@ export function startUpdateRecords(
   complain?: (line: string, error: unknown) => void,
 ): RepeatingJob {
   return startRepeating({
-    run: () => recordFinishedUpdate(database, updates),
+    // A last run that cannot be read is the screen's to say and stops the
+    // next request; a minute later it is no different.
+    run: () =>
+      recordFinishedUpdate(database, updates).catch((error: unknown) => {
+        if (error instanceof UnreadableLastRun) {
+          return false
+        }
+
+        throw error
+      }),
     intervalMs: 60_000,
     firstAfterMs: 15_000,
     failure:
