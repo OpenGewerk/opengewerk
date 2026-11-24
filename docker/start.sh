@@ -247,6 +247,9 @@ engine_new_enough
 say 'Die Datenbank wird eingerichtet oder auf den neuen Stand gebracht.'
 compose run --rm migrate ||
   fail 'Die Migration ist gescheitert, der Grund steht darüber. Eine laufende Instanz arbeitet unverändert weiter, die Datenbank steht auf dem Stand davor.'
+# The update from the office reads this sentence: from here on, a start that
+# stops has a migrated database behind it (opengewerk#1106).
+say 'Die Datenbank steht auf dem neuen Stand.'
 
 # Asked again right after the migrations, before the login comes back below:
 # an engine swapped meanwhile would get it without having seen them.

@@ -699,9 +699,9 @@ const stoppedIn: Record<
     left: (from) => `Geändert wurde nichts, die Instanz läuft weiter auf Fassung ${from}.`,
   },
   images: {
-    where: 'beim Holen der Abbilder',
+    where: 'beim Einspielen der neuen Fassung oder beim Holen ihrer Abbilder',
     left: (from) =>
-      `Die Dateien der neuen Fassung liegen schon im Ordner der Instanz, sie läuft aber weiter auf Fassung ${from}. ` +
+      `Dateien der neuen Fassung liegen schon im Ordner der Instanz, vielleicht nicht alle. Sie läuft aber weiter auf Fassung ${from}. ` +
       'Ein neuer Versuch im Bereich der Instanz setzt dort wieder an.',
   },
   migration: {

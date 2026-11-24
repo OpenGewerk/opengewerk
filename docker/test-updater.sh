@@ -42,6 +42,8 @@ echo 'OpenGewerk: Fassung: die signierten Abbilder werden geholt.'
 [ "${START_ENDS:-ok}" != images ] || exit 1
 echo 'OpenGewerk: Die Datenbank wird eingerichtet oder auf den neuen Stand gebracht.'
 [ "${START_ENDS:-ok}" != migration ] || exit 1
+echo 'OpenGewerk: Die Datenbank steht auf dem neuen Stand.'
+[ "${START_ENDS:-ok}" != migrated ] || exit 1
 echo 'OpenGewerk: OpenGewerk startet.'
 [ "${START_ENDS:-ok}" != restart ] || exit 1
 echo 'OpenGewerk: OpenGewerk läuft. Im Browser: https://example.org'
@@ -114,7 +116,18 @@ cat > "$work/bin/cosign" <<'FAKE'
 printf 'cosign|%s\n' "$*" >> "$CALLS"
 [ -z "${COSIGN_REFUSES:-}" ] || { echo 'Error: no matching signatures' >&2; exit 1; }
 FAKE
-chmod +x "$work/bin/docker" "$work/bin/curl" "$work/bin/cosign"
+# A cp that fails at the files FAKE_CP_FAILS names, a pattern, as on a disk
+# that runs full: the file it writes is cut off. The real one otherwise.
+real_cp=$(command -v cp)
+cat > "$work/bin/cp" <<FAKE
+#!/bin/sh
+for last; do :; done
+case "\$last" in
+  */\${FAKE_CP_FAILS:-//}) : > "\$last"; echo 'cp: No space left on device' >&2; exit 1 ;;
+esac
+exec $real_cp "\$@"
+FAKE
+chmod +x "$work/bin/docker" "$work/bin/curl" "$work/bin/cosign" "$work/bin/cp"
 
 PATH="$work/bin:$PATH"
 KITS="$work/kits"
@@ -403,7 +416,7 @@ check 'Paket einer anderen Fassung: abgelehnt, nichts entpackt'
 # 13. start.sh failing in each of its steps, and an application that answers
 # with another version: each ends in its own step.
 pack 1.1.0
-for case in images:2 migration:3 restart:4; do
+for case in images:2 migration:3 migrated:4 restart:4; do
   restore
   update eeeeeeee-2222-4333-8444-555555555555 "START_ENDS=${case%%:*}"
   failed_in "${case#*:}" "start.sh bei ${case%%:*}"
@@ -417,7 +430,18 @@ began=$(date +%s)
 update f0f0f0f0-2222-4333-8444-555555555555 HEALTH_HANGS=1 UPDATE_HEALTH_TIMEOUT=1
 failed_in 5 'Anwendung antwortet nicht'
 [ $(($(date +%s) - began)) -lt 20 ] || fail 'ein Versuch ohne Antwort hielt den Lauf auf'
-check 'start.sh scheitert bei Abbildern, Migration oder Neustart, falsche oder keine Fassung: Schritt 2, 3, 4 und 5'
+check 'start.sh scheitert bei Abbildern, Migration, nach der Migration oder beim Neustart, falsche oder keine Fassung: Schritt 2, 3, 4 und 5'
+
+# 13a. A disk that runs full while the files go into the installation, at
+# compose.yaml under whatever name it is written: the run stops in the step
+# that says files of the new version lie there, and compose.yaml stays whole,
+# the old one (opengewerk#1106).
+restore
+cp "$work/install/docker/compose.yaml" "$work/compose.before"
+update e1e1e1e1-2222-4333-8444-555555555555 'FAKE_CP_FAILS=compose.yaml*'
+failed_in 2 'Platte voll beim Einspielen'
+cmp -s "$work/compose.before" "$work/install/docker/compose.yaml" || fail 'compose.yaml ist nicht mehr ganz die alte'
+check 'Platte voll beim Einspielen: Schritt 2, compose.yaml bleibt ganz'
 
 # 14. A run for another request than the one recorded writes nothing.
 restore

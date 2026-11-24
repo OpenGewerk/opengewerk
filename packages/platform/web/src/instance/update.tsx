@@ -107,8 +107,8 @@ function stoppedIn(run: InstanceUpdateRun): { readonly what: string; readonly le
       }
     case 'images':
       return {
-        what: 'Die Abbilder ließen sich nicht holen oder prüfen.',
-        left: `Die Dateien der neuen Fassung liegen schon im Ordner, die Instanz läuft aber weiter auf ${before}. Ein neuer Versuch setzt dort wieder an.`,
+        what: 'Die neue Fassung ließ sich nicht in den Ordner legen, oder ihre Abbilder ließen sich nicht holen oder prüfen.',
+        left: `Dateien der neuen Fassung liegen schon im Ordner, vielleicht nicht alle. Die Instanz läuft aber weiter auf ${before}, und ein neuer Versuch setzt dort wieder an.`,
       }
     case 'migration':
       return {

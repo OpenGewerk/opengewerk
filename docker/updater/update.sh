@@ -144,21 +144,35 @@ tar --no-same-owner --no-same-permissions -xzf "$work/$kit" -C "$work/kit" >> "$
 grep -Eq "^[[:space:]]*image:[[:space:]]*[^[:space:]]+:$version@sha256:[0-9a-f]{64}" "$work/kit/$kit_name/docker/compose.yaml" ||
   { log_line "Das Paket nennt seine Abbilder nicht mit der Fassung $version und ihrem Digest."; exit 1; }
 
-# Over the installation, the .env and everything else that is not in the kit
-# staying as it is, and every file of the kit handed to the owner of the
-# installation, as tar --no-same-owner does for the one who unpacks.
-cp -R "$work/kit/$kit_name/." "$install/"
-(cd "$work/kit/$kit_name" && find . -mindepth 1) | while IFS= read -r path; do
+# 2: over the installation, the .env and everything else that is not in the
+# kit staying as it is. From the first file on, files of the new version may
+# lie in the folder, and a run that stops says so (opengewerk#1106). Each
+# file goes in under a name of its own and then takes the place of the old
+# one: a disk that runs full leaves every file whole, old or new, and
+# compose.yaml, which tells the version installed, among them. Every file and
+# folder of the kit goes to the owner of the installation, as tar
+# --no-same-owner does for the one who unpacks.
+step=$step_images
+progress
+kit_root="$work/kit/$kit_name"
+(cd "$kit_root" && find . -mindepth 1 -type d) | while IFS= read -r path; do
+  mkdir -p "$install/$path"
   chown -h "$owner" "$install/$path"
+done
+(cd "$kit_root" && find . -type f) | while IFS= read -r path; do
+  cp "$kit_root/$path" "$install/$path.opengewerk-update"
+  chown "$owner" "$install/$path.opengewerk-update"
+  mv -f "$install/$path.opengewerk-update" "$install/$path"
 done
 log_line "Die Fassung $version liegt im Ordner der Installation."
 
 # 2 to 4: start.sh, as an operator calls it.
-step=$step_images
-progress
-# The step start.sh is in, from the sentences it says as each begins.
+# The step start.sh is in, from the sentences it says as each begins. Once
+# the migrations went through, the database is on the new state, whatever
+# stops the start after them (opengewerk#1106).
 step_of_start() {
-  if grep -Fq "$name: $name startet." "$log"; then
+  if grep -Fq "$name: Die Datenbank steht auf dem neuen Stand." "$log" ||
+    grep -Fq "$name: $name startet." "$log"; then
     echo "$step_restart"
   elif grep -Fq "$name: Die Datenbank wird eingerichtet oder auf den neuen Stand gebracht." "$log"; then
     echo "$step_migration"
