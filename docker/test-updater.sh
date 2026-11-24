@@ -272,6 +272,12 @@ refused 55555555-2222-4333-8444-555555555555 1.1.0 running FAKE_RUNNING=1
 refused 66666666-2222-4333-8444-555555555555 1.1.0 elsewhere "INSTALL_DIRECTORY=$work/elsewhere"
 release v1.0.0
 refused 77777777-2222-4333-8444-555555555555 1.0.0 current
+# A request turned away stays turned away, also for a service that starts
+# again: after the .env was corrected, say, it would start an update nobody
+# asked for again.
+round
+if started; then fail 'ein abgelehnter Auftrag startete beim nächsten Start'; fi
+if grep -q 'abgelehnt' "$work/updater.log"; then fail 'ein abgelehnter Auftrag wurde noch einmal geprüft'; fi
 release v1.1.0
 check 'andere oder keine Fassung, alter Auftrag, laufendes Update, anderer Ordner, schon aktuell: abgelehnt, run.json bleibt'
 
@@ -472,6 +478,31 @@ pack 1.2.0
 cp -R "$work/pack/opengewerk/." "$work/install/"
 refused 22222222-3333-4333-8444-555555555555 1.1.0 current FAKE_APP_VERSION=1.0.0
 check 'Laufende Fassung von Docker: Ausgangspunkt eines neuen Laufs, dieselbe Fassung gilt als aktuell, nie älter als die Dateien'
+
+# 18a. The installation as it is when a request is taken, not as the service
+# found it when it started: a kit that changed since is looked at again.
+release v1.3.0
+pack 1.2.0
+cp -R "$work/pack/opengewerk/." "$work/install/"
+rm -f "$work/status/alive" "$work/requests/request.json"
+: > "$CALLS"
+env UPDATE_ROUNDS=2 UPDATE_POLL_INTERVAL=3 sh "$source_dir/updater/updater.sh" > "$work/updater.log" 2>&1 &
+service=$!
+waited=0
+while [ ! -s "$work/status/alive" ] && [ "$waited" -lt 50 ]; do
+  sleep 0.2
+  waited=$((waited + 1))
+done
+[ -s "$work/status/alive" ] || { kill "$service" 2>/dev/null || true; fail 'der Dienst ging seine erste Runde nicht'; }
+cp "$work/install/docker/compose.yaml" "$work/compose.signed"
+sed 's/@sha256:[0-9a-f]*//' "$work/compose.signed" > "$work/install/docker/compose.yaml"
+request 24242424-2222-4333-8444-555555555555 1.3.0
+wait "$service" || { cat "$work/updater.log"; fail 'updater.sh endete mit einem Fehler'; }
+cp "$work/compose.signed" "$work/install/docker/compose.yaml"
+if started; then fail 'ein Paket ohne Digests nach dem Start des Dienstes wurde aktualisiert'; fi
+[ "$(field .id "$refusal")" = 24242424-2222-4333-8444-555555555555 ] || fail 'der Auftrag wurde nicht abgelehnt'
+[ "$(field .reason "$refusal")" = unsigned ] || fail "abgelehnt mit $(field .reason "$refusal") statt unsigned"
+check 'Installation beim Annehmen frisch angesehen, nicht wie beim Start des Dienstes'
 
 # 19. A request a service took and then stopped, before it began or turned it
 # away, is taken again by the next.

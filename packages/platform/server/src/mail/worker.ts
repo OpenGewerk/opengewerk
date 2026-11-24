@@ -247,7 +247,12 @@ export async function runMailCycle<Message extends OutboxMessage>(
             } catch (error) {
               failure = asFailure(error)
 
-              if (failure.code !== null && serverWide.has(failure.code)) {
+              // A sender the server turns away turns away every message of
+              // the pass alike (opengewerk#1102): the others wait untried.
+              if (
+                (failure.code !== null && serverWide.has(failure.code)) ||
+                refusesSender(failure)
+              ) {
                 serverDown = failure
               }
             }

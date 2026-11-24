@@ -652,6 +652,14 @@ jobs:
           docker run --rm --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
             --security-opt no-new-privileges:true \
             --volume "$PWD:/docker:ro" opengewerk-updater-under-test sh /docker/test-updater.sh
+          # A request of the application, read with the rights the service has
+          # in compose.yaml.
+          docker volume create updater-request-under-test
+          docker run --rm --volume updater-request-under-test:/r opengewerk-updater-under-test \
+            sh -c 'echo "{}" > /r/request.json && chown 1000:1000 /r/request.json && touch -d "5 minutes ago" /r/request.json'
+          docker run --rm --cap-drop ALL --cap-add DAC_READ_SEARCH --security-opt no-new-privileges:true \
+            --read-only --tmpfs /tmp --volume updater-request-under-test:/r:ro --volume "$PWD:/docker:ro" \
+            opengewerk-updater-under-test sh /docker/test-updater-rights.sh
 
       - name: Jeder Dienst begrenzt seine Protokolle
         working-directory: docker

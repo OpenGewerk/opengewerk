@@ -65,6 +65,14 @@ id_valid() {
   printf '%s' "$1" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 }
 
+# The request of the office as a copy of its own, read once, with its time
+# and nothing else. The file belongs to the application; keeping its owner as
+# well, as cp -p does, would take CAP_CHOWN, which this service does not have,
+# and every request would be passed over.
+copy_request() {
+  cp --preserve=timestamps "$1" "$2"
+}
+
 # Whether the first version comes after the second.
 newer() {
   [ "$1" != "$2" ] &&

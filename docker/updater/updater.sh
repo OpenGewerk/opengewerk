@@ -42,6 +42,7 @@ trap 'rm -rf "$temp"' EXIT
 trap 'exit 0' TERM INT
 
 project=''
+unreadable=''
 mode=unsupported
 reason=docker
 installed=''
@@ -200,8 +201,14 @@ resume_taken() {
 take_request() {
   [ -f "$requests_path/request.json" ] || return 0
   # One copy, read once, with its time: the office may write the next request
-  # while this one is read, and ID, version and age would come from two.
-  cp -p "$requests_path/request.json" "$temp/request.json" 2>/dev/null || return 0
+  # while this one is read, and ID, version and age would come from two. A
+  # copy that fails is said once, not in every round.
+  if ! copy_request "$requests_path/request.json" "$temp/request.json" 2> "$temp/copy.log"; then
+    [ -n "$unreadable" ] || say "Der Auftrag ließ sich nicht lesen: $(tail -n 1 "$temp/copy.log")"
+    unreadable=yes
+    return 0
+  fi
+  unreadable=''
   request="$temp/request.json"
   id=$(jq -r 'if (.id | type) == "string" then .id else "" end' "$request" 2>/dev/null) || return 0
   id_valid "$id" || return 0

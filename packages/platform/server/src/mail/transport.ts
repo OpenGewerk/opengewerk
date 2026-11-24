@@ -61,6 +61,13 @@ export class MailDeliveryError extends Error {
     // gives no link, and it does not become open again. `EDESTINATION`: a
     // mail server in an internal network or on a port that is not for mail
     // stays where it is until somebody changes the settings.
+    // A sender the server does not take (`MAIL FROM`) is about the settings,
+    // not the message, and every message goes out once they are corrected
+    // (opengewerk#1102). nodemailer calls it an envelope error as well.
+    if (this.command === 'MAIL FROM' && !this.declaredPermanent) {
+      return false
+    }
+
     if (
       this.declaredPermanent ||
       this.code === 'EENVELOPE' ||
