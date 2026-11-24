@@ -272,6 +272,24 @@ export async function refreshSurchargeLine(
   )
 
   if (!marked) {
+    // A surcharge the office typed in while the line was gone is the draft's
+    // surcharge, whether one is due now or not: the line that went loses its
+    // mark for good, as it would next to a line still there.
+    if (typedSurchargeIn(lines)) {
+      await tx
+        .update(documentLines)
+        .set({ emergencySurcharge: false })
+        .where(
+          and(
+            eq(documentLines.documentId, documentId as DocumentId),
+            eq(documentLines.emergencySurcharge, true),
+            isNotNull(documentLines.deletedAt),
+          ),
+        )
+
+      return null
+    }
+
     return surcharge === null
       ? null
       : await restoreSurchargeLine(
@@ -341,18 +359,14 @@ export async function refreshSurchargeLine(
  * while this transaction waited for the draft lost it and stays removed. And
  * only where the draft has room: on a full one the line waits, marked, until
  * the office removes another, instead of refusing the change that brought it.
- * Not next to a surcharge the office typed in meanwhile: that one is the
- * draft's surcharge, and the line that went loses its mark for good.
+ * Never next to a surcharge the office typed in, which the caller has asked
+ * about before.
  */
 async function restoreSurchargeLine(
   tx: TenantTransaction,
   tenantId: TenantId,
   documentId: DocumentId,
-  lines: readonly {
-    readonly kind: string
-    readonly position: number
-    readonly designation: string
-  }[],
+  lines: readonly { readonly position: number }[],
   surcharge: SurchargeLine,
 ): Promise<SurchargeWait | null> {
   const gone = and(
@@ -368,12 +382,6 @@ async function restoreSurchargeLine(
     .limit(1)
 
   if (!last) {
-    return null
-  }
-
-  if (typedSurchargeIn(lines)) {
-    await tx.update(documentLines).set({ emergencySurcharge: false }).where(gone)
-
     return null
   }
 

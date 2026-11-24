@@ -1267,6 +1267,46 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     })
   })
 
+  it('stays removed when a device removes it after the server took it away', async () => {
+    const { job, invoice } = await draftOf()
+    const line = (await surchargeOf(invoice)).id
+
+    // The call was in the day after all: the server takes the line away.
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+
+    // A device that had not heard of it yet removes the line as well.
+    const answer = await push(app, office(), [deleted('document_lines', line)])
+
+    expect(answer.receipts.map((receipt) => receipt.outcome)).toEqual(['skipped'])
+    expect(await marksOf(invoice)).toBe(0)
+
+    // The night again: the line the device removed does not come back.
+    await patch(`/jobs/${job}`, { emergencyAt: saturday })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([])
+  })
+
+  it('does not come back after the office typed a surcharge while the line was gone', async () => {
+    const { job, invoice } = await draftOf()
+
+    await patch(`/jobs/${job}`, { emergencyAt: inTheDay })
+
+    const typed = await post(`/documents/${invoice}/lines`, {
+      designation: 'Notdienstzuschlag',
+      quantityMilli: 1000,
+      unit: 'flat_rate',
+      unitPriceCents: 3000,
+    })
+
+    expect(await marksOf(invoice)).toBe(0)
+
+    // The office removes its own again, and the call is on the Saturday once more.
+    await removeInOffice(invoice, typed.id)
+    await patch(`/jobs/${job}`, { emergencyAt: saturday })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([])
+  })
+
   it('moves with the draft to the job of another call, in the office and on a device', async () => {
     const { job, invoice, hour } = await draftOf()
     const night = aCall()

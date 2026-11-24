@@ -43,7 +43,7 @@ import {
 } from '@opengewerk/platform-server'
 
 import { ServiceUnavailableException } from '@nestjs/common'
-import { eq, getTableColumns, inArray, sql } from 'drizzle-orm'
+import { and, eq, getTableColumns, inArray, isNotNull, sql } from 'drizzle-orm'
 import type { PgColumn } from 'drizzle-orm/pg-core'
 
 import type { FoundIdentity } from '../api/identity.js'
@@ -828,6 +828,39 @@ async function lockDocumentsOf(
     for (const id of fresh) {
       locked.add(id)
     }
+  }
+
+  // Removed on a device after the server had taken it away, the line of the
+  // surcharge is gone already: the delete is skipped, and `afterWrite` never
+  // hears of it. Whoever removed it meant it to stay away all the same, so it
+  // loses its mark here, under the lock of its draft, on drafts only.
+  const removed = operations
+    .filter(
+      (operation) =>
+        operation.entity === 'document_lines' &&
+        operation.kind === 'delete' &&
+        isUuid(operation.recordId),
+    )
+    .map((operation) => operation.recordId as DocumentLineId)
+
+  if (removed.length > 0) {
+    await tx
+      .update(schema.documentLines)
+      .set({ emergencySurcharge: false })
+      .where(
+        and(
+          inArray(schema.documentLines.id, removed),
+          eq(schema.documentLines.emergencySurcharge, true),
+          isNotNull(schema.documentLines.deletedAt),
+          inArray(
+            schema.documentLines.documentId,
+            tx
+              .select({ id: schema.documents.id })
+              .from(schema.documents)
+              .where(eq(schema.documents.status, 'draft')),
+          ),
+        ),
+      )
   }
 
   noted.set(tx, {
