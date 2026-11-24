@@ -70,7 +70,10 @@ case "$*" in
   'ps --quiet --filter label=opengewerk.update.project='*) [ -z "${FAKE_RUNNING:-}" ] || printf 'c0ffee\n' ;;
   'ps --filter label=com.docker.compose.project='*) [ -z "${FAKE_APP_VERSION:-}" ] || printf '%s\n' "$FAKE_APP_VERSION" ;;
   'run --rm --network none '*' stat -c %d:%i '*) stat -c '%d:%i' "$last" ;;
-  'ps --quiet --filter label=opengewerk.update.id='*) [ -z "${FAKE_RUN_ANYWAY:-}" ] || printf 'c0ffee\n' ;;
+  'ps --quiet --filter label=opengewerk.update.id='*)
+    [ -z "${FAKE_PS_FAILS:-}" ] || exit 1
+    [ -z "${FAKE_RUN_ANYWAY:-}" ] || printf 'c0ffee\n'
+    ;;
   'run --detach '*)
     # A container that ran to its end before the answer of Docker came back.
     if [ -n "${FAKE_RUN_ENDED:-}" ]; then
@@ -543,6 +546,10 @@ round FAKE_RUN_FAILS=1 FAKE_RUN_ANYWAY=1
 request 27272727-2222-4333-8444-555555555555 1.4.0
 round FAKE_RUN_FAILS=1 FAKE_RUN_ENDED=1
 [ "$(field .state "$run")" = succeeded ] || fail 'ein Lauf, der schon zu Ende war, wurde als gescheitert vermerkt'
-check 'Start scheitert: Lauf gescheitert, außer Docker hat den Container doch, oder er ist schon zu Ende'
+request 28282828-2222-4333-8444-555555555555 1.4.0
+round FAKE_RUN_FAILS=1 FAKE_PS_FAILS=1
+[ "$(field .id "$run")" = 28282828-2222-4333-8444-555555555555 ] && [ "$(field .state "$run")" = running ] ||
+  fail 'ein Lauf wurde als gescheitert vermerkt, obwohl Docker nicht sagen konnte, ob er läuft'
+check 'Start scheitert: Lauf gescheitert, außer Docker hat den Container doch, er ist schon zu Ende oder Docker gibt keine Auskunft'
 
 printf 'Dienst für Aktualisierungen: alles in Ordnung.\n'

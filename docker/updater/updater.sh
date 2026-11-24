@@ -288,8 +288,12 @@ take_request() {
     --volume "$volume:$status_mount" \
     "$image" update.sh "$id" "$version" > "$temp/run.log" 2>&1; then
     # Docker may have taken the container and only the answer got lost: then
-    # the run is under way and says itself how it ends.
-    if docker ps --quiet --filter "label=opengewerk.update.id=$id" 2>/dev/null | grep -q .; then
+    # the run is under way and says itself how it ends. A question to Docker
+    # that fails as well is no answer that nothing runs: the run stays as it
+    # is, and watch_run looks again.
+    if ! found=$(docker ps --quiet --filter "label=opengewerk.update.id=$id" 2>/dev/null); then
+      say "Docker meldete einen Fehler und sagt nicht, ob der Lauf $id läuft: $(tail -n 1 "$temp/run.log")"
+    elif [ -n "$found" ]; then
       say "Docker meldete einen Fehler, der Lauf $id läuft aber: $(tail -n 1 "$temp/run.log")"
     else
       say "Der Lauf ließ sich nicht starten: $(tail -n 1 "$temp/run.log")"
