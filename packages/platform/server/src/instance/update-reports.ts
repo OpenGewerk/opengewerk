@@ -1,4 +1,4 @@
-import { instanceUpdateStepNames } from '@opengewerk/platform-domain'
+import { instanceUpdateStoppedIn } from '@opengewerk/platform-domain'
 import { eq } from 'drizzle-orm'
 
 import type { Database } from '../database/database.js'
@@ -162,22 +162,18 @@ export async function reportFinishedUpdate(
  * halfway writes the rest a minute later. A tenant that already has the run
  * is not written again. True when it wrote now.
  *
- * Within the same day as the mail, so that an update that ended before this
- * version was there stays out of the logs it never reached.
+ * However long ago the run ended: an update that left the instance down
+ * until somebody mended it on the server is the one the logs need most. A
+ * new request writes the last run first (`update.controller.ts`), so that it
+ * does not take its place in the folder unwritten.
  */
 export async function recordFinishedUpdate(
   database: Database,
   updates: InstanceUpdates,
-  now: Date = new Date(),
 ): Promise<boolean> {
-  const { run } = await readInstanceUpdate(updates, null, now)
+  const { run } = await readInstanceUpdate(updates, null)
 
-  if (
-    !run ||
-    run.state === 'running' ||
-    run.finishedAt === null ||
-    now.getTime() - new Date(run.finishedAt).getTime() > toldWithinMs
-  ) {
+  if (!run || run.state === 'running' || run.finishedAt === null) {
     return false
   }
 
@@ -200,7 +196,7 @@ export async function recordFinishedUpdate(
     toVersion: run.version,
     fromVersion: run.from,
     succeeded,
-    stoppedIn: succeeded ? null : instanceUpdateStepNames[run.step],
+    stoppedIn: succeeded ? null : instanceUpdateStoppedIn(run),
     finishedAt: new Date(run.finishedAt),
   }
 

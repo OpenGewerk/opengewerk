@@ -850,20 +850,80 @@ describe('the logs of an update', () => {
     expect((await inTheInstanceLog(id))['succeeded']).toBe('true')
   })
 
-  it('writes nothing of a run under way, or of one that ended more than a day ago (opengewerk#1093)', async () => {
+  it('writes nothing of a run under way, and a run that ended long ago all the same (opengewerk#1093)', async () => {
     const running = '55555555-3333-4333-8444-555555555555'
     const old = '66666666-3333-4333-8444-555555555555'
 
     ended(running, 'running')
     expect(await recordFinishedUpdate(database, updates)).toBe(false)
+    expect(await inTheInstanceLog(running)).toEqual({})
+    expect(await inTheTenantLogs(running)).toEqual([])
 
-    ended(old, 'failed', new Date(Date.now() - 25 * 60 * 60_000))
-    expect(await recordFinishedUpdate(database, updates)).toBe(false)
+    // An update that left the instance down over a weekend.
+    ended(old, 'failed', new Date(Date.now() - 60 * 60 * 60_000))
+    expect(await recordFinishedUpdate(database, updates)).toBe(true)
+    expect((await inTheInstanceLog(old))['stopped_in']).toBe('Abbilder holen und prüfen')
+    expect(await inTheTenantLogs(old)).toHaveLength(2)
+  })
 
-    for (const id of [running, old]) {
-      expect(await inTheInstanceLog(id)).toEqual({})
-      expect(await inTheTenantLogs(id)).toEqual([])
+  it('leaves the instance out of the logs until every tenant has the run (opengewerk#1093)', async () => {
+    const id = '77777777-3333-4333-8444-555555555555'
+    ended(id, 'failed')
+
+    // A look that fails at a tenant.
+    await admin.query('revoke insert on update_notices from opengewerk_app')
+
+    try {
+      await expect(recordFinishedUpdate(database, updates)).rejects.toThrow()
+    } finally {
+      await admin.query('grant insert on update_notices to opengewerk_app')
     }
+
+    expect(await inTheInstanceLog(id)).toEqual({})
+
+    expect(await recordFinishedUpdate(database, updates)).toBe(true)
+    expect(await inTheTenantLogs(id)).toHaveLength(2)
+    expect((await inTheInstanceLog(id))['to_version']).toBe('0.3.1')
+  })
+
+  it('says where a run stopped as the mail says it, one that never began and one that vanished (opengewerk#1093)', async () => {
+    const stoppedIn = async (id: string, reason: 'docker' | 'vanished', step: number) => {
+      written('run.json', {
+        id,
+        version: '0.3.1',
+        from: '0.3.0',
+        by: 'Lea Leitung',
+        state: 'failed',
+        reason,
+        step,
+        started_at: new Date(Date.now() - 60_000).toISOString(),
+        finished_at: new Date().toISOString(),
+        log: [],
+      })
+      expect(await recordFinishedUpdate(database, updates)).toBe(true)
+
+      return (await inTheInstanceLog(id))['stopped_in']
+    }
+
+    expect(await stoppedIn('88888888-3333-4333-8444-555555555555', 'docker', 0)).toBe(
+      'Vor dem ersten Schritt, der Lauf ließ sich nicht starten',
+    )
+    expect(await stoppedIn('99999999-3333-4333-8444-555555555555', 'vanished', 3)).toBe(
+      'Datenbank migrieren, der Lauf ist dabei verschwunden',
+    )
+  })
+
+  it('writes the last run into the logs before a new request takes its place (opengewerk#1093)', async () => {
+    const id = 'aaaaaaaa-3333-4333-8444-555555555555'
+    serviceFound()
+    // Ended long enough ago that no mail about it holds the request up.
+    ended(id, 'failed', new Date(Date.now() - 3 * 60_000))
+    await visitors.reconfirm(lea.email, as(lea))
+
+    await post('/instance/update', lea, { version: '0.3.1' }).expect(202)
+
+    expect((await inTheInstanceLog(id))['to_version']).toBe('0.3.1')
+    expect(await inTheTenantLogs(id)).toHaveLength(2)
   })
 })
 

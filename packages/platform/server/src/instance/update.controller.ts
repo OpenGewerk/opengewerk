@@ -26,6 +26,7 @@ import {
   stillTelling,
   updateRefusedNow,
 } from './update.js'
+import { recordFinishedUpdate } from './update-reports.js'
 
 const updateUnconfirmed =
   'Die Instanz wird erst nach der Bestätigung mit Passwort und Code aktualisiert.'
@@ -82,6 +83,12 @@ export class InstanceUpdateController {
     if (refused !== null) {
       throw new ConflictException(refused)
     }
+
+    // The run before goes into the logs first: the service writes the new
+    // one where it stood, and it would stay out of them (opengewerk#1093).
+    // Before the confirmation is spent, so that a log that cannot be written
+    // costs nobody a second one.
+    await recordFinishedUpdate(this.database, this.updates)
 
     if (!(await claimReconfirmation(this.database, user.sessionId))) {
       throw new ForbiddenException(updateUnconfirmed)

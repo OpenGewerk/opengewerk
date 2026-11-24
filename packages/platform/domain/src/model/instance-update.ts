@@ -59,6 +59,20 @@ export const instanceUpdateStepNames: Readonly<Record<InstanceUpdateStep, string
   check: 'Fassung prüfen',
 }
 
+/**
+ * Where a run that stopped stopped, in the words of the logs: its step, or
+ * that it never began, or that it vanished in it, as the mail says.
+ */
+export function instanceUpdateStoppedIn(run: Pick<InstanceUpdateRun, 'step' | 'reason'>): string {
+  if (run.reason === 'docker') {
+    return 'Vor dem ersten Schritt, der Lauf ließ sich nicht starten'
+  }
+
+  const step = instanceUpdateStepNames[run.step]
+
+  return run.reason === 'vanished' ? `${step}, der Lauf ist dabei verschwunden` : step
+}
+
 /** Whether version `a` comes after version `b`, both of the form 1.2.3, by number and not as text. */
 export function laterVersion(a: string, b: string): boolean {
   const [leftCore, leftPre] = withPreRelease(a)

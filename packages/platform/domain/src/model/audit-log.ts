@@ -727,6 +727,7 @@ const foundationReasonWords: Readonly<Record<string, string>> = {
   'second-factor.app': 'Authenticator-App eingerichtet',
   'second-factor.reset': 'Zweiter Faktor zurückgesetzt',
   'instance.mail-server': 'Mailserver der Instanz geändert',
+  'instance.update': 'Von selbst, Aktualisierung der Instanz',
   authentication: 'Anmeldung und Konten',
   'instance.setup': 'Ersteinrichtung',
   'invitation.redeem': 'Einladung eingelöst',
