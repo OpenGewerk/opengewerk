@@ -9,7 +9,7 @@
 # By its digest (#687), the same one the database runs in compose.yaml;
 # "test-stack.sh base-images" holds the two together when Dependabot moves
 # them one after the other.
-FROM postgres:18-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
+FROM postgres:18-alpine@sha256:0115267ab5a509022df9319c77be365cef335adb71556c75f60f5360ee247e71
 
 # tzdata for the schedule, which runs at night in the time zone of the
 # instance and not in UTC (#130).
