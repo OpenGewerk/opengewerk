@@ -201,14 +201,17 @@ export class JobsController {
       // (#1087), locked before the job is written, as issuing locks first.
       // And before the job is read: a change of the call that holds them is
       // waited for, and the terms are checked against what it left.
-      const drafts = surchargeFieldsOfJob.some((field) => field in picked)
-        ? await lockSurchargeDrafts(tx, id)
-        : []
+      const surchargeChanges = surchargeFieldsOfJob.some((field) => field in picked)
+      const drafts = surchargeChanges ? await lockSurchargeDrafts(tx, id) : []
 
-      const [current] = await tx
+      // And the job read under its lock where its surcharge changes, after the
+      // drafts: a named amount sent again as it is stored keeps its tax only
+      // as long as nothing changed the two in between (CodeRabbit on #1112).
+      const reading = tx
         .select()
         .from(jobs)
         .where(and(eq(jobs.id, id as JobId), isNull(jobs.deletedAt)))
+      const [current] = surchargeChanges ? await reading.for('no key update') : await reading
       // A named surcharge changed without its tax takes none along (#1083),
       // judged against what is stored, as the sync does.
       const values = namedTaxAlong(picked, current ?? null)

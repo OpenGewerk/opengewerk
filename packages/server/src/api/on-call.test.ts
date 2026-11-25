@@ -1253,6 +1253,51 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(rows).toEqual([{ vat: 1900 }])
   })
 
+  it('keeps no tax for an amount sent again while another change named a new one (CodeRabbit on #1112)', async () => {
+    const call = aCall({
+      emergencyNamedFlatCents: 4500,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
+    })
+
+    await push(app, office(), [call.operation])
+
+    // Another change names 30,00 € without tax and has not committed yet,
+    // while the office sends back the 45,00 € it read. Read before that
+    // change, the amount would look unchanged and keep the tax of the other.
+    const naming = await begun()
+    let sending: Promise<number> | undefined
+
+    try {
+      await naming.query(
+        `update jobs set emergency_named_flat_cents = 3000, emergency_named_vat_basis_points = 0
+         where id = $1`,
+        [call.id],
+      )
+      sending = http()
+        .patch(`/jobs/${call.id}`)
+        .set('x-test-identity', office())
+        .send({ emergencyNamedFlatCents: 4500, emergencyNamedBasisPoints: 0 })
+        .then((answer) => answer.status)
+      await waitingFor(admin, naming, sending)
+      await naming.query('commit')
+    } finally {
+      await naming.query('rollback').catch(() => undefined)
+      naming.release()
+      await Promise.allSettled([sending])
+    }
+
+    expect(await sending).toBe(200)
+
+    const { rows } = await admin.query<{ flat: number; vat: number | null }>(
+      `select emergency_named_flat_cents as flat, emergency_named_vat_basis_points as vat
+       from jobs where id = $1`,
+      [call.id],
+    )
+
+    expect(rows).toEqual([{ flat: 4500, vat: null }])
+  })
+
   it('works the line out again when the tax of the draft changes, at the route and on a device (CodeRabbit on #1112)', async () => {
     for (const where of ['route', 'device'] as const) {
       // 45,00 € named under section 19: with 19 % on the invoice the line is
