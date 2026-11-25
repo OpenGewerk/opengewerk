@@ -1165,6 +1165,63 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(await surchargeOf(draft.invoice)).toMatchObject({ net_cents: 3000 })
   })
 
+  it('asks no rate of tax for a draft without a surcharge due, at the route and on a device (the review of #1112)', async () => {
+    // No call, and a day of work typed as 2006, before the rates of tax the
+    // application knows: the change is saved, as before the line followed.
+    const { invoice } = await draftOf({ emergencyAt: null })
+
+    await patch(`/documents/${invoice}`, { serviceFrom: '2006-12-01', serviceUntil: '2006-12-01' })
+    await sent(
+      changed('documents', invoice, {
+        serviceUntil: { from: '2006-12-01', to: '2006-12-02' },
+      }),
+    )
+
+    const { rows } = await admin.query<{ until: string }>(
+      "select to_char(service_until, 'YYYY-MM-DD') as until from documents where id = $1",
+      [invoice],
+    )
+
+    expect(rows).toEqual([{ until: '2006-12-02' }])
+  })
+
+  it('works the line out from the hours while its day of work has no rate of tax that it needs (the review of #1112)', async () => {
+    // Half the hours on a Saturday, nothing named: the line needs no rate,
+    // and it follows the hours on a day of work typed as 2006 as on any.
+    const { invoice, hour } = await draftOf()
+
+    await price(invoice, hour, 10_000)
+    const before = await surchargeOf(invoice)
+
+    await patch(`/documents/${invoice}`, { serviceFrom: '2006-12-01', serviceUntil: '2006-12-01' })
+    await price(invoice, hour, 20_000)
+
+    expect(before.net_cents).toBeGreaterThan(0)
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: before.net_cents * 2 })
+  })
+
+  it('keeps the line while its day of work has no rate of tax, and issuing names the day (the review of #1112)', async () => {
+    const draft = await draftOf({
+      emergencyAt: atNight,
+      emergencyNamedFlatCents: 4500,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
+    })
+
+    const before = await surchargeOf(draft.invoice)
+
+    expect(before).toMatchObject({ net_cents: 4500, deleted: false })
+
+    await patch(`/documents/${draft.invoice}`, {
+      serviceFrom: '2006-12-01',
+      serviceUntil: '2006-12-01',
+    })
+
+    expect(await surchargeOf(draft.invoice)).toEqual(before)
+
+    await post(`/documents/${draft.invoice}/issue`, {}, office(), 422)
+  })
+
   it('takes the tax of the line from the day an invoice without a day of work is issued on (the review of #1112)', async () => {
     const draft = await draftOf({
       emergencyAt: atNight,

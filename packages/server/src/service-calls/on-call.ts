@@ -18,6 +18,7 @@ import {
   type JobId,
   lineLimits,
   type LineUnit,
+  RuleError,
   longestOnCallDays,
   shippedRules,
   type SurchargeLine,
@@ -127,7 +128,7 @@ export async function surchargeLineFor(
   tx: TenantTransaction,
   jobId: string | null,
   lines: readonly { readonly unit: LineUnit; readonly netCents: number }[],
-  lineVatBasisPoints: number,
+  lineVatBasisPoints: () => number,
 ): Promise<SurchargeLine | null> {
   if (jobId === null || !isUuid(jobId)) {
     return null
@@ -162,12 +163,18 @@ export async function surchargeLineFor(
     .filter((line) => hourUnits.includes(line.unit))
     .reduce((sum, line) => sum + line.netCents, 0)
 
+  // The tax of the line is asked only where a named amount with its tax needs
+  // it (the review of #1112): a draft without a surcharge due asks no rate,
+  // and a day of work typed as 2006 stops none of its changes.
+  const named = namedOf(job)
+  const tax =
+    named !== null && named.flatCents > 0 && job.namedVatBasisPoints !== null
+      ? { named: job.namedVatBasisPoints, line: lineVatBasisPoints() }
+      : null
+
   return emergencySurchargeLine(
     kind,
-    chargeableSurcharge(tariff.surcharges[kind], namedOf(job), hourNetCents, {
-      named: job.namedVatBasisPoints,
-      line: lineVatBasisPoints,
-    }),
+    chargeableSurcharge(tariff.surcharges[kind], named, hourNetCents, tax),
     hourNetCents,
   )
 }
@@ -305,18 +312,32 @@ export async function refreshSurchargeLine(
   // before the date of the document (`documentTotals`), none without tax on
   // the document. Taken from the date of the document, a line written after
   // the rate went down charged more than was named.
-  const surcharge = await surchargeLineFor(
-    tx,
-    document.jobId,
-    lines.filter((line) => line !== marked),
-    document.taxTreatment === 'standard'
-      ? shippedRules.valueAt(
-          'vat.standard',
-          'basis_points',
-          document.serviceUntil ?? document.serviceFrom ?? document.documentDate,
-        )
-      : 0,
-  )
+  let surcharge: SurchargeLine | null
+
+  try {
+    surcharge = await surchargeLineFor(
+      tx,
+      document.jobId,
+      lines.filter((line) => line !== marked),
+      () =>
+        document.taxTreatment === 'standard'
+          ? shippedRules.valueAt(
+              'vat.standard',
+              'basis_points',
+              document.serviceUntil ?? document.serviceFrom ?? document.documentDate,
+            )
+          : 0,
+    )
+  } catch (error) {
+    // A day no rate of tax is known for: the line stays as it is until the
+    // day is corrected, which works it out again, and issuing names the day
+    // as it does for the totals (the review of #1112).
+    if (error instanceof RuleError) {
+      return null
+    }
+
+    throw error
+  }
 
   // A surcharge the office typed in, or one a device moved here from another
   // draft, is the draft's surcharge, whether one is due now or not: the draft
