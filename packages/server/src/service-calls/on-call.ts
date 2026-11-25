@@ -165,16 +165,21 @@ export async function surchargeLineFor(
 
   // The tax of the line is asked only where a named amount with its tax needs
   // it (the review of #1112): a draft without a surcharge due asks no rate,
-  // and a day of work typed as 2006 stops none of its changes.
+  // and a day of work typed as 2006 stops none of its changes. Nor where the
+  // day charges nothing, which takes the line away (CodeRabbit on #1112).
+  const day = tariff.surcharges[kind]
   const named = namedOf(job)
   const tax =
-    named !== null && named.flatCents > 0 && job.namedVatBasisPoints !== null
+    named !== null &&
+    named.flatCents > 0 &&
+    job.namedVatBasisPoints !== null &&
+    (day.flatCents > 0 || day.basisPoints > 0)
       ? { named: job.namedVatBasisPoints, line: lineVatBasisPoints() }
       : null
 
   return emergencySurchargeLine(
     kind,
-    chargeableSurcharge(tariff.surcharges[kind], named, hourNetCents, tax),
+    chargeableSurcharge(day, named, hourNetCents, tax),
     hourNetCents,
   )
 }
@@ -331,21 +336,36 @@ export async function refreshSurchargeLine(
       tx,
       document.jobId,
       lines.filter((line) => line !== marked),
-      () =>
-        document.taxTreatment === 'standard'
-          ? shippedRules.valueAt(
-              'vat.standard',
-              'basis_points',
-              document.serviceUntil ?? document.serviceFrom ?? document.documentDate,
-            )
-          : 0,
+      () => {
+        if (document.taxTreatment !== 'standard') {
+          return 0
+        }
+
+        try {
+          return shippedRules.valueAt(
+            'vat.standard',
+            'basis_points',
+            document.serviceUntil ?? document.serviceFrom ?? document.documentDate,
+          )
+        } catch (error) {
+          throw error instanceof RuleError ? new NoRateOfTheLine() : error
+        }
+      },
     )
   } catch (error) {
-    // A day no rate of tax is known for: the line stays as it is until the
-    // day is corrected, which works it out again, and issuing names the day
-    // as it does for the totals (the review of #1112).
-    if (error instanceof RuleError) {
+    // A day of work no rate of tax is known for: the line stays as it is
+    // until the day is corrected, which works it out again, and issuing
+    // names the day as it does for the totals (the review of #1112).
+    if (error instanceof NoRateOfTheLine) {
       return null
+    }
+
+    // A call on a day without rules, from before #1085 refused one: the line
+    // waits as well, without holding up a change of the settings for every
+    // draft, and issuing refuses rather than freeze a line that may be stale
+    // (CodeRabbit on #1112).
+    if (error instanceof RuleError) {
+      return 'no rules for the call'
     }
 
     throw error
@@ -516,11 +536,14 @@ function typedSurchargeIn(
   )
 }
 
+/** The day of work of a draft has no rate of tax that the line of its surcharge needs. */
+class NoRateOfTheLine extends Error {}
+
 /**
  * Why a surcharge that is due is not on its draft (#1087): the draft has no
  * room left, or the surcharge is more than a line holds.
  */
-export type SurchargeWait = 'waits for room' | 'too large'
+export type SurchargeWait = 'waits for room' | 'too large' | 'no rules for the call'
 
 /** The most cents a line holds: the largest integer of its columns. */
 const largestCents = 2_147_483_647

@@ -545,6 +545,13 @@ export class DocumentsController {
       // silence.
       const surchargeWaits = await refreshSurchargeLine(tx, existing.id)
 
+      if (surchargeWaits === 'no rules for the call') {
+        throw new UnprocessableEntityException(
+          'Der Notdienstzuschlag lässt sich nicht rechnen: Für den Tag des Anrufs kennt ' +
+            'OpenGewerk keine Regeln. Den Zeitpunkt des Anrufs am Auftrag prüfen.',
+        )
+      }
+
       if (surchargeWaits === 'waits for room') {
         throw new ConflictException(
           'Für den Notdienstzuschlag ist kein Platz mehr: Ein Beleg hat höchstens ' +

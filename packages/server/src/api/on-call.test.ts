@@ -212,6 +212,24 @@ async function setting(key: string, value: number) {
   await post('/settings/parameters', { key, from: '2026-01-01', value, note: null }, owner())
 }
 
+/**
+ * Takes a value set from a day back past the routes, and the one before it
+ * holds on again: for a test that changes the settings in the middle of
+ * this file, so that the tariffs of the tests after it stay as they were.
+ */
+async function settingTakenBack(key: string, from: string) {
+  await admin.query(
+    'delete from tenant_parameters where tenant_id = $1 and key = $2 and valid_from = $3',
+    [north.id, key, from],
+  )
+  await admin.query(
+    `update tenant_parameters set valid_until = null
+     where tenant_id = $1 and key = $2
+       and valid_from = (select max(valid_from) from tenant_parameters where tenant_id = $1 and key = $2)`,
+    [north.id, key],
+  )
+}
+
 let customer = ''
 let shift = ''
 
@@ -1219,7 +1237,10 @@ describe('the line of the surcharge on a draft (#1087)', () => {
 
     expect(await surchargeOf(draft.invoice)).toEqual(before)
 
-    await post(`/documents/${draft.invoice}/issue`, {}, office(), 422)
+    const refused = await post(`/documents/${draft.invoice}/issue`, {}, office(), 422)
+
+    expect(refused.message).toContain('2006-12-01')
+    expect(refused.message).toContain('vat.standard')
   })
 
   it('steps back next to a surcharge the office types in while its day of work has no rate of tax (CodeRabbit on #1112)', async () => {
@@ -1244,6 +1265,72 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(await marksOf(invoice)).toBe(0)
   })
 
+  it('takes the line away once the day charges nothing, while its day of work has no rate of tax (CodeRabbit on #1112)', async () => {
+    const draft = await draftOf({
+      emergencyAt: atNight,
+      emergencyNamedFlatCents: 4500,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
+    })
+
+    await patch(`/documents/${draft.invoice}`, {
+      serviceFrom: '2006-12-01',
+      serviceUntil: '2006-12-01',
+    })
+
+    expect(await surchargeOf(draft.invoice)).toMatchObject({ deleted: false })
+
+    // The office charges nothing at night from October on, for the day of
+    // the call. Taken back afterwards, so that the tariffs of the tests after
+    // it stay as they were.
+    try {
+      await post(
+        '/settings/parameters',
+        { key: 'emergency.night_flat_cents', from: '2026-10-01', value: 0, note: null },
+        owner(),
+      )
+
+      expect(await surchargeOf(draft.invoice)).toMatchObject({ deleted: true })
+    } finally {
+      await settingTakenBack('emergency.night_flat_cents', '2026-10-01')
+    }
+  })
+
+  it('refuses to issue a draft whose call is on a day without rules, and holds up nothing else (CodeRabbit on #1112)', async () => {
+    // A call typed as 2006 before #1085 refused one, past the routes.
+    const draft = await draftOf({ emergencyAt: atNight })
+
+    await writtenPastTheRoutes(
+      "update jobs set emergency_at = '2006-10-28T01:14:00Z' where id = $1",
+      [draft.job],
+    )
+
+    const before = await surchargeOf(draft.invoice)
+
+    try {
+      // A change of the settings works out every draft that follows its
+      // call, this one as well: it goes through, and the line waits as it is.
+      await post(
+        '/settings/parameters',
+        { key: 'emergency.night_flat_cents', from: '2026-12-01', value: 4600, note: null },
+        owner(),
+      )
+
+      expect(await surchargeOf(draft.invoice)).toEqual(before)
+
+      const refused = await post(`/documents/${draft.invoice}/issue`, {}, office(), 422)
+
+      expect(refused.message).toContain('Tag des Anrufs')
+    } finally {
+      // Put back, so that the tests after it meet neither.
+      await settingTakenBack('emergency.night_flat_cents', '2026-12-01')
+      await writtenPastTheRoutes('update jobs set emergency_at = $2 where id = $1', [
+        draft.job,
+        atNight,
+      ])
+    }
+  })
+
   it('takes the tax of the line from the day an invoice without a day of work is issued on (the review of #1112)', async () => {
     const draft = await draftOf({
       emergencyAt: atNight,
@@ -1253,13 +1340,16 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     })
 
     // No day of work, and written on a day of 16 %: issuing dates it today,
-    // with 19 %, and so does the line. With 16 % it would be 30,78 €, which
-    // with the 19 % of the totals makes more than the 35,70 € named.
-    await admin.query(
-      `update documents set service_from = null, service_until = null, document_date = '2020-07-02'
-       where id = $1`,
-      [draft.invoice],
-    )
+    // with 19 %, and so does the line. With 16 % it is 30,78 €, which with
+    // the 19 % of the totals makes more than the 35,70 € named.
+    await patch(`/documents/${draft.invoice}`, {
+      serviceFrom: null,
+      serviceUntil: null,
+      documentDate: '2020-07-02',
+    })
+
+    expect(await surchargeOf(draft.invoice)).toMatchObject({ net_cents: 3078 })
+
     await post(`/documents/${draft.invoice}/issue`, {})
 
     expect(await surchargeOf(draft.invoice)).toMatchObject({ net_cents: 3000 })
