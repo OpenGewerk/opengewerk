@@ -514,6 +514,13 @@ function DefectForm({
   const [due, setDue] = useState(text(defect, 'remedyDueOn'))
   const [problems, setProblems] = useState<{ description?: string; due?: string }>({})
   const [trouble, setTrouble] = useState<string | null>(null)
+  // What the form handed when it was opened: only what changes against it is
+  // written, so that a field another device changed meanwhile stays
+  // (opengewerk#1057).
+  const [opened] = useState(() => ({
+    description: text(defect, 'description').trim(),
+    remedyDueOn: text(defect, 'remedyDueOn') === '' ? null : text(defect, 'remedyDueOn'),
+  }))
 
   async function save(event: FormEvent) {
     event.preventDefault()
@@ -530,10 +537,12 @@ function DefectForm({
       return
     }
 
-    const changed = await client.update('defects', String(defect['id']), {
-      description: said,
-      remedyDueOn: due === '' ? null : due,
-    })
+    const changed = await client.update(
+      'defects',
+      String(defect['id']),
+      { description: said, remedyDueOn: due === '' ? null : due },
+      opened,
+    )
 
     if (changed.outcome === 'refused') {
       setTrouble(refusalFor(changed))

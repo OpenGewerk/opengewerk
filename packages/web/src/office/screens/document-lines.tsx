@@ -290,6 +290,47 @@ const figureColumns: Readonly<Record<number, string>> = {
 }
 
 /**
+ * What the form of a line would hand back for what is typed in it, or null
+ * where a figure does not read: what it opened with (opengewerk#1057), in the
+ * shape it saves.
+ */
+function lineValuesOf(
+  kind: LineKind,
+  priced: boolean,
+  typed: {
+    readonly designation: string
+    readonly description: string
+    readonly quantity: string
+    readonly unit: string
+    readonly price: string
+    readonly base: string
+    readonly rate: string
+    readonly articleId: string | null
+  },
+): LineValues | null {
+  const item = kind === 'item'
+  const perUnits = item && priced && typed.unit !== 'flat_rate'
+  const quantityMilli = item ? parseQuantity(typed.quantity) : 0
+  const unitPriceCents = item && priced ? parseEuros(typed.price) : 0
+
+  if (quantityMilli === null || unitPriceCents === null) {
+    return null
+  }
+
+  return {
+    kind,
+    designation: typed.designation.trim(),
+    description: asTextOrNull(typed.description),
+    quantityMilli,
+    unit: item ? typed.unit : 'flat_rate',
+    unitPriceCents,
+    priceBase: perUnits ? priceBaseOf(Number(typed.base)) : 1,
+    vatRate: item ? typed.rate : 'standard',
+    articleId: item ? typed.articleId : null,
+  }
+}
+
+/**
  * One line, new or changed. A title asks for its heading and nothing else:
  * it carries no amount, and the server refuses one that does. On a document
  * without prices, a report, a position asks for no price either.
@@ -317,7 +358,12 @@ function LineForm({
   readonly taxed: boolean
   readonly priced: boolean
   readonly submitLabel: string
-  readonly onSave: (values: LineValues) => Promise<EditResult>
+  /**
+   * Saves the values. `opened` is what the form would have handed when it was
+   * opened, or what it handed last and was taken, for `update` to write only
+   * what changed in the form (opengewerk#1057); null for a new line.
+   */
+  readonly onSave: (values: LineValues, opened: LineValues | null) => Promise<EditResult>
   readonly onCancel: () => void
 }) {
   const [designation, setDesignation] = useState(text(record, 'designation'))
@@ -333,6 +379,20 @@ function LineForm({
   const [trouble, setTrouble] = useState<string | null>(null)
   // The markup as typed; until somebody types one, it follows the unit price.
   const [markupTyped, setMarkupTyped] = useState<string | null>(null)
+  const [opened, setOpened] = useState<LineValues | null>(() =>
+    record
+      ? lineValuesOf(kind, priced, {
+          designation,
+          description,
+          quantity,
+          unit,
+          price,
+          base,
+          rate,
+          articleId,
+        })
+      : null,
+  )
   const item = kind === 'item'
   // A lump sum is for one of it; "je 100 psch." would say nothing (#456).
   const perUnits = item && priced && unit !== 'flat_rate'
@@ -428,7 +488,7 @@ function LineForm({
     setTrouble(null)
 
     try {
-      const result = await onSave({
+      const values: LineValues = {
         kind,
         designation: designation.trim(),
         description: asTextOrNull(description),
@@ -438,10 +498,13 @@ function LineForm({
         priceBase,
         vatRate: item ? rate : 'standard',
         articleId: item ? articleId : null,
-      })
+      }
+      const result = await onSave(values, opened)
 
       if (result.outcome === 'refused') {
         setTrouble(refusalFor(result))
+      } else {
+        setOpened(values)
       }
     } finally {
       setWorking(false)
@@ -770,8 +833,17 @@ export function LinesPanel({
         onCancel={() => {
           setEditing(null)
         }}
-        onSave={async (values) => {
-          const saved = await client.update('document_lines', line.id, values)
+        onSave={async (values, opened) => {
+          // A unit and the base of its price go together, a flat rate has
+          // none: a unit changed in the form takes its base along, whatever it
+          // was when the form opened (CodeRabbit on #1108).
+          const base =
+            opened && opened.unit !== values.unit
+              ? Object.fromEntries(
+                  Object.entries(opened).filter(([field]) => field !== 'priceBase'),
+                )
+              : opened
+          const saved = await client.update('document_lines', line.id, values, base ?? undefined)
 
           if (saved.outcome === 'queued') {
             setEditing(null)

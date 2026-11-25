@@ -87,6 +87,18 @@ const privateText: SyncCheck<Courier> = ({ operation, values }) => {
   return null
 }
 
+/**
+ * A note "Regal anlegen" makes a shelf as it is written: a check that writes,
+ * as an application draws a number in the same transaction.
+ */
+const shelfAlong: SyncCheck<Courier> = async ({ tx, tenantId, operation, values }) => {
+  if (operation.entity === 'notes' && values['text'] === 'Regal anlegen') {
+    await tx.insert(shelves).values({ id: newId<'shelf'>(), tenantId, label: 'Aus einer Notiz' })
+  }
+
+  return null
+}
+
 /** Who sent a note, written into nothing but this list, so that a test can see the sender arrive. */
 const senders: string[] = []
 
@@ -152,6 +164,7 @@ const sync = serverSync<Courier>({
     },
     closedShelf,
     privateText,
+    shelfAlong,
   ],
   complete: ({ operation, values, current, sender }) => {
     if (operation.entity === 'letter_seals') {
@@ -1252,6 +1265,405 @@ describe('a gate while its record is being fixed', () => {
         .sort(),
     ).toEqual(['applied:null', 'conflict:record_is_fixed'])
     expect(await inTenant(north.id, (tx) => tx.select().from(letterSeals))).toHaveLength(1)
+  })
+})
+
+describe('two transmissions to the same record (opengewerk#1074)', () => {
+  /** A draft with a line of three on it, and a note, as a device sent them. */
+  async function records() {
+    const letterId = newId<'letter'>()
+    const lineId = newId<'letter-line'>()
+    const noteId = newId<'note'>()
+
+    await send(north.id, [
+      operation({
+        entity: 'letters',
+        recordId: letterId,
+        patches: [{ field: 'subject', to: 'Angebot' }],
+      }),
+      operation({
+        entity: 'letter_lines',
+        recordId: lineId,
+        patches: [
+          { field: 'letterId', to: letterId },
+          { field: 'quantity', to: 3 },
+        ],
+      }),
+      operation({
+        entity: 'notes',
+        recordId: noteId,
+        patches: [{ field: 'text', to: 'Zähler ablesen' }],
+      }),
+    ])
+
+    return { letterId, lineId, noteId }
+  }
+
+  /**
+   * A change that is written in a transaction that has not ended, while a
+   * transmission is on its way: it reads what was there before, and its
+   * write waits for this one.
+   */
+  async function whileChanging<Result>(
+    change: (tx: TenantTransaction) => Promise<unknown>,
+    transmission: () => Promise<Result>,
+  ): Promise<Result> {
+    let held = () => {}
+    let release = () => {}
+    const holding = new Promise<void>((resolve) => {
+      held = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const changing = inTenant(
+      north.id,
+      async (tx) => {
+        await change(tx)
+        held()
+        await released
+      },
+      'office',
+    )
+
+    let late: Promise<Result> | null = null
+
+    try {
+      // A change that fails ends the test with its error, not with a wait.
+      await Promise.race([holding, changing])
+
+      late = transmission()
+      // Handled from the start: one that fails before it waits is no
+      // rejection nobody took (CodeRabbit on #1074).
+      late.catch(() => undefined)
+
+      await standingInLine(admin, 1)
+      release()
+      await changing
+
+      return await late
+    } finally {
+      release()
+      // A wait that failed lets the transmission and the change end before
+      // the test does, without hiding the failure that ended it.
+      await late?.catch(() => undefined)
+      await changing.catch(() => undefined)
+    }
+  }
+
+  it('keeps a change made in between for a person, instead of writing past it', async () => {
+    const { noteId } = await records()
+
+    const receipts = await whileChanging(
+      (tx) => tx.update(notes).set({ text: 'Zähler abgelesen' }).where(eq(notes.id, noteId)),
+      () =>
+        send(north.id, [
+          operation({
+            entity: 'notes',
+            recordId: noteId,
+            kind: 'update',
+            patches: [{ field: 'text', from: 'Zähler ablesen', to: 'Zähler fehlt' }],
+          }),
+        ]),
+    )
+
+    expect(outcomes(receipts)).toEqual([
+      { outcome: 'conflict', reason: 'changed_elsewhere', fields: ['text'] },
+    ])
+    expect(await inTenant(north.id, (tx) => tx.select({ text: notes.text }).from(notes))).toEqual([
+      { text: 'Zähler abgelesen' },
+    ])
+  })
+
+  it('works out what the server puts in from the record as the change in between left it', async () => {
+    const { lineId } = await records()
+
+    const receipts = await whileChanging(
+      (tx) => tx.update(letterLines).set({ price: 5 }).where(eq(letterLines.id, lineId)),
+      () =>
+        send(north.id, [
+          operation({
+            entity: 'letter_lines',
+            recordId: lineId,
+            kind: 'update',
+            patches: [{ field: 'quantity', from: 3, to: 4 }],
+          }),
+        ]),
+    )
+
+    expect(outcomes(receipts)).toEqual([{ outcome: 'applied', reason: null, fields: [] }])
+    expect(
+      await inTenant(north.id, (tx) =>
+        tx
+          .select({
+            quantity: letterLines.quantity,
+            price: letterLines.price,
+            total: letterLines.total,
+          })
+          .from(letterLines),
+      ),
+    ).toEqual([{ quantity: 4, price: 5, total: 20 }])
+  })
+
+  it('takes back what a check wrote in a try that found the record changed, and keeps it of the try that wrote', async () => {
+    const { noteId } = await records()
+
+    const receipts = await whileChanging(
+      (tx) =>
+        tx
+          .update(notes)
+          .set({ tags: ['eilig'] })
+          .where(eq(notes.id, noteId)),
+      () =>
+        send(north.id, [
+          operation({
+            entity: 'notes',
+            recordId: noteId,
+            kind: 'update',
+            patches: [{ field: 'text', from: 'Zähler ablesen', to: 'Regal anlegen' }],
+          }),
+        ]),
+    )
+
+    expect(outcomes(receipts)).toEqual([{ outcome: 'applied', reason: null, fields: [] }])
+    expect(
+      await inTenant(north.id, (tx) =>
+        tx.select({ id: shelves.id }).from(shelves).where(eq(shelves.label, 'Aus einer Notiz')),
+      ),
+    ).toHaveLength(1)
+  })
+
+  it('checks a record again that changed after it was read, instead of refusing it on what it was (CodeRabbit on #1074)', async () => {
+    const { noteId } = await records()
+    const judged: string[] = []
+    let between: (() => Promise<unknown>) | null = () =>
+      inTenant(
+        north.id,
+        (tx) => tx.update(notes).set({ text: 'Zähler frei' }).where(eq(notes.id, noteId)),
+        'office',
+      )
+    const watching = serverSync<Courier>({
+      rules: probeSyncRules,
+      tables: syncTables({ shelves, notes, letters, letterLines }),
+      checks: [
+        async ({ operation, current }) => {
+          if (operation.entity !== 'notes' || operation.kind !== 'update') {
+            return null
+          }
+
+          const read = String(current?.['text'] ?? '')
+          judged.push(read)
+
+          // Another transaction changes the note and commits, after this one
+          // read it and before it judges it.
+          if (between) {
+            const change = between
+            between = null
+            await change()
+          }
+
+          return read === 'Zähler ablesen'
+            ? { kind: 'conflict', reason: 'record_is_fixed', fields: ['marks'] }
+            : null
+        },
+      ],
+    })
+
+    const receipts = await inTenant(north.id, (tx) =>
+      watching.applyOperations(
+        tx,
+        north.id,
+        [
+          operation({
+            entity: 'notes',
+            recordId: noteId,
+            kind: 'update',
+            patches: [{ field: 'marks', from: '[]', to: '["Keller"]' }],
+          }),
+        ],
+        courier,
+      ),
+    )
+
+    expect(outcomes(receipts)).toEqual([{ outcome: 'applied', reason: null, fields: [] }])
+    expect(judged).toEqual(['Zähler ablesen', 'Zähler frei'])
+  })
+
+  it('judges a line by the letter it is in once the lock of its letter came, not the one it was read in (CodeRabbit on #1074)', async () => {
+    const { letterId, lineId } = await records()
+    const otherLetter = newId<'letter'>()
+
+    await send(north.id, [
+      operation({
+        entity: 'letters',
+        recordId: otherLetter,
+        patches: [{ field: 'subject', to: 'Nachtrag' }],
+      }),
+    ])
+
+    // The letter is sealed and the line moved out of it in one transaction,
+    // which holds the letter while the transmission waits for it.
+    const receipts = whileChanging(
+      async (tx) => {
+        await tx.update(letters).set({ status: 'sealed' }).where(eq(letters.id, letterId))
+        await tx
+          .update(letterLines)
+          .set({ letterId: otherLetter })
+          .where(eq(letterLines.id, lineId))
+      },
+      () =>
+        send(north.id, [
+          operation({
+            entity: 'letter_lines',
+            recordId: lineId,
+            kind: 'update',
+            patches: [{ field: 'quantity', from: 3, to: 4 }],
+          }),
+        ]),
+    )
+
+    // Not refused for the sealed letter it has left: sent back, as a line that
+    // went to another parent while it was written.
+    await expect(receipts).rejects.toThrow(OperationRefused)
+    await expect(receipts.catch((error: unknown) => (error as Error).cause)).resolves.toMatchObject(
+      {
+        message: expect.stringContaining('went to another parent'),
+      },
+    )
+  })
+
+  it('sends a transmission back whose record went to another parent while it was written, and takes it the next time', async () => {
+    const { lineId } = await records()
+    const otherLetter = newId<'letter'>()
+
+    await send(north.id, [
+      operation({
+        entity: 'letters',
+        recordId: otherLetter,
+        patches: [{ field: 'subject', to: 'Nachtrag' }],
+      }),
+    ])
+
+    // One operation, sent again as the device sends it: with its id.
+    const quantity = operation({
+      entity: 'letter_lines',
+      recordId: lineId,
+      kind: 'update',
+      patches: [{ field: 'quantity', from: 3, to: 4 }],
+    })
+    const change = () => send(north.id, [quantity])
+
+    // The lock of the first letter is held: waiting for the second as well
+    // could wait in a circle with a transmission that holds it.
+    const sentBack = whileChanging(
+      (tx) =>
+        tx.update(letterLines).set({ letterId: otherLetter }).where(eq(letterLines.id, lineId)),
+      change,
+    )
+
+    await expect(sentBack).rejects.toThrow(OperationRefused)
+    await expect(sentBack.catch((error: unknown) => (error as Error).cause)).resolves.toMatchObject(
+      {
+        message: expect.stringContaining('went to another parent'),
+      },
+    )
+
+    expect(outcomes(await change())).toEqual([{ outcome: 'applied', reason: null, fields: [] }])
+    expect(
+      await inTenant(north.id, (tx) =>
+        tx
+          .select({ letterId: letterLines.letterId, quantity: letterLines.quantity })
+          .from(letterLines),
+      ),
+    ).toEqual([{ letterId: otherLetter, quantity: 4 }])
+  })
+
+  it('lands two transmissions with a parent and its child in opposite order, each on what the other left', async () => {
+    const { letterId, lineId } = await records()
+    const transmit = (deviceId: string, operations: readonly Operation[]) =>
+      inTenant(north.id, (tx) => sync.applyOperations(tx, north.id, operations, courier), deviceId)
+    const holder = await admin.connect()
+    let settled: PromiseSettledResult<readonly OperationReceipt[]>[]
+    let watched: Promise<PromiseSettledResult<readonly OperationReceipt[]>[]> | undefined
+    let ended = false
+
+    try {
+      await holder.query('begin')
+      await holder.query('select id from letters where id = $1 for update', [letterId])
+
+      const both = [
+        transmit('phone-a', [
+          operation({
+            entity: 'letters',
+            recordId: letterId,
+            kind: 'update',
+            patches: [{ field: 'subject', from: 'Angebot', to: 'Angebot A' }],
+            deviceId: 'phone-a',
+          }),
+          operation({
+            entity: 'letter_lines',
+            recordId: lineId,
+            kind: 'update',
+            patches: [{ field: 'price', from: 0, to: 5 }],
+            deviceId: 'phone-a',
+          }),
+        ]),
+        transmit('phone-b', [
+          operation({
+            entity: 'letter_lines',
+            recordId: lineId,
+            kind: 'update',
+            patches: [{ field: 'quantity', from: 3, to: 4 }],
+            deviceId: 'phone-b',
+          }),
+          operation({
+            entity: 'letters',
+            recordId: letterId,
+            kind: 'update',
+            patches: [{ field: 'subject', from: 'Angebot', to: 'Angebot B' }],
+            deviceId: 'phone-b',
+          }),
+        ]),
+      ]
+
+      // Taken from the start, and waited for when the wait fails.
+      watched = Promise.allSettled(both)
+
+      await standingInLine(admin, 2)
+      await holder.query('commit')
+      ended = true
+      settled = await watched
+    } finally {
+      // Never back into the pool with the lock still held: the transmissions
+      // would wait for it, and the tests after this one with them.
+      if (!ended) {
+        await holder.query('rollback').catch(() => undefined)
+        await watched
+      }
+
+      holder.release()
+    }
+
+    expect(settled.map((each) => each.status)).toEqual(['fulfilled', 'fulfilled'])
+    // Whichever came first: both lines land, one subject does, and the other
+    // is kept for a person.
+    expect(
+      settled
+        .flatMap((each) => (each.status === 'fulfilled' ? outcomes(each.value) : []))
+        .map(({ outcome, reason }) => `${outcome}:${String(reason)}`)
+        .sort(),
+    ).toEqual(['applied:null', 'applied:null', 'applied:null', 'conflict:changed_elsewhere'])
+    expect(
+      await inTenant(north.id, (tx) =>
+        tx
+          .select({
+            quantity: letterLines.quantity,
+            price: letterLines.price,
+            total: letterLines.total,
+          })
+          .from(letterLines),
+      ),
+    ).toEqual([{ quantity: 4, price: 5, total: 20 }])
   })
 })
 

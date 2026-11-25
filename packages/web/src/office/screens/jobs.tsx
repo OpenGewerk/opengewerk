@@ -338,8 +338,8 @@ function JobRecord({ job }: { readonly job: RecordState }) {
           onCancel={() => {
             setEditing(false)
           }}
-          onSubmit={async (values) => {
-            const saved = await client.update('jobs', jobId, asJob(values))
+          onSubmit={async (values, opened) => {
+            const saved = await client.update('jobs', jobId, asJob(values), asJob(opened))
 
             if (saved.outcome === 'queued') {
               setEditing(false)

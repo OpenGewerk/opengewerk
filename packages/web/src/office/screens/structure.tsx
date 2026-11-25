@@ -697,8 +697,13 @@ function BoardDetail({ boardId }: { readonly boardId: string }) {
             onCancel={() => {
               setEditing(false)
             }}
-            onSubmit={async (values) => {
-              const saved = await client.update('distribution_boards', boardId, asBoard(values))
+            onSubmit={async (values, opened) => {
+              const saved = await client.update(
+                'distribution_boards',
+                boardId,
+                asBoard(values),
+                asBoard(opened),
+              )
 
               if (saved.outcome === 'queued') {
                 setEditing(false)
@@ -869,8 +874,13 @@ function SectionsTable({
         onCancel={() => {
           setEditing(null)
         }}
-        onSubmit={async (values) => {
-          const saved = await client.update('board_sections', id, asSection(values))
+        onSubmit={async (values, opened) => {
+          const saved = await client.update(
+            'board_sections',
+            id,
+            asSection(values),
+            asSection(opened),
+          )
 
           if (saved.outcome === 'queued') {
             setEditing(null)
@@ -1131,8 +1141,8 @@ function CircuitDetail({ circuitId }: { readonly circuitId: string }) {
           onCancel={() => {
             setEditing(false)
           }}
-          onSubmit={async (values) => {
-            const saved = await client.update('circuits', circuitId, values)
+          onSubmit={async (values, opened) => {
+            const saved = await client.update('circuits', circuitId, values, opened)
 
             if (saved.outcome === 'queued') {
               setEditing(false)
@@ -1304,8 +1314,13 @@ function EquipmentTable({
         onCancel={() => {
           setEditing(null)
         }}
-        onSubmit={async (values) => {
-          const saved = await client.update('equipment', id, asEquipment(values))
+        onSubmit={async (values, opened) => {
+          const saved = await client.update(
+            'equipment',
+            id,
+            asEquipment(values),
+            asEquipment(opened),
+          )
 
           if (saved.outcome === 'queued') {
             setEditing(null)

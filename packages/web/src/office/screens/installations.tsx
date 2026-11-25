@@ -369,12 +369,18 @@ export function InstallationScreen() {
                   onCancel={() => {
                     setEditing(false)
                   }}
-                  onSubmit={async (values) => {
-                    const saved = await client.update('installations', installationId, {
-                      ...asInstallation(values),
-                      ...asCompanion(values),
-                      ...asGridOperatorLink(values),
+                  onSubmit={async (values, opened) => {
+                    const written = (from: Record<string, string>) => ({
+                      ...asInstallation(from),
+                      ...asCompanion(from),
+                      ...asGridOperatorLink(from),
                     })
+                    const saved = await client.update(
+                      'installations',
+                      installationId,
+                      written(values),
+                      written(opened),
+                    )
 
                     if (saved.outcome === 'queued') {
                       setEditing(false)

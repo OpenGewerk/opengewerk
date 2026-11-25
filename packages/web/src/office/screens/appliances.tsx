@@ -564,8 +564,13 @@ export function ApplianceScreen() {
                 onCancel={() => {
                   setEditing(false)
                 }}
-                onSubmit={async (values) => {
-                  const result = await client.update('appliances', applianceId, asAppliance(values))
+                onSubmit={async (values, opened) => {
+                  const result = await client.update(
+                    'appliances',
+                    applianceId,
+                    asAppliance(values),
+                    asAppliance(opened),
+                  )
 
                   if (result.outcome === 'queued') {
                     setEditing(false)

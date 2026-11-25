@@ -8,6 +8,11 @@ import { circuitAlong, selectiveRefusal, structureProblem, valueAfter } from './
 // needs one, and the tests of an application's sync hold that.
 
 describe('what a device may not send of the structure', () => {
+  it('is nothing for an entity that is a name of the prototype of an object', () => {
+    expect(structureProblem('__proto__', { kind: 'garage' }, null)).toBeNull()
+    expect(structureProblem('constructor', { kind: 'garage' }, null)).toBeNull()
+  })
+
   it('is a kind of board nobody knows', () => {
     expect(structureProblem('distribution_boards', { kind: 'garage' }, null)).toBe(
       'Diese Art von Verteiler ist unbekannt.',

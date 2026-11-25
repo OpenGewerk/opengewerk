@@ -1,4 +1,5 @@
 import {
+  circuitAlong,
   type ConflictReason,
   type FieldPatch,
   inOutboxOrder,
@@ -7,6 +8,7 @@ import {
   type OperationKind,
   type OperationReceipt,
   type RecordState,
+  structureProblem,
   type SyncConflict,
   type SyncRules,
   type SyncValue,
@@ -42,17 +44,60 @@ import {
 } from './transport.js'
 
 /**
- * Whether a value a form hands in is the one the device holds. A list or a
- * value of JSON is held as its text since opengewerk#519 and compared as that
- * text; `sameValue` takes neither.
+ * A value a form hands in, as the device would hold it. A list or a value of
+ * JSON is held as its text since opengewerk#519 and compared as that text;
+ * `sameValue` takes neither.
  */
-function sameAsHeld(held: SyncValue | undefined, handed: unknown): boolean {
-  const comparable =
-    handed !== null && typeof handed === 'object' && !(handed instanceof Date)
-      ? jsonText(handed)
-      : toSyncValue(handed)
+function asHeld(handed: unknown): SyncValue {
+  return handed !== null && typeof handed === 'object' && !(handed instanceof Date)
+    ? jsonText(handed)
+    : toSyncValue(handed)
+}
 
-  return Object.is(held ?? null, comparable)
+/** Whether a value a form hands in is the one the device holds. */
+function sameAsHeld(held: SyncValue | undefined, handed: unknown): boolean {
+  return Object.is(held ?? null, asHeld(handed))
+}
+
+/**
+ * The fields of what a form hands in that it changed against what it handed
+ * when it was opened (opengewerk#1057). A field the opening did not have
+ * counts as changed.
+ */
+function changedSince(opened: Draft, values: Draft): Draft {
+  return Object.fromEntries(
+    Object.entries(values).filter(
+      ([field, value]) => !(field in opened) || !Object.is(asHeld(opened[field]), asHeld(value)),
+    ),
+  )
+}
+
+/**
+ * The patches with what the server puts along with them, so that the device
+ * holds what the server will (CodeRabbit on #1074): a type of RCD taken away
+ * takes selective along (#1021). Left to the server alone, the device went on
+ * holding selective, and a later change that set it again sent nothing.
+ */
+function alongWith(
+  entity: string,
+  patches: readonly FieldPatch[],
+  current: RecordState | null,
+): readonly FieldPatch[] {
+  const written = Object.fromEntries(patches.map((patch) => [patch.field, patch.to]))
+  const added = Object.entries(circuitAlong(entity, written, current)).filter(
+    ([field]) => !(field in written),
+  )
+
+  return added.length === 0
+    ? patches
+    : [
+        ...patches,
+        ...added.map(([field, to]) => ({
+          field,
+          from: current?.[field] ?? null,
+          to: toSyncValue(to),
+        })),
+      ]
 }
 
 /**
@@ -215,7 +260,9 @@ export type EditResult =
       readonly fields: readonly string[]
       /**
        * The server's own sentence, when it turned a direct write down with
-       * one. Absent when the device decided, or nobody answered.
+       * one, or the sentence of the rule a part of the structure would not
+       * stand by (`structureProblem`). Absent when the device decided
+       * otherwise, or nobody answered.
        */
       readonly message?: string
     }
@@ -835,10 +882,23 @@ export class SyncClient {
    * nobody able to correct an address at all, which was the first thing that
    * broke when the first screens were built.
    */
-  update(entity: string, id: string, values: Draft): Promise<EditResult> {
+  update(entity: string, id: string, values: Draft, opened?: Draft): Promise<EditResult> {
+    // A form fixes what it shows when it is opened, and hands back every
+    // field when it is saved. Compared with what the device holds by then, a
+    // field another device changed while the form was open differed, and
+    // went back to what the form opened with, though nobody here touched it
+    // (opengewerk#1057). With `opened`, what the form handed when it was
+    // opened, in the shape it hands values, only the fields changed in the
+    // form are written; what another device changed in the others stays.
+    // A changed field goes out from what the device holds, as every change
+    // does: the form shows a value shaped for the person, a choice where
+    // nothing was chosen yet, a number as text, and that is no value another
+    // device wrote.
+    const changed = opened === undefined ? values : changedSince(opened, values)
+
     return this.needsConnection(entity)
-      ? this.writeDirectly(entity, id, values)
-      : this.edit(entity, id, 'update', values)
+      ? this.writeDirectly(entity, id, changed)
+      : this.edit(entity, id, 'update', changed)
   }
 
   remove(entity: string, id: string): Promise<EditResult> {
@@ -928,6 +988,14 @@ export class SyncClient {
   }
 
   /**
+   * One change after the other on this device (CodeRabbit on #1074): two at
+   * once both read the same record before either was in the outbox, and each
+   * passed the check of the structure that their sum fails, a selective RCD
+   * without a type. A change that fails takes nothing down after it.
+   */
+  private editing: Promise<unknown> = Promise.resolve()
+
+  /**
    * Puts one write into the outbox, after asking the same question the server
    * will ask.
    *
@@ -942,14 +1010,28 @@ export class SyncClient {
    * here and collides at the server. That collision becomes a conflict, which
    * is the one thing this layer never resolves by itself.
    */
-  private async edit(
+  private edit(
+    entity: string,
+    id: string,
+    kind: OperationKind,
+    values: Draft,
+  ): Promise<EditResult> {
+    const turn = this.editing.then(() => this.editNow(entity, id, kind, values))
+
+    this.editing = turn.catch(() => undefined)
+
+    return turn
+  }
+
+  private async editNow(
     entity: string,
     id: string,
     kind: OperationKind,
     values: Draft,
   ): Promise<EditResult> {
     const current = kind === 'create' ? null : this.get(entity, id)
-    const patches = this.patchesFor(entity, current, values)
+    const changed = this.patchesFor(entity, current, values)
+    const patches = kind === 'delete' ? changed : alongWith(entity, changed, current)
 
     if (kind === 'update' && patches.length === 0) {
       // Nothing changed. Queueing it would put an operation in front of the
@@ -976,6 +1058,22 @@ export class SyncClient {
 
     if (decision.outcome === 'skip') {
       return { outcome: 'queued', id }
+    }
+
+    // A part of the structure, judged as it would stand afterwards by the rule
+    // the server asks (opengewerk#1072). A version no form checked, as one
+    // kept in a conflict, or what a form changed on a circuit another device
+    // changed meanwhile, can come to a whole the server takes for a mistake
+    // of the device: it would refuse the whole transmission, and the outbox
+    // would hang until somebody threw the change away. The merge alone does
+    // not see it.
+    if (kind !== 'delete') {
+      const written = Object.fromEntries(patches.map((patch) => [patch.field, patch.to]))
+      const problem = structureProblem(entity, written, current)
+
+      if (problem !== null) {
+        return { outcome: 'refused', reason: 'changed_elsewhere', fields: [], message: problem }
+      }
     }
 
     const queued = await this.store.queue(operation)
