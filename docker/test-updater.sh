@@ -1,0 +1,579 @@
+#!/bin/sh
+# Exercises the service for updates (#1093) in its own image, with a docker,
+# a curl and a cosign that only write down what they are asked and answer
+# what each case needs: what updater.sh takes from a request of the office
+# and what it turns away, and what update.sh does in each step and how it
+# ends when one fails. Run by the CI as
+#
+#   docker build --tag opengewerk-updater-under-test updater
+#   docker run --rm --volume "$PWD:/docker:ro" opengewerk-updater-under-test sh /docker/test-updater.sh
+#
+# Prints what it checks and stops at the first thing that is wrong.
+set -eu
+
+source_dir=$(cd "$(dirname "$0")" && pwd)
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+mkdir -p "$work/bin" "$work/install/docker" "$work/status" "$work/requests" "$work/kits"
+CALLS="$work/calls"
+: > "$CALLS"
+
+# A kit of the version given, packed the way the release packs it: one
+# folder, compose.yaml with every image of the application by its digest, and
+# a start.sh that says the sentences of the real one and ends as START_ENDS
+# says: ok, or the step it fails in.
+pack() {
+  folder="$work/pack/opengewerk"
+  rm -rf "$work/pack"
+  mkdir -p "$folder/docker"
+  cp "$source_dir/compose.yaml" "$source_dir/application.env" "$folder/docker/"
+  sh "$source_dir/kit-images.sh" "$folder/docker/compose.yaml" OPENGEWERK "$1" \
+    "ghcr.io/opengewerk/opengewerk@sha256:$(printf '%064d' 1)" \
+    "ghcr.io/opengewerk/backup@sha256:$(printf '%064d' 2)" \
+    "ghcr.io/opengewerk/updater@sha256:$(printf '%064d' 3)"
+  cat > "$folder/docker/start.sh" <<'START'
+#!/bin/sh
+# setup.sh writes a new .env as whoever runs it, as here.
+here=$(dirname "$0")
+cat "$here/.env" > "$here/.env.new"
+mv "$here/.env.new" "$here/.env"
+echo 'OpenGewerk: Fassung: die signierten Abbilder werden geholt.'
+[ "${START_ENDS:-ok}" != images ] || exit 1
+echo 'OpenGewerk: Die Datenbank wird eingerichtet oder auf den neuen Stand gebracht.'
+[ "${START_ENDS:-ok}" != migration ] || exit 1
+echo 'OpenGewerk: Die Datenbank steht auf dem neuen Stand.'
+[ "${START_ENDS:-ok}" != migrated ] || exit 1
+echo 'OpenGewerk: OpenGewerk startet.'
+[ "${START_ENDS:-ok}" != restart ] || exit 1
+echo 'OpenGewerk: OpenGewerk läuft. Im Browser: https://example.org'
+START
+  printf 'neu in %s\n' "$1" > "$folder/docker/only-in-$1.txt"
+  tar -czf "$work/kits/opengewerk-$1.tar.gz" -C "$work/pack" opengewerk
+  printf '{}' > "$work/kits/opengewerk-$1.tar.gz.sigstore.json"
+}
+
+# The installation: the kit of 1.0.0, unpacked, with a .env, belonging to an
+# account that is not root.
+pack 1.0.0
+cp -R "$work/pack/opengewerk/." "$work/install/"
+printf 'SESSION_SECRET=geheim\n' > "$work/install/docker/.env"
+chown -R 1234:1234 "$work/install"
+
+cat > "$work/bin/docker" <<'FAKE'
+#!/bin/sh
+printf 'docker|%s\n' "$*" >> "$CALLS"
+for last; do :; done
+case "$*" in
+  inspect*Config.Labels*) printf '%s\n' "${FAKE_PROJECT-opengewerk}" ;;
+  'inspect --format {{.Image}} '*) printf '%s\n' "${FAKE_IMAGE-sha256:updater}" ;;
+  inspect*/var/run/docker.sock*) printf '/var/run/docker.sock\n' ;;
+  inspect*update-status*) printf 'opengewerk_update-status\n' ;;
+  'ps --quiet --filter label=opengewerk.update.project='*) [ -z "${FAKE_RUNNING:-}" ] || printf 'c0ffee\n' ;;
+  'ps --filter label=com.docker.compose.project='*) [ -z "${FAKE_APP_VERSION:-}" ] || printf '%s\n' "$FAKE_APP_VERSION" ;;
+  'run --rm --network none '*' stat -c %d:%i '*) stat -c '%d:%i' "$last" ;;
+  'ps --quiet --filter label=opengewerk.update.id='*)
+    [ -z "${FAKE_PS_FAILS:-}" ] || exit 1
+    [ -z "${FAKE_RUN_ANYWAY:-}" ] || printf 'c0ffee\n'
+    ;;
+  'run --detach '*)
+    # A container that ran to its end before the answer of Docker came back.
+    if [ -n "${FAKE_RUN_ENDED:-}" ]; then
+      jq '.state = "succeeded"' "$UPDATE_STATUS_PATH/run.json" > "$UPDATE_STATUS_PATH/run.json.new"
+      mv "$UPDATE_STATUS_PATH/run.json.new" "$UPDATE_STATUS_PATH/run.json"
+    fi
+    exit "${FAKE_RUN_FAILS:-0}"
+    ;;
+  compose*' --profile backup run --rm backup backup.sh') exit "${BACKUP_FAILS:-0}" ;;
+  compose*' exec -T app node -e '*)
+    [ -z "${HEALTH_HANGS:-}" ] || exec sleep 30
+    printf '%s\n' "${ANSWERED-1.1.0}"
+    ;;
+esac
+FAKE
+
+cat > "$work/bin/curl" <<'FAKE'
+#!/bin/sh
+printf 'curl|%s\n' "$*" >> "$CALLS"
+output=''
+previous=''
+for argument; do
+  [ "$previous" != --output ] || output=$argument
+  previous=$argument
+  address=$argument
+done
+case "$address" in
+  https://api.github.com/*)
+    [ -z "${GITHUB_DOWN:-}" ] || { echo 'curl: (6) Could not resolve host' >&2; exit 6; }
+    cp "$RELEASE" "$output"
+    ;;
+  *) cp "$KITS/${address##*/}" "$output" ;;
+esac
+FAKE
+
+cat > "$work/bin/cosign" <<'FAKE'
+#!/bin/sh
+printf 'cosign|%s\n' "$*" >> "$CALLS"
+[ -z "${COSIGN_REFUSES:-}" ] || { echo 'Error: no matching signatures' >&2; exit 1; }
+FAKE
+# A cp that fails at the files FAKE_CP_FAILS names, a pattern, as on a disk
+# that runs full: the file it writes is cut off. The real one otherwise.
+real_cp=$(command -v cp)
+cat > "$work/bin/cp" <<FAKE
+#!/bin/sh
+for last; do :; done
+case "\$last" in
+  */\${FAKE_CP_FAILS:-//}) : > "\$last"; echo 'cp: No space left on device' >&2; exit 1 ;;
+esac
+exec $real_cp "\$@"
+FAKE
+chmod +x "$work/bin/docker" "$work/bin/curl" "$work/bin/cosign" "$work/bin/cp"
+
+PATH="$work/bin:$PATH"
+KITS="$work/kits"
+RELEASE="$work/release.json"
+UPDATE_INSTALL="$work/install"
+UPDATE_STATUS_PATH="$work/status"
+UPDATE_REQUESTS_PATH="$work/requests"
+UPDATE_POLL_INTERVAL=0
+INSTALL_DIRECTORY="$work/install"
+export CALLS PATH KITS RELEASE UPDATE_INSTALL UPDATE_STATUS_PATH UPDATE_REQUESTS_PATH UPDATE_POLL_INTERVAL \
+  INSTALL_DIRECTORY
+
+check() {
+  printf 'check: %s\n' "$1"
+}
+
+fail() {
+  printf 'FEHLER: %s\n' "$1"
+  exit 1
+}
+
+field() {
+  jq -r "$1" "$2"
+}
+
+release() {
+  jq -n --arg tag "$1" '{tag_name: $tag, html_url: ("https://github.com/OpenGewerk/opengewerk/releases/tag/" + $tag),
+    url: "https://api.github.com/repos/OpenGewerk/opengewerk/releases/1",
+    published_at: "2026-11-24T10:00:00Z", body: "### Sicherheit\n\n- Eine Lücke geschlossen.\n\n### Neu\n\n- Etwas Neues."}' > "$RELEASE"
+}
+
+# One round of updater.sh, with the variables given for this round alone.
+round() {
+  : > "$CALLS"
+  env "$@" UPDATE_ROUNDS=1 sh "$source_dir/updater/updater.sh" > "$work/updater.log" 2>&1 ||
+    { cat "$work/updater.log"; fail 'updater.sh endete mit einem Fehler'; }
+}
+
+request() {
+  jq -n --arg id "$1" --arg version "$2" '{id: $id, version: $version, by: "Moritz Beispiel", at: "2026-11-24T10:00:00Z"}' \
+    > "$work/requests/request.json"
+}
+
+started() {
+  grep -q '^docker|run --detach ' "$CALLS"
+}
+
+# 1. The newest release, from GitHub, and the installation ready for an
+# update: a kit by its digests, its path in the .env, and that path the
+# folder the service sees.
+release v1.1.0
+round
+available="$work/status/available.json"
+[ "$(field .latest "$available")" = 1.1.0 ] || fail 'neueste Fassung nicht 1.1.0'
+[ "$(field .installed "$available")" = 1.0.0 ] || fail 'installiert nicht 1.0.0'
+[ "$(field .mode "$available")" = ready ] || fail "Modus $(field .mode "$available") statt ready"
+field .notes "$available" | grep -q 'Eine Lücke geschlossen' || fail 'Hinweise fehlen'
+[ "$(field .url "$available")" = https://github.com/OpenGewerk/opengewerk/releases/tag/v1.1.0 ] || fail 'Adresse fehlt'
+[ -s "$work/status/alive" ] || fail 'kein Lebenszeichen'
+check 'neueste Fassung, Hinweise und Adresse übernommen, Installation bereit'
+
+# 1a. Versions: by number, and none with a leading zero, which the same numbers
+# would make another text.
+(
+  . "$source_dir/updater/common.sh"
+  newer 1.10.0 1.9.9 && ! newer 1.9.9 1.10.0 && ! newer 1.0.0 1.0.0 &&
+    version_valid 1.10.0 && ! version_valid 01.0.0 && ! version_valid 1.00.0 && ! version_valid 1.0.01
+) || fail 'Fassungen falsch verglichen oder mit führender Null angenommen'
+printf '{"tag_name": "v01.1.0"}' > "$RELEASE"
+round
+[ "$(field .latest "$available")" = 1.1.0 ] || fail 'ein Tag mit führender Null ersetzte die Fassung'
+[ "$(field .error "$available")" = invalid ] || fail 'ein Tag mit führender Null wurde nicht abgelehnt'
+release v1.1.0
+round
+check 'Fassungen nach Zahlen, ohne führende Null'
+
+# 2. An answer of GitHub without a version keeps what was found before, and
+# says so; so does no answer at all.
+printf '{"tag_name": "latest; rm -rf /"}' > "$RELEASE"
+round
+[ "$(field .latest "$available")" = 1.1.0 ] || fail 'eine ungültige Antwort ersetzte die Fassung'
+[ "$(field .error "$available")" = invalid ] || fail 'ungültige Antwort nicht gemeldet'
+round GITHUB_DOWN=1
+[ "$(field .latest "$available")" = 1.1.0 ] || fail 'ohne Antwort ging die Fassung verloren'
+[ "$(field .error "$available")" = unreachable ] || fail 'fehlende Antwort nicht gemeldet'
+release v1.1.0
+check 'ungültige oder fehlende Antwort: Fassung von vorher, Fehler genannt'
+
+# 3. A path in the .env that is another folder, an empty one, and a checkout.
+mkdir -p "$work/elsewhere/docker"
+cp "$work/install/docker/compose.yaml" "$work/elsewhere/docker/"
+round "INSTALL_DIRECTORY=$work/elsewhere"
+[ "$(field .reason "$available")" = elsewhere ] || fail 'ein anderer Ordner wurde nicht erkannt'
+# Looked at through a mount, which makes no folder that is gone.
+grep -qF -- "--mount type=bind,src=$work/elsewhere,dst=$work/elsewhere,readonly " "$CALLS" ||
+  fail 'der Pfad wurde nicht über einen Mount geprüft'
+if grep -qF -- "--volume $work/elsewhere" "$CALLS"; then fail 'der Pfad wurde als Volume geprüft'; fi
+round INSTALL_DIRECTORY=
+[ "$(field .reason "$available")" = directory ] || fail 'ein fehlender Pfad wurde nicht erkannt'
+round 'INSTALL_DIRECTORY=/srv/mit leerzeichen'
+[ "$(field .reason "$available")" = directory ] || fail 'ein Pfad mit Leerzeichen wurde angenommen'
+mkdir -p "$work/checkout/docker"
+cp "$source_dir/compose.yaml" "$source_dir/application.env" "$work/checkout/docker/"
+round "UPDATE_INSTALL=$work/checkout" "INSTALL_DIRECTORY=$work/checkout"
+[ "$(field .mode "$available")" = checkout ] || fail 'ein Checkout wurde nicht erkannt'
+round
+check 'anderer Ordner, kein Pfad, Pfad mit Leerzeichen und Checkout: kein Update aus dem Büro'
+
+# 4. A request with the version found: the update starts in a container of
+# its own, as the installation's owner would by hand, with three
+# capabilities, read-only, under the path of the installation.
+id=11111111-2222-4333-8444-555555555555
+request "$id" 1.1.0
+round
+started || fail 'das Update startete nicht'
+line=$(grep '^docker|run --detach ' "$CALLS")
+for part in "--label opengewerk.update.project=opengewerk" "--cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER" \
+  "--security-opt no-new-privileges:true --read-only --tmpfs /tmp:rw,size=512m" "--env UPDATE_INSTALL=$work/install" \
+  "--volume $work/install:$work/install" "--env COMPOSE_PROJECT_NAME=opengewerk" \
+  "--volume /var/run/docker.sock:/var/run/docker.sock" "--volume opengewerk_update-status:/var/lib/opengewerk/update-status" \
+  "sha256:updater update.sh $id 1.1.0"; do
+  printf '%s' "$line" | grep -qF -- "$part" || fail "dem Start fehlt: $part"
+done
+run="$work/status/run.json"
+[ "$(field .state "$run")" = running ] || fail 'run.json läuft nicht'
+[ "$(field .from "$run")" = 1.0.0 ] || fail 'run.json nennt nicht die Fassung davor'
+[ "$(field .by "$run")" = 'Moritz Beispiel' ] || fail 'run.json nennt nicht, wer es angestoßen hat'
+check 'Auftrag mit der gefundenen Fassung: Update gestartet, mit drei Capabilities und nur lesbar'
+
+# 5. The same request again starts nothing.
+round
+if started; then fail 'derselbe Auftrag startete ein zweites Mal'; fi
+check 'derselbe Auftrag: kein zweiter Start'
+
+refusal="$work/status/refusal.json"
+
+# A request that is turned away, with the variables given for its round: in
+# refusal.json with its reason, and run.json, which belongs to the update that
+# ran last, untouched.
+refused() {
+  identifier=$1
+  wanted=$2
+  why=$3
+  shift 3
+  request "$identifier" "$wanted"
+  before=$(cat "$run")
+  round "$@"
+  if started; then fail "gestartet trotz $why"; fi
+  [ "$(field .id "$refusal")" = "$identifier" ] || fail "nicht abgelehnt: $why"
+  [ "$(field .reason "$refusal")" = "$why" ] || fail "abgelehnt mit $(field .reason "$refusal") statt $why"
+  [ "$(cat "$run")" = "$before" ] || fail "eine Ablehnung ($why) hat run.json verändert"
+}
+
+# 6. Every request that does not hold is turned away, and says why: another
+# version than the newest, one that is no version, a request older than ten
+# minutes, an update already under way, a path that is not this folder, and
+# a newest version that is the installed one.
+refused 22222222-2222-4333-8444-555555555555 1.2.0 version
+refused 33333333-2222-4333-8444-555555555555 '1.1.0; reboot' version
+request 44444444-2222-4333-8444-555555555555 1.1.0
+touch -d '20 minutes ago' "$work/requests/request.json"
+round
+if started; then fail 'ein alter Auftrag startete'; fi
+[ "$(field .reason "$refusal")" = expired ] || fail 'ein alter Auftrag wurde nicht als zu alt abgelehnt'
+refused 55555555-2222-4333-8444-555555555555 1.1.0 running FAKE_RUNNING=1
+refused 66666666-2222-4333-8444-555555555555 1.1.0 elsewhere "INSTALL_DIRECTORY=$work/elsewhere"
+# A request turned away stays turned away, also for a service that starts
+# again once the path is right: it would start an update nobody asked for
+# any more, though the same request with another ID would start now.
+round
+if started; then fail 'ein abgelehnter Auftrag startete nach dem Berichtigen des Pfads'; fi
+if grep -q 'abgelehnt' "$work/updater.log"; then fail 'ein abgelehnter Auftrag wurde noch einmal geprüft'; fi
+release v1.0.0
+refused 77777777-2222-4333-8444-555555555555 1.0.0 current
+release v1.1.0
+check 'andere oder keine Fassung, alter Auftrag, laufendes Update, anderer Ordner, schon aktuell: abgelehnt, run.json bleibt'
+
+# 7. A request whose ID is no ID is not even recorded.
+before=$(cat "$run")
+before_refusal=$(cat "$refusal")
+request '../../etc/passwd' 1.1.0
+round
+if started; then fail 'ein Auftrag ohne gültige Kennung startete'; fi
+[ "$(cat "$run")" = "$before" ] || fail 'ein Auftrag ohne gültige Kennung veränderte run.json'
+[ "$(cat "$refusal")" = "$before_refusal" ] || fail 'ein Auftrag ohne gültige Kennung wurde eingetragen'
+check 'Auftrag ohne gültige Kennung: übergangen'
+
+# A run as updater.sh writes it before the update starts.
+begin() {
+  jq -n --arg id "$1" '{id: $id, version: "1.1.0", from: "1.0.0", by: "Moritz Beispiel", state: "running",
+    reason: null, step: 0, started_at: "2026-11-24T10:00:00Z", finished_at: null, message: null, log: []}' > "$run"
+}
+
+# One update, with the variables given for it alone.
+update() {
+  : > "$CALLS"
+  begin "$1"
+  identifier=$1
+  shift
+  update_status=0
+  env "$@" UPDATE_HEALTH_ATTEMPTS=2 sh "$source_dir/updater/update.sh" "$identifier" 1.1.0 > "$work/update.log" 2>&1 ||
+    update_status=$?
+}
+
+unchanged() {
+  [ ! -e "$work/install/docker/only-in-1.1.0.txt" ] || fail "$1: die neue Fassung wurde schon entpackt"
+}
+
+# 8. An update that goes through: the backup before anything else, the kit
+# checked against the release workflow of its tag before it is unpacked, the
+# files of the new version given to the owner of the installation, the .env
+# kept, and the version the application answers with checked.
+cp -R "$work/install" "$work/install.before"
+pack 1.1.0
+update 88888888-2222-4333-8444-555555555555
+[ "$(field .state "$run")" = succeeded ] || { cat "$work/update.log"; jq . "$run"; fail 'das Update ging nicht durch'; }
+[ "$update_status" = 0 ] || { cat "$work/update.log"; fail "update.sh endete nach dem Erfolg mit $update_status"; }
+[ "$(field .step "$run")" = 5 ] || fail 'das Update endete nicht im letzten Schritt'
+backup=$(grep -n 'backup.sh$' "$CALLS" | head -n 1 | cut -d: -f1)
+signature=$(grep -n '^cosign|verify-blob' "$CALLS" | head -n 1 | cut -d: -f1)
+[ -n "$backup" ] && [ -n "$signature" ] && [ "$backup" -lt "$signature" ] || fail 'die Sicherung kam nicht zuerst'
+grep -qF -- '--certificate-identity https://github.com/OpenGewerk/opengewerk/.github/workflows/release.yml@refs/tags/v1.1.0 --certificate-oidc-issuer https://token.actions.githubusercontent.com' "$CALLS" ||
+  fail 'die Signatur wurde nicht gegen den Workflow dieses Tags geprüft'
+[ "$(stat -c %u:%g "$work/install/docker/only-in-1.1.0.txt")" = 1234:1234 ] || fail 'die neue Datei gehört nicht dem Besitzer'
+[ "$(stat -c %u:%g "$work/install/docker/compose.yaml")" = 1234:1234 ] || fail 'compose.yaml gehört nicht dem Besitzer'
+grep -q ':1.1.0@sha256:' "$work/install/docker/compose.yaml" || fail 'compose.yaml ist nicht die der neuen Fassung'
+grep -qx 'SESSION_SECRET=geheim' "$work/install/docker/.env" || fail 'die .env wurde verändert'
+check 'Update: erst Sicherung, dann Signatur des Pakets, neue Fassung dem Besitzer, .env bleibt'
+
+restore() {
+  rm -rf "$work/install"
+  cp -R "$work/install.before" "$work/install"
+}
+
+failed_in() {
+  [ "$(field .state "$run")" = failed ] || { jq . "$run"; fail "$2: nicht gescheitert"; }
+  [ "$(field .step "$run")" = "$1" ] || fail "$2: gescheitert in Schritt $(field .step "$run") statt $1"
+}
+
+# 9. A backup that fails ends the run before anything is fetched.
+restore
+update 99999999-2222-4333-8444-555555555555 BACKUP_FAILS=1
+failed_in 0 'Sicherung'
+if grep -q '^curl|\|^cosign|' "$CALLS"; then fail 'nach einer gescheiterten Sicherung wurde weitergemacht'; fi
+unchanged 'Sicherung'
+check 'Sicherung scheitert: nichts geladen, nichts entpackt'
+
+# 10. A signature that does not hold: nothing unpacked.
+restore
+update aaaaaaaa-2222-4333-8444-555555555555 COSIGN_REFUSES=1
+failed_in 1 'Signatur'
+unchanged 'Signatur'
+check 'Signatur des Pakets hält nicht: nichts entpackt'
+
+# 11. A kit with a link in it, or with a path out of its folder, is not
+# unpacked, signature or not.
+restore
+pack 1.1.0
+ln -s /etc "$work/pack/opengewerk/docker/link"
+tar -czf "$work/kits/opengewerk-1.1.0.tar.gz" -C "$work/pack" opengewerk
+update bbbbbbbb-2222-4333-8444-555555555555
+failed_in 1 'Verweis im Paket'
+unchanged 'Verweis im Paket'
+[ ! -e "$work/install/docker/link" ] || fail 'der Verweis wurde entpackt'
+restore
+pack 1.1.0
+mkdir -p "$work/pack/other"
+printf 'x\n' > "$work/pack/other/file"
+tar -czf "$work/kits/opengewerk-1.1.0.tar.gz" -C "$work/pack" opengewerk other
+update cccccccc-2222-4333-8444-555555555555
+failed_in 1 'Pfad außerhalb'
+unchanged 'Pfad außerhalb'
+check 'Paket mit Verweis oder Pfad außerhalb seines Ordners: nicht entpackt'
+
+# 12. A kit of another version than the one asked for.
+restore
+pack 1.2.0
+cp "$work/kits/opengewerk-1.2.0.tar.gz" "$work/kits/opengewerk-1.1.0.tar.gz"
+cp "$work/install/docker/compose.yaml" "$work/compose.before"
+update dddddddd-2222-4333-8444-555555555555
+failed_in 1 'andere Fassung im Paket'
+[ ! -e "$work/install/docker/only-in-1.2.0.txt" ] || fail 'das Paket einer anderen Fassung wurde entpackt'
+cmp -s "$work/compose.before" "$work/install/docker/compose.yaml" || fail 'compose.yaml wurde verändert'
+check 'Paket einer anderen Fassung: abgelehnt, nichts entpackt'
+
+# 13. start.sh failing in each of its steps, and an application that answers
+# with another version: each ends in its own step.
+pack 1.1.0
+for case in images:2 migration:3 migrated:4 restart:4; do
+  restore
+  update eeeeeeee-2222-4333-8444-555555555555 "START_ENDS=${case%%:*}"
+  failed_in "${case#*:}" "start.sh bei ${case%%:*}"
+done
+restore
+update ffffffff-2222-4333-8444-555555555555 ANSWERED=1.0.0
+failed_in 5 'Fassung der Anwendung'
+field '.log | join("\n")' "$run" | grep -q 'meldet die Fassung 1.0.0' || fail 'das Protokoll nennt die gemeldete Fassung nicht'
+restore
+began=$(date +%s)
+update f0f0f0f0-2222-4333-8444-555555555555 HEALTH_HANGS=1 UPDATE_HEALTH_TIMEOUT=1
+failed_in 5 'Anwendung antwortet nicht'
+[ $(($(date +%s) - began)) -lt 20 ] || fail 'ein Versuch ohne Antwort hielt den Lauf auf'
+check 'start.sh scheitert bei Abbildern, Migration, nach der Migration oder beim Neustart, falsche oder keine Fassung: Schritt 2, 3, 4 und 5'
+
+# 13a. A disk that runs full while the files go into the installation, at
+# compose.yaml under whatever name it is written: the run stops in the step
+# that says files of the new version lie there, and compose.yaml stays whole,
+# the old one (opengewerk#1106).
+restore
+cp "$work/install/docker/compose.yaml" "$work/compose.before"
+update e1e1e1e1-2222-4333-8444-555555555555 'FAKE_CP_FAILS=compose.yaml*'
+failed_in 2 'Platte voll beim Einspielen'
+cmp -s "$work/compose.before" "$work/install/docker/compose.yaml" || fail 'compose.yaml ist nicht mehr ganz die alte'
+check 'Platte voll beim Einspielen: Schritt 2, compose.yaml bleibt ganz'
+
+# 14. A run for another request than the one recorded writes nothing.
+restore
+begin 12121212-2222-4333-8444-555555555555
+before=$(cat "$run")
+sh "$source_dir/updater/update.sh" 13131313-2222-4333-8444-555555555555 1.1.0 > /dev/null 2>&1 || true
+[ "$(cat "$run")" = "$before" ] || fail 'ein fremder Lauf hat run.json verändert'
+unchanged 'fremder Lauf'
+check 'Lauf zu einem anderen Auftrag: schreibt nichts, entpackt nichts'
+
+# 15. A start.sh that fails after setup.sh wrote the .env anew leaves it with
+# the owner of the installation, who could not read it otherwise.
+restore
+chown -R 1234:1234 "$work/install"
+update 14141414-2222-4333-8444-555555555555 START_ENDS=migration
+failed_in 3 '.env nach einem Abbruch'
+[ "$(stat -c %u:%g "$work/install/docker/.env")" = 1234:1234 ] || fail 'die .env gehört nach einem Abbruch root'
+check 'Abbruch nach dem Schreiben der .env: sie gehört weiter dem Besitzer'
+
+# 16. After a run that stopped once the files of the new version were in
+# place, the installation names the new version while the instance runs the
+# one before. A new request for the version that failed takes it up again,
+# from the version it started from; another version than that still counts
+# as current.
+pack 1.1.0
+cp -R "$work/pack/opengewerk/." "$work/install/"
+jq -n '{id: "15151515-2222-4333-8444-555555555555", version: "1.1.0", from: "1.0.0", by: "Moritz Beispiel",
+  state: "failed", reason: null, step: 3, started_at: "2026-11-24T10:00:00Z", finished_at: "2026-11-24T10:01:00Z", log: []}' > "$run"
+request 16161616-2222-4333-8444-555555555555 1.1.0
+round
+started || fail 'ein neuer Versuch nach einem Abbruch startete nicht'
+[ "$(field .from "$run")" = 1.0.0 ] || fail 'der neue Versuch nennt nicht die Fassung, von der er ausging'
+jq '.state = "succeeded"' "$run" > "$run.new" && mv "$run.new" "$run"
+refused 17171717-2222-4333-8444-555555555555 1.1.0 current
+check 'Neuer Versuch nach einem Abbruch mit entpackter Fassung: startet, nach einem Erfolg nicht mehr'
+
+# 17. After such a stop a later version starts from the version that runs, as
+# the stopped run names it, not from the one of the files; an earlier version
+# than the files never starts, whatever run.json says.
+stopped_run() {
+  jq -n '{id: "15151515-2222-4333-8444-555555555555", version: "1.1.0", from: "1.0.0", by: "Moritz Beispiel",
+    state: "failed", reason: null, step: 3, started_at: "2026-11-24T10:00:00Z", finished_at: "2026-11-24T10:01:00Z", log: []}' > "$run"
+}
+stopped_run
+release v1.2.0
+request 18181818-2222-4333-8444-555555555555 1.2.0
+round
+started || fail 'eine neuere Fassung nach einem Abbruch startete nicht'
+[ "$(field .from "$run")" = 1.0.0 ] || fail "der Lauf nennt $(field .from "$run") statt der Fassung, die läuft"
+pack 1.2.0
+cp -R "$work/pack/opengewerk/." "$work/install/"
+stopped_run
+release v1.1.0
+refused 19191919-2222-4333-8444-555555555555 1.1.0 current
+check 'Nach einem Abbruch: neuere Fassung von der laufenden aus, ältere als die Dateien nie'
+
+# 18. Which version runs, Docker says where it can: after a stop in the
+# restart, started by hand since, the instance runs the version of the files,
+# and an update to a later one starts from that one, not from the version the
+# stopped run started from.
+pack 1.1.0
+cp -R "$work/pack/opengewerk/." "$work/install/"
+stopped_run
+release v1.2.0
+request 20202020-2222-4333-8444-555555555555 1.2.0
+round FAKE_APP_VERSION=1.1.0
+started || fail 'die neuere Fassung startete nicht'
+[ "$(field .from "$run")" = 1.1.0 ] || fail "der Lauf nennt $(field .from "$run") statt der Fassung, die Docker meldet"
+stopped_run
+release v1.1.0
+refused 21212121-2222-4333-8444-555555555555 1.1.0 current FAKE_APP_VERSION=1.1.0
+# Docker naming an older version than the files lets no version start that
+# is older than the files: their database may be on the new state.
+pack 1.2.0
+cp -R "$work/pack/opengewerk/." "$work/install/"
+refused 22222222-3333-4333-8444-555555555555 1.1.0 current FAKE_APP_VERSION=1.0.0
+check 'Laufende Fassung von Docker: Ausgangspunkt eines neuen Laufs, dieselbe Fassung gilt als aktuell, nie älter als die Dateien'
+
+# 18a. The installation as it is when a request is taken, not as the service
+# found it when it started: a kit that changed since is looked at again.
+release v1.3.0
+pack 1.2.0
+cp -R "$work/pack/opengewerk/." "$work/install/"
+rm -f "$work/status/alive" "$work/requests/request.json"
+: > "$CALLS"
+env UPDATE_ROUNDS=2 UPDATE_POLL_INTERVAL=20 sh "$source_dir/updater/updater.sh" > "$work/updater.log" 2>&1 &
+service=$!
+waited=0
+while [ ! -s "$work/status/alive" ] && [ "$waited" -lt 50 ]; do
+  sleep 0.2
+  waited=$((waited + 1))
+done
+[ -s "$work/status/alive" ] || { kill "$service" 2>/dev/null || true; fail 'der Dienst ging seine erste Runde nicht'; }
+cp "$work/install/docker/compose.yaml" "$work/compose.signed"
+sed 's/@sha256:[0-9a-f]*//' "$work/compose.signed" > "$work/install/docker/compose.yaml"
+request 24242424-2222-4333-8444-555555555555 1.3.0
+wait "$service" || { cat "$work/updater.log"; fail 'updater.sh endete mit einem Fehler'; }
+cp "$work/compose.signed" "$work/install/docker/compose.yaml"
+if started; then fail 'ein Paket ohne Digests nach dem Start des Dienstes wurde aktualisiert'; fi
+[ "$(field .id "$refusal")" = 24242424-2222-4333-8444-555555555555 ] || fail 'der Auftrag wurde nicht abgelehnt'
+[ "$(field .reason "$refusal")" = unsigned ] || fail "abgelehnt mit $(field .reason "$refusal") statt unsigned"
+check 'Installation beim Annehmen frisch angesehen, nicht wie beim Start des Dienstes'
+
+# 19. A request a service took and then stopped, before it began or turned it
+# away, is taken again by the next.
+release v1.3.0
+request 23232323-2222-4333-8444-555555555555 1.3.0
+printf '23232323-2222-4333-8444-555555555555\n' > "$work/status/taken"
+round
+started || fail 'ein angenommener, nie begonnener Auftrag wurde nicht wieder aufgenommen'
+[ "$(field .id "$run")" = 23232323-2222-4333-8444-555555555555 ] || fail 'run.json nennt den wieder aufgenommenen Auftrag nicht'
+check 'Auftrag angenommen, Dienst gestoppt: der nächste nimmt ihn wieder auf'
+
+# 20. A start Docker reports as failed ends the run with the reason docker,
+# unless Docker has the container all the same: then that run says itself how
+# it ends.
+release v1.4.0
+request 25252525-2222-4333-8444-555555555555 1.4.0
+round FAKE_RUN_FAILS=1
+[ "$(field .state "$run")" = failed ] && [ "$(field .reason "$run")" = docker ] ||
+  fail 'ein gescheiterter Start wurde nicht als gescheitert vermerkt'
+request 26262626-2222-4333-8444-555555555555 1.4.0
+round FAKE_RUN_FAILS=1 FAKE_RUN_ANYWAY=1
+[ "$(field .id "$run")" = 26262626-2222-4333-8444-555555555555 ] && [ "$(field .state "$run")" = running ] ||
+  fail 'ein Lauf, den Docker trotz der Fehlermeldung hat, wurde als gescheitert vermerkt'
+request 27272727-2222-4333-8444-555555555555 1.4.0
+round FAKE_RUN_FAILS=1 FAKE_RUN_ENDED=1
+[ "$(field .state "$run")" = succeeded ] || fail 'ein Lauf, der schon zu Ende war, wurde als gescheitert vermerkt'
+request 28282828-2222-4333-8444-555555555555 1.4.0
+round FAKE_RUN_FAILS=1 FAKE_PS_FAILS=1
+[ "$(field .id "$run")" = 28282828-2222-4333-8444-555555555555 ] && [ "$(field .state "$run")" = running ] ||
+  fail 'ein Lauf wurde als gescheitert vermerkt, obwohl Docker nicht sagen konnte, ob er läuft'
+check 'Start scheitert: Lauf gescheitert, außer Docker hat den Container doch, er ist schon zu Ende oder Docker gibt keine Auskunft'
+
+printf 'Dienst für Aktualisierungen: alles in Ordnung.\n'

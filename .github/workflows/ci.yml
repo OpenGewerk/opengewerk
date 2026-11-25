@@ -640,6 +640,27 @@ jobs:
             --cap-add KILL --cap-add SETGID --cap-add SETUID --security-opt no-new-privileges:true \
             --volume "$PWD:/docker:ro" opengewerk-backup-under-test sh /docker/test-backup.sh
 
+      # The service for updates (#1093) in its own image, with stand-ins for
+      # docker, curl and cosign: what it takes from a request of the office
+      # and what it turns away, and in which step an update ends when one
+      # fails. The capabilities of the run are those its container for an
+      # update gets.
+      - name: Dienst für Aktualisierungen prüfen
+        working-directory: docker
+        run: |
+          docker build --quiet --tag opengewerk-updater-under-test updater
+          docker run --rm --cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
+            --security-opt no-new-privileges:true \
+            --volume "$PWD:/docker:ro" opengewerk-updater-under-test sh /docker/test-updater.sh
+          # A request of the application, read with the rights the service has
+          # in compose.yaml.
+          docker volume create updater-request-under-test
+          docker run --rm --volume updater-request-under-test:/r opengewerk-updater-under-test \
+            sh -c 'echo "{}" > /r/request.json && chown 1000:1000 /r/request.json && touch -d "5 minutes ago" /r/request.json'
+          docker run --rm --cap-drop ALL --cap-add DAC_READ_SEARCH --security-opt no-new-privileges:true \
+            --read-only --tmpfs /tmp --volume updater-request-under-test:/r:ro --volume "$PWD:/docker:ro" \
+            opengewerk-updater-under-test sh /docker/test-updater-rights.sh
+
       - name: Jeder Dienst begrenzt seine Protokolle
         working-directory: docker
         run: sh test-stack.sh log-limits

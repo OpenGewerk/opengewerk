@@ -297,6 +297,41 @@ if grep -q "^${version_variable}=latest[[:space:]]*\$" "$env_file"; then
   say "$version_variable stand auf latest, der früheren Vorgabe, und ist jetzt leer: ein Paket läuft damit in seiner Fassung, ein Checkout baut aus dem Quelltext."
 fi
 
+# Where the installation lies on this machine (#1093). The service for updates
+# runs an update from the office with this folder under the same path, so
+# that every path in compose.yaml means the same in its container. Only on
+# Linux: under Docker Desktop on Windows or macOS the engine sees other paths
+# than this shell. A folder that moved gets its new path on the next start. A
+# path with a character beyond letters, digits and . _ - / stays out of the
+# .env, and one moved to such a path takes the old path out, so that no update
+# runs on a folder this installation left; the office then says how to update
+# by hand.
+directory_variable="${APPLICATION_PREFIX}_DIRECTORY"
+
+if [ "$(uname -s)" = Linux ] && grep -q "^${directory_variable}=" "$env_file"; then
+  directory=$(cd "$here/.." && pwd -P)
+  case "$directory" in
+    /*[!A-Za-z0-9/._-]* | [!/]*) directory='' ;;
+  esac
+  recorded=$(sed -n "s/^${directory_variable}=//p" "$env_file" | head -n 1 | tr -d "$carriage_return")
+  if [ "$recorded" != "$directory" ]; then
+    draft=$(mktemp "$here/.env.XXXXXX")
+    trap 'rm -f "$draft"' EXIT
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        "${directory_variable}="*) printf '%s=%s\n' "$directory_variable" "$directory" ;;
+        *) printf '%s\n' "$line" ;;
+      esac
+    done < "$env_file" > "$draft"
+    replace_env "$draft"
+    if [ -n "$directory" ]; then
+      say "Ordner der Installation für Aktualisierungen aus dem Büro eingetragen: $directory"
+    else
+      say "Der Pfad dieses Ordners hat Zeichen außer Buchstaben, Ziffern und . _ - /. Aus dem Büro lässt sich die Instanz deshalb nicht aktualisieren, nur von Hand."
+    fi
+  fi
+fi
+
 # Every placeholder becomes a secret of its own. The loop reads from a file
 # and writes to one, with no pipe in between: behind a pipe it would run in a
 # subshell, and the list of names would be empty afterwards.

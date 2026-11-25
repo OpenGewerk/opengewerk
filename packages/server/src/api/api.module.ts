@@ -17,6 +17,7 @@ import {
   type FileStorage,
   HealthController,
   type InstanceSettingsCache,
+  type InstanceUpdates,
   MAIL,
   type MailContext,
   mailSettingsParts,
@@ -188,6 +189,12 @@ export interface ApiOptions {
    * writes the database and nothing is kept.
    */
   readonly instance?: { readonly settings: InstanceSettingsCache } | null
+  /**
+   * The two folders shared with the service for updates (#1093), as the
+   * Compose file mounts them. Left out, the area of the instance has no page
+   * for updates and the route is not there.
+   */
+  readonly updates?: InstanceUpdates | null
 }
 
 /**
@@ -237,6 +244,9 @@ export class ApiModule {
       // The words of the mails to an account, for the area of the instance:
       // it tells whoever owns a business of a new mail server in them.
       accountMessages,
+      // The page of the update in the area of the instance (#1093), where
+      // the Compose file shares the folders of the service for updates.
+      instanceUpdates: options.updates ?? null,
     })
     // The key the ways into a site are sealed with (#286), the one of the mail
     // context where none is handed in on its own.

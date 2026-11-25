@@ -4,8 +4,8 @@
 #   cp .env.example .env    (and replace every placeholder in it)
 #   docker compose up -d
 #
-# Five services, three of which run at all times. The order is not a
-# convenience: the database has to answer before anything migrates, and the
+# Seven services; the migration runs once per start, the backup only when it
+# is called, the others at all times. The order is not a convenience: the database has to answer before anything migrates, and the
 # migration has to be through before the application starts. Otherwise the
 # application looks for tables on its first start that do not exist yet.
 
@@ -204,9 +204,17 @@ services:
       # themselves hold every business and stay out of reach of the
       # application.
       BACKUP_STATUS_PATH: /var/lib/opengewerk/backup-status
+      # The two folders the application shares with the service for updates
+      # below (#1093): it writes the request of an operator into the first
+      # and reads in the second what that service found and how an update
+      # went, which only that service writes.
+      UPDATE_REQUESTS_PATH: /var/lib/opengewerk/update-requests
+      UPDATE_STATUS_PATH: /var/lib/opengewerk/update-status
     volumes:
       - files:/var/lib/opengewerk/storage
       - backup-status:/var/lib/opengewerk/backup-status:ro
+      - update-requests:/var/lib/opengewerk/update-requests
+      - update-status:/var/lib/opengewerk/update-status:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -412,6 +420,54 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # The service for updates (#1093). Asks GitHub once a day for the newest
+  # release, and updates the instance when an operator asks for it in the
+  # office under Instanz, Aktualisierung: a backup first, then the kit of the
+  # new version with its signature checked, then start.sh of that version.
+  # It runs in a container of its own beside Compose, which outlives the
+  # restart of this service; docker/updater/updater.sh says what it takes
+  # from the request and what it checks.
+  #
+  # Through the socket of Docker it can do on this machine what root can,
+  # which an update needs, and so nothing reaches it from outside: no port,
+  # and none of the networks the application, the database or the renderer
+  # are on. The application talks to it through the two volumes alone, each
+  # writable for one side. Without OPENGEWERK_DIRECTORY in the .env, which
+  # start.sh writes there on Linux, it still looks for releases, and the
+  # office says how to update by hand. DOCKER_SOCKET names another socket than
+  # the usual one, that of a Docker without root, say.
+  updater:
+    build:
+      context: ./updater
+    image: ghcr.io/opengewerk/updater:${OPENGEWERK_VERSION:-source}
+    restart: unless-stopped
+    logging: *logging
+    <<: *hardening
+    # As root, since the socket belongs to root, and of its capabilities with
+    # one: reading the installation whoever it belongs to.
+    cap_add: [DAC_READ_SEARCH]
+    read_only: true
+    tmpfs:
+      - /tmp
+    # A stop reaches the loop at once and not after its pause.
+    init: true
+    environment:
+      INSTALL_DIRECTORY: ${OPENGEWERK_DIRECTORY:-}
+    volumes:
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      # The installation, to read its version and what it is called. The
+      # update writes to it under its path on the machine, not through here.
+      - ..:/srv/install:ro
+      - update-requests:/var/lib/opengewerk/update-requests:ro
+      - update-status:/var/lib/opengewerk/update-status
+    networks:
+      - updates
+    # After the application, so that the volume of the requests is made from
+    # its image, with the folder belonging to the user it runs as.
+    depends_on:
+      app:
+        condition: service_started
+
 networks:
   # The one Compose makes for every service that names no other.
   default:
@@ -419,6 +475,9 @@ networks:
   # that nothing on it reaches beyond the host.
   printing:
     internal: true
+  # The service for updates, alone: it reaches GitHub and nothing of the
+  # stack (#1093).
+  updates:
 
 volumes:
   database:
@@ -430,3 +489,9 @@ volumes:
   # The record of the last backup, written by the backup services and read by
   # the application. A few hundred bytes.
   backup-status:
+  # The requests of the office for an update, written by the application and
+  # read by the service for updates (#1093).
+  update-requests:
+  # What the service for updates found and how the last update went, written
+  # by it and read by the application.
+  update-status:

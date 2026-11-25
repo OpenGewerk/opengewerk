@@ -49,6 +49,7 @@ import { probeMade } from '../database/probe-schema.js'
 import type { TestDatabase } from '../database/test-database.js'
 import type { InstanceSettingsCache } from '../instance/settings.js'
 import type { AccountMessages } from '../instance/account-mail.js'
+import type { InstanceUpdates } from '../instance/update.js'
 import { SIGNING, type SigningContext } from '../instance/signing.js'
 import { MAIL, type MailContext } from '../mail/context.js'
 import type { MadeByTheApplication } from '../migration/guards.js'
@@ -315,6 +316,8 @@ export interface ProbeModuleOptions {
   readonly signing?: SigningContext | null
   /** The version the health check names; left out, it names none, as in a checkout. */
   readonly version?: string | null
+  /** The folders shared with a service for updates. Left out, the instance has none. */
+  readonly instanceUpdates?: InstanceUpdates | null
   /** What this application keeps beside a membership. Left out, nothing. */
   readonly additions?: MembershipAdditions
   /** The roles given only up to a last day. Left out, none. */
@@ -340,6 +343,7 @@ export class ProbeModule {
       invitationMailing: options.invitationMailing,
       instanceSettings: options.instanceSettings,
       accountMessages: options.accountMessages ?? null,
+      instanceUpdates: options.instanceUpdates ?? null,
     })
 
     return {
@@ -404,6 +408,10 @@ export interface ProbeInstanceOptions extends Pick<
   readonly accountMessages?: AccountMessages | null
   /** What the instance signs PDFs with. Left out, this application signs none. */
   readonly signing?: SigningContext | null
+  /** The version the instance runs. Left out, none, as in a checkout. */
+  readonly version?: string | null
+  /** The folders shared with a service for updates. Left out, the instance has none. */
+  readonly instanceUpdates?: InstanceUpdates | null
   /** What this application keeps beside a membership. Left out, nothing. */
   readonly additions?: MembershipAdditions
   /** The roles given only up to a last day. Left out, none. */
@@ -458,6 +466,8 @@ export async function probeInstance(
     mail = null,
     accountMessages = null,
     signing = null,
+    version = null,
+    instanceUpdates = null,
     additions,
     endingRoles,
     trustedOrigins = [probeOrigin],
@@ -480,7 +490,7 @@ export async function probeInstance(
         database,
         closed ? new ClosedIdentitySource() : probeIdentities(authentication, database),
         closed
-          ? { trustedOrigins, invitationMailing, instanceSettings, mail, signing }
+          ? { trustedOrigins, invitationMailing, instanceSettings, mail, signing, version }
           : {
               authentication,
               setupCode: setupCode ?? null,
@@ -490,6 +500,8 @@ export async function probeInstance(
               mail,
               accountMessages,
               signing,
+              version,
+              instanceUpdates,
               ...(additions ? { additions } : {}),
               ...(endingRoles ? { endingRoles } : {}),
             },

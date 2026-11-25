@@ -5,6 +5,7 @@ import {
   InstanceOperatorsScreen,
   InstanceSettingsScreen,
   InstanceTenantsScreen,
+  InstanceUpdateScreen,
 } from '@opengewerk/platform-web/instance'
 import { AuditLogScreen, SettingsScreen, SyncScreen } from '@opengewerk/platform-web/office'
 import {
@@ -222,6 +223,11 @@ const instanceRoutes = [
     getParentRoute: () => instance,
     path: '/einstellungen',
     component: InstanceSettingsScreen,
+  }),
+  createRoute({
+    getParentRoute: () => instance,
+    path: '/aktualisierung',
+    component: InstanceUpdateScreen,
   }),
   createRoute({
     getParentRoute: () => instance,

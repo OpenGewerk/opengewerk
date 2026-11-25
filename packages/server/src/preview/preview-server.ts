@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from 'node:crypto'
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -13,6 +13,7 @@ import {
   reachableOnly,
   readRendererConfiguration,
   httpsPost,
+  type InstanceUpdates,
   rendererFor,
   SecretKey,
   smtpTransport,
@@ -22,6 +23,24 @@ import {
 import { ApiModule } from '../api/api.module.js'
 import { previewPort, previewUser } from './preview-database.js'
 import { PreviewIdentitySource, previewSession } from './preview-identity.js'
+
+/**
+ * The two folders of the update of the instance (#1093), new for every start,
+ * or under the folder PREVIEW_UPDATES names. There whoever looks at the page
+ * puts what the service for updates would write, which the preview does not
+ * run: available.json, run.json, refusal.json and alive.
+ */
+function previewUpdates(): InstanceUpdates {
+  const base =
+    process.env['PREVIEW_UPDATES']?.trim() ||
+    mkdtempSync(join(tmpdir(), 'opengewerk-vorschau-aktualisierung-'))
+  const updates = { requestsPath: join(base, 'requests'), statusPath: join(base, 'status') }
+
+  mkdirSync(updates.requestsPath, { recursive: true })
+  mkdirSync(updates.statusPath, { recursive: true })
+
+  return updates
+}
 
 /**
  * The server as an installation runs it, with one difference: nobody signs
@@ -87,6 +106,10 @@ export async function openPreview(
         ),
         post: httpsPost(),
       },
+      // The page of the update with nothing from the service, or with what
+      // PREVIEW_UPDATES holds; PREVIEW_VERSION is the version it runs.
+      updates: previewUpdates(),
+      version: process.env['PREVIEW_VERSION']?.trim() || null,
     }),
     { authenticationHandler: previewSession(identity, previewUser), serverPaths },
   )

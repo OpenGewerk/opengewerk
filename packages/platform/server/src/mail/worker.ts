@@ -88,6 +88,26 @@ const serverWide = new Set([
   'ENOAUTH',
 ])
 
+/** Whether a failure to send is about the server and not about the one message. */
+export function failsServerWide(error: unknown): boolean {
+  const failure = asFailure(error)
+
+  return failure.code !== null && serverWide.has(failure.code)
+}
+
+/**
+ * Whether the server turned the sender away: about the address the instance
+ * sends from, not about the one message or its recipient.
+ */
+export function refusesSender(error: unknown): boolean {
+  return asFailure(error).refusedSender
+}
+
+/** Whether trying the message again cannot help (`MailDeliveryError.permanent`). */
+export function failsForGood(error: unknown): boolean {
+  return asFailure(error).permanent
+}
+
 function outgoing(
   message: OutboxMessage,
   from: string,
@@ -227,7 +247,12 @@ export async function runMailCycle<Message extends OutboxMessage>(
             } catch (error) {
               failure = asFailure(error)
 
-              if (failure.code !== null && serverWide.has(failure.code)) {
+              // A sender the server turns away turns away every message of
+              // the pass alike (opengewerk#1102): the others wait untried.
+              if (
+                (failure.code !== null && serverWide.has(failure.code)) ||
+                refusesSender(failure)
+              ) {
                 serverDown = failure
               }
             }
@@ -252,7 +277,15 @@ export async function runMailCycle<Message extends OutboxMessage>(
         transport.close()
       }
 
-      if (serverDown) {
+      if (serverDown && refusesSender(serverDown)) {
+        // The server answered: it is the address the mails go out from.
+        console.warn(
+          `Der Mailserver ${configuration.host} nimmt die Absenderadresse ${configuration.from} ` +
+            `nicht an (${serverDown.message}). Die E-Mails warten im Postausgang und gehen ` +
+            'hinaus, sobald die Absenderadresse in den Einstellungen des Mailservers stimmt, ' +
+            'höchstens bis zum letzten Versuch.',
+        )
+      } else if (serverDown) {
         console.warn(
           `Der Mailserver ${configuration.host} antwortet nicht (${serverDown.message}). Die ` +
             'E-Mails warten im Postausgang und werden später noch einmal versucht.',

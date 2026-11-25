@@ -168,7 +168,7 @@ describe('the foundation, built from its building blocks alone', () => {
   it('keeps every table from the owner and opens it to the application', async () => {
     const tables = await tableProtections(admin)
 
-    expect(tables).toHaveLength(33)
+    expect(tables).toHaveLength(35)
     expect(unprotected(tables)).toEqual([])
   })
 
@@ -192,8 +192,8 @@ describe('the foundation, built from its building blocks alone', () => {
   it('lets the application past the tenant only where the list says why', async () => {
     const reading = await readPolicies(admin)
 
-    // The twenty-two tables of the foundation that carry a tenant, `tenants` among them.
-    expect(reading.tables).toBe(22)
+    // The twenty-three tables of the foundation that carry a tenant, `tenants` among them.
+    expect(reading.tables).toBe(23)
     expect(reading.violations).toEqual([])
     expect(reading.stale).toEqual([])
   })
@@ -384,6 +384,7 @@ describe('the foundation, built from its building blocks alone', () => {
       'tenant_roles',
       'tenant_sessions',
       'tenants',
+      'update_notices',
     ])
     expect(coverage.unwatched).toEqual([])
     expect(coverage.watchedAgainstTheList).toEqual([])
@@ -393,6 +394,7 @@ describe('the foundation, built from its building blocks alone', () => {
     expect(await instanceLogCoverage(admin)).toEqual([
       'instance_operators',
       'instance_settings',
+      'instance_updates',
       'tenants',
     ])
   })
@@ -408,14 +410,18 @@ describe('the foundation, built from its building blocks alone', () => {
 
       expect(coverage.unwatched).toEqual(['memberships'])
       expect(coverage.watched).not.toContain('memberships')
-      expect(await instanceLogCoverage(admin)).toEqual(['instance_operators', 'tenants'])
+      expect(await instanceLogCoverage(admin)).toEqual([
+        'instance_operators',
+        'instance_updates',
+        'tenants',
+      ])
     } finally {
       await admin.query('alter table "memberships" enable trigger "audit_changes"')
       await admin.query('alter table "instance_settings" enable trigger "instance_changes"')
     }
 
     expect((await logCoverage(admin)).unwatched).toEqual([])
-    expect(await instanceLogCoverage(admin)).toHaveLength(3)
+    expect(await instanceLogCoverage(admin)).toHaveLength(4)
   })
 
   it('has the columns of an audit entry as they are frozen', async () => {
@@ -1042,6 +1048,6 @@ describe('the rollback of the foundation', () => {
     expect(rows[0]?.schema).toBeNull()
 
     await kit.applyFoundation()
-    expect(await tableNames(admin)).toHaveLength(33)
+    expect(await tableNames(admin)).toHaveLength(35)
   })
 })

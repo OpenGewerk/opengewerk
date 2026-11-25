@@ -77,9 +77,30 @@ describe('the configuration', () => {
       mailInternalHosts: [],
       version: null,
       vapidPrivateKey: null,
+      updates: null,
       port: 8080,
       host: '127.0.0.1',
     })
+  })
+
+  it('reads both folders for updates, or neither, since one without the other is no way to talk (opengewerk#1093)', () => {
+    const folders = {
+      UPDATE_REQUESTS_PATH: ' /var/lib/opengewerk/update-requests ',
+      UPDATE_STATUS_PATH: '/var/lib/opengewerk/update-status',
+    }
+
+    expect(readConfiguration({ ...valid, ...folders }, writable).updates).toEqual({
+      requestsPath: '/var/lib/opengewerk/update-requests',
+      statusPath: '/var/lib/opengewerk/update-status',
+    })
+    expect(
+      readConfiguration({ ...valid, UPDATE_REQUESTS_PATH: folders.UPDATE_REQUESTS_PATH }, writable)
+        .updates,
+    ).toBeNull()
+    expect(
+      readConfiguration({ ...valid, UPDATE_STATUS_PATH: folders.UPDATE_STATUS_PATH }, writable)
+        .updates,
+    ).toBeNull()
   })
 
   /**

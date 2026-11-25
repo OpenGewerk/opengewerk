@@ -9,6 +9,7 @@ import type {
   InstanceMeasuresView,
   InstanceSettingsView,
   InstanceTenantView,
+  InstanceUpdateView,
   LegalTextKind,
   OperatorView,
   SmtpSecurity,
@@ -118,6 +119,22 @@ export function instanceSigning(): Promise<InstanceSigningState> {
 /** A new key for every PDF signed from now on. */
 export function renewInstanceSigning(): Promise<InstanceSigningState> {
   return request<InstanceSigningState>('/instance/signing', { method: 'POST' })
+}
+
+/**
+ * Which version runs, the newest with its notes and the last update
+ * (opengewerk#1093), as the service for updates wrote it.
+ */
+export function instanceUpdate(): Promise<InstanceUpdateView> {
+  return request<InstanceUpdateView>('/instance/update')
+}
+
+/** Asks for an update to the newest version, after confirming again. */
+export function startInstanceUpdate(version: string): Promise<InstanceUpdateView> {
+  return request<InstanceUpdateView>('/instance/update', {
+    method: 'POST',
+    body: JSON.stringify({ version }),
+  })
 }
 
 /** The legal texts of the instance for their screen, each with when and by whom it was last changed (opengewerk-haustechnik#129). */

@@ -327,6 +327,10 @@ describe('the way a change took', () => {
 
   it("is in the foundation's words for its reasons, and in the application's for those that name a tenant", () => {
     expect(language.way('session.start', applicationRoleName).text).toBe('Anmeldung')
+    // How an update of the instance ended, in every log (opengewerk#1093).
+    expect(language.way('instance.update', applicationRoleName).text).toBe(
+      'Von selbst, Aktualisierung der Instanz',
+    )
     // The sweep of sessions that ran out writes this one (opengewerk#1029).
     expect(language.way('session.expire', applicationRoleName).text).toBe(
       'Von selbst, Sitzung abgelaufen',

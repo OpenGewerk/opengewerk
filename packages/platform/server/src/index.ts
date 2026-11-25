@@ -151,6 +151,9 @@ export * from './instance/sentences.js'
 export * from './instance/settings.js'
 export * from './instance/signing.js'
 export * from './instance/tenants.js'
+export * from './instance/update.js'
+export * from './instance/update.controller.js'
+export * from './instance/update-reports.js'
 
 // The signature of the PDFs of the instance (opengewerk-haustechnik#457): a
 // key with a certificate the instance gives itself, and a CMS signature that

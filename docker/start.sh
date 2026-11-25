@@ -222,8 +222,14 @@ case "$version" in
   '' | latest | source)
     say 'Die Abbilder werden aus dem Quelltext gebaut.'
     # The backup along with the application: the service that backs up every
-    # night would otherwise keep the image of the first start.
-    compose build migrate backup-schedule ||
+    # night would otherwise keep the image of the first start. And the
+    # service for updates, where the application has one (#1093).
+    built='migrate backup-schedule'
+    if compose config --services 2>/dev/null | grep -qx updater; then
+      built="$built updater"
+    fi
+    # shellcheck disable=SC2086
+    compose build $built ||
       fail 'Die Abbilder ließen sich nicht bauen, der Grund steht darüber. Eine laufende Instanz arbeitet unverändert weiter.'
     ;;
   *)
@@ -241,6 +247,9 @@ engine_new_enough
 say 'Die Datenbank wird eingerichtet oder auf den neuen Stand gebracht.'
 compose run --rm migrate ||
   fail 'Die Migration ist gescheitert, der Grund steht darüber. Eine laufende Instanz arbeitet unverändert weiter, die Datenbank steht auf dem Stand davor.'
+# The update from the office reads this sentence: from here on, a start that
+# stops has a migrated database behind it (opengewerk#1106).
+say 'Die Datenbank steht auf dem neuen Stand.'
 
 # Asked again right after the migrations, before the login comes back below:
 # an engine swapped meanwhile would get it without having seen them.

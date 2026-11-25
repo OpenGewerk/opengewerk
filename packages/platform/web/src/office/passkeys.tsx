@@ -388,11 +388,14 @@ function RenameForm({
 export function Reconfirmation({
   narrow,
   said = null,
+  confirm: confirmLabel = 'Weiter',
   onConfirmed,
   onCancel,
 }: {
   readonly narrow: boolean
   readonly said?: string | null
+  /** The word on the button that confirms, where the next step is the action itself. */
+  readonly confirm?: string
   readonly onConfirmed: () => void
   readonly onCancel: () => void
 }) {
@@ -479,7 +482,7 @@ export function Reconfirmation({
         <div className="grow" />
         <Button onClick={onCancel}>Abbrechen</Button>
         <Button type="submit" tone="primary" disabled={working}>
-          {working ? 'Wird geprüft' : 'Weiter'}
+          {working ? 'Wird geprüft' : confirmLabel}
         </Button>
       </div>
     </form>

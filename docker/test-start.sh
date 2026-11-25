@@ -66,6 +66,12 @@ case "$*" in
     [ -z "${CONTEXT_FAILS:-}" ] || exit 1
     printf '%s\n' "${CONTEXT_IN_USE-default}"
     ;;
+  'compose -f '*' config --services')
+    # The names at the second level of the compose.yaml named, as near to the
+    # services as start.sh needs: whether one of them is the updater.
+    file=${*#compose -f }
+    sed -n 's/^  \([a-z][a-z-]*\):$/\1/p' "${file% config --services}"
+    ;;
 esac
 FAKE
 chmod +x "$work/bin/docker"
@@ -109,12 +115,12 @@ pulled() {
 }
 
 # 1. A checkout: "source" in compose.yaml, nothing in the .env. The backup is
-# built along with the application.
+# built along with the application, and the service for updates (#1093).
 start
-grep -q '|compose -f .*compose.yaml build migrate backup-schedule$' "$CALLS"
+grep -q '|compose -f .*compose.yaml build migrate backup-schedule updater$' "$CALLS"
 grep -q '|compose -f .*compose.yaml run --rm migrate$' "$CALLS"
 absent ' pull'
-check 'Quelltext: Anwendung und Sicherung gebaut, nichts geholt'
+check 'Quelltext: Anwendung, Sicherung und Dienst für Aktualisierungen gebaut, nichts geholt'
 
 # 1b. Between the migration and the start, the application gets its login
 # back if a restore of an older backup left it locked (#988): after the
@@ -293,8 +299,10 @@ check 'zweite Anwendung: falsches Präfix abgelehnt, bevor Docker gefragt wird'
 cp "$source_dir/compose.yaml" "$work/docker/compose.yaml"
 app_digest="sha256:$(printf '%064d' 1)"
 backup_digest="sha256:$(printf '%064d' 2)"
+updater_digest="sha256:$(printf '%064d' 3)"
 sh "$source_dir/kit-images.sh" "$work/docker/compose.yaml" OPENGEWERK 0.6.0 \
-  "ghcr.io/opengewerk/opengewerk@$app_digest" "ghcr.io/opengewerk/backup@$backup_digest"
+  "ghcr.io/opengewerk/opengewerk@$app_digest" "ghcr.io/opengewerk/backup@$backup_digest" \
+  "ghcr.io/opengewerk/updater@$updater_digest"
 
 cat > "$work/bin/cosign" <<'FAKE'
 #!/bin/sh
@@ -314,7 +322,8 @@ said() {
 identity='https://github.com/OpenGewerk/opengewerk/.github/workflows/release.yml@refs/tags/v0.6.0'
 pin 0.2.1
 out=$(said)
-for image in "ghcr.io/opengewerk/opengewerk:0.6.0@$app_digest" "ghcr.io/opengewerk/backup:0.6.0@$backup_digest"; do
+for image in "ghcr.io/opengewerk/opengewerk:0.6.0@$app_digest" "ghcr.io/opengewerk/backup:0.6.0@$backup_digest" \
+  "ghcr.io/opengewerk/updater:0.6.0@$updater_digest"; do
   grep -qF "cosign|verify --certificate-identity $identity --certificate-oidc-issuer https://token.actions.githubusercontent.com $image" "$CALLS"
 done
 absent 'cosign|.*browserless'
