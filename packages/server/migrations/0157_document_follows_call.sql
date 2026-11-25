@@ -50,6 +50,16 @@ UPDATE "documents" d
 				ON a.tenant_id = o.tenant_id AND a.table_name = 'document_lines' AND a.record_id = o.id
 			WHERE o.tenant_id = d.tenant_id AND o.document_id = d.id AND NOT o.emergency_surcharge
 				AND a.field = 'emergency_surcharge' AND a.old_value = 'true' AND a.new_value = 'false'
+		)
+		-- A line of the server the office renamed before 0155 marked it, in a
+		-- version that had no mark yet: its log keeps the name it had.
+		AND NOT EXISTS (
+			SELECT 1 FROM "document_lines" o
+			JOIN "audit_entries" a
+				ON a.tenant_id = o.tenant_id AND a.table_name = 'document_lines' AND a.record_id = o.id
+			WHERE o.tenant_id = d.tenant_id AND o.document_id = d.id AND NOT o.emergency_surcharge
+				AND a.field = 'designation'
+				AND (a.old_value = 'Notdienstzuschlag' OR a.old_value LIKE 'Notdienstzuschlag %')
 		);--> statement-breakpoint
 SELECT set_config('app.reason', '', true);--> statement-breakpoint
 ALTER TABLE "audit_entries" FORCE ROW LEVEL SECURITY;--> statement-breakpoint

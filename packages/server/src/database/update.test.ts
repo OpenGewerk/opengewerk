@@ -3431,6 +3431,78 @@ describe('the drafts from before 0157 that follow their call', () => {
       expect(forced[0]?.forced, table).toBe(true)
     }
   })
+
+  it('is not set where the office renamed the line of the server before any line had a mark (security review of #1097)', async () => {
+    const report = newId<'document'>()
+    const invoice = newId<'document'>()
+    const repriced = newId<'document'>()
+    const secondReport = newId<'document'>()
+    const unmarked = readMigrationIndex().findIndex(
+      (entry) => entry.tag === '0155_document_line_emergency_surcharge',
+    )
+
+    expect(unmarked).toBeGreaterThan(0)
+
+    // An installation on 0.8.0, before the lines had a mark.
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), releaseFolder(unmarked))
+    await admin.query('insert into tenants (id, name) values ($1, $2)', [tenant.id, tenant.name])
+    await admin.query(
+      "insert into customers (id, tenant_id, kind, name) values ($1, $2, 'private', 'Familie Arslan')",
+      [customer, tenant.id],
+    )
+    await admin.query(
+      `insert into jobs (id, tenant_id, customer_id, kind, status, designation)
+       values ($1, $2, $3, 'service', 'active', 'Heizung ohne Strom')`,
+      [job, tenant.id, customer],
+    )
+    for (const [index, source] of [report, secondReport].entries()) {
+      await admin.query(
+        `insert into documents (id, tenant_id, customer_id, kind, document_date, job_id)
+         values ($1, $2, $3, 'time_and_material_report', '2026-10-28', $4)`,
+        [source, tenant.id, customer, job],
+      )
+      await admin.query(
+        `update documents set status = 'issued', number = $2, issued_at = now() where id = $1`,
+        [source, `RB-2026-001${String(index)}`],
+      )
+    }
+    await admin.query(
+      `insert into documents (id, tenant_id, customer_id, kind, document_date, job_id, predecessor_document_id)
+       values ($1, $3, $4, 'final_invoice', '2026-10-28', $5, $6),
+              ($2, $3, $4, 'final_invoice', '2026-10-28', $5, $7)`,
+      [invoice, repriced, tenant.id, customer, job, report, secondReport],
+    )
+    // The line of the server as 0.8.0 wrote it, without a mark, then renamed
+    // on one invoice and only repriced on the other.
+    await admin.query(
+      `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit,
+         unit_price_cents, net_cents)
+       values ($1, $2, 1, 'Notdienstzuschlag Nacht', 1000, 'flat_rate', 4500, 4500),
+              ($1, $3, 1, 'Notdienstzuschlag Nacht', 1000, 'flat_rate', 4500, 4500)`,
+      [tenant.id, invoice, repriced],
+    )
+    await admin.query(
+      `update document_lines set designation = 'Zuschlag Nachteinsatz' where document_id = $1`,
+      [invoice],
+    )
+    await admin.query(
+      `update document_lines set unit_price_cents = 5000, net_cents = 5000 where document_id = $1`,
+      [repriced],
+    )
+
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+
+    const { rows } = await admin.query<{ id: string; follows_call: boolean }>(
+      'select id, follows_call from documents where id = any($1)',
+      [[invoice, repriced]],
+    )
+
+    expect(Object.fromEntries(rows.map((row) => [row.id, row.follows_call]))).toEqual({
+      [invoice]: false,
+      [repriced]: false,
+    })
+  })
 })
 
 /**
