@@ -15,6 +15,7 @@ import {
 } from '@opengewerk/platform-server'
 import { tenantColumn } from '@opengewerk/platform-server/schema'
 import {
+  boolean,
   check,
   date,
   foreignKey,
@@ -79,6 +80,12 @@ export const documents = pgTable(
     // The maintenance contract a recurring invoice bills a period of (#295), one
     // per contract and start of a period; written by the deadline engine.
     maintenanceContractId: reference<'maintenance-contract'>('maintenance_contract_id'),
+    // Whether the line of the emergency surcharge follows the call of the job
+    // (#1097): set on the invoice out of a report and on a collective
+    // invoice, taken away when the office or a device changes or removes the
+    // line by hand or puts a surcharge of its own on the draft. Written by the
+    // server alone, reserved in the sync.
+    followsCall: boolean('follows_call').notNull().default(false),
     issuedAt: timestamp('issued_at', { withTimezone: true }),
     /**
      * The account that issued it, written by the route with `issued_at` and

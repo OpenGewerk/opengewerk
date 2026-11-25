@@ -3,6 +3,7 @@ import {
   type EmergencyTariff,
   emergencyTariffText,
   namedSurcharge,
+  namedSurchargeVat,
   type RecordState,
   tariffOn,
   urgentRepairNote,
@@ -268,6 +269,8 @@ export function SiteNewCallScreen() {
           ? {
               emergencyNamedFlatCents: named.flatCents,
               emergencyNamedBasisPoints: named.basisPoints,
+              // With the tax it was named with (#1083).
+              emergencyNamedVatBasisPoints: namedSurchargeVat(asking ? null : tariff),
             }
           : {}),
       })

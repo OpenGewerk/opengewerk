@@ -108,6 +108,9 @@ export const syncPolicies: Readonly<Record<string, SyncPolicy>> = {
       'createdBy',
       'predecessorDocumentId',
       'maintenanceContractId',
+      // Whether the line of the surcharge follows the call (#1097) is the
+      // server's to say, as the mark of the line is.
+      'followsCall',
     ],
     createdAs: { status: 'draft' },
   },

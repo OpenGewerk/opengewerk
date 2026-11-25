@@ -14,6 +14,7 @@ import {
 import {
   emergencyAtProblem,
   emergencyNamedProblem,
+  namedTaxAlong,
   type JobId,
   jobTermsProblem,
   urgentRepairProblem,
@@ -65,6 +66,7 @@ const writableFields = [
   // The surcharge the office named before the order (#1081).
   'emergencyNamedFlatCents',
   'emergencyNamedBasisPoints',
+  'emergencyNamedVatBasisPoints',
 ] as const
 
 /**
@@ -85,6 +87,7 @@ function requireTerms(
       after('emergencyNamedFlatCents'),
       after('emergencyNamedBasisPoints'),
       after('emergencyAt'),
+      after('emergencyNamedVatBasisPoints'),
     )
 
   if (problem !== null) {
@@ -188,24 +191,30 @@ export class JobsController {
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
-    const values = pick(body, writableFields)
-    requireSomething(values)
+    const picked = pick(body, writableFields)
+    requireSomething(picked)
 
     const [updated] = await this.database.forTenant(identity, async (tx) => {
-      await requireReferences(tx, jobs, values, false)
+      await requireReferences(tx, jobs, picked, false)
 
       // The drafts of the call follow its moment and its named surcharge
       // (#1087), locked before the job is written, as issuing locks first.
       // And before the job is read: a change of the call that holds them is
       // waited for, and the terms are checked against what it left.
-      const drafts = surchargeFieldsOfJob.some((field) => field in values)
-        ? await lockSurchargeDrafts(tx, id)
-        : []
+      const surchargeChanges = surchargeFieldsOfJob.some((field) => field in picked)
+      const drafts = surchargeChanges ? await lockSurchargeDrafts(tx, id) : []
 
-      const [current] = await tx
+      // And the job read under its lock where its surcharge changes, after the
+      // drafts: a named amount sent again as it is stored keeps its tax only
+      // as long as nothing changed the two in between (CodeRabbit on #1112).
+      const reading = tx
         .select()
         .from(jobs)
         .where(and(eq(jobs.id, id as JobId), isNull(jobs.deletedAt)))
+      const [current] = surchargeChanges ? await reading.for('no key update') : await reading
+      // A named surcharge changed without its tax takes none along (#1083),
+      // judged against what is stored, as the sync does.
+      const values = namedTaxAlong(picked, current ?? null)
 
       requireTerms(values, current)
 

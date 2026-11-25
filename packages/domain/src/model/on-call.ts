@@ -325,6 +325,30 @@ export function namedSurcharge(tariff: EmergencyTariff | null, moment: Date): Em
   return tariff && kind ? tariff.surcharges[kind] : { flatCents: 0, basisPoints: 0 }
 }
 
+/**
+ * The tax a device records with the surcharge it names (#1083): the one of
+ * the tariff it named it from, 0 under section 19 UStG, and null without a
+ * tariff, where it named nothing.
+ */
+export function namedSurchargeVat(tariff: EmergencyTariff | null): number | null {
+  return tariff ? (tariff.vatBasisPoints ?? 0) : null
+}
+
+/** The most a net amount may be whose total with tax at `basisPoints` is no more than `gross`. */
+export function netWithin(gross: number, basisPoints: number): number {
+  let net = Math.floor((gross * 10_000) / (10_000 + basisPoints))
+
+  while (net > 0 && net + applyRate(net, basisPoints) > gross) {
+    net -= 1
+  }
+
+  while (net + 1 + applyRate(net + 1, basisPoints) <= gross) {
+    net += 1
+  }
+
+  return net
+}
+
 function isNothing(surcharge: EmergencySurcharge): boolean {
   return surcharge.flatCents === 0 && surcharge.basisPoints === 0
 }
@@ -340,15 +364,29 @@ function isNothing(surcharge: EmergencySurcharge): boolean {
  * (zero) makes a percentage cost nothing; an equal amount goes to what was
  * named, so that the invoice never shows more than the customer heard. With
  * nothing recorded, the one of the day.
+ *
+ * A flat amount named with its tax (#1083, `tax.named`) is held to the total
+ * the customer heard: on the invoice, with the tax of the line (`tax.line`, 0
+ * without tax), it comes to no more than that, whether the tax changed
+ * between the call and the invoice or not.
  */
 export function chargeableSurcharge(
   day: EmergencySurcharge,
-  named: EmergencySurcharge | null,
+  heard: EmergencySurcharge | null,
   hourNetCents: number | null,
+  tax: { readonly named: number | null; readonly line: number } | null = null,
 ): EmergencySurcharge {
-  if (named === null || isNothing(day)) {
+  if (heard === null || isNothing(day)) {
     return day
   }
+
+  const named =
+    tax !== null && tax.named !== null && heard.flatCents > 0
+      ? {
+          ...heard,
+          flatCents: netWithin(heard.flatCents + applyRate(heard.flatCents, tax.named), tax.line),
+        }
+      : heard
 
   const flat = (surcharge: EmergencySurcharge) => surcharge.flatCents > 0
 

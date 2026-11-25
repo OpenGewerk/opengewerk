@@ -6,6 +6,7 @@ import {
   emergencyTariffText,
   type IsoDate,
   namedSurcharge,
+  namedSurchargeVat,
   type RecordState,
   tariffOn,
   urgentRepairNote,
@@ -442,6 +443,8 @@ export function NewServiceCallScreen() {
           ? (({ flatCents, basisPoints }) => ({
               emergencyNamedFlatCents: flatCents,
               emergencyNamedBasisPoints: basisPoints,
+              // With the tax it was named with (#1083).
+              emergencyNamedVatBasisPoints: namedSurchargeVat(tariff),
             }))(namedSurcharge(tariff, berlinInstant(calledOn, minuteOf(calledAt))))
           : {}),
       })

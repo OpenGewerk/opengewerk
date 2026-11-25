@@ -92,12 +92,46 @@ export interface Job extends Synced {
   readonly emergencyNamedFlatCents: number | null
   readonly emergencyNamedBasisPoints: number | null
   /**
+   * The tax the flat amount was named with (#1083), in basis points, 0 for a
+   * business under section 19 UStG: the invoice charges no more than that
+   * amount with this tax, whatever tax it has itself. Null where it was named
+   * before or by a device that does not know it; the amount then counts net.
+   */
+  readonly emergencyNamedVatBasisPoints: number | null
+  /**
    * The maintenance contract whose deadline made this service job (#294), and
    * the day that maintenance is due: the proposal on the planning board. Set
    * by the server and only there, never by a device.
    */
   readonly maintenanceContractId: MaintenanceContractId | null
   readonly maintenanceDueOn: string | null
+}
+
+/**
+ * A change of a job with the tax of its named surcharge taken along (#1083).
+ * The tax belongs to the amount it was named with: a change of the named
+ * amount or percentage that does not say with which tax, as from a device
+ * that does not know it, leaves none recorded, and the amount counts net, as
+ * for a call from before. Kept, the tax of the old amount would have made the
+ * new one a total it never was.
+ */
+export function namedTaxAlong<Values extends Readonly<Record<string, unknown>>>(
+  values: Values,
+  current: Readonly<Record<string, unknown>> | null = null,
+): Values {
+  if ('emergencyNamedVatBasisPoints' in values) {
+    return values
+  }
+
+  // Sent again as it is stored, an amount changes nothing, and the tax it was
+  // named with stays (CodeRabbit on #1112): a client that hands back what it
+  // read would otherwise take it away.
+  const changed = (field: string) =>
+    field in values && (current === null || (values[field] ?? null) !== (current[field] ?? null))
+
+  return changed('emergencyNamedFlatCents') || changed('emergencyNamedBasisPoints')
+    ? { ...values, emergencyNamedVatBasisPoints: null }
+    : values
 }
 
 /**
@@ -242,8 +276,25 @@ export function emergencyNamedProblem(
   flatCents: unknown,
   basisPoints: unknown,
   emergencyAt: unknown,
+  vatBasisPoints: unknown = null,
 ): string | null {
   const absent = (value: unknown) => value === undefined || value === null
+
+  // The tax only with an amount it was named with (#1083), and as a rate.
+  if (!absent(vatBasisPoints)) {
+    if (absent(flatCents)) {
+      return 'Die Steuer eines genannten Notdienstzuschlags gehört zu seinem Betrag.'
+    }
+
+    if (
+      typeof vatBasisPoints !== 'number' ||
+      !Number.isInteger(vatBasisPoints) ||
+      vatBasisPoints < 0 ||
+      vatBasisPoints > 10_000
+    ) {
+      return 'Die Steuer eines genannten Notdienstzuschlags ist ein Satz zwischen 0 und 100 %.'
+    }
+  }
 
   if (absent(flatCents) && absent(basisPoints)) {
     return null

@@ -414,6 +414,18 @@ describe('the surcharge of an emergency call at its job (#1087)', () => {
         job('j-3', { ...call, emergencyNamedFlatCents: 0, emergencyNamedBasisPoints: 0 }),
         job('j-4', call),
         job('j-5', { status: 'active' }),
+        job('j-6', {
+          ...call,
+          emergencyNamedFlatCents: 3000,
+          emergencyNamedBasisPoints: 0,
+          emergencyNamedVatBasisPoints: 1900,
+        }),
+        job('j-7', {
+          ...call,
+          emergencyNamedFlatCents: 4500,
+          emergencyNamedBasisPoints: 0,
+          emergencyNamedVatBasisPoints: 0,
+        }),
       ],
       '/auftraege/j-1',
     )
@@ -425,6 +437,9 @@ describe('the surcharge of an emergency call at its job (#1087)', () => {
 
     for (const [id, held] of [
       ['j-2', '30,00 € netto pauschal, vor dem Auftrag genannt'],
+      // With the tax it was named with (#1083), as the mail names it.
+      ['j-6', '35,70 € pauschal einschließlich 19 % Umsatzsteuer, vor dem Auftrag genannt'],
+      ['j-7', '45,00 € pauschal ohne Umsatzsteuer, vor dem Auftrag genannt'],
       ['j-3', 'keiner, so vor dem Auftrag genannt'],
       ['j-4', 'keiner festgehalten, die Rechnung nimmt den des Tages'],
     ] as const) {

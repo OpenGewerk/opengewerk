@@ -13,6 +13,7 @@ import {
   lineNetCents,
   locationFields,
   mayDeleteDraft,
+  namedTaxAlong,
   notOwnDraft,
   offlineRules,
   type Operation,
@@ -52,8 +53,10 @@ import { earlyStartArrival } from '../service-calls/instructions.js'
 import {
   onCallRefusal,
   refreshSurchargeLines,
+  stopFollowingCall,
   surchargeDraftsOf,
   surchargeFieldsOfJob,
+  surchargeTermsOfDocument,
   takesOverSurcharge,
 } from '../service-calls/on-call.js'
 import { consentGiven, correctionRefusal } from '../time/entries.js'
@@ -158,6 +161,19 @@ const onCall: Check = async ({ tx, operation, values, sender }) => {
   const refusal = await onCallRefusal(tx, sender.userId, values)
 
   return refusal ? { kind: 'conflict', reason: refusal.reason, fields: refusal.fields } : null
+}
+
+/**
+ * A named surcharge changed on a device without its tax (#1083) takes none
+ * along (`namedTaxAlong`), before the rules of the job judge it and before it
+ * is written: as the route does.
+ */
+const namedTax: Check = ({ operation, values, current }) => {
+  if (operation.entity === 'jobs' && operation.kind === 'update') {
+    Object.assign(values, namedTaxAlong(values, current))
+  }
+
+  return null
 }
 
 /**
@@ -867,7 +883,11 @@ async function lockDocumentsOf(
     (unseen.length === 0
       ? []
       : await tx
-          .select({ id: schema.documentLines.id, version: schema.documentLines.version })
+          .select({
+            id: schema.documentLines.id,
+            version: schema.documentLines.version,
+            documentId: schema.documentLines.documentId,
+          })
           .from(schema.documentLines)
           .where(
             and(
@@ -886,24 +906,33 @@ async function lockDocumentsOf(
               ),
             ),
           )
-    ).map((row) => [canonical(row.id), row.version]),
+    ).map((row) => [canonical(row.id), row]),
   )
-  const removed = unseen
-    .filter((operation) => {
-      const version = gone.get(canonical(operation.recordId))
+  const removed = unseen.flatMap((operation) => {
+    const line = gone.get(canonical(operation.recordId))
 
-      return (
-        version !== undefined &&
-        (operation.baseVersion === null || operation.baseVersion >= version - 1)
-      )
-    })
-    .map((operation) => operation.recordId as DocumentLineId)
+    return line !== undefined &&
+      (operation.baseVersion === null || operation.baseVersion >= line.version - 1)
+      ? [line]
+      : []
+  })
 
   if (removed.length > 0) {
     await tx
       .update(schema.documentLines)
       .set({ emergencySurcharge: false })
-      .where(inArray(schema.documentLines.id, removed))
+      .where(
+        inArray(
+          schema.documentLines.id,
+          removed.map((line) => line.id),
+        ),
+      )
+  }
+
+  // Their drafts no longer follow their call either (#1097): the surcharge was
+  // removed by hand, on a device, and does not come back.
+  for (const draft of new Set(removed.map((line) => line.documentId))) {
+    await stopFollowingCall(tx, draft)
   }
 
   noted.set(tx, {
@@ -991,12 +1020,24 @@ async function afterSurchargeWrite(
   noted.set(tx, note)
 
   if (operation.entity === 'document_lines') {
-    // Removed on a device, the line of the surcharge does not come back.
+    // Removed on a device, the line of the surcharge does not come back; and
+    // removed or changed by hand there, its draft no longer follows its call
+    // (#1097). The draft the line was on: a line moved to another draft is
+    // the surcharge of that one, which its own refresh finds typed in.
+    const takenOver =
+      current?.['emergencySurcharge'] === true &&
+      (operation.kind === 'delete' ||
+        (operation.kind === 'update' && values['emergencySurcharge'] === false))
+
     if (operation.kind === 'delete' && current?.['emergencySurcharge'] === true) {
       await tx
         .update(schema.documentLines)
         .set({ emergencySurcharge: false })
         .where(eq(schema.documentLines.id, operation.recordId as DocumentLineId))
+    }
+
+    if (takenOver && typeof current['documentId'] === 'string') {
+      await stopFollowingCall(tx, current['documentId'])
     }
 
     for (const draft of [values['documentId'], current?.['documentId']]) {
@@ -1006,7 +1047,10 @@ async function afterSurchargeWrite(
     }
   } else if (operation.kind !== 'update') {
     return
-  } else if (operation.entity === 'documents' && values['jobId'] !== undefined) {
+  } else if (
+    operation.entity === 'documents' &&
+    surchargeTermsOfDocument.some((field) => values[field] !== undefined)
+  ) {
     note.touched.add(canonical(operation.recordId))
   } else if (operation.entity === 'jobs') {
     for (const draft of note.drafts.get(operation.id) ?? []) {
@@ -1107,6 +1151,7 @@ export const sync = serverSync<FoundIdentity>({
   // place to remember on the next table.
   tables,
   checks: [
+    namedTax,
     signature,
     earlyStart,
     onCall,

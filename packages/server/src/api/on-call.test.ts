@@ -81,7 +81,7 @@ async function lockedForIssuing(invoice: string): Promise<PoolClient> {
   const client = await begun()
 
   try {
-    await client.query('select id from documents where id = $1 for update', [invoice])
+    await client.query('select id from documents where id = $1 for no key update', [invoice])
 
     return client
   } catch (error) {
@@ -212,6 +212,24 @@ async function setting(key: string, value: number) {
   await post('/settings/parameters', { key, from: '2026-01-01', value, note: null }, owner())
 }
 
+/**
+ * Takes a value set from a day back past the routes, and the one before it
+ * holds on again: for a test that changes the settings in the middle of
+ * this file, so that the tariffs of the tests after it stay as they were.
+ */
+async function settingTakenBack(key: string, from: string) {
+  await admin.query(
+    'delete from tenant_parameters where tenant_id = $1 and key = $2 and valid_from = $3',
+    [north.id, key, from],
+  )
+  await admin.query(
+    `update tenant_parameters set valid_until = null
+     where tenant_id = $1 and key = $2
+       and valid_from = (select max(valid_from) from tenant_parameters where tenant_id = $1 and key = $2)`,
+    [north.id, key],
+  )
+}
+
 let customer = ''
 let shift = ''
 
@@ -264,6 +282,16 @@ afterAll(async () => {
   await admin.end()
   rmSync(storageRoot, { recursive: true, force: true })
 })
+
+/** Whether the draft follows its call (#1097). */
+async function followsCallOf(invoice: string): Promise<boolean> {
+  const { rows } = await admin.query<{ follows_call: boolean }>(
+    'select follows_call from documents where id = $1',
+    [invoice],
+  )
+
+  return rows[0]?.follows_call === true
+}
 
 describe('the on-call plan (#293)', () => {
   it('is kept in the office and listed by the span it overlaps', async () => {
@@ -676,8 +704,10 @@ describe('the surcharge of an emergency call', () => {
         [invoice],
       )
 
-      // Its surcharge, or the one taken away at once, at that place as well.
-      expect(rows, emergencyAt).toEqual([{ position: 2_147_483_647 }])
+      // Its surcharge at that place as well; in the day there is none to make.
+      expect(rows, emergencyAt).toEqual(
+        emergencyAt === atNight ? [{ position: 2_147_483_647 }] : [],
+      )
     }
   })
 
@@ -1108,6 +1138,378 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     return rows[0]?.marks
   }
 
+  it('charges no more in total than was named with its tax, when the invoice has another (#1083)', async () => {
+    // 45,00 € named in the night under section 19, the invoice with 19 %.
+    const underSection19 = await draftOf({
+      emergencyAt: atNight,
+      emergencyNamedFlatCents: 4500,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 0,
+    })
+
+    expect(await surchargeOf(underSection19.invoice)).toMatchObject({
+      designation: 'Notdienstzuschlag Nacht',
+      net_cents: 3781,
+    })
+
+    // Named with the tax the invoice has: the amount as named.
+    const withTheSameTax = await draftOf({
+      emergencyAt: atNight,
+      emergencyNamedFlatCents: 4500,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
+    })
+
+    expect(await surchargeOf(withTheSameTax.invoice)).toMatchObject({ net_cents: 4500 })
+  })
+
+  it('takes the tax of the line from the day the totals reckon with, not from the date of the invoice (#1083)', async () => {
+    const draft = await draftOf({
+      emergencyAt: atNight,
+      emergencyNamedFlatCents: 3000,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
+    })
+
+    // Written on a day of another rate than the work: 16 % in the second half
+    // of 2020. The totals take the rate of the work, and so does the line;
+    // with 16 % it would be 30,78 €, and 36,63 € with the 19 % of the totals,
+    // more than the 35,70 € that were named.
+    await admin.query(`update documents set document_date = '2020-07-02' where id = $1`, [
+      draft.invoice,
+    ])
+    await price(draft.invoice, draft.hour, 6100)
+
+    expect(await surchargeOf(draft.invoice)).toMatchObject({ net_cents: 3000 })
+  })
+
+  it('asks no rate of tax for a draft without a surcharge due, at the route and on a device (the review of #1112)', async () => {
+    // No call, and a day of work typed as 2006, before the rates of tax the
+    // application knows: the change is saved, as before the line followed.
+    const { invoice } = await draftOf({ emergencyAt: null })
+
+    await patch(`/documents/${invoice}`, { serviceFrom: '2006-12-01', serviceUntil: '2006-12-01' })
+    await sent(
+      changed('documents', invoice, {
+        serviceUntil: { from: '2006-12-01', to: '2006-12-02' },
+      }),
+    )
+
+    const { rows } = await admin.query<{ until: string }>(
+      "select to_char(service_until, 'YYYY-MM-DD') as until from documents where id = $1",
+      [invoice],
+    )
+
+    expect(rows).toEqual([{ until: '2006-12-02' }])
+  })
+
+  it('works the line out from the hours while its day of work has no rate of tax that it needs (the review of #1112)', async () => {
+    // Half the hours on a Saturday, nothing named: the line needs no rate,
+    // and it follows the hours on a day of work typed as 2006 as on any.
+    const { invoice, hour } = await draftOf()
+
+    await price(invoice, hour, 10_000)
+    const before = await surchargeOf(invoice)
+
+    await patch(`/documents/${invoice}`, { serviceFrom: '2006-12-01', serviceUntil: '2006-12-01' })
+    await price(invoice, hour, 20_000)
+
+    expect(before.net_cents).toBeGreaterThan(0)
+    expect(await surchargeOf(invoice)).toMatchObject({ net_cents: before.net_cents * 2 })
+  })
+
+  it('keeps the line while its day of work has no rate of tax, and issuing names the day (the review of #1112)', async () => {
+    const draft = await draftOf({
+      emergencyAt: atNight,
+      emergencyNamedFlatCents: 4500,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
+    })
+
+    const before = await surchargeOf(draft.invoice)
+
+    expect(before).toMatchObject({ net_cents: 4500, deleted: false })
+
+    await patch(`/documents/${draft.invoice}`, {
+      serviceFrom: '2006-12-01',
+      serviceUntil: '2006-12-01',
+    })
+
+    expect(await surchargeOf(draft.invoice)).toEqual(before)
+
+    const refused = await post(`/documents/${draft.invoice}/issue`, {}, office(), 422)
+
+    expect(refused.message).toContain('2006-12-01')
+    expect(refused.message).toContain('vat.standard')
+  })
+
+  it('steps back next to a surcharge the office types in while its day of work has no rate of tax (CodeRabbit on #1112)', async () => {
+    const { invoice } = await draftOf({
+      emergencyAt: atNight,
+      emergencyNamedFlatCents: 4500,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
+    })
+
+    await patch(`/documents/${invoice}`, { serviceFrom: '2006-12-01', serviceUntil: '2006-12-01' })
+    await post(`/documents/${invoice}/lines`, {
+      designation: 'Notdienstzuschlag Nacht',
+      quantityMilli: 1000,
+      unit: 'flat_rate',
+      unitPriceCents: 4500,
+    })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Nacht', emergency_surcharge: false },
+    ])
+    expect(await marksOf(invoice)).toBe(0)
+  })
+
+  it('takes the line away once the day charges nothing, while its day of work has no rate of tax (CodeRabbit on #1112)', async () => {
+    const draft = await draftOf({
+      emergencyAt: atNight,
+      emergencyNamedFlatCents: 4500,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
+    })
+
+    await patch(`/documents/${draft.invoice}`, {
+      serviceFrom: '2006-12-01',
+      serviceUntil: '2006-12-01',
+    })
+
+    expect(await surchargeOf(draft.invoice)).toMatchObject({ deleted: false })
+
+    // The office charges nothing at night from October on, for the day of
+    // the call. Taken back afterwards, so that the tariffs of the tests after
+    // it stay as they were.
+    try {
+      await post(
+        '/settings/parameters',
+        { key: 'emergency.night_flat_cents', from: '2026-10-01', value: 0, note: null },
+        owner(),
+      )
+
+      expect(await surchargeOf(draft.invoice)).toMatchObject({ deleted: true })
+    } finally {
+      await settingTakenBack('emergency.night_flat_cents', '2026-10-01')
+    }
+  })
+
+  it('refuses to issue a draft whose call is on a day without rules, and holds up nothing else (CodeRabbit on #1112)', async () => {
+    // A call typed as 2006 before #1085 refused one, past the routes.
+    const draft = await draftOf({ emergencyAt: atNight })
+
+    await writtenPastTheRoutes(
+      "update jobs set emergency_at = '2006-10-28T01:14:00Z' where id = $1",
+      [draft.job],
+    )
+
+    const before = await surchargeOf(draft.invoice)
+
+    try {
+      // A change of the settings works out every draft that follows its
+      // call, this one as well: it goes through, and the line waits as it is.
+      await post(
+        '/settings/parameters',
+        { key: 'emergency.night_flat_cents', from: '2026-12-01', value: 4600, note: null },
+        owner(),
+      )
+
+      expect(await surchargeOf(draft.invoice)).toEqual(before)
+
+      const refused = await post(`/documents/${draft.invoice}/issue`, {}, office(), 422)
+
+      expect(refused.message).toContain('Tag des Anrufs')
+    } finally {
+      // Put back, so that the tests after it meet neither.
+      await settingTakenBack('emergency.night_flat_cents', '2026-12-01')
+      await writtenPastTheRoutes('update jobs set emergency_at = $2 where id = $1', [
+        draft.job,
+        atNight,
+      ])
+    }
+  })
+
+  it('takes the tax of the line from the day an invoice without a day of work is issued on (the review of #1112)', async () => {
+    const draft = await draftOf({
+      emergencyAt: atNight,
+      emergencyNamedFlatCents: 3000,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
+    })
+
+    // No day of work, and written on a day of 16 %: issuing dates it today,
+    // with 19 %, and so does the line. With 16 % it is 30,78 €, which with
+    // the 19 % of the totals makes more than the 35,70 € named.
+    await patch(`/documents/${draft.invoice}`, {
+      serviceFrom: null,
+      serviceUntil: null,
+      documentDate: '2020-07-02',
+    })
+
+    expect(await surchargeOf(draft.invoice)).toMatchObject({ net_cents: 3078 })
+
+    await post(`/documents/${draft.invoice}/issue`, {})
+
+    expect(await surchargeOf(draft.invoice)).toMatchObject({ net_cents: 3000 })
+  })
+
+  it('takes no tax along where the named surcharge changes without it, on a device or at the route (#1083)', async () => {
+    for (const where of ['device', 'route'] as const) {
+      const call = aCall({
+        emergencyNamedFlatCents: 4500,
+        emergencyNamedBasisPoints: 0,
+        emergencyNamedVatBasisPoints: 1900,
+      })
+
+      await push(app, office(), [call.operation])
+
+      // As a device or a client does that does not know the tax: the tax of
+      // 45,00 € would have made 30,00 € a total of 35,70 €.
+      if (where === 'device') {
+        await sent(changed('jobs', call.id, { emergencyNamedFlatCents: { from: 4500, to: 3000 } }))
+      } else {
+        await patch(`/jobs/${call.id}`, { emergencyNamedFlatCents: 3000 })
+      }
+
+      const { rows } = await admin.query<{ flat: number; vat: number | null }>(
+        `select emergency_named_flat_cents as flat, emergency_named_vat_basis_points as vat
+         from jobs where id = $1`,
+        [call.id],
+      )
+
+      expect(rows, where).toEqual([{ flat: 3000, vat: null }])
+    }
+  })
+
+  it('answers the making of an invoice out of a report and of a collective one with whether it follows its call (#1097)', async () => {
+    const call = aCall({ emergencyAt: saturday })
+
+    await push(app, office(), [call.operation])
+
+    const fromReport = await post(`/documents/${await aSignedReport(call.id)}/successors`, {
+      kind: 'final_invoice',
+    })
+
+    expect(fromReport).toMatchObject({ followsCall: true })
+
+    const other = aCall({ emergencyAt: saturday })
+
+    await push(app, office(), [other.operation])
+    await post(`/documents/${await aSignedReport(other.id)}/issue`, {})
+
+    expect(await post(`/jobs/${other.id}/collective-invoice`, {})).toMatchObject({
+      followsCall: true,
+    })
+  })
+
+  it('keeps the tax of a named surcharge sent again as it is stored (CodeRabbit on #1112)', async () => {
+    const call = aCall({
+      emergencyNamedFlatCents: 4500,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
+    })
+
+    await push(app, office(), [call.operation])
+    await patch(`/jobs/${call.id}`, { emergencyNamedFlatCents: 4500, emergencyNamedBasisPoints: 0 })
+
+    const { rows } = await admin.query<{ vat: number | null }>(
+      'select emergency_named_vat_basis_points as vat from jobs where id = $1',
+      [call.id],
+    )
+
+    expect(rows).toEqual([{ vat: 1900 }])
+  })
+
+  it('keeps no tax for an amount sent again while another change named a new one (CodeRabbit on #1112)', async () => {
+    const call = aCall({
+      emergencyNamedFlatCents: 4500,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
+    })
+
+    await push(app, office(), [call.operation])
+
+    // Another change names 30,00 € without tax and has not committed yet,
+    // while the office sends back the 45,00 € it read. Read before that
+    // change, the amount would look unchanged and keep the tax of the other.
+    const naming = await begun()
+    let sending: Promise<number> | undefined
+
+    try {
+      await naming.query(
+        `update jobs set emergency_named_flat_cents = 3000, emergency_named_vat_basis_points = 0
+         where id = $1`,
+        [call.id],
+      )
+      sending = http()
+        .patch(`/jobs/${call.id}`)
+        .set('x-test-identity', office())
+        .send({ emergencyNamedFlatCents: 4500, emergencyNamedBasisPoints: 0 })
+        .then((answer) => answer.status)
+      await waitingFor(admin, naming, sending)
+      await naming.query('commit')
+    } finally {
+      await naming.query('rollback').catch(() => undefined)
+      naming.release()
+      await Promise.allSettled([sending])
+    }
+
+    expect(await sending).toBe(200)
+
+    const { rows } = await admin.query<{ flat: number; vat: number | null }>(
+      `select emergency_named_flat_cents as flat, emergency_named_vat_basis_points as vat
+       from jobs where id = $1`,
+      [call.id],
+    )
+
+    expect(rows).toEqual([{ flat: 4500, vat: null }])
+  })
+
+  it('works the line out again when the tax of the draft changes, at the route and on a device (CodeRabbit on #1112)', async () => {
+    for (const where of ['route', 'device'] as const) {
+      // 45,00 € named under section 19: with 19 % on the invoice the line is
+      // 37,81 €, and without tax on it 45,00 €.
+      const draft = await draftOf({
+        emergencyAt: atNight,
+        emergencyNamedFlatCents: 4500,
+        emergencyNamedBasisPoints: 0,
+        emergencyNamedVatBasisPoints: 0,
+      })
+
+      expect(await surchargeOf(draft.invoice), where).toMatchObject({ net_cents: 3781 })
+
+      if (where === 'route') {
+        await patch(`/documents/${draft.invoice}`, { taxTreatment: 'small_business' })
+      } else {
+        await sent(
+          changed('documents', draft.invoice, {
+            taxTreatment: { from: 'standard', to: 'small_business' },
+          }),
+        )
+      }
+
+      expect(await surchargeOf(draft.invoice), where).toMatchObject({ net_cents: 4500 })
+    }
+  })
+
+  it('refuses a tax of the named surcharge that is no rate, or without an amount (#1083)', async () => {
+    for (const fields of [
+      {
+        emergencyNamedFlatCents: 4500,
+        emergencyNamedBasisPoints: 0,
+        emergencyNamedVatBasisPoints: 10_001,
+      },
+      { emergencyNamedVatBasisPoints: 1900 },
+    ]) {
+      const call = aCall({ emergencyAt: atNight, ...fields })
+      const answer = await push(app, office(), [call.operation], 400)
+
+      expect(answer.message).toMatch(/Steuer eines genannten Notdienstzuschlags/)
+    }
+  })
+
   it('follows the hours the office prices, up to what was named before the order', async () => {
     const { invoice, hour } = await draftOf({
       emergencyNamedFlatCents: 3000,
@@ -1277,6 +1679,35 @@ describe('the line of the surcharge on a draft (#1087)', () => {
       fields: ['emergencySurcharge'],
     })
     expect(await surchargeOf(onDevice.invoice)).toMatchObject({ emergency_surcharge: false })
+  })
+
+  it('belongs to the office once its rate of tax is changed by hand, in the office or on a device (CodeRabbit on #1112)', async () => {
+    for (const where of ['office', 'device'] as const) {
+      const draft = await draftOf()
+
+      await price(draft.invoice, draft.hour, 1000)
+      const line = (await surchargeOf(draft.invoice)).id
+
+      if (where === 'office') {
+        await patch(`/documents/${draft.invoice}/lines/${line}`, { vatRate: 'zero' })
+      } else {
+        await sent(changed('document_lines', line, { vatRate: { from: 'standard', to: 'zero' } }))
+      }
+
+      await price(draft.invoice, draft.hour, 2000)
+
+      expect(await surchargeOf(draft.invoice), where).toMatchObject({
+        net_cents: 500,
+        emergency_surcharge: false,
+      })
+
+      const { rows } = await admin.query<{ follows: boolean }>(
+        'select follows_call as follows from documents where id = $1',
+        [draft.invoice],
+      )
+
+      expect(rows, where).toEqual([{ follows: false }])
+    }
   })
 
   it('follows the call and the surcharge named for it, and goes where the call has none', async () => {
@@ -1640,6 +2071,132 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     },
   )
 
+  it('comes on the invoice of a job that becomes an emergency call later, in the office and on a device (#1097)', async () => {
+    const inOffice = await draftOf({ emergencyAt: null })
+
+    expect(await followsCallOf(inOffice.invoice)).toBe(true)
+    expect(await marksOf(inOffice.invoice)).toBe(0)
+
+    await patch(`/jobs/${inOffice.job}`, { emergencyAt: atNight })
+
+    expect(await shownSurchargesOf(inOffice.invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Nacht', emergency_surcharge: true },
+    ])
+
+    const onDevice = await draftOf({ emergencyAt: null })
+
+    await sent(changed('jobs', onDevice.job, { emergencyAt: { from: null, to: atNight } }))
+
+    expect(await shownSurchargesOf(onDevice.invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Nacht', emergency_surcharge: true },
+    ])
+  })
+
+  it('takes whether it follows its call from the server alone, not from a device (#1097)', async () => {
+    const { invoice } = await draftOf()
+    const answer = await push(app, office(), [
+      changed('documents', invoice, { followsCall: { from: true, to: false } }),
+    ])
+
+    expect(
+      answer.receipts.map((receipt) => [receipt.outcome, receipt.reason, receipt.fields]),
+    ).toEqual([['conflict', 'set_by_server', ['followsCall']]])
+    expect(await followsCallOf(invoice)).toBe(true)
+  })
+
+  it('comes on a draft of another job moved to an emergency call (#1097)', async () => {
+    const { invoice } = await draftOf({ emergencyAt: null })
+    const call = aCall({ emergencyAt: atNight })
+
+    await push(app, office(), [call.operation])
+    await patch(`/documents/${invoice}`, { jobId: call.id })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Nacht', emergency_surcharge: true },
+    ])
+  })
+
+  it('no longer follows the call once the office or a device removed or changed the line, and nothing brings it back (#1097)', async () => {
+    const removedInOffice = await draftOf()
+
+    await removeInOffice(removedInOffice.invoice, (await surchargeOf(removedInOffice.invoice)).id)
+
+    const removedOnDevice = await draftOf()
+
+    await sent(deleted('document_lines', (await surchargeOf(removedOnDevice.invoice)).id))
+
+    const changedInOffice = await draftOf()
+
+    await patch(
+      `/documents/${changedInOffice.invoice}/lines/${(await surchargeOf(changedInOffice.invoice)).id}`,
+      { unitPriceCents: 1234 },
+    )
+
+    for (const draft of [removedInOffice, removedOnDevice, changedInOffice]) {
+      expect(await followsCallOf(draft.invoice)).toBe(false)
+
+      // Another kind of call, which would make a line of its own.
+      await patch(`/jobs/${draft.job}`, { emergencyAt: atNight })
+
+      expect(await marksOf(draft.invoice)).toBe(0)
+    }
+
+    expect(await shownSurchargesOf(removedInOffice.invoice)).toEqual([])
+    expect(await shownSurchargesOf(removedOnDevice.invoice)).toEqual([])
+    expect(await shownSurchargesOf(changedInOffice.invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Wochenende', emergency_surcharge: false },
+    ])
+  })
+
+  it('comes after the flat price of a maintenance contract, on the invoice of its report and on its collective invoice (#1096)', async () => {
+    const quote = (
+      await post('/documents', { customerId: customer, kind: 'quote', documentDate: '2026-10-01' })
+    ).id
+    const contract = newId<'maintenance-contract'>()
+
+    await writtenPastTheRoutes(
+      `insert into maintenance_contracts (id, tenant_id, number, designation, customer_id, quote_id,
+         starts_on, first_visit_on, interval_months, term_months, renewal, notice_months, price_kind, flat_cents)
+       values ($1, $2, 'WV-2026-1096', 'Wartung Elektroanlage', $3, $4, '2026-01-01', '2026-01-01', 12, 24,
+         'none', 3, 'flat', 48000)`,
+      [contract, north.id, customer, quote],
+    )
+
+    for (const collective of [false, true]) {
+      const call = aCall({ emergencyAt: atNight })
+
+      await push(app, office(), [call.operation])
+      await writtenPastTheRoutes(
+        `update jobs set maintenance_contract_id = $1, maintenance_due_on = $3 where id = $2`,
+        [contract, call.id, collective ? '2026-11-30' : '2026-10-31'],
+      )
+
+      const report = await aSignedReport(call.id)
+      const invoice = collective
+        ? (await post(`/documents/${report}/issue`, {}),
+          (await post(`/jobs/${call.id}/collective-invoice`, {})).id)
+        : (await post(`/documents/${report}/successors`, { kind: 'final_invoice' })).id
+      const { rows } = await admin.query<{
+        position: number
+        unit_price_cents: number
+        emergency_surcharge: boolean
+      }>(
+        `select position, unit_price_cents, emergency_surcharge from document_lines
+         where document_id = $1 and deleted_at is null order by position`,
+        [invoice],
+      )
+
+      expect(rows[0], `collective ${String(collective)}`).toMatchObject({
+        position: 1,
+        unit_price_cents: 48_000,
+        emergency_surcharge: false,
+      })
+      expect(rows.slice(1), `collective ${String(collective)}`).toMatchObject([
+        { position: 2, emergency_surcharge: true },
+      ])
+    }
+  })
+
   it('comes back next to a heading with the word in it', async () => {
     const { job, invoice } = await draftOf()
 
@@ -1863,6 +2420,46 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(await transmit()).toEqual({ status: 201, outcomes: ['applied', 'applied'] })
   })
 
+  it('lets a reference to the invoice or its report be checked while the invoice is issued (#1095)', async () => {
+    const { invoice } = await draftOf()
+    const { rows } = await admin.query<{ report: string }>(
+      'select predecessor_document_id as report from documents where id = $1',
+      [invoice],
+    )
+    // Held the way the check of a foreign key holds the row it points at, as
+    // keeping the first PDF of a document does.
+    const checking = await begun()
+    let issued: Promise<number> | undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    try {
+      await checking.query('select id from documents where id = any($1) for key share', [
+        [invoice, rows[0]?.report],
+      ])
+
+      issued = http()
+        .post(`/documents/${invoice}/issue`)
+        .set('x-test-identity', office())
+        .send({})
+        .then((answer) => answer.status)
+      const outcome = await Promise.race([
+        issued,
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve('waits'), 5000)
+        }),
+      ])
+
+      expect(outcome).toBe(201)
+    } finally {
+      clearTimeout(timer)
+      await checking.query('rollback').catch(() => undefined)
+      checking.release()
+      // One that waited past the time is through before the next test begins
+      // (CodeRabbit on #1112).
+      await Promise.allSettled([issued])
+    }
+  })
+
   it('locks an invoice with its report in the order of their ids, as a transmission does', async () => {
     const { invoice } = await draftOf()
     const { rows } = await admin.query<{ report: string }>(
@@ -1943,6 +2540,7 @@ describe('the line of the surcharge on a draft (#1087)', () => {
         'update document_lines set deleted_at = now(), emergency_surcharge = false where document_id = $1 and emergency_surcharge',
         [invoice],
       )
+      await removing.query('update documents set follows_call = false where id = $1', [invoice])
       await removing.query('commit')
     } finally {
       await removing.query('rollback').catch(() => undefined)
@@ -2117,7 +2715,9 @@ describe('the line of the surcharge on a draft (#1087)', () => {
 
     const invoice = (await post(`/documents/${report}/successors`, { kind: 'final_invoice' })).id
 
-    expect(await marksOf(invoice)).toBe(1)
+    // No line, not even one taken away: the draft follows its call (#1097).
+    expect(await marksOf(invoice)).toBe(0)
+    expect(await followsCallOf(invoice)).toBe(true)
     expect(await shownSurchargesOf(invoice)).toEqual([])
 
     const refused = await http()

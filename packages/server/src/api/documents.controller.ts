@@ -73,9 +73,9 @@ import { articlePricesOn, type PriceOfDay, pricedFromArticle } from '../document
 import { contentAndGapsOf, issuerOf, withStoredLogo } from '../documents/content.js'
 import { contractFlatLineFor } from '../contracts/invoice.js'
 import {
-  insertSurchargeLine,
+  followCall,
   refreshSurchargeLine,
-  surchargeLineFor,
+  surchargeTermsOfDocument,
 } from '../service-calls/on-call.js'
 import { deductionsFor, paymentsOfADraft, showsReceivedPayments } from '../documents/deductions.js'
 import { choicesOf } from '../documents/instructions.js'
@@ -274,6 +274,20 @@ function checkPaymentTerm(values: Partial<Record<string, unknown>>): void {
   }
 }
 
+/**
+ * A document made a moment ago as it stands after what followed in the same
+ * transaction: whether it follows its call and the version the line of the
+ * surcharge gave it (#1097), which the row its insert returned does not know.
+ */
+async function asItStands(
+  tx: TenantTransaction,
+  created: typeof documents.$inferSelect,
+): Promise<typeof documents.$inferSelect> {
+  const [now] = await tx.select().from(documents).where(eq(documents.id, created.id))
+
+  return now ?? created
+}
+
 /** Refuses a text longer than a document holds (`documentTextLimits`), as the check in the database does. */
 function checkTexts(values: Partial<Record<string, unknown>>): void {
   const problem =
@@ -366,8 +380,9 @@ export class DocumentsController {
         .returning()
 
       if (updated) {
-        // A draft moved to another job has the surcharge of that call (#1087).
-        if (values.jobId !== undefined) {
+        // A draft moved to another job has the surcharge of that call (#1087),
+        // and one whose tax changes works it out with that tax.
+        if (surchargeTermsOfDocument.some((field) => values[field] !== undefined)) {
           await refreshSurchargeLine(tx, updated.id)
         }
 
@@ -476,14 +491,18 @@ export class DocumentsController {
         .for('no key update')
 
       // Locked before anything is read that the snapshot freezes: a line
-      // route, a change to the head and the trigger on the lines wait for
-      // this row, so the snapshot holds what the document says when it is
-      // issued, and a write that comes later finds it fixed.
+      // route (`no key update`), a change to the head (an update) and the
+      // trigger on the lines (`for share`) wait for this row, so the snapshot
+      // holds what the document says when it is issued, and a write that
+      // comes later finds it fixed. Not `for update` (#1095): that would hold
+      // up every check of a foreign key that points here, the first PDF of the
+      // document kept meanwhile among them, which takes the chain of the log
+      // first and so would wait in a circle with this transaction.
       const [existing] = await tx
         .select()
         .from(documents)
         .where(and(eq(documents.id, id as DocumentId), isNull(documents.deletedAt)))
-        .for('update')
+        .for('no key update')
 
       if (!existing) {
         throw new NotFoundException()
@@ -503,12 +522,20 @@ export class DocumentsController {
           .select()
           .from(documents)
           .where(and(eq(documents.id, existing.predecessorDocumentId), isNull(documents.deletedAt)))
-          .for('update')
+          .for('no key update')
 
         if (predecessor && isSignedReport(predecessor)) {
           await fixDocument(tx, identity, predecessor)
         }
       }
+
+      // One moment for the date and the issuing, so that an invoice issued
+      // across midnight in Germany is not dated the day before its issue.
+      // Dated before the line of the surcharge is worked out the last time:
+      // without a day of work, its tax is the one of that date, as the totals'
+      // is (the review of #1112).
+      const issuedAt = new Date()
+      const dated = await datedForIssue(tx, existing, todayInGermany(issuedAt))
 
       // The line of the surcharge as everything stands now, once more before
       // it is frozen (#1087): a change that raced the draft into being, or
@@ -517,6 +544,13 @@ export class DocumentsController {
       // the draft, for want of room or for its size, is not left off in
       // silence.
       const surchargeWaits = await refreshSurchargeLine(tx, existing.id)
+
+      if (surchargeWaits === 'no rules for the call') {
+        throw new UnprocessableEntityException(
+          'Der Notdienstzuschlag lässt sich nicht rechnen: Für den Tag des Anrufs kennt ' +
+            'OpenGewerk keine Regeln. Den Zeitpunkt des Anrufs am Auftrag prüfen.',
+        )
+      }
 
       if (surchargeWaits === 'waits for room') {
         throw new ConflictException(
@@ -534,10 +568,6 @@ export class DocumentsController {
         )
       }
 
-      // One moment for the date and the issuing, so that an invoice issued
-      // across midnight in Germany is not dated the day before its issue.
-      const issuedAt = new Date()
-      const dated = await datedForIssue(tx, existing, todayInGermany(issuedAt))
       const { content, missing } = await contentForIssuing(tx, dated)
 
       if (missing.length > 0) {
@@ -753,7 +783,12 @@ export class DocumentsController {
           .insert(documentLines)
           .values({ tenantId: identity.tenantId, documentId: created.id, position: 1, ...flat })
 
-        return created
+        // An emergency call under such a contract carries its surcharge as
+        // well, as the collective invoice of its job does (#1096); in percent
+        // it counts the hours of the draft, of which a flat price has none.
+        await followCall(tx, created.id)
+
+        return await asItStands(tx, created)
       }
 
       const lines = await tx
@@ -796,17 +831,14 @@ export class DocumentsController {
         )
       }
 
-      // The invoice out of the report of an emergency call carries the
-      // surcharge the business set for its kind (#293), as the last line.
+      // The invoice out of a report follows its call (#1097): the report of
+      // an emergency call gives it the surcharge the business set for its
+      // kind (#293), as the last line, and one whose job becomes an emergency
+      // call later gets it then.
       if (predecessor.kind === 'time_and_material_report') {
-        await insertSurchargeLine(
-          tx,
-          identity.tenantId,
-          created.id,
-          priced.reduce((last, line) => Math.max(last, line.position), 0) + 1,
-          predecessor.jobId,
-          await surchargeLineFor(tx, predecessor.jobId, priced),
-        )
+        await followCall(tx, created.id)
+
+        return await asItStands(tx, created)
       }
 
       return created
