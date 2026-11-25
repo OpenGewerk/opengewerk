@@ -21,7 +21,8 @@ compose`-Befehl weiter unten dieselbe. Gebraucht werden Docker Engine ab 28.3.3
 und Docker Compose ab 2.22. Ein Checkout des Repositorys hat an derselben Stelle `source`
 und baut die Abbilder aus dem Quelltext, für Entwicklung und Vorschau. Wer im
 Checkout lieber eine veröffentlichte Fassung betreibt, trägt sie in der `.env`
-als `OPENGEWERK_VERSION` ein, ab 0.9.0; was das beim Aktualisieren heißt, steht
+als `OPENGEWERK_VERSION` ein, ab 0.9.0. Ihre Abbilder holt der Start dann nach
+ihrem Tag, ohne ihre Signatur zu prüfen; was das beim Aktualisieren heißt, steht
 unter „Aktualisieren“.
 
 **Ein Paket nennt seine Abbilder mit Digest und prüft ihre Signatur** (#687). In
