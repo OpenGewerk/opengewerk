@@ -56,6 +56,7 @@ import {
   stopFollowingCall,
   surchargeDraftsOf,
   surchargeFieldsOfJob,
+  surchargeTermsOfDocument,
   takesOverSurcharge,
 } from '../service-calls/on-call.js'
 import { consentGiven, correctionRefusal } from '../time/entries.js'
@@ -167,9 +168,9 @@ const onCall: Check = async ({ tx, operation, values, sender }) => {
  * along (`namedTaxAlong`), before the rules of the job judge it and before it
  * is written: as the route does.
  */
-const namedTax: Check = ({ operation, values }) => {
+const namedTax: Check = ({ operation, values, current }) => {
   if (operation.entity === 'jobs' && operation.kind === 'update') {
-    Object.assign(values, namedTaxAlong(values))
+    Object.assign(values, namedTaxAlong(values, current))
   }
 
   return null
@@ -1046,7 +1047,10 @@ async function afterSurchargeWrite(
     }
   } else if (operation.kind !== 'update') {
     return
-  } else if (operation.entity === 'documents' && values['jobId'] !== undefined) {
+  } else if (
+    operation.entity === 'documents' &&
+    surchargeTermsOfDocument.some((field) => values[field] !== undefined)
+  ) {
     note.touched.add(canonical(operation.recordId))
   } else if (operation.entity === 'jobs') {
     for (const draft of note.drafts.get(operation.id) ?? []) {

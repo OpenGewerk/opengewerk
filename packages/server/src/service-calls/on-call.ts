@@ -173,6 +173,21 @@ export async function surchargeLineFor(
 }
 
 /**
+ * What of a draft the line of its surcharge follows besides its lines: the
+ * call of its job, and what its tax comes from, the treatment of tax and the
+ * day of the work or, without one, the date of the document (CodeRabbit on
+ * #1112). A change of one works the line out again, at the route as in the
+ * sync.
+ */
+export const surchargeTermsOfDocument = [
+  'jobId',
+  'taxTreatment',
+  'serviceFrom',
+  'serviceUntil',
+  'documentDate',
+] as const
+
+/**
  * What of the line of the surcharge the server works out, and a change of
  * which by hand takes it over (#1087), with the document it is on: a line a
  * device moves to another draft is no surcharge of that draft's call, and

@@ -1214,6 +1214,51 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     })
   })
 
+  it('keeps the tax of a named surcharge sent again as it is stored (CodeRabbit on #1112)', async () => {
+    const call = aCall({
+      emergencyNamedFlatCents: 4500,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
+    })
+
+    await push(app, office(), [call.operation])
+    await patch(`/jobs/${call.id}`, { emergencyNamedFlatCents: 4500, emergencyNamedBasisPoints: 0 })
+
+    const { rows } = await admin.query<{ vat: number | null }>(
+      'select emergency_named_vat_basis_points as vat from jobs where id = $1',
+      [call.id],
+    )
+
+    expect(rows).toEqual([{ vat: 1900 }])
+  })
+
+  it('works the line out again when the tax of the draft changes, at the route and on a device (CodeRabbit on #1112)', async () => {
+    for (const where of ['route', 'device'] as const) {
+      // 45,00 € named under section 19: with 19 % on the invoice the line is
+      // 37,81 €, and without tax on it 45,00 €.
+      const draft = await draftOf({
+        emergencyAt: atNight,
+        emergencyNamedFlatCents: 4500,
+        emergencyNamedBasisPoints: 0,
+        emergencyNamedVatBasisPoints: 0,
+      })
+
+      expect(await surchargeOf(draft.invoice), where).toMatchObject({ net_cents: 3781 })
+
+      if (where === 'route') {
+        await patch(`/documents/${draft.invoice}`, { taxTreatment: 'small_business' })
+      } else {
+        await sent(
+          changed('documents', draft.invoice, {
+            taxTreatment: { from: 'standard', to: 'small_business' },
+          }),
+        )
+      }
+
+      expect(await surchargeOf(draft.invoice), where).toMatchObject({ net_cents: 4500 })
+    }
+  })
+
   it('refuses a tax of the named surcharge that is no rate, or without an amount (#1083)', async () => {
     for (const fields of [
       {

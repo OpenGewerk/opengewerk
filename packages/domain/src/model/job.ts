@@ -117,9 +117,19 @@ export interface Job extends Synced {
  */
 export function namedTaxAlong<Values extends Readonly<Record<string, unknown>>>(
   values: Values,
+  current: Readonly<Record<string, unknown>> | null = null,
 ): Values {
-  return ('emergencyNamedFlatCents' in values || 'emergencyNamedBasisPoints' in values) &&
-    !('emergencyNamedVatBasisPoints' in values)
+  if ('emergencyNamedVatBasisPoints' in values) {
+    return values
+  }
+
+  // Sent again as it is stored, an amount changes nothing, and the tax it was
+  // named with stays (CodeRabbit on #1112): a client that hands back what it
+  // read would otherwise take it away.
+  const changed = (field: string) =>
+    field in values && (current === null || (values[field] ?? null) !== (current[field] ?? null))
+
+  return changed('emergencyNamedFlatCents') || changed('emergencyNamedBasisPoints')
     ? { ...values, emergencyNamedVatBasisPoints: null }
     : values
 }

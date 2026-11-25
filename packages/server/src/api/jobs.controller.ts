@@ -191,17 +191,17 @@ export class JobsController {
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
-    const values = namedTaxAlong(pick(body, writableFields))
-    requireSomething(values)
+    const picked = pick(body, writableFields)
+    requireSomething(picked)
 
     const [updated] = await this.database.forTenant(identity, async (tx) => {
-      await requireReferences(tx, jobs, values, false)
+      await requireReferences(tx, jobs, picked, false)
 
       // The drafts of the call follow its moment and its named surcharge
       // (#1087), locked before the job is written, as issuing locks first.
       // And before the job is read: a change of the call that holds them is
       // waited for, and the terms are checked against what it left.
-      const drafts = surchargeFieldsOfJob.some((field) => field in values)
+      const drafts = surchargeFieldsOfJob.some((field) => field in picked)
         ? await lockSurchargeDrafts(tx, id)
         : []
 
@@ -209,6 +209,9 @@ export class JobsController {
         .select()
         .from(jobs)
         .where(and(eq(jobs.id, id as JobId), isNull(jobs.deletedAt)))
+      // A named surcharge changed without its tax takes none along (#1083),
+      // judged against what is stored, as the sync does.
+      const values = namedTaxAlong(picked, current ?? null)
 
       requireTerms(values, current)
 

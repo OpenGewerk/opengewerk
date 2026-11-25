@@ -72,7 +72,11 @@ import {
 import { articlePricesOn, type PriceOfDay, pricedFromArticle } from '../documents/article-prices.js'
 import { contentAndGapsOf, issuerOf, withStoredLogo } from '../documents/content.js'
 import { contractFlatLineFor } from '../contracts/invoice.js'
-import { followCall, refreshSurchargeLine } from '../service-calls/on-call.js'
+import {
+  followCall,
+  refreshSurchargeLine,
+  surchargeTermsOfDocument,
+} from '../service-calls/on-call.js'
 import { deductionsFor, paymentsOfADraft, showsReceivedPayments } from '../documents/deductions.js'
 import { choicesOf } from '../documents/instructions.js'
 import { proposedTreatment } from '../documents/treatment.js'
@@ -376,8 +380,9 @@ export class DocumentsController {
         .returning()
 
       if (updated) {
-        // A draft moved to another job has the surcharge of that call (#1087).
-        if (values.jobId !== undefined) {
+        // A draft moved to another job has the surcharge of that call (#1087),
+        // and one whose tax changes works it out with that tax.
+        if (surchargeTermsOfDocument.some((field) => values[field] !== undefined)) {
           await refreshSurchargeLine(tx, updated.id)
         }
 
