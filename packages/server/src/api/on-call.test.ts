@@ -1165,6 +1165,27 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(await surchargeOf(draft.invoice)).toMatchObject({ net_cents: 3000 })
   })
 
+  it('takes the tax of the line from the day an invoice without a day of work is issued on (the review of #1112)', async () => {
+    const draft = await draftOf({
+      emergencyAt: atNight,
+      emergencyNamedFlatCents: 3000,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
+    })
+
+    // No day of work, and written on a day of 16 %: issuing dates it today,
+    // with 19 %, and so does the line. With 16 % it would be 30,78 €, which
+    // with the 19 % of the totals makes more than the 35,70 € named.
+    await admin.query(
+      `update documents set service_from = null, service_until = null, document_date = '2020-07-02'
+       where id = $1`,
+      [draft.invoice],
+    )
+    await post(`/documents/${draft.invoice}/issue`, {})
+
+    expect(await surchargeOf(draft.invoice)).toMatchObject({ net_cents: 3000 })
+  })
+
   it('takes no tax along where the named surcharge changes without it, on a device or at the route (#1083)', async () => {
     for (const where of ['device', 'route'] as const) {
       const call = aCall({

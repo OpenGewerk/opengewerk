@@ -529,6 +529,14 @@ export class DocumentsController {
         }
       }
 
+      // One moment for the date and the issuing, so that an invoice issued
+      // across midnight in Germany is not dated the day before its issue.
+      // Dated before the line of the surcharge is worked out the last time:
+      // without a day of work, its tax is the one of that date, as the totals'
+      // is (the review of #1112).
+      const issuedAt = new Date()
+      const dated = await datedForIssue(tx, existing, todayInGermany(issuedAt))
+
       // The line of the surcharge as everything stands now, once more before
       // it is frozen (#1087): a change that raced the draft into being, or
       // one that came before its line, shows here at the latest. After the
@@ -553,10 +561,6 @@ export class DocumentsController {
         )
       }
 
-      // One moment for the date and the issuing, so that an invoice issued
-      // across midnight in Germany is not dated the day before its issue.
-      const issuedAt = new Date()
-      const dated = await datedForIssue(tx, existing, todayInGermany(issuedAt))
       const { content, missing } = await contentForIssuing(tx, dated)
 
       if (missing.length > 0) {
