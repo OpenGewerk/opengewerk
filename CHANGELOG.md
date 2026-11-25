@@ -7,6 +7,29 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-25
+
+Die neunte Fassung schließt Phase 2 bis auf drei Punkte ab. Zwei Neuerungen helfen vor allem Betrieben ohne
+eigenen Administrator: Wer die Instanz betreibt, bringt sie jetzt aus ihrem Bereich auf eine neue Fassung, mit einer
+Sicherung vorher und geprüfter Signatur, und im Büro wie auf der Baustelle gibt es zu jeder Seite eine Hilfe, die
+auch ohne Netz da ist. Beim Notdienst hält das Telefon fest, welchen Zuschlag es einem Verbraucher vor dem Auftrag
+genannt hat, mit seiner Umsatzsteuer, und die Rechnung nimmt höchstens diesen. Im Entwurf rechnet sich die Zeile des
+Zuschlags neu, sobald sich Stunden, Anruf oder Steuer ändern. Die Protokolle der Erstprüfung, der
+Wiederholungsprüfung, der Geräteprüfung und der Wallbox urteilen so, wie es die fachliche Abnahme am 20.11.2026
+entschieden hat, und ein Stromkreis nennt seine Nennspannung. Der Steuersatz einer Rechnung richtet sich nach dem Tag
+der Leistung, und beim Festschreiben bekommt sie den Tag ihrer Ausstellung als Datum.
+
+Aus Phase 2 fehlen noch der Messgeräte-Import nach dem Proof of Concept (#309) und DATANORM 5 mit der
+Zuschlagsstaffel aus den Z-Sätzen (#455, #798). Der Abschnitt „Sicherheit“ schließt zwei Lücken in Sicherung und
+Rückspielen, die eine kompromittierte Anwendung hätte nutzen können; welche Fassungen betroffen waren, steht in den
+Advisories.
+
+Vor dem Update: OpenGewerk braucht jetzt Docker Engine 28.3.3 oder neuer, `sh docker/start.sh` bricht mit einer
+älteren ab. Die Migrationen 0151 bis 0158 laufen beim Start. Dieses eine Mal wird noch von Hand aktualisiert, wie in
+`docs/betrieb.md` beschrieben, denn den Dienst `updater` bringt erst diese Fassung mit. Ab der nächsten geht es auf
+Linux über „Aktualisierung“ im Bereich der Instanz; eine Installation aus dem Quelltext oder unter Docker Desktop
+bleibt beim Weg von Hand.
+
 ### Hinzugefügt
 
 - Der Betreiber aktualisiert die Instanz aus ihrem Bereich auf eine neuere Fassung (#1093). Unter „Aktualisierung“ steht, welche Fassung läuft, die neueste mit ihren Versionshinweisen, der Teil Sicherheit zuerst, und wann zuletzt nachgesehen wurde. Ein neuer Dienst `updater` in `docker/compose.yaml` fragt dafür einmal am Tag GitHub. Aktualisiert wird nur auf Knopfdruck und nach der Bestätigung mit Passwort und Code: zuerst eine Sicherung, ohne die nichts weitergeht, dann das Paket der neuen Fassung mit geprüfter Signatur, über die Installation entpackt, dann `start.sh` dieser Fassung. Jede Datei kommt dabei erst unter eigenem Namen in den Ordner und ersetzt dann die alte, damit eine volle Platte keine abgeschnittene Datei hinterlässt, und ein Abbruch ab dem ersten Schreiben sagt, dass schon Dateien der neuen Fassung dort liegen (#1106). Fertig ist es erst, wenn die Anwendung die neue Fassung nennt. Die Seite zeigt die Schritte und bei einem Abbruch, wo er war, was er hinterlassen hat und das Ende des Protokolls; alle Betreiber bekommen eine E-Mail. Wie ein Lauf ausging, steht außerdem im Protokoll der Instanz und im Änderungsprotokoll jedes Betriebs, auch ohne Mailserver (Tabellen `instance_updates` und `update_notices`, Migration 0156). Der Dienst hat den Socket von Docker, aber keinen Port und ein Netz für sich, und mit der Anwendung spricht er nur über zwei Volumes, je eines für jede Richtung; die Fassung nimmt er nie aus dem Auftrag, sondern nur die neueste, die er selbst gefunden hat. `start.sh` schreibt dafür auf Linux den Ordner der Installation als `OPENGEWERK_DIRECTORY` in die `.env`. Ein Checkout und eine Installation unter Docker Desktop auf Windows oder macOS werden weiter von Hand aktualisiert, und die Seite sagt, wie. Der Release baut und signiert das Abbild `ghcr.io/opengewerk/updater` mit. Warum: Ein Betrieb ohne jemanden, der sich mit Servern auskennt, soll eine neue Fassung, vor allem eine mit einer Sicherheitskorrektur, einspielen können, ohne eine Konsole zu öffnen.
@@ -133,6 +156,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Sicherheit
 
+- Eine Datei im Dateispeicher, die eine kompromittierte Anwendung während der Sicherung gegen einen Link oder eine Pipe tauscht, bringt über das Rückspielen keinen fremden Inhalt mehr in den Speicher und hält die Sicherung nicht mehr für immer an (#995). Jedes `tar` und `find` über den Speicher endet spätestens mit der Grenze von zwölf Stunden, der zweite Teil der Sicherung nimmt nur Dateien, deren Name der SHA-256 ihres Inhalts ist, und `restore.sh` nimmt alles heraus, was nicht wie eine Datei des Speichers heißt und dort liegt, wo der Speicher sie sucht. Warum: Das `tar` aus BusyBox sieht sich eine Datei an und öffnet sie danach, ohne Links abzulehnen; dazwischen ließ sie sich tauschen, etwa gegen `/proc/self/environ` mit dem Passwort der Datenbank, oder gegen eine Pipe, an der `tar` für immer wartete.
 - `restore.sh` leert und füllt den Dateispeicher mit den Rechten seines Eigentümers, des Benutzers der Anwendung, statt als root, und ohne die Passwörter der Datenbank. Den geprüften Ordner liest root in seinem eigenen Arbeitsordner und gibt ihn als `tar` an den Eigentümer weiter, der ihn mit den Rechten aus dem Archiv auspackt; das `chown -R` danach entfällt, und Ordner, die das Archiv ohne Schreibrecht für den Eigentümer hält, bekommen es vorher. Dafür hat der Dienst `backup` die Capabilities `SETUID` und `SETGID`, dazu `KILL`, damit `docker stop` über das Init auch diese Schritte erreicht; ohne sie wartete der Lauf auf ein langes Leeren bis zum KILL am Ende der Frist. Bevor sich etwas ändert, lehnt `restore.sh` ab, wenn ihm `SETUID` oder `SETGID` fehlen und der Speicher nicht root gehört, wenn der Eigentümer in das Ziel der Sicherungen oder in `BACKUP_STATUS_PATH` schreiben darf, ausprobiert und nicht aus den Rechten abgelesen (scheitert die Probe aus einem anderen Grund als fehlendem Recht, etwa an einem vollen Ziel, wird ebenso abgelehnt), etwa auf einer Freigabe, die beim Einhängen ihm zugeordnet ist oder jeden Benutzer gleich behandelt, und wenn im Speicher ein Ordner liegt, den der Eigentümer nicht leeren darf, etwa einer, der nach einem halben Kopieren vor #1000 root gehört; die Meldung nennt dann die Befehle, die den Speicher seinem Eigentümer zurückgeben. Gehört der Speicher root, läuft alles wie bisher. `test-backup.sh` läuft in der CI mit den Capabilities des Dienstes. Die Haustechnik braucht beim Anheben des Submoduls dieselben Capabilities für ihren Dienst `backup`. Warum: Der dokumentierte Ablauf hält die Anwendung vor dem Rückspielen an, ob sie wirklich steht, sieht `restore.sh` aber nicht. Eine kompromittierte Anwendung, die weiterlief, konnte zwischen zwei Schritten einen Ordner gegen einen Link tauschen, und root folgte ihm aus dem Speicher hinaus. Löschen, Schreiben und `chown` trafen dann Dateien im Container der Sicherung, die Archive unter `BACKUP_PATH` etwa.
 
 ## [0.8.0] - 2026-11-17
