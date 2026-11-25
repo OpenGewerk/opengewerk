@@ -1157,7 +1157,7 @@ Aktualisierungen mit ihren Signaturen nach Docker Hub, als `opengewerk/opengewer
 `opengewerk/backup` und `opengewerk/updater`, dort mit `latest` für die neueste
 Fassung (#281). Das Paket holt weiter aus ghcr.io, denn Docker Hub
 begrenzt anonyme Pulls; eine ältere Fassung holt der Workflow "Docker Hub" von Hand
-nach.
+nach, vor 0.9.0 ohne den Dienst für Aktualisierungen, den es da noch nicht gab.
 
 Eine Fassung, die eine Sicherheitslücke schließt, trägt in ihrem Abschnitt des
 CHANGELOG den Unterabschnitt `### Sicherheit`, und ihre Release-Seite beginnt
