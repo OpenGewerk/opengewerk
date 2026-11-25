@@ -7,6 +7,10 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ## [Unreleased]
 
+### Behoben
+
+- Das Kapitel „Update“ im Handbuch sagt für einen Checkout des Quelltexts, dass `start.sh` nur aus dem Quelltext baut, solange `OPENGEWERK_VERSION` in `docker/.env` leer ist, und was zu tun ist, wenn dort eine Fassung steht. Das Beispiel nennt keinen alten Tag mehr (#1114). Warum: Wer eine Fassung eingetragen hatte und der alten Anleitung folgte, blieb nach `git pull` unbemerkt auf ihr stehen, und wer das Beispiel abschrieb, landete auf 0.3.1.
+
 ## [0.9.0] - 2026-11-25
 
 Die neunte Fassung schließt Phase 2 bis auf drei Punkte ab. Zwei Neuerungen helfen vor allem Betrieben ohne
