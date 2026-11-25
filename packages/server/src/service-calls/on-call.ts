@@ -215,6 +215,7 @@ const surchargeFields = [
   'unitPriceCents',
   'priceBase',
   'articleId',
+  'vatRate',
 ] as const
 
 /** The fields of the surcharge that hold an id. */
@@ -222,9 +223,12 @@ const idFields: readonly string[] = ['documentId', 'articleId']
 
 /**
  * Whether a change takes the line of the surcharge over from the server
- * (#1087): its document, text, quantity, unit, price or article set to
- * something else than it holds. Its place among the lines and its rate of
- * tax are no change of the surcharge. A number compared as a number: the
+ * (#1087): its document, text, quantity, unit, price, article or rate of
+ * tax set to something else than it holds. Its place among the lines is no
+ * change of the surcharge. Its rate of tax is (CodeRabbit on #1112): the
+ * server works the line out with the standard rate, and one set otherwise,
+ * such as the 0 % of a photovoltaic installation, is the office's to price.
+ * A number compared as a number: the
  * line route takes one written as text, " 1000" or "01000" alike, which the
  * column stores as the number, so the same value sent that way changes
  * nothing. An id alike in capitals, which a device may send and a column of

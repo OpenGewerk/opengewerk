@@ -1681,6 +1681,35 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     expect(await surchargeOf(onDevice.invoice)).toMatchObject({ emergency_surcharge: false })
   })
 
+  it('belongs to the office once its rate of tax is changed by hand, in the office or on a device (CodeRabbit on #1112)', async () => {
+    for (const where of ['office', 'device'] as const) {
+      const draft = await draftOf()
+
+      await price(draft.invoice, draft.hour, 1000)
+      const line = (await surchargeOf(draft.invoice)).id
+
+      if (where === 'office') {
+        await patch(`/documents/${draft.invoice}/lines/${line}`, { vatRate: 'zero' })
+      } else {
+        await sent(changed('document_lines', line, { vatRate: { from: 'standard', to: 'zero' } }))
+      }
+
+      await price(draft.invoice, draft.hour, 2000)
+
+      expect(await surchargeOf(draft.invoice), where).toMatchObject({
+        net_cents: 500,
+        emergency_surcharge: false,
+      })
+
+      const { rows } = await admin.query<{ follows: boolean }>(
+        'select follows_call as follows from documents where id = $1',
+        [draft.invoice],
+      )
+
+      expect(rows, where).toEqual([{ follows: false }])
+    }
+  })
+
   it('follows the call and the surcharge named for it, and goes where the call has none', async () => {
     const { job, invoice, hour } = await draftOf()
 

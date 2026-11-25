@@ -60,6 +60,13 @@ UPDATE "documents" d
 			WHERE o.tenant_id = d.tenant_id AND o.document_id = d.id AND NOT o.emergency_surcharge
 				AND a.field = 'designation'
 				AND (a.old_value = 'Notdienstzuschlag' OR a.old_value LIKE 'Notdienstzuschlag %')
+		)
+		-- A line of the server whose rate of tax the office set by hand, which
+		-- kept its mark then: the server writes only the standard rate.
+		AND NOT EXISTS (
+			SELECT 1 FROM "document_lines" o
+			WHERE o.tenant_id = d.tenant_id AND o.document_id = d.id AND o.emergency_surcharge
+				AND o.vat_rate <> 'standard'
 		);--> statement-breakpoint
 SELECT set_config('app.reason', '', true);--> statement-breakpoint
 ALTER TABLE "audit_entries" FORCE ROW LEVEL SECURITY;--> statement-breakpoint

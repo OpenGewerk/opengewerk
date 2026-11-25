@@ -3300,6 +3300,7 @@ describe('the drafts from before 0157 that follow their call', () => {
     newId<'document'>(),
     newId<'document'>(),
     newId<'document'>(),
+    newId<'document'>(),
   ]
   const fromReport = newId<'document'>()
   const collective = newId<'document'>()
@@ -3309,6 +3310,7 @@ describe('the drafts from before 0157 that follow their call', () => {
   const issued = newId<'document'>()
   const removed = newId<'document'>()
   const renamed = newId<'document'>()
+  const taxed = newId<'document'>()
 
   it('is set where the draft follows and nowhere else', async () => {
     expect(before()).toBeGreaterThan(0)
@@ -3399,6 +3401,19 @@ describe('the drafts from before 0157 that follow their call', () => {
       `update document_lines set emergency_surcharge = false, deleted_at = now() where document_id = $1`,
       [removed],
     )
+    // And one whose line of the server the office gave a rate of tax of its
+    // own, which kept the mark then (CodeRabbit on #1112).
+    await admin.query(
+      `insert into documents (id, tenant_id, customer_id, kind, document_date, job_id, predecessor_document_id)
+       values ($1, $2, $3, 'final_invoice', '2026-10-28', $4, $5)`,
+      [taxed, tenant.id, customer, job, reports[6]],
+    )
+    await admin.query(
+      `insert into document_lines (tenant_id, document_id, position, designation, quantity_milli, unit,
+         unit_price_cents, net_cents, emergency_surcharge, vat_rate)
+       values ($1, $2, 1, 'Notdienstzuschlag Nacht', 1000, 'flat_rate', 4500, 4500, true, 'zero')`,
+      [tenant.id, taxed],
+    )
     await admin.query(
       `update document_lines set emergency_surcharge = false, designation = 'Zuschlag Nachteinsatz'
        where document_id = $1`,
@@ -3420,6 +3435,7 @@ describe('the drafts from before 0157 that follow their call', () => {
       [issued]: false,
       [removed]: false,
       [renamed]: false,
+      [taxed]: false,
     })
 
     for (const table of ['documents', 'document_lines', 'document_sources', 'audit_entries']) {
