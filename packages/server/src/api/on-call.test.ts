@@ -2400,26 +2400,34 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     // Held the way the check of a foreign key holds the row it points at, as
     // keeping the first PDF of a document does.
     const checking = await begun()
+    let issued: Promise<number> | undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
 
     try {
       await checking.query('select id from documents where id = any($1) for key share', [
         [invoice, rows[0]?.report],
       ])
 
-      const issued = http()
+      issued = http()
         .post(`/documents/${invoice}/issue`)
         .set('x-test-identity', office())
         .send({})
         .then((answer) => answer.status)
       const outcome = await Promise.race([
         issued,
-        new Promise((resolve) => setTimeout(() => resolve('waits'), 5000)),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve('waits'), 5000)
+        }),
       ])
 
       expect(outcome).toBe(201)
     } finally {
+      clearTimeout(timer)
       await checking.query('rollback').catch(() => undefined)
       checking.release()
+      // One that waited past the time is through before the next test begins
+      // (CodeRabbit on #1112).
+      await Promise.allSettled([issued])
     }
   })
 
