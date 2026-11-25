@@ -1023,7 +1023,9 @@ aus dem Quelltext
 Das gilt, solange `OPENGEWERK_VERSION` in der `.env` leer ist. Steht dort eine
 Fassung, holt der Befehl deren Abbilder und baut nichts, und die Instanz bleibt
 nach `git pull` auf dieser Fassung; vor dem Start wird die Zeile geleert oder
-auf die neue Fassung gesetzt. Eine Fassung vor 0.9.0 passt dort nicht mehr: Für
+auf die neue Fassung gesetzt. Eine in der Shell exportierte `OPENGEWERK_VERSION`
+gilt vor der Zeile in der `.env` und wird vorher mit `unset` entfernt. Eine
+Fassung vor 0.9.0 passt dort nicht mehr: Für
 sie gibt es kein Abbild des Dienstes für Aktualisierungen, den ein Checkout ab
 0.9.0 mitstartet.
 
