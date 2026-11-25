@@ -71,7 +71,18 @@ jobs:
           gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json tagName > /dev/null
           newest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
 
+          # The service for updates came with 0.9.0 (#1093); an older
+          # release brought over by hand has none to copy.
+          images="opengewerk backup"
+          major=${VERSION%%.*}
+          rest=${VERSION#*.}
+          minor=${rest%%.*}
+          if [ "$major" -gt 0 ] || [ "$minor" -ge 9 ]; then
+            images="$images updater"
+          fi
+
           echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "images=$images" >> "$GITHUB_OUTPUT"
           if [ "$newest" = "v$VERSION" ]; then
             echo "latest=true" >> "$GITHUB_OUTPUT"
           else
@@ -124,10 +135,11 @@ jobs:
         if: steps.setup.outputs.enabled == 'true'
         env:
           LATEST: ${{ steps.setup.outputs.latest }}
+          IMAGES: ${{ steps.setup.outputs.images }}
         run: |
           set -eu
 
-          for image in opengewerk backup; do
+          for image in $IMAGES; do
             source="ghcr.io/opengewerk/$image"
             target="docker.io/opengewerk/$image"
             digest=$(crane digest "$source:$VERSION")
@@ -156,10 +168,12 @@ jobs:
       # command the release page names, only with the other registry.
       - name: Signaturen auf Docker Hub prüfen
         if: steps.setup.outputs.enabled == 'true'
+        env:
+          IMAGES: ${{ steps.setup.outputs.images }}
         run: |
           set -eu
 
-          for image in opengewerk backup; do
+          for image in $IMAGES; do
             cosign verify "docker.io/opengewerk/$image:$VERSION" \
               --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/tags/v$VERSION" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
@@ -187,3 +201,13 @@ jobs:
           repository: opengewerk/backup
           short-description: Die nächtliche Sicherung von OpenGewerk, startet mit dem Installationspaket
           readme-filepath: .github/dockerhub/backup.md
+
+      - name: Seite des Dienstes für Aktualisierungen auf Docker Hub
+        if: steps.setup.outputs.enabled == 'true' && contains(steps.setup.outputs.images, 'updater')
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: opengewerk/updater
+          short-description: Der Dienst für Aktualisierungen von OpenGewerk, startet mit dem Installationspaket
+          readme-filepath: .github/dockerhub/updater.md
