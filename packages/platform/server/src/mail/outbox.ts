@@ -9,7 +9,8 @@ import type { MailDeliveryError } from './transport.js'
  *
  * Quick at first, because most failures are a server restarting, then
  * patient: from the fifth attempt on every three hours. Twenty attempts cover
- * a little over two days, which is a weekend with the mail server down.
+ * about 46 hours, not quite two days and so not a whole weekend with the
+ * mail server down.
  */
 export const retryMinutes: readonly number[] = [1, 5, 15, 60, 180]
 

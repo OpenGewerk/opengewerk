@@ -1,4 +1,5 @@
 import { createTransport } from 'nodemailer'
+import MailComposer from 'nodemailer/lib/mail-composer'
 
 import type { MailConfiguration } from './configuration.js'
 
@@ -31,14 +32,34 @@ export interface OutgoingMail {
 export class MailDeliveryError extends Error {
   private readonly declaredPermanent: boolean
 
+  /**
+   * The command of the conversation the server answered with the refusal,
+   * `MAIL FROM` for a sender it does not take, `RCPT TO` for a recipient;
+   * null where none was under way.
+   */
+  readonly command: string | null
+
+  /**
+   * Whether the server turned the sender away (opengewerk#1102): at
+   * `MAIL FROM`, or at `RCPT TO` with an answer about the sender, as Postfix
+   * gives it in its default of answering every restriction there.
+   */
+  readonly refusedSender: boolean
+
   constructor(
     message: string,
     readonly code: string | null,
     readonly responseCode: number | null,
-    options: { readonly permanent?: boolean } = {},
+    options: {
+      readonly permanent?: boolean
+      readonly command?: string | null
+      readonly refusedSender?: boolean
+    } = {},
   ) {
     super(message)
     this.declaredPermanent = options.permanent ?? false
+    this.command = options.command ?? null
+    this.refusedSender = options.refusedSender ?? this.command === 'MAIL FROM'
   }
 
   /**
@@ -53,9 +74,22 @@ export class MailDeliveryError extends Error {
     // gives no link, and it does not become open again. `EDESTINATION`: a
     // mail server in an internal network or on a port that is not for mail
     // stays where it is until somebody changes the settings.
+    // A sender the server does not take is about the settings, not the
+    // message (opengewerk#1102), and is tried again like a server that does
+    // not take anything right now: up to the last attempt of the outbox.
+    // nodemailer calls it an envelope error as well.
+    if (this.refusedSender && !this.declaredPermanent) {
+      return false
+    }
+
+    // An envelope the server turned down for now, with a four hundred, is
+    // tried again: greylisting, a mailbox that is full this hour
+    // (opengewerk#1103).
+    const forNow = this.responseCode !== null && this.responseCode >= 400 && this.responseCode < 500
+
     if (
       this.declaredPermanent ||
-      this.code === 'EENVELOPE' ||
+      (this.code === 'EENVELOPE' && !forNow) ||
       this.code === 'EINVITATION' ||
       this.code === 'EDESTINATION'
     ) {
@@ -85,17 +119,135 @@ export interface MailTransport {
   close(): void
 }
 
-function asDeliveryError(error: unknown): MailDeliveryError {
+/** The addresses of a message as nodemailer sends them after `MAIL FROM` and `RCPT TO`. */
+interface SentEnvelope {
+  readonly from: string
+  readonly to: readonly string[]
+}
+
+/**
+ * The envelope nodemailer makes out of the same fields the message is sent
+ * with. It puts a local part in quotes, escapes what needs it, drops what it
+ * does not send and writes a domain as an A-label or a U-label; doing that
+ * again here went wrong for more than one address (opengewerk#1102). Null
+ * where it cannot make one, and then the message never reached a server.
+ */
+function sentEnvelope(addresses: {
+  readonly from: { readonly name: string; readonly address: string }
+  readonly to: { readonly name: string; readonly address: string }
+}): SentEnvelope | null {
+  try {
+    const envelope = new MailComposer(addresses).compile().getEnvelope()
+
+    return {
+      from: typeof envelope.from === 'string' ? envelope.from.trim() : '',
+      to: envelope.to.map((address) => address.trim()),
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Whether a refusal is about the sender of the mail (opengewerk#1102). At
+ * `MAIL FROM` it is. At `RCPT TO` it is where every address the answer names
+ * in angle brackets is the sender as it was sent, as Postfix answers: "553
+ * 5.7.1 <post@nord.example.de>: Sender address rejected". A recipient it
+ * refuses it names as well, in the form nodemailer sent it, which need not be
+ * the one stored: `"max..mustermann"@example.de`. So an answer that names any
+ * other address stays a refusal of the message, and so does one whose words
+ * outside the addresses speak of the recipient and not of the sender, as
+ * "550 5.1.1 Recipient unknown; contact <post@nord.example.de>" (CodeRabbit
+ * on #1101). Where sender and recipient went out as one address, those words
+ * say which side it means, since an address may hold either word itself.
+ */
+function aboutTheSender(
+  command: string | null,
+  answer: string,
+  envelope: SentEnvelope | null,
+): boolean {
+  if (command === 'MAIL FROM') {
+    return true
+  }
+
+  if (command !== 'RCPT TO' || envelope === null) {
+    return false
+  }
+
+  const said = answer.toLowerCase()
+  const named = addressesIn(said)
+  const sender = `<${envelope.from.toLowerCase()}>`
+
+  if (named.length === 0 || !named.every((address) => address === sender)) {
+    return false
+  }
+
+  const words = said.replace(/<[^<>]*>/g, ' ')
+  const ofTheSender = words.includes('sender') && !words.includes('recipient')
+
+  if (words.includes('recipient') && !words.includes('sender')) {
+    return false
+  }
+
+  if (envelope.to.some((address) => `<${address.toLowerCase()}>` === sender)) {
+    return ofTheSender
+  }
+
+  return true
+}
+
+/**
+ * The parts of an answer in angle brackets that hold an "@", each with its
+ * brackets. Read once from left to right, without a pattern: the answer comes
+ * from the server of a tenant.
+ */
+function addressesIn(said: string): string[] {
+  const found: string[] = []
+  let at = 0
+
+  for (;;) {
+    const open = said.indexOf('<', at)
+    const close = open < 0 ? -1 : said.indexOf('>', open + 1)
+
+    if (close < 0) {
+      break
+    }
+
+    // A bracket opened again before it closes starts the address: "<<a@b>".
+    const inner = said.lastIndexOf('<', close)
+    const part = said.slice(inner, close + 1)
+
+    if (part.includes('@')) {
+      found.push(part)
+    }
+
+    at = close + 1
+  }
+
+  return found
+}
+
+function asDeliveryError(error: unknown, envelope: SentEnvelope | null = null): MailDeliveryError {
   if (error instanceof MailDeliveryError) {
     return error
   }
 
-  const detail = (error ?? {}) as { message?: unknown; code?: unknown; responseCode?: unknown }
+  const detail = (error ?? {}) as {
+    message?: unknown
+    code?: unknown
+    responseCode?: unknown
+    command?: unknown
+    response?: unknown
+  }
+  const message = typeof detail.message === 'string' ? detail.message : String(error)
+  const command = typeof detail.command === 'string' ? detail.command : null
+  const answer = typeof detail.response === 'string' ? detail.response : message
 
   return new MailDeliveryError(
-    typeof detail.message === 'string' ? detail.message : String(error),
+    message,
     typeof detail.code === 'string' ? detail.code : null,
     typeof detail.responseCode === 'number' ? detail.responseCode : null,
+    { command, refusedSender: aboutTheSender(command, answer, envelope) },
   )
 }
 
@@ -171,6 +323,14 @@ export function smtpTransport(
       // still delivers: a message of a few hundred kilobytes has mostly left
       // right after the server asked for it, and a server that takes it then
       // has it, although the outbox counts it as not sent.
+      // Objects, with an empty name where there is none: a bare text
+      // nodemailer reads with its parser, which takes `a(b)@example.de` for
+      // `a@example.de`, and the same address reached another mailbox without
+      // a name than with one (opengewerk#1104).
+      const addresses = {
+        from: { name: mail.from.name, address: mail.from.address },
+        to: { name: mail.to.name ?? '', address: mail.to.address },
+      }
       const deadline = new AbortController()
       const timer = setTimeout(() => {
         deadline.abort()
@@ -178,9 +338,9 @@ export function smtpTransport(
 
       try {
         await transport.sendMail({
-          from: { name: mail.from.name, address: mail.from.address },
-          replyTo: mail.replyTo ?? undefined,
-          to: mail.to.name ? { name: mail.to.name, address: mail.to.address } : mail.to.address,
+          from: addresses.from,
+          replyTo: mail.replyTo ? { name: '', address: mail.replyTo } : undefined,
+          to: addresses.to,
           subject: mail.subject,
           text: mail.text,
           attachments: mail.attachments.map((attachment) => ({
@@ -199,7 +359,7 @@ export function smtpTransport(
           )
         }
 
-        throw asDeliveryError(error)
+        throw asDeliveryError(error, sentEnvelope(addresses))
       } finally {
         clearTimeout(timer)
       }

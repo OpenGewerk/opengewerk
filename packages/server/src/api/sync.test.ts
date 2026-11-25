@@ -308,6 +308,9 @@ describe('the tables', () => {
       // A change of the second factor, as a business learns of it (N6).
       name === 'second_factor_changes' ||
       name === 'account_mail_server_changes' ||
+      // How an update of the instance ended, as a business learns of it
+      // (opengewerk#1093), in its log and nowhere else.
+      name === 'update_notices' ||
       name === 'tenant_roles' ||
       name === 'site_access_deliveries' ||
       name === 'supplier_articles' ||

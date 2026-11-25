@@ -139,12 +139,13 @@ describe('the tables', () => {
   })
 
   it('give the tables of the instance a log of their own, and the businesses too', async () => {
-    // The operators and the settings of the instance, and `tenants` for a
-    // business being created or removed; the log of the instance itself is
-    // what is written, so it carries no writer.
+    // The operators and the settings of the instance, how each update of it
+    // ended, and `tenants` for a business being created or removed; the log
+    // of the instance itself is what is written, so it carries no writer.
     expect(await instanceLogCoverage(admin)).toEqual([
       'instance_operators',
       'instance_settings',
+      'instance_updates',
       'tenants',
     ])
   })

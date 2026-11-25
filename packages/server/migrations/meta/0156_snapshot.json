@@ -1,5 +1,5 @@
 {
-  "id": "b5656a7d-0f1a-4e87-869a-86827932512b",
+  "id": "44c2f5ec-cdf4-44f7-8bdd-2590d81961b3",
   "prevId": "8638b446-a43b-4c85-9ab1-0b6baec33209",
   "version": "7",
   "dialect": "postgresql",
@@ -2271,6 +2271,71 @@
       },
       "isRLSEnabled": false
     },
+    "public.instance_updates": {
+      "name": "instance_updates",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "to_version": {
+          "name": "to_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_version": {
+          "name": "from_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "succeeded": {
+          "name": "succeeded",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "stopped_in": {
+          "name": "stopped_in",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "outside_any_tenant": {
+          "name": "outside_any_tenant",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "opengewerk_app"
+          ],
+          "using": "nullif(current_setting('app.tenant_id', true), '') is null",
+          "withCheck": "nullif(current_setting('app.tenant_id', true), '') is null"
+        }
+      },
+      "checkConstraints": {
+        "instance_updates_stopped_somewhere": {
+          "name": "instance_updates_stopped_somewhere",
+          "value": "\"instance_updates\".\"succeeded\" = (\"instance_updates\".\"stopped_in\" is null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.mail_settings": {
       "name": "mail_settings",
       "schema": "",
@@ -3328,6 +3393,107 @@
         }
       },
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.update_notices": {
+      "name": "update_notices",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "uuidv7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_version": {
+          "name": "to_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_version": {
+          "name": "from_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "succeeded": {
+          "name": "succeeded",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "stopped_in": {
+          "name": "stopped_in",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "update_notices_tenant_id_tenants_id_fk": {
+          "name": "update_notices_tenant_id_tenants_id_fk",
+          "tableFrom": "update_notices",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "update_notices_once": {
+          "name": "update_notices_once",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "run_id"
+          ]
+        }
+      },
+      "policies": {
+        "tenant_isolation": {
+          "name": "tenant_isolation",
+          "as": "PERMISSIVE",
+          "for": "ALL",
+          "to": [
+            "opengewerk_app"
+          ],
+          "using": "\"update_notices\".\"tenant_id\" = nullif(current_setting('app.tenant_id', true), '')::uuid",
+          "withCheck": "\"update_notices\".\"tenant_id\" = nullif(current_setting('app.tenant_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "update_notices_stopped_somewhere": {
+          "name": "update_notices_stopped_somewhere",
+          "value": "\"update_notices\".\"succeeded\" = (\"update_notices\".\"stopped_in\" is null)"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.sync_conflicts": {
@@ -8404,13 +8570,6 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": false
-        },
-        "follows_call": {
-          "name": "follows_call",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "issued_at": {
           "name": "issued_at",

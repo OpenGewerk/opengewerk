@@ -98,6 +98,13 @@ export interface Configuration {
    */
   readonly backupStatusPath: string | null
   /**
+   * The two folders the application shares with the service for updates
+   * (opengewerk#1093), or null. Set by the Compose file, like the record of
+   * the backups; without them the area of the instance says nothing about
+   * updates.
+   */
+  readonly updates: { readonly requestsPath: string; readonly statusPath: string } | null
+  /**
    * Whether the instance recognises nobody at all.
    *
    * Off in normal operation. An operator switches it on to keep an instance
@@ -496,6 +503,16 @@ function setupCode(environment: Environment): string | null {
   return code
 }
 
+/** Both folders for updates, or neither: one without the other is no way to talk. */
+function updateFolders(
+  environment: Environment,
+): { readonly requestsPath: string; readonly statusPath: string } | null {
+  const requestsPath = environment['UPDATE_REQUESTS_PATH']?.trim()
+  const statusPath = environment['UPDATE_STATUS_PATH']?.trim()
+
+  return requestsPath && statusPath ? { requestsPath, statusPath } : null
+}
+
 /**
  * The version of this installation, from the variable the application names
  * (#259).
@@ -590,6 +607,7 @@ export function readConfiguration(
     trustedOrigins: trustedOrigins(application, environment),
     setupCode: setupCode(environment),
     backupStatusPath: environment['BACKUP_STATUS_PATH']?.trim() || null,
+    updates: updateFolders(environment),
     closed: flag(environment, 'CLOSED'),
     mailInternalHosts: mailInternalHosts(environment),
     version: releaseVersion(application, environment),

@@ -163,6 +163,10 @@ describe('the sample data', () => {
     ])
   })
 
+  it('opens the area of the instance, its session carrying the second factor (#1100)', async () => {
+    expect(await read('/instance/access')).toEqual({ operator: true, secondFactor: true })
+  })
+
   it('shows a document in each state and the chain between two of them', async () => {
     const documents = await read<
       {

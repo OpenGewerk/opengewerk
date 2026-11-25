@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
+  boolean,
   check,
   date,
   foreignKey,
@@ -8,6 +9,7 @@ import {
   text,
   timestamp,
   unique,
+  uuid,
 } from 'drizzle-orm/pg-core'
 
 import { authUsers, signInMethod } from './authentication.js'
@@ -328,6 +330,37 @@ export const accountMailServerChanges = pgTable(
     check(
       'account_mail_server_changes_names_a_server',
       sql`${table.hostBefore} is not null or ${table.hostAfter} is not null`,
+    ),
+  ],
+)
+
+/**
+ * How an update of the instance ended, as every tenant on it learns of it
+ * (opengewerk#1093): one row per run in every tenant, and the audit trigger
+ * puts it into the log, beside the change of the mail server of the
+ * instance. From which version to which, and whether it went through or in
+ * which step it stopped; the run itself is named by its id.
+ *
+ * Written once per run and tenant, and never changed or removed.
+ */
+export const updateNotices = pgTable(
+  'update_notices',
+  {
+    id: primaryId<'update-notice'>(),
+    ...tenantColumn,
+    runId: uuid('run_id').notNull(),
+    toVersion: text('to_version').notNull(),
+    fromVersion: text('from_version'),
+    succeeded: boolean('succeeded').notNull(),
+    stoppedIn: text('stopped_in'),
+    finishedAt: timestamp('finished_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    tenantIsolation(table.tenantId),
+    unique('update_notices_once').on(table.tenantId, table.runId),
+    check(
+      'update_notices_stopped_somewhere',
+      sql`${table.succeeded} = (${table.stoppedIn} is null)`,
     ),
   ],
 )

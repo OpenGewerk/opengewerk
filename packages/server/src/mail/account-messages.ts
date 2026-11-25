@@ -4,6 +4,7 @@ import {
   addressChangedMessage,
   addressConfirmationMessage,
   mailServerChangedMessage,
+  instanceUpdatedMessage,
   operatorsChangedMessage,
   passkeyAddedMessage,
   passwordResetMessage,
@@ -39,4 +40,5 @@ export const accountMessages: AccountMessages = {
   addressChanged: addressChangedMessage,
   operatorsChanged: operatorsChangedMessage,
   mailServerChanged: mailServerChangedMessage,
+  instanceUpdated: instanceUpdatedMessage,
 }

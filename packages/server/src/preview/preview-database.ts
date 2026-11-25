@@ -7,6 +7,7 @@ import {
   resetSchema,
   shipRoles,
 } from '../database/test-database.js'
+import { previewSessionId } from './preview-identity.js'
 
 /**
  * A start of the preview that was refused, with the sentence why. Its own
@@ -234,6 +235,15 @@ export async function admitPreviewUser(
       previewRoles,
     ])
     await client.query('insert into instance_operators (user_id) values ($1)', [previewUser.id])
+    // The session every request of the preview carries, with the second
+    // factor the area of the instance asks of it (#1100). Without the row the
+    // area turned the preview away, and none of its screens could be looked
+    // at there.
+    await client.query(
+      `insert into auth_sessions (id, token, user_id, expires_at, second_factor)
+       values ($1, $2, $3, now() + interval '10 years', true)`,
+      [previewSessionId, `${previewSessionId}-token`, previewUser.id],
+    )
 
     for (const colleague of previewColleagues) {
       await client.query(

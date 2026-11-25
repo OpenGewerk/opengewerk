@@ -273,6 +273,12 @@ export const foundationGuards: readonly TableGuard[] = [
     audited: true,
     synced: false,
   },
+  {
+    table: 'update_notices',
+    grants: ['select', 'insert'],
+    audited: true,
+    synced: false,
+  },
   { table: 'invitations', grants: noDelete, audited: true, synced: false },
   {
     table: 'tenant_roles',
@@ -341,6 +347,7 @@ export const foundationGuards: readonly TableGuard[] = [
     synced: false,
   },
   { table: 'instance_settings', grants: ['select', 'update'], audited: false, synced: false },
+  { table: 'instance_updates', grants: ['select', 'insert'], audited: false, synced: false },
   { table: 'instance_changes', grants: ['select'], audited: false, synced: false },
 ]
 
