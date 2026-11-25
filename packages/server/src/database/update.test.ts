@@ -3281,15 +3281,15 @@ describe('the line of the surcharge on the drafts from before 0155', () => {
 })
 
 /**
- * Whether a draft follows its call (0156, opengewerk#1097). One from before
+ * Whether a draft follows its call (0157, opengewerk#1097). One from before
  * does where it has a marked line, came out of a report or is a collective
  * invoice, unless the office typed a surcharge on it or took over the line of
  * the server, by changing or by removing it; an invoice made by hand and an
  * issued one do not. Under FORCE, as an installation migrates.
  */
-describe('the drafts from before 0156 that follow their call', () => {
+describe('the drafts from before 0157 that follow their call', () => {
   const before = () =>
-    readMigrationIndex().findIndex((entry) => entry.tag === '0156_document_follows_call')
+    readMigrationIndex().findIndex((entry) => entry.tag === '0157_document_follows_call')
   const customer = newId<'customer'>()
   const job = newId<'job'>()
   // One report per invoice made out of one: a report has one successor.
