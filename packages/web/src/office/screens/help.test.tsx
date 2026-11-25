@@ -63,7 +63,7 @@ describe('"Hilfe" in the office', () => {
     const news = await screen.findByRole('region', { name: helpWords.news })
 
     // The column stands while the notes are on their way, saying so.
-    expect(await within(news).findByText('Fassung 0.8.0')).toBeTruthy()
+    expect(await within(news).findByText('Fassung 0.9.0')).toBeTruthy()
     expect(within(news).getAllByRole('listitem')).toHaveLength(3)
     expect(within(news).getByRole('link', { name: helpWords.allNews }).getAttribute('href')).toBe(
       '/hilfe/neu',
@@ -133,6 +133,7 @@ describe('"Hilfe" in the office', () => {
     const versions = await screen.findAllByText(/^Fassung \d+\.\d+\.\d+$/)
 
     expect(versions.map((version) => version.textContent)).toEqual([
+      'Fassung 0.9.0',
       'Fassung 0.8.0',
       'Fassung 0.7.0',
     ])
