@@ -315,8 +315,10 @@ jobs:
           mirror = ""
           if os.environ.get("DOCKER_HUB") == "true":
               mirror = (
-                  "\nAnwendung und Sicherung liegen mit denselben Digests und Signaturen auch auf "
-                  f"Docker Hub, als `opengewerk/opengewerk:{version}` und `opengewerk/backup:{version}`. "
+                  "\nAnwendung, Sicherung und der Dienst für Aktualisierungen liegen mit denselben "
+                  "Digests und Signaturen auch auf Docker Hub, als "
+                  f"`opengewerk/opengewerk:{version}`, `opengewerk/backup:{version}` und "
+                  f"`opengewerk/updater:{version}`. "
                   "Das Paket holt sie trotzdem aus ghcr.io, denn Docker Hub begrenzt anonyme Pulls.\n"
               )
 

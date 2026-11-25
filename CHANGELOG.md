@@ -11,9 +11,9 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 Die neunte Fassung schließt Phase 2 bis auf drei Punkte ab. Zwei Neuerungen helfen vor allem Betrieben ohne
 eigenen Administrator: Wer die Instanz betreibt, bringt sie jetzt aus ihrem Bereich auf eine neue Fassung, mit einer
-Sicherung vorher und geprüfter Signatur, und im Büro wie auf der Baustelle gibt es zu jeder Seite eine Hilfe, die
-auch ohne Netz da ist. Beim Notdienst hält das Telefon fest, welchen Zuschlag es einem Verbraucher vor dem Auftrag
-genannt hat, mit seiner Umsatzsteuer, und die Rechnung nimmt höchstens diesen. Im Entwurf rechnet sich die Zeile des
+Sicherung vorher und geprüfter Signatur, und im Büro gibt es zu jeder Seite eine Hilfe, auf der Baustelle eine im
+Menü, beide auch ohne Netz. Beim Notdienst halten Telefon und Büro fest, welchen Zuschlag sie einem Verbraucher vor
+dem Auftrag genannt haben, mit seiner Umsatzsteuer, und die Rechnung nimmt höchstens diesen. Im Entwurf rechnet sich die Zeile des
 Zuschlags neu, sobald sich Stunden, Anruf oder Steuer ändern. Die Protokolle der Erstprüfung, der
 Wiederholungsprüfung, der Geräteprüfung und der Wallbox urteilen so, wie es die fachliche Abnahme am 20.11.2026
 entschieden hat, und ein Stromkreis nennt seine Nennspannung. Der Steuersatz einer Rechnung richtet sich nach dem Tag
@@ -28,7 +28,7 @@ Vor dem Update: OpenGewerk braucht jetzt Docker Engine 28.3.3 oder neuer, `sh do
 älteren ab. Die Migrationen 0151 bis 0158 laufen beim Start. Dieses eine Mal wird noch von Hand aktualisiert, wie in
 `docs/betrieb.md` beschrieben, denn den Dienst `updater` bringt erst diese Fassung mit. Ab der nächsten geht es auf
 Linux über „Aktualisierung“ im Bereich der Instanz; eine Installation aus dem Quelltext oder unter Docker Desktop
-bleibt beim Weg von Hand.
+auf Windows oder macOS bleibt beim Weg von Hand.
 
 ### Hinzugefügt
 
@@ -42,7 +42,7 @@ bleibt beim Weg von Hand.
   und, wo sie einen Ablauf hat, seine Schritte; auf einem schmalen Bildschirm steht „Hilfe zu dieser Seite“ im Menü. Unter „Hilfe“ stehen
   die Kurzanleitungen zu Angebot, Regiebericht und Rechnung, Plantafel und Prüfprotokoll, eine Suche über die Texte
   des Büros, die Kurzanleitungen und die Versionshinweise, und „Was ist neu“ mit den Versionshinweisen in der Sprache eines Betriebs. Auf der Baustelle führt das Menü zur Hilfe,
-  mit einem Text je Bildschirm und denselben Kurzanleitungen. Wer die Instanz betreibt, findet im Bereich der Instanz
+  mit Texten zu den Aufträgen, einem Auftrag, Scannen, Zeiten und Konflikten und denselben Kurzanleitungen. Wer die Instanz betreibt, findet im Bereich der Instanz
   das Handbuch mit Installation, Update, Sicherung und weiteren Betrieben. Die Texte kommen mit der Anwendung und sind
   ohne Netz da; der Fuß der Anmeldung führt zur Hilfe auf opengewerk.de, weil vor der Anmeldung nichts von der
   Anwendung geladen ist. Ein Test hält fest, dass jede Seite des Büros einen Text hat. Warum: Wer neu in OpenGewerk
@@ -157,7 +157,7 @@ bleibt beim Weg von Hand.
 
 ### Sicherheit
 
-- Eine Datei im Dateispeicher, die eine kompromittierte Anwendung während der Sicherung gegen einen Link oder eine Pipe tauscht, bringt über das Rückspielen keinen fremden Inhalt mehr in den Speicher und hält die Sicherung nicht mehr für immer an (#995). Jedes `tar` und `find` über den Speicher endet spätestens mit der Grenze von zwölf Stunden, solange es nicht im Kernel auf ein Laufwerk wartet, das nicht mehr antwortet (siehe #999); der zweite Teil der Sicherung nimmt nur Dateien, deren Name der SHA-256 ihres Inhalts ist, und `restore.sh` nimmt alles heraus, was nicht wie eine Datei des Speichers heißt und dort liegt, wo der Speicher sie sucht. Warum: Das `tar` aus BusyBox sieht sich eine Datei an und öffnet sie danach, ohne Links abzulehnen; dazwischen ließ sie sich tauschen, etwa gegen `/proc/self/environ` mit dem Passwort der Datenbank, oder gegen eine Pipe, an der `tar` für immer wartete.
+- Eine Datei im Dateispeicher, die eine kompromittierte Anwendung während der Sicherung gegen einen Link oder eine Pipe tauscht, bringt über das Rückspielen keinen fremden Inhalt mehr in den Speicher und hält die Sicherung nicht mehr für immer an (#995). Jedes `tar` und `find` über den Speicher endet spätestens mit der Grenze von zwölf Stunden, solange es nicht im Kernel auf ein Laufwerk wartet, das nicht mehr antwortet (siehe #999); der zweite Teil der Sicherung nimmt nur Dateien, deren Name der SHA-256 ihres Inhalts ist, und `restore.sh` nimmt alles heraus, was nicht wie eine Datei des Speichers heißt und dort liegt, wo der Speicher sie sucht; passt der Inhalt einer Datei nicht zu ihrem Namen, bricht es ab, bevor sie in den Speicher kommt. Warum: Das `tar` aus BusyBox sieht sich eine Datei an und öffnet sie danach, ohne Links abzulehnen; dazwischen ließ sie sich tauschen, etwa gegen `/proc/self/environ` mit dem Passwort der Datenbank, oder gegen eine Pipe, an der `tar` für immer wartete.
 - `restore.sh` leert und füllt den Dateispeicher mit den Rechten seines Eigentümers, des Benutzers der Anwendung, statt als root, und ohne die Passwörter der Datenbank. Den geprüften Ordner liest root in seinem eigenen Arbeitsordner und gibt ihn als `tar` an den Eigentümer weiter, der ihn mit den Rechten aus dem Archiv auspackt; das `chown -R` danach entfällt, und Ordner, die das Archiv ohne Schreibrecht für den Eigentümer hält, bekommen es vorher. Dafür hat der Dienst `backup` die Capabilities `SETUID` und `SETGID`, dazu `KILL`, damit `docker stop` über das Init auch diese Schritte erreicht; ohne sie wartete der Lauf auf ein langes Leeren bis zum KILL am Ende der Frist. Bevor sich etwas ändert, lehnt `restore.sh` ab, wenn ihm `SETUID` oder `SETGID` fehlen und der Speicher nicht root gehört, wenn der Eigentümer in das Ziel der Sicherungen oder in `BACKUP_STATUS_PATH` schreiben darf, ausprobiert und nicht aus den Rechten abgelesen (scheitert die Probe aus einem anderen Grund als fehlendem Recht, etwa an einem vollen Ziel, wird ebenso abgelehnt), etwa auf einer Freigabe, die beim Einhängen ihm zugeordnet ist oder jeden Benutzer gleich behandelt, und wenn im Speicher ein Ordner liegt, den der Eigentümer nicht leeren darf, etwa einer, der nach einem halben Kopieren vor #1000 root gehört; die Meldung nennt dann die Befehle, die den Speicher seinem Eigentümer zurückgeben. Gehört der Speicher root, läuft alles wie bisher. `test-backup.sh` läuft in der CI mit den Capabilities des Dienstes. Die Haustechnik braucht beim Anheben des Submoduls dieselben Capabilities für ihren Dienst `backup`. Warum: Der dokumentierte Ablauf hält die Anwendung vor dem Rückspielen an, ob sie wirklich steht, sieht `restore.sh` aber nicht. Eine kompromittierte Anwendung, die weiterlief, konnte zwischen zwei Schritten einen Ordner gegen einen Link tauschen, und root folgte ihm aus dem Speicher hinaus. Löschen, Schreiben und `chown` trafen dann Dateien im Container der Sicherung, die Archive unter `BACKUP_PATH` etwa.
 
 ## [0.8.0] - 2026-11-17
