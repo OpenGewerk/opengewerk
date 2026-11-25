@@ -1019,6 +1019,12 @@ In einem Checkout kommt die neue Fassung mit `git pull`, und statt zu holen
 baut der Befehl vorher Anwendung, Sicherung und den Dienst für Aktualisierungen
 aus dem Quelltext
 (`docker compose -f docker/compose.yaml build migrate backup-schedule updater`).
+Das gilt, solange `OPENGEWERK_VERSION` in der `.env` leer ist. Steht dort eine
+Fassung, holt der Befehl deren Abbilder und baut nichts, und die Instanz bleibt
+nach `git pull` auf dieser Fassung; vor dem Start wird die Zeile geleert oder
+auf die neue Fassung gesetzt. Eine Fassung vor 0.9.0 passt dort nicht mehr: Für
+sie gibt es kein Abbild des Dienstes für Aktualisierungen, den ein Checkout ab
+0.9.0 mitstartet.
 
 Läuft die Migration durch, tauscht der zweite Aufruf die Container, und nach
 wenigen Sekunden antwortet die Instanz wieder. Schlägt sie fehl, bricht der

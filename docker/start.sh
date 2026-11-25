@@ -236,8 +236,13 @@ case "$version" in
     export "$version_variable=$version"
     if [ -n "$signed" ]; then
       verify_signatures
+      say "Fassung $version: die signierten Abbilder werden geholt."
+    else
+      # A checkout with a version in the .env names its images by tag alone,
+      # and nothing here checks what the tag stands for: only a kit carries
+      # the digests a signature is checked against (#1114).
+      say "Fassung $version: die Abbilder werden nach ihrem Tag geholt. Ihre Signatur prüft nur der Start aus einem Paket eines Releases, nicht ein Checkout."
     fi
-    say "Fassung $version: die signierten Abbilder werden geholt."
     compose pull --policy missing ||
       fail "Die Abbilder der Fassung $version ließen sich nicht holen, der Grund steht darüber. Gebraucht werden eine Verbindung zu ghcr.io und Docker Compose ab 2.22. Eine laufende Instanz arbeitet unverändert weiter."
     ;;
