@@ -179,6 +179,32 @@ export interface Changes {
   readonly hasMore: boolean
 }
 
+/**
+ * How often an operation is read and decided again because another
+ * transaction changed its record in between (opengewerk#1074). Each attempt
+ * reads what was committed by then, so a second one finds the record as the
+ * other transaction left it; only a record changed again and again within the
+ * few milliseconds of one attempt needs more. After the last the transmission
+ * is refused, and the device sends it again.
+ */
+const mostAttempts = 5
+
+/** A try that found its record changed since it was read (opengewerk#1074). */
+class ChangedMeanwhile extends Error {}
+
+/** What one try to write an operation came to: turned down by a check, or written. */
+type Tried<Sender> =
+  | {
+      readonly kind: 'refused'
+      readonly reason: ConflictReason
+      readonly fields: readonly string[]
+    }
+  | {
+      readonly kind: 'written'
+      readonly context: SyncCheckContext<Sender>
+      readonly complete: Readonly<Record<string, unknown>>
+    }
+
 /** The sync on the server, bound to one application. */
 export interface ServerSync<Sender> {
   /** The table of an entity, or null for a name nothing in the schema has. */
@@ -285,22 +311,9 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
     current: RecordState | null,
   ): Promise<RecordState | null> {
     const inherited = rules.policyFor(operation.entity)?.gateFrom
+    const reference = parentReference(operation, current)
 
-    if (!inherited) {
-      return null
-    }
-
-    // A deletion writes none of its fields and takes the record from the
-    // parent it is under: that parent decides. Asked for the one a field of
-    // the deletion named, the line of a sent letter was deleted by naming a
-    // draft.
-    const patched =
-      operation.kind === 'delete'
-        ? undefined
-        : operation.patches.find((patch) => patch.field === inherited.reference)
-    const reference = patched ? patched.to : (current?.[inherited.reference] ?? null)
-
-    if (typeof reference !== 'string') {
+    if (!inherited || reference === null) {
       return null
     }
 
@@ -321,6 +334,30 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
     const found = await tx.select().from(table).where(eq(id, reference)).for('no key update')
 
     return found[0] ? toRecordState(table, found[0] as Record<string, unknown>) : null
+  }
+
+  /**
+   * The id of the record the operation's record hangs on, by its policy's
+   * `gateFrom`, or null where there is none.
+   *
+   * A deletion writes none of its fields and takes the record from the
+   * parent it is under: that parent decides. Asked for the one a field of the
+   * deletion named, the line of a sent letter was deleted by naming a draft.
+   */
+  function parentReference(operation: Operation, current: RecordState | null): string | null {
+    const inherited = rules.policyFor(operation.entity)?.gateFrom
+
+    if (!inherited) {
+      return null
+    }
+
+    const patched =
+      operation.kind === 'delete'
+        ? undefined
+        : operation.patches.find((patch) => patch.field === inherited.reference)
+    const reference = patched ? patched.to : (current?.[inherited.reference] ?? null)
+
+    return typeof reference === 'string' ? reference : null
   }
 
   /**
@@ -512,106 +549,218 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
 
     formed(operation)
 
-    // Without a condition on `deletedAt`, unlike a route, and that is the
-    // point: a deleted row has to be found here. It is what turns a repeated
-    // create into a `skip` instead of a primary key collision, and what lets
-    // the merge tell "never existed" apart from "deleted since". The merge
-    // refuses the deleted row itself; leaving it out of the query would hide
-    // it.
-    const found = await tx.select().from(table).where(eq(id, operation.recordId))
-    const current = found[0] ? toRecordState(table, found[0] as Record<string, unknown>) : null
-    const decision = rules.decideMerge(operation, current, await parentFor(tx, operation, current))
+    // Read, decided and written as one step that holds only while nothing
+    // else changes the record in between (opengewerk#1074). Read without a
+    // lock, two transmissions to the same record both saw the same state, and
+    // the later one wrote past what the earlier had changed: a change was lost
+    // without a conflict, or a rule over two fields broke only at the write
+    // and took the whole transmission along. A lock on the read is not the
+    // way out; it waited in a circle with the counter of changes and with
+    // the parent `parentFor` locks. So a change or a deletion is written only
+    // onto the version it was decided on. If that version is gone, another
+    // transaction changed the record and committed since, and the operation
+    // is read, decided and checked again on what it left. The write waits for
+    // a transaction that holds the row, as it did before, and takes no lock
+    // the old one did not take.
+    let firstParent: string | null = null
 
-    if (decision.outcome === 'skip') {
-      return await record(tx, tenantId, operation, {
-        outcome: 'skipped',
-        reason: decision.reason,
-        fields: [],
-      })
-    }
+    // Whether the record changed since it was read at the start of a try.
+    const changedSinceRead = async (db: TenantTransaction, read: RecordState): Promise<boolean> =>
+      (await versionNow(db, operation.entity, operation.recordId)) !== read['version']
+    const changedEveryTime = (cause?: unknown) =>
+      new Error(
+        `The record ${operation.recordId} changed under every one of ${String(mostAttempts)} attempts`,
+        cause === undefined ? undefined : { cause },
+      )
 
-    if (decision.outcome === 'conflict') {
-      return await record(tx, tenantId, operation, {
-        outcome: 'conflict',
-        reason: decision.reason,
-        fields: decision.fields,
-        current,
-      })
-    }
+    for (let attempt = 1; ; attempt += 1) {
+      // Without a condition on `deletedAt`, unlike a route, and that is the
+      // point: a deleted row has to be found here. It is what turns a repeated
+      // create into a `skip` instead of a primary key collision, and what lets
+      // the merge tell "never existed" apart from "deleted since". The merge
+      // refuses the deleted row itself; leaving it out of the query would hide
+      // it.
+      const found = await tx.select().from(table).where(eq(id, operation.recordId))
+      const current = found[0] ? toRecordState(table, found[0] as Record<string, unknown>) : null
+      const parent = parentReference(operation, current)
 
-    const patched = columnsFor(
-      table,
-      operation.patches.map((patch) => patch.field),
-    )
-    const values: Record<string, unknown> = {}
-
-    for (const patch of operation.patches) {
-      const column = patched[patch.field]
-      if (column) {
-        values[patch.field] = forColumn(column, patch.to)
+      // A record that went to another parent while it was being written: the
+      // lock of the first is held, and waiting for the second as well could
+      // wait in a circle with a transmission that holds the second and wants
+      // the first. The transmission goes back to the device, which sends it
+      // again (CodeRabbit on #1074).
+      if (attempt === 1) {
+        firstParent = parent
+      } else if (parent !== firstParent) {
+        throw new Error(
+          `The record ${operation.recordId} went to another parent while it was being written`,
+        )
       }
-    }
 
-    const context: SyncCheckContext<Sender> = {
-      tx,
-      tenantId,
-      operation,
-      table,
-      values,
-      current,
-      sender,
-    }
+      const parentRecord = await parentFor(tx, operation, current)
 
-    for (const check of checks) {
-      const refusal = await check(context)
+      // The lock of the parent may have been waited for, and under read
+      // committed the record, read before it, is then older than the parent
+      // read after it: a line read in one letter, judged by the letter it has
+      // left since (CodeRabbit on #1074). A record that changed meanwhile is
+      // read again.
+      if (parentRecord !== null && current !== null && (await changedSinceRead(tx, current))) {
+        if (attempt >= mostAttempts) {
+          throw changedEveryTime()
+        }
 
-      if (refusal === null) {
         continue
       }
 
-      if (refusal.kind === 'client') {
-        throw new UnknownFieldError(refusal.message)
+      const decision = rules.decideMerge(operation, current, parentRecord)
+
+      if (decision.outcome === 'skip') {
+        return await record(tx, tenantId, operation, {
+          outcome: 'skipped',
+          reason: decision.reason,
+          fields: [],
+        })
+      }
+
+      if (decision.outcome === 'conflict') {
+        return await record(tx, tenantId, operation, {
+          outcome: 'conflict',
+          reason: decision.reason,
+          fields: decision.fields,
+          current,
+        })
+      }
+
+      // Checked, completed and written in a savepoint of its own (CodeRabbit
+      // on #1074): a try that finds the record changed is taken back whole,
+      // with whatever the checks and `complete` wrote for it, a number drawn
+      // included, before the next one reads again. A create is never tried
+      // twice and needs none. The savepoint is set in SQL and in the same
+      // transaction object: the transaction of a tenant is a connection with
+      // its own BEGIN, on which a nested transaction of drizzle would commit
+      // it, and the hooks keep what they note under that object.
+      const tryWrite = async (db: TenantTransaction): Promise<Tried<Sender>> => {
+        const patched = columnsFor(
+          table,
+          operation.patches.map((patch) => patch.field),
+        )
+        const values: Record<string, unknown> = {}
+
+        for (const patch of operation.patches) {
+          const column = patched[patch.field]
+          if (column) {
+            values[patch.field] = forColumn(column, patch.to)
+          }
+        }
+
+        const context: SyncCheckContext<Sender> = {
+          tx: db,
+          tenantId,
+          operation,
+          table,
+          values,
+          current,
+          sender,
+        }
+
+        for (const check of checks) {
+          const refusal = await check(context)
+
+          if (refusal === null) {
+            continue
+          }
+
+          // A refusal judged on the record as it was read (CodeRabbit on
+          // #1074): one another transaction changed since is read and checked
+          // again, and a change that holds on what it left is not turned away.
+          if (current !== null && (await changedSinceRead(db, current))) {
+            throw new ChangedMeanwhile()
+          }
+
+          if (refusal.kind === 'client') {
+            throw new UnknownFieldError(refusal.message)
+          }
+
+          return { kind: 'refused', reason: refusal.reason, fields: refusal.fields }
+        }
+
+        const complete = application.complete ? await application.complete(context) : values
+
+        if (operation.kind === 'create') {
+          await db.insert(table).values({ ...complete, id: operation.recordId, tenantId } as never)
+        } else {
+          const decidedOn = current?.['version']
+          const unchanged = and(
+            eq(id, operation.recordId),
+            columns['version'] && typeof decidedOn === 'number'
+              ? eq(columns['version'], decidedOn)
+              : undefined,
+          )
+          const written = await db
+            .update(table)
+            // A deletion marks the record and does not remove it. A row that
+            // is gone is a row a device that was offline never hears about
+            // again.
+            .set((operation.kind === 'delete' ? { deletedAt: new Date() } : complete) as never)
+            .where(unchanged)
+            .returning({ id })
+
+          if (written.length === 0) {
+            throw new ChangedMeanwhile()
+          }
+        }
+
+        return { kind: 'written', context, complete }
+      }
+
+      let tried: Tried<Sender>
+
+      if (operation.kind === 'create') {
+        tried = await tryWrite(tx)
+      } else {
+        await tx.execute(sql`savepoint opengewerk_sync_try`)
+
+        try {
+          tried = await tryWrite(tx)
+          await tx.execute(sql`release savepoint opengewerk_sync_try`)
+        } catch (error) {
+          if (!(error instanceof ChangedMeanwhile)) {
+            throw error
+          }
+
+          await tx.execute(sql`rollback to savepoint opengewerk_sync_try`)
+
+          if (attempt >= mostAttempts) {
+            throw changedEveryTime(error)
+          }
+
+          continue
+        }
+      }
+
+      if (tried.kind === 'refused') {
+        return await record(tx, tenantId, operation, {
+          outcome: 'conflict',
+          reason: tried.reason,
+          fields: tried.fields,
+          current,
+        })
+      }
+
+      if (application.afterWrite) {
+        await application.afterWrite({ ...tried.context, tx, values: tried.complete })
       }
 
       return await record(tx, tenantId, operation, {
-        outcome: 'conflict',
-        reason: refusal.reason,
-        fields: refusal.fields,
-        current,
+        outcome: 'applied',
+        reason: null,
+        fields: [],
+        // As the triggers and `afterWrite` left the row (opengewerk#959). The
+        // lock of its write holds until the end of the transaction, so nothing
+        // else has changed it since.
+        version: await versionNow(tx, operation.entity, operation.recordId),
       })
     }
-
-    const complete = application.complete ? await application.complete(context) : values
-
-    if (operation.kind === 'create') {
-      await tx.insert(table).values({ ...complete, id: operation.recordId, tenantId } as never)
-    } else if (operation.kind === 'delete') {
-      // Marked, not removed. A row that is gone is a row a device that was
-      // offline never hears about again.
-      await tx
-        .update(table)
-        .set({ deletedAt: new Date() } as never)
-        .where(eq(id, operation.recordId))
-    } else {
-      await tx
-        .update(table)
-        .set(complete as never)
-        .where(eq(id, operation.recordId))
-    }
-
-    if (application.afterWrite) {
-      await application.afterWrite({ ...context, values: complete })
-    }
-
-    return await record(tx, tenantId, operation, {
-      outcome: 'applied',
-      reason: null,
-      fields: [],
-      // As the triggers and `afterWrite` left the row (opengewerk#959). The
-      // lock of its write holds until the end of the transaction, so nothing
-      // else has changed it since.
-      version: await versionNow(tx, operation.entity, operation.recordId),
-    })
   }
 
   return {

@@ -201,6 +201,10 @@ function ConflictCard({
 
     try {
       if (takeMine) {
+        // Judged as it would stand before anything is queued, by the rule
+        // the server asks for a part of the structure (opengewerk#1072, in
+        // `edit`): a curve that does not go with the protective device
+        // somebody changed meanwhile is refused here with its sentence.
         const again = await client.update(conflict.entity, conflict.recordId, conflict.wanted)
 
         if (again.outcome === 'refused') {

@@ -398,8 +398,8 @@ function InverterDetail({
           onCancel={() => {
             setEditing(false)
           }}
-          onSubmit={async (values) => {
-            const saved = await client.update('inverters', inverterId, values)
+          onSubmit={async (values, opened) => {
+            const saved = await client.update('inverters', inverterId, values, opened)
 
             if (saved.outcome === 'queued') {
               setEditing(false)
@@ -615,8 +615,8 @@ function StringsTable({
         onCancel={() => {
           setEditing(null)
         }}
-        onSubmit={async (values) => {
-          const saved = await client.update('pv_strings', id, values)
+        onSubmit={async (values, opened) => {
+          const saved = await client.update('pv_strings', id, values, opened)
 
           if (saved.outcome === 'queued') {
             setEditing(null)
@@ -838,8 +838,8 @@ function StringDetail({ stringId }: { readonly stringId: string }) {
           onCancel={() => {
             setEditing(false)
           }}
-          onSubmit={async (values) => {
-            const saved = await client.update('pv_strings', stringId, values)
+          onSubmit={async (values, opened) => {
+            const saved = await client.update('pv_strings', stringId, values, opened)
 
             if (saved.outcome === 'queued') {
               setEditing(false)
@@ -1010,8 +1010,8 @@ function ModulesTable({
         onCancel={() => {
           setEditing(null)
         }}
-        onSubmit={async (values) => {
-          const saved = await client.update('pv_modules', id, values)
+        onSubmit={async (values, opened) => {
+          const saved = await client.update('pv_modules', id, values, opened)
 
           if (saved.outcome === 'queued') {
             setEditing(null)

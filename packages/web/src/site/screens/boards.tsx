@@ -405,8 +405,8 @@ export function SiteCircuitScreen() {
           onCancel={() => {
             setEditing(false)
           }}
-          onSubmit={async (values) => {
-            const saved = await client.update('circuits', circuitId, values)
+          onSubmit={async (values, opened) => {
+            const saved = await client.update('circuits', circuitId, values, opened)
 
             if (saved.outcome === 'queued') {
               setEditing(false)

@@ -1,11 +1,13 @@
 import 'fake-indexeddb/auto'
 
+import { syncRules } from '@opengewerk/platform-domain'
 import type {
   Operation,
   OperationReceipt,
   RecordState,
   SyncConflict,
 } from '@opengewerk/platform-domain'
+import { probePolicies } from '@opengewerk/platform-domain/testing'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -466,6 +468,238 @@ describe('a conflict in the office', () => {
  * it without fields and values (#696). The card says why it is empty, names no
  * version, offers only to close it and sends nothing for it, in both entries.
  */
+describe('the version of the device of a circuit (opengewerk#1072)', () => {
+  /** A circuit as the system holds it, every figure in its range. */
+  const circuit = {
+    id: 'sk-1',
+    designation: 'F3',
+    voltageClass: 'up_to_500',
+    overcurrentDevice: 'circuit_breaker',
+    tripCharacteristic: 'b',
+    ratedCurrentMilli: 16_000,
+    rcdType: 'a',
+    rcdSelective: false,
+    ratedResidualCurrentMilli: 30,
+    cableCores: 3,
+    cableCrossSectionMilli: 1500,
+    cableLengthMilli: 12_000,
+    cableInstallationMethod: null,
+    version: 4,
+    deletedAt: null,
+  }
+
+  /** A client of an application whose devices change circuits field by field. */
+  async function withCircuit(held: RecordState) {
+    server.pulls.push({
+      changes: [{ entity: 'circuits', rows: [held] }],
+      cursor: 1,
+      hasMore: false,
+    })
+
+    const started = await SyncClient.start({
+      store: await openLocalStore(`decisions${String((counter += 1))}`),
+      transport: server,
+      writer: server,
+      rules: syncRules({ ...probePolicies, circuits: { create: true, change: 'merge' } }),
+      deviceId: 'device',
+      entities: ['circuits'],
+      onSignedOut: () => {},
+    })
+
+    await started.synchronise()
+
+    return started
+  }
+
+  function aboutTheCircuit(part: ConflictPart): SyncConflict {
+    return conflict({ id: 'k-7', entity: 'circuits', recordId: 'sk-1', ...part })
+  }
+
+  it.each<{
+    readonly what: string
+    readonly held: RecordState
+    readonly part: ConflictPart
+    readonly sentence: string
+  }>([
+    {
+      what: 'a curve that does not go with the protective device somebody changed meanwhile',
+      held: { ...circuit, overcurrentDevice: 'fuse_d0', tripCharacteristic: 'gg', version: 5 },
+      part: {
+        fields: ['tripCharacteristic'],
+        wanted: { tripCharacteristic: 'c' },
+        seen: { tripCharacteristic: 'b' },
+        found: { tripCharacteristic: 'gg' },
+      },
+      sentence:
+        'B, C, D, K und Z sind Auslösekennlinien von Schaltern, gG und aM Betriebsklassen von ' +
+        'Schmelzsicherungen. Diese passt nicht zur gewählten Schutzeinrichtung.',
+    },
+    {
+      what: 'a selective RCD whose type somebody took away meanwhile',
+      held: { ...circuit, rcdType: null, rcdSelective: false, version: 5 },
+      part: {
+        fields: ['rcdType', 'rcdSelective'],
+        wanted: { rcdSelective: true },
+        seen: { rcdType: 'a', rcdSelective: false },
+        found: { rcdType: null, rcdSelective: false },
+      },
+      sentence: 'Selektiv ist nur ein RCD mit Typ. Bitte zuerst den Typ wählen.',
+    },
+  ])(
+    'queues nothing for $what, says why and leaves the conflict open',
+    async ({ held, part, sentence }) => {
+      server.open = [aboutTheCircuit(part)]
+
+      const started = await withCircuit(held)
+
+      inOffice(started)
+      await userEvent
+        .setup()
+        .click(await screen.findByRole('button', { name: 'Fassung vom Gerät übernehmen' }))
+
+      expect((await screen.findByRole('alert')).textContent).toBe(sentence)
+
+      await started.synchronise()
+
+      expect(server.operations()).toEqual([])
+      expect(server.resolved).toEqual([])
+      expect(started.status().pending).toBe(0)
+      expect(screen.getByRole('button', { name: 'Fassung vom Gerät übernehmen' })).toBeTruthy()
+    },
+  )
+
+  it('sends no patch for a value the device holds already, and keeps the version for the checks of the server', async () => {
+    // Another device set the method the form changes to as well; the type
+    // of the RCD the device still holds, while a third one may have taken it
+    // away: the server asks the version for that, and sees it is old.
+    const started = await withCircuit({ ...circuit, cableInstallationMethod: 'c', version: 5 })
+    const opened = { cableInstallationMethod: null, rcdType: 'a', rcdSelective: false }
+
+    await started.update(
+      'circuits',
+      'sk-1',
+      { ...opened, cableInstallationMethod: 'c', rcdSelective: true },
+      opened,
+    )
+    await started.synchronise()
+
+    expect(server.sent.flat().at(-1)).toMatchObject({
+      baseVersion: 5,
+      patches: [{ field: 'rcdSelective', from: false, to: true }],
+    })
+  })
+
+  it('holds what the server puts along with a type taken away, so that selective set again goes out again (CodeRabbit on #1074)', async () => {
+    const started = await withCircuit({ ...circuit, rcdType: 'a', rcdSelective: true, version: 5 })
+
+    await started.update('circuits', 'sk-1', { rcdType: null })
+
+    expect(started.get('circuits', 'sk-1')?.['rcdSelective']).toBe(false)
+
+    await started.update('circuits', 'sk-1', { rcdType: 'a', rcdSelective: true })
+    await started.synchronise()
+
+    const sent = server.sent.flat()
+
+    expect(sent.at(-2)?.patches).toEqual([
+      { field: 'rcdType', from: 'a', to: null },
+      { field: 'rcdSelective', from: true, to: false },
+    ])
+    expect(sent.at(-1)?.patches).toContainEqual({ field: 'rcdSelective', from: false, to: true })
+  })
+
+  it('judges a second change on the same circuit by the first, though both come at once (CodeRabbit on #1074)', async () => {
+    const started = await withCircuit({ ...circuit, rcdType: 'a', rcdSelective: false, version: 5 })
+
+    const [first, second] = await Promise.all([
+      started.update('circuits', 'sk-1', { rcdType: null }),
+      started.update('circuits', 'sk-1', { rcdSelective: true }),
+    ])
+
+    expect(first).toMatchObject({ outcome: 'queued' })
+    expect(second).toMatchObject({
+      outcome: 'refused',
+      message: 'Selektiv ist nur ein RCD mit Typ. Bitte zuerst den Typ wählen.',
+    })
+  })
+
+  it('queues nothing a form changed on a circuit that the change of another device would leave broken, and says why', async () => {
+    // The form opened with a type of RCD; another device took it away since.
+    // Selective on its own would leave a selective RCD without a type, which
+    // the server refuses for the whole transmission.
+    const started = await withCircuit({
+      ...circuit,
+      rcdType: null,
+      rcdSelective: false,
+      version: 5,
+    })
+    const opened = { designation: 'F3', rcdType: 'a', rcdSelective: false }
+    const saved = await started.update(
+      'circuits',
+      'sk-1',
+      { ...opened, rcdSelective: true },
+      opened,
+    )
+
+    expect(saved).toMatchObject({
+      outcome: 'refused',
+      message: 'Selektiv ist nur ein RCD mit Typ. Bitte zuerst den Typ wählen.',
+    })
+    expect(started.status().pending).toBe(0)
+    await started.synchronise()
+    expect(server.operations()).toEqual([])
+  })
+
+  it.each<{
+    readonly what: string
+    readonly held: RecordState
+    readonly part: ConflictPart
+    readonly values: Readonly<Record<string, unknown>>
+  }>([
+    {
+      what: 'a curve that goes with the protective device',
+      held: { ...circuit, tripCharacteristic: 'd', version: 5 },
+      part: {
+        fields: ['tripCharacteristic'],
+        wanted: { tripCharacteristic: 'c' },
+        seen: { tripCharacteristic: 'b' },
+        found: { tripCharacteristic: 'd' },
+      },
+      values: { tripCharacteristic: 'c' },
+    },
+    {
+      // The server takes the selective along with the type (#1021), and the
+      // device sends it along itself, so that it holds what the server will.
+      what: 'a type taken away from a selective RCD',
+      held: { ...circuit, rcdSelective: true, version: 5 },
+      part: {
+        fields: ['rcdType', 'rcdSelective'],
+        wanted: { rcdType: null },
+        seen: { rcdType: 'a', rcdSelective: false },
+        found: { rcdType: 'a', rcdSelective: true },
+      },
+      values: { rcdType: null, rcdSelective: false },
+    },
+  ])(
+    'takes $what as an ordinary change, and closes the conflict',
+    async ({ held, part, values }) => {
+      server.open = [aboutTheCircuit(part)]
+
+      const started = await withCircuit(held)
+
+      inOffice(started)
+      await userEvent
+        .setup()
+        .click(await screen.findByRole('button', { name: 'Fassung vom Gerät übernehmen' }))
+      await screen.findByText('Keine Konflikte')
+      await started.synchronise()
+
+      expect(server.operations()).toEqual([{ entity: 'circuits', kind: 'update', values }])
+      expect(server.resolved).toEqual(['k-7'])
+    },
+  )
+})
+
 describe('a conflict whose record the person no longer sees', () => {
   const hidden = () => conflict({ recordId: 'n-9', fields: [], wanted: {}, seen: {}, found: {} })
 

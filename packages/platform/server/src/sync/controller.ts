@@ -482,12 +482,20 @@ export class SyncController {
       }))
     } catch (error) {
       if (error instanceof OperationRefused) {
-        throw naming(
-          error.operationId,
+        const answer =
           error.cause instanceof UnknownFieldError
             ? new BadRequestException(error.cause.message)
-            : this.routes.answerFor(error.cause),
-        )
+            : this.routes.answerFor(error.cause)
+
+        // A failure of the server itself is said in its log with what caused
+        // it: the filter logs only what is no answer yet, and this one is
+        // (opengewerk#1105). Otherwise a device sends the transmission again
+        // and again, and nobody learns why it fails.
+        if (answer.getStatus() >= 500) {
+          console.error('Eine Übertragung ließ sich nicht anwenden.', error.cause)
+        }
+
+        throw naming(error.operationId, answer)
       }
 
       throw error
