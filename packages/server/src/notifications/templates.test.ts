@@ -7,7 +7,7 @@ import {
 } from '@opengewerk/domain'
 import { describe, expect, it } from 'vitest'
 
-import { documentMessage } from './templates.js'
+import { documentMessage, instanceUpdatedMessage } from './templates.js'
 
 /**
  * The message a document goes out with, as far as it names the document: the
@@ -125,5 +125,34 @@ describe('the message of an invoice', () => {
 
     expect(sent.subject).toBe('Abschlagsrechnung RE-2026-0042 von Elektro Nord GmbH')
     expect(sent.body).toContain('im Anhang erhalten Sie die Abschlagsrechnung RE-2026-0042')
+  })
+})
+
+describe('the mail about an update of the instance (#1093)', () => {
+  const facts = {
+    name: 'Lea Leitung',
+    version: '0.3.1',
+    from: '0.3.0',
+    succeeded: false,
+    step: 'migration' as const,
+    reason: null,
+    by: 'Lea Leitung',
+    startedAt: new Date('2026-11-24T02:14:00Z'),
+    link: 'https://instanz.example.de',
+  }
+
+  it('says where a run stopped and what that left behind', () => {
+    const text = instanceUpdatedMessage(facts)
+
+    expect(text.subject).toBe('Die Aktualisierung von OpenGewerk auf 0.3.1 ist abgebrochen')
+    expect(text.body).toContain('bei der Migration der Datenbank abgebrochen')
+    expect(text.body).toContain('Die Datenbank steht auf dem Stand davor')
+  })
+
+  it('claims no state of the database for a run that went away without saying how it ended', () => {
+    const text = instanceUpdatedMessage({ ...facts, reason: 'vanished' })
+
+    expect(text.body).toContain('ohne zu sagen, wie er endete')
+    expect(text.body).not.toContain('Stand davor')
   })
 })

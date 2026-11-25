@@ -89,6 +89,8 @@ CREATE TRIGGER "instance_changes" AFTER INSERT OR UPDATE OR DELETE ON "instance_
 	FOR EACH ROW EXECUTE FUNCTION "record_instance_change"();--> statement-breakpoint
 CREATE TRIGGER "instance_changes" AFTER INSERT OR DELETE ON "tenants"
 	FOR EACH ROW EXECUTE FUNCTION "record_instance_change"();--> statement-breakpoint
+CREATE TRIGGER "instance_changes" AFTER INSERT OR UPDATE OR DELETE ON "instance_updates"
+	FOR EACH ROW EXECUTE FUNCTION "record_instance_change"();--> statement-breakpoint
 
 -- The one row of settings, with the defaults: no mail server in the own
 -- network, the backup at half past two. Written here because nothing else may:

@@ -1016,8 +1016,9 @@ docker compose -f docker/compose.yaml up -d
 ```
 
 In einem Checkout kommt die neue Fassung mit `git pull`, und statt zu holen
-baut der Befehl vorher Anwendung und Sicherung aus dem Quelltext
-(`docker compose -f docker/compose.yaml build migrate backup-schedule`).
+baut der Befehl vorher Anwendung, Sicherung und den Dienst für Aktualisierungen
+aus dem Quelltext
+(`docker compose -f docker/compose.yaml build migrate backup-schedule updater`).
 
 Läuft die Migration durch, tauscht der zweite Aufruf die Container, und nach
 wenigen Sekunden antwortet die Instanz wieder. Schlägt sie fehl, bricht der
@@ -1094,11 +1095,54 @@ docker compose -f docker/compose.yaml exec postgres psql -U postgres -c "alter r
 
 Dann `sh docker/start.sh`.
 
+**Aus dem Bereich der Instanz** (#1093). Unter „Aktualisierung“ im Bereich der
+Instanz steht, welche Fassung läuft und ob es eine neuere gibt, mit ihren
+Versionshinweisen. Dahinter steht der Dienst `updater` aus `docker/compose.yaml`,
+der mit jeder Instanz startet. Er fragt einmal am Tag die API von GitHub nach dem
+neuesten Release; geht das schief, versucht er es nach einer Stunde wieder.
+Aktualisiert wird nur, wenn ein Betreiber den Knopf drückt und mit Passwort und
+Code bestätigt. Dann startet der Dienst einen Container aus seinem eigenen
+Abbild, neben Compose und nicht darunter, damit er den Neustart übersteht. Der
+geht die Schritte von oben: zuerst die Sicherung mit `backup.sh`, ohne die nichts
+weitergeht. Dann das Paket der neuen Fassung, mit `cosign verify-blob` gegen den
+Workflow "Release" genau ihres Tags geprüft, auf Verweise und auf Pfade außerhalb
+seines Ordners untersucht und Datei für Datei über die Installation gelegt, jede
+erst unter eigenem Namen, damit eine volle Platte keine abschneidet; die `.env`
+bleibt, und jede Datei gehört danach dem Besitzer des Ordners. Dann `sh docker/start.sh`
+der neuen Fassung. Fertig ist der Lauf erst, wenn die Anwendung über `/health`
+die neue Fassung nennt. Wie er ausging, zeigt die Seite mit den Schritten und dem
+Ende des Protokolls. Es steht außerdem im Protokoll der Instanz und im
+Änderungsprotokoll jedes Betriebs, und alle Betreiber bekommen eine E-Mail,
+sofern der Mailserver der Instanz eingerichtet ist.
+
+Der Dienst braucht den Socket von Docker und kann damit auf der Maschine, was
+root kann; anders geht ein Update nicht. Deshalb erreicht ihn nichts von außen:
+er hat keinen Port und ein Netz für sich allein. Mit der Anwendung spricht er nur
+über zwei Volumes. In `update-requests` schreibt die Anwendung den Auftrag, und
+nur sie darf dort schreiben; in `update-status` schreibt der Dienst, was er
+gefunden hat und wie der Lauf steht, und die Anwendung liest es nur. Die Fassung
+nimmt der Dienst nicht aus dem Auftrag. Es muss die neueste sein, die er selbst
+gefunden hat, neuer als die Fassung, die läuft, und nicht älter als die Dateien
+der Installation; nach einem Lauf, der nach dem Entpacken abbrach, geht so
+dieselbe Fassung noch einmal. Der Auftrag darf höchstens zehn Minuten alt sein; ein Auftrag, der einen Stillstand des Dienstes überdauert hat,
+startet so kein Update, mit dem niemand mehr rechnet.
+
+Das geht nur mit einem Paket aus einem Release, das seine Abbilder mit Digest
+nennt, und nur dort, wo der Dienst den Pfad der Installation auf der Maschine
+kennt. Den schreibt `sh docker/start.sh` auf Linux als `OPENGEWERK_DIRECTORY` in
+die `.env`, nach einem Umzug des Ordners den neuen. Unter Docker Desktop auf
+Windows oder macOS bleibt er leer, weil die Engine dort andere Pfade sieht als
+die Konsole, ebenso bei einem Pfad mit anderen Zeichen als Buchstaben, Ziffern
+und `. _ - /`. Dann und in einem Checkout sagt die Seite, wie von Hand
+aktualisiert wird. Läuft Docker ohne root, nennt `DOCKER_SOCKET` in der `.env`
+seinen Socket, etwa `/run/user/1000/docker.sock`. Was der Dienst tut, zeigt
+`docker compose -f docker/compose.yaml logs updater`.
+
 **Releases** (#155). Eine Fassung erscheint mit einem Tag `v0.x.y` auf `main`;
-die erste war 0.1.0 am 24.09.2026. Der Workflow "Release" baut dann Anwendung
-und Sicherung für x86_64 und ARM64, legt beide unter dieser Fassung in
-`ghcr.io/opengewerk/opengewerk` und `ghcr.io/opengewerk/backup` ab, signiert
-sie ohne Schlüssel über Sigstore und
+die erste war 0.1.0 am 24.09.2026. Der Workflow "Release" baut dann Anwendung,
+Sicherung und den Dienst für Aktualisierungen für x86_64 und ARM64, legt sie unter
+dieser Fassung in `ghcr.io/opengewerk/opengewerk`, `ghcr.io/opengewerk/backup` und
+`ghcr.io/opengewerk/updater` ab, signiert sie ohne Schlüssel über Sigstore und
 schreibt die Release-Seite aus dem Abschnitt des CHANGELOG, mit dem Paket,
 seiner Prüfsumme und seiner Signatur (`.sigstore.json`, ebenfalls ohne
 Schlüssel). Im Paket steht die Fassung in `docker/compose.yaml` an der
@@ -1108,7 +1152,7 @@ CHANGELOG oder für einen Tag, der nicht auf einem Stand von `main` steht,
 bricht er ab. Ob ein Abbild wirklich aus diesem Repository stammt, zeigt
 `cosign verify` mit dem Befehl aus den Hinweisen jedes Releases. Ein Tag wird
 nie neu vergeben: eine Fassung ist, was unter ihrem Tag steht, und dafür steht
-ihre Signatur. Ein zweiter Job spiegelt beide Abbilder mit ihren Signaturen nach
+ihre Signatur. Ein zweiter Job spiegelt Anwendung und Sicherung mit ihren Signaturen nach
 Docker Hub, als `opengewerk/opengewerk` und `opengewerk/backup`, dort mit `latest`
 für die neueste Fassung (#281). Das Paket holt weiter aus ghcr.io, denn Docker Hub
 begrenzt anonyme Pulls; eine ältere Fassung holt der Workflow "Docker Hub" von Hand

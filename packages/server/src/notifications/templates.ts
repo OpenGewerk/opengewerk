@@ -3,6 +3,7 @@ import {
   closesProgressInvoices,
   type DocumentContent,
   type DocumentKind,
+  type InstanceUpdateStep,
   type IssuerContent,
   isInvoice,
   showsPrices,
@@ -682,6 +683,116 @@ export function operatorsChangedMessage(facts: {
   ].join('\n')
 
   return { subject: 'Die Betreiber Ihrer OpenGewerk-Instanz haben sich geändert', body }
+}
+
+/** Where an update stopped, for the mail: in which step, and what that left behind. */
+const stoppedIn: Record<
+  InstanceUpdateStep,
+  { readonly where: string; readonly left: (from: string) => string }
+> = {
+  backup: {
+    where: 'beim Sichern',
+    left: (from) => `Geändert wurde nichts, die Instanz läuft weiter auf Fassung ${from}.`,
+  },
+  download: {
+    where: 'beim Laden und Prüfen der neuen Fassung',
+    left: (from) => `Geändert wurde nichts, die Instanz läuft weiter auf Fassung ${from}.`,
+  },
+  images: {
+    where: 'beim Einspielen der neuen Fassung oder beim Holen ihrer Abbilder',
+    left: (from) =>
+      `Dateien der neuen Fassung liegen schon im Ordner der Instanz, vielleicht nicht alle. Sie läuft aber weiter auf Fassung ${from}. ` +
+      'Ein neuer Versuch im Bereich der Instanz setzt dort wieder an.',
+  },
+  migration: {
+    where: 'bei der Migration der Datenbank',
+    left: (from) =>
+      `Die Datenbank steht auf dem Stand davor, die Instanz läuft weiter auf Fassung ${from}.`,
+  },
+  restart: {
+    where: 'beim Neustart',
+    left: () =>
+      'Die Datenbank ist schon migriert, und die Instanz antwortet vielleicht nicht. Bitte auf dem ' +
+      'Server nachsehen: was zu tun ist, steht in docs/betrieb.md unter "Aktualisieren", und die ' +
+      'Sicherung von vor dem Update ist der Weg zurück.',
+  },
+  check: {
+    where: 'bei der Prüfung der Fassung',
+    left: () =>
+      'Die Instanz meldet nach dem Neustart nicht die neue Fassung. Bitte auf dem Server ' +
+      'nachsehen, was dort läuft: docker compose -f docker/compose.yaml ps',
+  },
+}
+
+/**
+ * The mail about an update of the instance from its area (#1093), to
+ * everybody who runs it, once it ended: through, or stopped in a step, with
+ * what that left behind. Whoever asked for it is named; the page of the
+ * update shows the steps and the end of the log.
+ */
+export function instanceUpdatedMessage(facts: {
+  readonly name: string
+  readonly version: string
+  readonly from: string | null
+  readonly succeeded: boolean
+  readonly step: InstanceUpdateStep
+  readonly reason: 'vanished' | 'docker' | null
+  readonly by: string
+  readonly startedAt: Date
+  readonly link: string
+}): MessageText {
+  const before = facts.from ?? 'der Fassung davor'
+  const asked = facts.by ? ` von ${facts.by}` : ''
+  // A run that went away, or never started, has no step that says what it
+  // left behind.
+  const stopped =
+    facts.reason === 'vanished'
+      ? {
+          where: 'mittendrin',
+          left: () =>
+            'Der Lauf ist verschwunden, ohne zu sagen, wie er endete, etwa weil der Server neu ' +
+            'gestartet wurde. Bitte auf dem Server nachsehen, was dort läuft: ' +
+            'docker compose -f docker/compose.yaml ps',
+        }
+      : facts.reason === 'docker'
+        ? {
+            where: 'vor dem ersten Schritt',
+            left: (from: string) =>
+              `Der Lauf ließ sich nicht starten. Geändert wurde nichts, die Instanz läuft weiter auf Fassung ${from}.`,
+          }
+        : stoppedIn[facts.step]
+  const what = facts.succeeded
+    ? [
+        `die Aktualisierung Ihrer OpenGewerk-Instanz auf Fassung ${facts.version}, am ` +
+          `${momentOf(facts.startedAt)} Uhr${asked} angestoßen, ist durch. Die Instanz läuft ` +
+          `jetzt mit ${facts.version}, vorher mit ${before}.`,
+      ]
+    : [
+        `die Aktualisierung Ihrer OpenGewerk-Instanz auf Fassung ${facts.version}, am ` +
+          `${momentOf(facts.startedAt)} Uhr${asked} angestoßen, ist ${stopped.where} abgebrochen.`,
+        '',
+        stopped.left(before),
+      ]
+
+  const body = [
+    facts.name ? `Hallo ${facts.name},` : 'Hallo,',
+    '',
+    ...what,
+    '',
+    'Die Schritte und das Ende des Protokolls stehen im Bereich der Instanz unter Aktualisierung:',
+    '',
+    facts.link,
+    '',
+    '-- ',
+    'OpenGewerk',
+  ].join('\n')
+
+  return {
+    subject: facts.succeeded
+      ? `OpenGewerk ist auf Fassung ${facts.version} aktualisiert`
+      : `Die Aktualisierung von OpenGewerk auf ${facts.version} ist abgebrochen`,
+    body,
+  }
 }
 
 /**

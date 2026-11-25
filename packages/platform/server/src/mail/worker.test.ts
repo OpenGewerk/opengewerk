@@ -375,6 +375,22 @@ describe('a message the server refuses for good', () => {
   })
 })
 
+describe('a sender the server turns away (opengewerk#1102)', () => {
+  it('gives up on no message, tries the first again later and keeps the others waiting untried', async () => {
+    waiting.set(north.id, ['P-0042', 'P-0043'])
+    const post = recording()
+    post.fail(
+      new MailDeliveryError('Absender abgelehnt', 'EENVELOPE', 553, { command: 'MAIL FROM' }),
+    )
+
+    const report = await runMailCycle(job(post.transport, soon()))
+
+    expect(report).toMatchObject({ sent: 0, failed: 0 })
+    expect(post.calls()).toBe(1)
+    expect((await messages()).map((message) => message.status)).toEqual(['pending', 'pending'])
+  })
+})
+
 describe('a tenant whose password no longer opens', () => {
   it('keeps its messages waiting, untried, and is said once in the words of the application', async () => {
     waiting.set(north.id, ['P-0042'])

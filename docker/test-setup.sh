@@ -149,6 +149,36 @@ sh "$work/setup.sh" < /dev/null > /dev/null 2>&1
 grep -qx 'OPENGEWERK_VERSION=0.2.0' "$work/.env"
 check 'latest aus einer alten .env: jetzt leer, eine gewählte Fassung bleibt'
 
+# 6b. The folder of the installation, for an update from the office (#1093):
+# on Linux the path of the folder above the scripts, corrected after a move,
+# and empty for a path the .env and a mount would not carry as it is. On
+# another system it stays empty, as the template has it.
+installation=$(cd "$work/.." && pwd -P)
+if [ "$(uname -s)" = Linux ]; then
+  grep -qx "OPENGEWERK_DIRECTORY=$installation" "$work/.env"
+  sed 's|^OPENGEWERK_DIRECTORY=.*|OPENGEWERK_DIRECTORY=/srv/elsewhere|' "$work/.env" > "$work/.env.moved"
+  mv "$work/.env.moved" "$work/.env"
+  out=$(sh "$work/setup.sh" < /dev/null 2>&1)
+  grep -qx "OPENGEWERK_DIRECTORY=$installation" "$work/.env"
+  printf '%s' "$out" | grep -q 'für Aktualisierungen aus dem Büro eingetragen'
+  spaced="$work/mit Leerzeichen/docker"
+  mkdir -p "$spaced"
+  cp "$source_dir/setup.sh" "$source_dir/.env.example" "$source_dir/application.env" "$spaced/"
+  OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$spaced/setup.sh" < /dev/null > /dev/null 2>&1
+  grep -qx 'OPENGEWERK_DIRECTORY=' "$spaced/.env"
+  # Moved there from a path that went into the .env: that path comes out.
+  sed 's|^OPENGEWERK_DIRECTORY=.*|OPENGEWERK_DIRECTORY=/srv/opengewerk|' "$spaced/.env" > "$spaced/.env.moved"
+  mv "$spaced/.env.moved" "$spaced/.env"
+  out=$(sh "$spaced/setup.sh" < /dev/null 2>&1)
+  grep -qx 'OPENGEWERK_DIRECTORY=' "$spaced/.env"
+  printf '%s' "$out" | grep -q 'nur von Hand'
+  rm -rf "$work/mit Leerzeichen"
+  check 'Ordner der Installation: eingetragen, nach einem Umzug berichtigt, mit Leerzeichen leer, auch nach einem Umzug dorthin'
+else
+  grep -qx 'OPENGEWERK_DIRECTORY=' "$work/.env"
+  check 'Ordner der Installation: außerhalb von Linux leer'
+fi
+
 # 7. No address and nobody at the terminal: a sentence, and a failure.
 rm "$work/.env"
 if out=$(sh "$work/setup.sh" < /dev/null 2>&1); then

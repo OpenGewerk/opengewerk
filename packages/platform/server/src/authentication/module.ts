@@ -4,6 +4,8 @@ import { AUTHENTICATION, SETUP_CODE } from '../api/handed-in.js'
 import { ACCOUNT_MESSAGES, type AccountMessages } from '../instance/account-mail.js'
 import { INSTANCE_SETTINGS, InstanceController } from '../instance/instance.controller.js'
 import { LegalTextsController } from '../instance/legal-texts.controller.js'
+import { INSTANCE_UPDATES, type InstanceUpdates } from '../instance/update.js'
+import { InstanceUpdateController } from '../instance/update.controller.js'
 import type { InstanceSettingsCache } from '../instance/settings.js'
 import { ACCESS_RULES, type AccessRules } from './access.js'
 import { AddressController } from './address.controller.js'
@@ -66,6 +68,14 @@ export interface AuthenticationParts {
    * of the texts all the same, says yes.
    */
   readonly legalTexts?: boolean | undefined
+  /**
+   * The two folders the application shares with its service for updates
+   * (opengewerk#1093). Handed in, the area of the instance shows which
+   * version runs and the newest, and takes a request for an update. Left
+   * out, as by an application without that service or outside Compose, the
+   * route does not exist.
+   */
+  readonly instanceUpdates?: InstanceUpdates | null | undefined
 }
 
 /**
@@ -88,6 +98,7 @@ export function authenticationParts(parts: AuthenticationParts): {
     instanceSettings = null,
     accountMessages,
     legalTexts = authentication !== undefined,
+    instanceUpdates = null,
   } = parts
 
   return {
@@ -108,12 +119,14 @@ export function authenticationParts(parts: AuthenticationParts): {
       PasskeysController,
       StaffController,
       InstanceController,
+      ...(instanceUpdates ? [InstanceUpdateController] : []),
     ],
     providers: [
       { provide: ACCESS_RULES, useValue: access },
       { provide: INVITATION_MAILING, useValue: invitationMailing },
       { provide: INSTANCE_SETTINGS, useValue: instanceSettings },
       { provide: ACCOUNT_MESSAGES, useValue: accountMessages },
+      ...(instanceUpdates ? [{ provide: INSTANCE_UPDATES, useValue: instanceUpdates }] : []),
       ...(authentication
         ? [
             { provide: AUTHENTICATION, useValue: authentication },
