@@ -1222,6 +1222,28 @@ describe('the line of the surcharge on a draft (#1087)', () => {
     await post(`/documents/${draft.invoice}/issue`, {}, office(), 422)
   })
 
+  it('steps back next to a surcharge the office types in while its day of work has no rate of tax (CodeRabbit on #1112)', async () => {
+    const { invoice } = await draftOf({
+      emergencyAt: atNight,
+      emergencyNamedFlatCents: 4500,
+      emergencyNamedBasisPoints: 0,
+      emergencyNamedVatBasisPoints: 1900,
+    })
+
+    await patch(`/documents/${invoice}`, { serviceFrom: '2006-12-01', serviceUntil: '2006-12-01' })
+    await post(`/documents/${invoice}/lines`, {
+      designation: 'Notdienstzuschlag Nacht',
+      quantityMilli: 1000,
+      unit: 'flat_rate',
+      unitPriceCents: 4500,
+    })
+
+    expect(await shownSurchargesOf(invoice)).toEqual([
+      { designation: 'Notdienstzuschlag Nacht', emergency_surcharge: false },
+    ])
+    expect(await marksOf(invoice)).toBe(0)
+  })
+
   it('takes the tax of the line from the day an invoice without a day of work is issued on (the review of #1112)', async () => {
     const draft = await draftOf({
       emergencyAt: atNight,

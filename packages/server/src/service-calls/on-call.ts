@@ -307,6 +307,18 @@ export async function refreshSurchargeLine(
       and(eq(documentLines.documentId, documentId as DocumentId), isNull(documentLines.deletedAt)),
     )
   const marked = lines.find((line) => line.emergencySurcharge)
+
+  // A surcharge the office typed in, or one a device moved here from another
+  // draft, is the draft's surcharge, whether one is due now or not: the draft
+  // no longer follows its call, and the line of the server steps back for
+  // good, as one the office removed. A draft charges one surcharge. Seen
+  // before the surcharge is worked out, which a day without a rate of tax
+  // stops (CodeRabbit on #1112).
+  if (typedSurchargeIn(lines)) {
+    await stopFollowingCall(tx, documentId)
+
+    return null
+  }
   // The tax the line of the surcharge carries on this draft (#1083): the
   // standard rate on the day the totals reckon with, the end of the service
   // before the date of the document (`documentTotals`), none without tax on
@@ -337,16 +349,6 @@ export async function refreshSurchargeLine(
     }
 
     throw error
-  }
-
-  // A surcharge the office typed in, or one a device moved here from another
-  // draft, is the draft's surcharge, whether one is due now or not: the draft
-  // no longer follows its call, and the line of the server steps back for
-  // good, as one the office removed. A draft charges one surcharge.
-  if (typedSurchargeIn(lines)) {
-    await stopFollowingCall(tx, documentId)
-
-    return null
   }
 
   if (!marked) {
