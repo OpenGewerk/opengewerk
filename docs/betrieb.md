@@ -21,7 +21,9 @@ compose`-Befehl weiter unten dieselbe. Gebraucht werden Docker Engine ab 28.3.3
 und Docker Compose ab 2.22. Ein Checkout des Repositorys hat an derselben Stelle `source`
 und baut die Abbilder aus dem Quelltext, für Entwicklung und Vorschau. Wer im
 Checkout lieber eine veröffentlichte Fassung betreibt, trägt sie in der `.env`
-als `OPENGEWERK_VERSION` ein.
+als `OPENGEWERK_VERSION` ein, ab 0.9.0. Ihre Abbilder holt der Start dann nach
+ihrem Tag, ohne ihre Signatur zu prüfen; was das beim Aktualisieren heißt, steht
+unter „Aktualisieren“.
 
 **Ein Paket nennt seine Abbilder mit Digest und prüft ihre Signatur** (#687). In
 `docker/compose.yaml` eines Pakets steht jedes Abbild von OpenGewerk als
@@ -1019,6 +1021,14 @@ In einem Checkout kommt die neue Fassung mit `git pull`, und statt zu holen
 baut der Befehl vorher Anwendung, Sicherung und den Dienst für Aktualisierungen
 aus dem Quelltext
 (`docker compose -f docker/compose.yaml build migrate backup-schedule updater`).
+Das gilt, solange `OPENGEWERK_VERSION` in der `.env` leer ist. Steht dort eine
+Fassung, holt der Befehl deren Abbilder und baut nichts, und die Instanz bleibt
+nach `git pull` auf dieser Fassung; vor dem Start wird die Zeile geleert oder
+auf die neue Fassung gesetzt. Eine in der Shell exportierte `OPENGEWERK_VERSION`
+gilt vor der Zeile in der `.env` und wird vorher mit `unset` entfernt. Eine
+Fassung vor 0.9.0 passt dort nicht mehr: Für
+sie gibt es kein Abbild des Dienstes für Aktualisierungen, den ein Checkout ab
+0.9.0 mitstartet.
 
 Läuft die Migration durch, tauscht der zweite Aufruf die Container, und nach
 wenigen Sekunden antwortet die Instanz wieder. Schlägt sie fehl, bricht der

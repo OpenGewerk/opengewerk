@@ -59,7 +59,8 @@ assess() {
   fi
   installed=$(installed_version)
   if ! version_valid "$installed"; then
-    # A checkout of the source: updated with git, and built.
+    # A checkout of the source: updated with git, and built, unless its .env
+    # names a version, whose images are pulled instead (#1114).
     mode=checkout
     reason=checkout
     installed=''
