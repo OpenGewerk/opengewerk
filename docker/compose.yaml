@@ -252,7 +252,7 @@ services:
   # name the same image. `chromium` is already the slimmest image browserless
   # publishes, the others carry Firefox and WebKit as well.
   renderer:
-    image: ghcr.io/browserless/chromium:v2.63.2@sha256:7611afcfc02e1040c2f0d03515d086e5be89eaf383e77a2370b690162040758a
+    image: ghcr.io/browserless/chromium:v2.64.3@sha256:f53b8d1dedf3dce0cc738ae4d5cb82a72cb895914364bc36345215da7b7b785c
     restart: unless-stopped
     profiles: ['renderer']
     logging: *logging
