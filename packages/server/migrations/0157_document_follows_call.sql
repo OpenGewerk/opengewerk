@@ -12,8 +12,8 @@
 -- it, without the mark): that one stays the draft's. Such a draft gets its
 -- line with the next change that works it out, at the latest when it is
 -- issued. An installation migrates as the owner of the tables, under FORCE,
--- where the update would meet no row: the three tables go without FORCE for
--- it and get it back right after.
+-- where the update would meet no row: the four tables it reads go without
+-- FORCE for it and get it back right after.
 ALTER TABLE "documents" ADD COLUMN "follows_call" boolean DEFAULT false NOT NULL;--> statement-breakpoint
 ALTER TABLE "documents" NO FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "document_lines" NO FORCE ROW LEVEL SECURITY;--> statement-breakpoint
