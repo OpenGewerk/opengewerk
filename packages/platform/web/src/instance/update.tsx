@@ -41,7 +41,7 @@ const betrieb = 'docs/betrieb.md unter „Aktualisieren“'
 /** Why the instance cannot be updated from here, and what to do instead. */
 const reasonTexts: Readonly<Record<InstanceUpdateReason, string>> = {
   checkout:
-    'Diese Instanz läuft aus einem Checkout des Quelltexts. Sie wird mit git pull und sh docker/start.sh aktualisiert, nicht hier; steht in der .env eine Fassung, wird diese Zeile vorher geleert oder auf die neue Fassung gesetzt, sonst bleibt die Instanz auf ihr. Ein Paket aus einem Release passt nicht über einen Checkout.',
+    'Diese Instanz läuft aus einem Checkout des Quelltexts. Sie wird mit git pull und sh docker/start.sh aktualisiert, nicht hier; steht in der .env eine Fassung, wird diese Zeile vorher geleert oder auf die neue Fassung gesetzt, sonst bleibt die Instanz auf ihr. Eine in der Shell exportierte Fassung geht der Zeile vor und wird vorher mit unset entfernt. Ein Paket aus einem Release passt nicht über einen Checkout.',
   unsigned: `Diese Installation stammt aus einem Paket, das seine Abbilder nicht mit Digest nennt. Sie wird einmal von Hand aktualisiert, wie in ${betrieb} beschrieben; danach geht es hier.`,
   directory:
     'Der Ordner der Installation ist nicht bekannt, etwa unter Docker Desktop auf Windows oder macOS, oder sein Pfad enthält ein Zeichen, das nicht durchgeht. Aktualisiert wird dort von Hand: das neue Paket an dieselbe Stelle entpacken, dann sh docker/start.sh.',
