@@ -114,14 +114,18 @@ async function draftChanges(
 ): Promise<RecurringChange[]> {
   const taken = document.takenOver
 
-  if (document.serviceFrom === null || document.serviceUntil === null) {
+  if (document.serviceFrom === null) {
     return []
   }
 
+  // A single day of service is its own end, as `followPeriod` takes it.
   const values = await periodValues(
     tx,
     contract,
-    { from: document.serviceFrom as IsoDate, until: document.serviceUntil as IsoDate },
+    {
+      from: document.serviceFrom as IsoDate,
+      until: (document.serviceUntil ?? document.serviceFrom) as IsoDate,
+    },
     document.customerId,
   )
   const changes: RecurringChange[] = []
@@ -360,8 +364,12 @@ export class RecurringInvoicesController {
 
       const contract = await contractOf(tx, document)
 
-      if (contract === null || document.serviceFrom === null || document.serviceUntil === null) {
+      if (contract === null) {
         throw new ConflictException('Diese Dauerrechnung gehört zu keinem Wartungsvertrag mehr.')
+      }
+
+      if (document.serviceFrom === null) {
+        throw new ConflictException('Diese Dauerrechnung nennt keinen Leistungszeitraum.')
       }
 
       const old = await linesOf(tx, document.id)
@@ -388,13 +396,18 @@ export class RecurringInvoicesController {
       const renewed = await layOutPeriod(
         tx,
         contract,
-        { from: document.serviceFrom as IsoDate, until: document.serviceUntil as IsoDate },
+        // A single day of service is its own end, and stays a single day.
+        {
+          from: document.serviceFrom as IsoDate,
+          until: (document.serviceUntil ?? document.serviceFrom) as IsoDate,
+        },
         todayInGermany(),
         {
           lines,
           flatAt: flatAt === -1 ? null : flatAt,
           customerId: document.customerId,
           siteId: document.siteId,
+          serviceUntil: document.serviceUntil,
           jobId: document.jobId,
           installationId: document.installationId,
           subject: document.subject,

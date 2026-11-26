@@ -365,6 +365,18 @@ export class DocumentsController {
     return this.database.forTenant(identity, async (tx) => {
       await requireReferences(tx, documents, values, false)
 
+      // The period as it was, read under the lock the update takes anyway, so
+      // that the day of a maintenance follows a period that moves and not one
+      // that is sent again as it stands (#1037).
+      const [before] =
+        values['serviceFrom'] !== undefined || values['serviceUntil'] !== undefined
+          ? await tx
+              .select({ serviceFrom: documents.serviceFrom, serviceUntil: documents.serviceUntil })
+              .from(documents)
+              .where(and(eq(documents.id, id as DocumentId), isNull(documents.deletedAt)))
+              .for('update')
+          : []
+
       const [updated] = await tx
         .update(documents)
         .set(values as Partial<typeof documents.$inferInsert>)
@@ -389,7 +401,11 @@ export class DocumentsController {
 
         // A recurring invoice whose period moves takes the day of the
         // maintenance that period pays for (#1037).
-        if (values['serviceFrom'] !== undefined || values['serviceUntil'] !== undefined) {
+        if (
+          before &&
+          (before.serviceFrom !== updated.serviceFrom ||
+            before.serviceUntil !== updated.serviceUntil)
+        ) {
           return (await followPeriod(tx, updated.id)) ?? updated
         }
 

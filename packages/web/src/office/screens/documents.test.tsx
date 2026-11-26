@@ -3538,6 +3538,50 @@ describe('what has changed for a recurring invoice (#1037)', () => {
     expect(calls.filter((call) => call.path === '/documents/d-1/renewal')).toHaveLength(1)
   })
 
+  it('stays on the invoice and says so when the exchange after laying it out again fails', async () => {
+    serverSays('GET', '/documents/d-1/recurring-check', () => ({
+      status: 200,
+      body: {
+        changes: [
+          { field: 'rate', rate: 'standard', supplyOn: '2026-11-30', was: 1900, now: 1600 },
+        ],
+      },
+    }))
+    // Done on the server, but the exchange after it does not bring the new
+    // draft here: this server never has it.
+    serverSays('POST', '/documents/d-1/renewal', () => ({
+      status: 201,
+      body: {
+        cancellation: { id: 'd-2' },
+        renewed: recurring({ id: 'd-3', status: 'draft', number: null }),
+      },
+    }))
+
+    await mount('/belege/d-1', {
+      documents: [
+        recurring({
+          status: 'issued',
+          number: 'RE-2026-0241',
+          serviceFrom: '2026-11-01',
+          serviceUntil: '2026-11-30',
+          issuedTotals: frozenAt(3_900),
+        }),
+      ],
+      document_lines: [line('l-1', 1, { unit: 'flat_rate', unitPriceCents: 3_900 })],
+    })
+    const person = userEvent.setup()
+
+    await person.click(await screen.findByRole('button', { name: 'Stornieren und neu anlegen' }))
+    await person.click(screen.getByRole('button', { name: 'Jetzt stornieren und neu anlegen' }))
+
+    expect(
+      await screen.findByText(
+        /^Storniert und neu angelegt\. Den neuen Entwurf bringt der Abgleich/,
+      ),
+    ).toBeDefined()
+    expect(screen.queryByRole('heading', { level: 1, name: 'Dauerrechnung' })).toBeNull()
+  })
+
   it('offers to lay an issued invoice out again only to whoever issues documents', async () => {
     serverSays('GET', '/documents/d-1/recurring-check', () => ({
       status: 200,

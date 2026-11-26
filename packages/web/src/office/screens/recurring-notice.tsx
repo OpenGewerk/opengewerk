@@ -93,7 +93,7 @@ function issuedSentence(changes: readonly RecurringChange[]): string {
 export function RecurringNotice({ document }: { readonly document: RecordState }) {
   const documentId = String(document['id'])
   const status = documentStatusOf(document)
-  const { online } = useSyncStatus()
+  const { online, lastSyncedAt } = useSyncStatus()
   const client = useSync()
   const queries = useQueryClient()
   const navigate = useNavigate()
@@ -104,16 +104,23 @@ export function RecurringNotice({ document }: { readonly document: RecordState }
   const [trouble, setTrouble] = useState<string | null>(null)
   const asked = status === 'draft' || status === 'issued'
   const check = useQuery({
-    queryKey: ['recurring-check', documentId, document['version']],
+    // Asked again after every exchange too: the contract or the customer may
+    // have changed meanwhile, which the version of the document does not show.
+    queryKey: ['recurring-check', documentId, document['version'], lastSyncedAt?.getTime() ?? null],
     queryFn: () => recurringCheck(documentId),
     enabled: online && asked,
   })
   const changes = check.data?.changes ?? []
 
   // Without a connection neither button can act, and what the server said
-  // may be out of date: nothing to say until it is back.
+  // may be out of date: nothing to say until it is back. What a step that
+  // went through on the server said stays, also then.
   if (!online || !asked || changes.length === 0) {
-    return null
+    return trouble ? (
+      <p role="alert" className="text-body font-semibold text-conflict">
+        {trouble}
+      </p>
+    ) : null
   }
 
   async function takeOver() {
@@ -166,11 +173,25 @@ export function RecurringNotice({ document }: { readonly document: RecordState }
       return
     }
 
-    // Done on the server: the new draft is there whether or not the exchange
-    // that brings it here goes through now, and the screen moves on to it.
+    // Done on the server. The screen moves on to the new draft once the
+    // exchange has brought it here; until then it stays and says so. An
+    // exchange that fails does not throw, it leaves the draft away.
+    const renewedId = String(renewed['id'])
+
     await client.synchronise().catch(() => undefined)
     setWorking(false)
-    await navigate({ to: `/belege/${String(renewed['id'])}` })
+
+    if (client.get('documents', renewedId) === null) {
+      setRenewing(false)
+      setTrouble(
+        'Storniert und neu angelegt. Den neuen Entwurf bringt der Abgleich, sobald er wieder ' +
+          'durchgeht.',
+      )
+
+      return
+    }
+
+    await navigate({ to: `/belege/${renewedId}` })
   }
 
   const alert = trouble ? (

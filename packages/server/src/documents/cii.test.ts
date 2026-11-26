@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { UnprocessableEntityException } from '@nestjs/common'
-import { eInvoiceGaps, type IsoDate, RuleError } from '@opengewerk/domain'
+import { eInvoiceGaps, RuleError } from '@opengewerk/domain'
 import { XmlDocument } from 'libxml2-wasm'
 import { describe, expect, it } from 'vitest'
 
@@ -18,6 +18,7 @@ import {
   item,
   perHundred,
   photovoltaics,
+  recurringInvoice,
   reverseCharge,
   samples,
   secondProgress,
@@ -352,14 +353,19 @@ describe('an e-invoice', () => {
   })
 
   it('states the day of the maintenance a recurring invoice names as the day of delivery, beside its period (#1037)', () => {
-    const xml = ciiInvoice({ ...finalInvoice, supplyOn: '2026-07-15' as IsoDate }, 'en16931')
+    // The same sample the schema and the validators of the CI check.
+    const xml = ciiInvoice(recurringInvoice, 'en16931')
 
     expect(read(xml, '//ram:ActualDeliverySupplyChainEvent//udt:DateTimeString')).toEqual([
-      '20260715',
+      '20200615',
     ])
     expect(read(xml, `${settlement}/ram:BillingSpecifiedPeriod//udt:DateTimeString`)).toEqual([
-      '20260901',
-      '20260915',
+      '20200701',
+      '20200731',
+    ])
+    // Taxed by the day of the maintenance: nineteen percent, not sixteen.
+    expect(read(xml, `${settlement}/ram:ApplicableTradeTax/ram:RateApplicablePercent`)).toEqual([
+      '19',
     ])
   })
 

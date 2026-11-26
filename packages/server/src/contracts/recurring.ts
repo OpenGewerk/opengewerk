@@ -131,6 +131,8 @@ export interface KeptOfInvoice {
   readonly flatAt: number | null
   readonly customerId: DocumentRow['customerId']
   readonly siteId: DocumentRow['siteId']
+  /** Null where the invoice named a single day of service. */
+  readonly serviceUntil: DocumentRow['serviceUntil']
   readonly jobId: DocumentRow['jobId']
   readonly installationId: DocumentRow['installationId']
   readonly subject: DocumentRow['subject']
@@ -185,7 +187,7 @@ export async function layOutPeriod(
       closingText: kept?.closingText ?? null,
       paymentTermDays: kept?.paymentTermDays ?? null,
       serviceFrom: period.from,
-      serviceUntil: period.until,
+      serviceUntil: kept ? kept.serviceUntil : period.until,
       supplyOn: values.supplyOn,
       maintenanceContractId: contract.id,
       taxTreatment: kept ? kept.taxTreatment : values.taxTreatment,
