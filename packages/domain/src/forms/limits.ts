@@ -23,7 +23,8 @@ export function formatMeasured(milli: number, unit: MeasurementUnit, decimals: n
  * The limits a measured value has to reach rather than stay under. A rule
  * says so itself (`at_least`); of the limits worked out, only the insulation
  * of an appliance does (#303), and the insulation of a circuit after its
- * nominal voltage (#1021) and both of the recurring inspection (#1022); the
+ * nominal voltage (#1021) and both of the recurring inspection (#1022, in
+ * version 3 with the head up to 500 V, #1120); the
  * loop impedance, the tripping current and time and the protective conductor
  * of an appliance are limits to stay under.
  */
@@ -32,6 +33,8 @@ const workedOutMinimums: ReadonlySet<string> = new Set([
   'circuit_insulation',
   'recurring_insulation_without_loads',
   'recurring_insulation_with_loads',
+  'recurring_insulation_up_to_500v_without_loads',
+  'recurring_insulation_up_to_500v_with_loads',
 ])
 
 /**

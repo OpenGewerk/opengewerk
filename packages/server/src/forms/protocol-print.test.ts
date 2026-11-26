@@ -116,6 +116,30 @@ describe('the limits under a table of a printed protocol', () => {
   })
 })
 
+describe('a printed recurring inspection in version 3 (#1120)', () => {
+  const printed = (version: number) =>
+    protocolPrintJob({
+      ...protocol,
+      definition: elektroRegistry.definitionFor('vde-0105-100', version) as FormDefinition,
+      values: {
+        nominal_voltage: 690_000,
+        circuits: [{ circuitId: 'k-1', circuit: null, values: { insulation_with_loads: 100 } }],
+      },
+      performedOn: '2026-11-26',
+      rules: elektroRules,
+    }).html
+
+  it('judges no insulation where the protocol names more than 500 V, and says so under the table', () => {
+    // 300 Ω per volt at 690 V would ask 0,207 MΩ, and 0,100 MΩ fell short in version 2.
+    expect(printed(3).match(/<td class="figure outside">/g)).toBeNull()
+    expect(printed(3)).toContain(
+      'je Volt der Nennspannung des Protokolls bis 500 V, ohne Angabe 230 V, und 0,25 MΩ bei SELV und PELV',
+    )
+    expect(printed(2).match(/<td class="figure outside">/g)).toHaveLength(1)
+    expect(printed(2)).toContain('je Volt der Nennspannung des Protokolls, ohne Angabe 230 V')
+  })
+})
+
 describe('a printed recurring inspection in version 2 (#1022)', () => {
   const second = elektroRegistry.definitionFor('vde-0105-100', 2)
 

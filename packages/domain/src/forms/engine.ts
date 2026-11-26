@@ -17,6 +17,8 @@ import {
   loopImpedanceMeasured,
   rcdTripCurrentRange,
   rcdTripTime,
+  recurringInsulationUpTo500WithLoads,
+  recurringInsulationUpTo500WithoutLoads,
   recurringInsulationWithLoads,
   recurringInsulationWithoutLoads,
 } from './circuit-limits.js'
@@ -66,6 +68,8 @@ export const tradeForms = formEngine<TradeFormTerms>({
     rcd_trip_time: rcdTripTime,
     recurring_insulation_without_loads: recurringInsulationWithoutLoads,
     recurring_insulation_with_loads: recurringInsulationWithLoads,
+    recurring_insulation_up_to_500v_without_loads: recurringInsulationUpTo500WithoutLoads,
+    recurring_insulation_up_to_500v_with_loads: recurringInsulationUpTo500WithLoads,
     appliance_insulation: applianceInsulation,
     appliance_protective_conductor: applianceProtectiveConductor,
     appliance_protective_conductor_current: applianceProtectiveConductorCurrent,

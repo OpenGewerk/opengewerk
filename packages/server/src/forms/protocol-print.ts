@@ -377,15 +377,19 @@ function circuitLimitLegend(kind: string | undefined, protocol: PrintedProtocol)
         : missing
     }
     case 'recurring_insulation_without_loads':
-    case 'recurring_insulation_with_loads': {
-      const loads = kind === 'recurring_insulation_with_loads' ? 'with_loads' : 'without_loads'
+    case 'recurring_insulation_with_loads':
+    case 'recurring_insulation_up_to_500v_without_loads':
+    case 'recurring_insulation_up_to_500v_with_loads': {
+      const loads = kind.endsWith('_with_loads') ? 'with_loads' : 'without_loads'
+      // Version 3 counts per volt only up to 500 V in the head (#1120).
+      const upTo = kind.startsWith('recurring_insulation_up_to_500v') ? ' bis 500 V' : ''
       const dry = perVolt(`elektro.insulation.recurring_per_volt_${loads}_dry`)
       const damp = perVolt(`elektro.insulation.recurring_per_volt_${loads}_damp`)
       const it = perVolt('elektro.insulation.recurring_per_volt_it')
       const low = ohms('elektro.insulation.recurring_selv_pelv')
 
       return dry && damp && it && low
-        ? `nach Umgebung und Netzform des Stromkreises mindestens ${dry} trocken, ${damp} feucht, ${it} im IT-System, je Volt der Nennspannung des Protokolls, ohne Angabe 230 V, und ${text(
+        ? `nach Umgebung und Netzform des Stromkreises mindestens ${dry} trocken, ${damp} feucht, ${it} im IT-System, je Volt der Nennspannung des Protokolls${upTo}, ohne Angabe 230 V, und ${text(
             low,
           )} bei SELV und PELV; einen Stromkreis über 500 V beurteilt das Protokoll nicht, weil es seine Nennspannung nicht kennt; ${sources(
             `elektro.insulation.recurring_per_volt_${loads}_dry`,

@@ -316,7 +316,7 @@ describe('a test protocol in the office (#79)', () => {
     const fields = Object.fromEntries((made?.patches ?? []).map((patch) => [patch.field, patch.to]))
 
     expect(fields['definitionKey']).toBe('vde-0105-100')
-    expect(fields['definitionVersion']).toBe(2)
+    expect(fields['definitionVersion']).toBe(3)
     // What describes the installation and the test, and nothing the first
     // inspection alone knows, such as its occasion.
     expect(readFormValues(fields['values'])).toEqual({
