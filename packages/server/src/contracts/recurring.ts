@@ -128,21 +128,29 @@ export function flatLine(
 }
 
 /**
- * What a period laid out again keeps of the invoice it replaces (#1037): its
- * lines, which of them carries the flat price, whom it went to, how it was
- * taxed, and what it had taken from its contract and its customer. So what
- * the office set on it stays the office's, and the notice of the new draft
- * tells only what has changed there since. Only the day of the maintenance
- * is worked out anew, from the contract of today: that day is what laying a
- * period out again is for.
+ * What a period laid out again keeps of the invoice it replaces (#1037):
+ * everything the office can set on a draft, which is its lines, which of
+ * them carries the flat price, whom and what it is for, its texts, how it was
+ * taxed and its payment term, and what it had taken from its contract and its
+ * customer. So what the office set on it stays the office's, and the notice
+ * of the new draft tells only what has changed there since. Only the day of
+ * the maintenance is worked out anew, from the contract of today: that day
+ * is what laying a period out again is for. The date is the day it is laid
+ * out, as for any draft.
  */
-export interface HandedLines {
+export interface KeptOfInvoice {
   readonly lines: readonly PeriodLine[]
   /** Where in `lines` the line of the flat price stands, or null for none. */
   readonly flatAt: number | null
   readonly customerId: DocumentRow['customerId']
   readonly siteId: DocumentRow['siteId']
+  readonly jobId: DocumentRow['jobId']
+  readonly installationId: DocumentRow['installationId']
+  readonly subject: DocumentRow['subject']
+  readonly introText: DocumentRow['introText']
+  readonly closingText: DocumentRow['closingText']
   readonly taxTreatment: DocumentRow['taxTreatment']
+  readonly paymentTermDays: DocumentRow['paymentTermDays']
   /** What the invoice had taken: the flat price and the tax treatment. */
   readonly taken: { readonly flatCents: number | null; readonly taxTreatment: string }
 }
@@ -151,7 +159,7 @@ export interface HandedLines {
  * The draft of the recurring invoice of a period, with the values of its
  * contract and customer of today (`periodValues`), and with the flat price as
  * its one line unless it is handed what to keep (#1037): laying a period out
- * again after a cancellation keeps what the invoice billed (`HandedLines`).
+ * again after a cancellation keeps what the invoice billed (`KeptOfInvoice`).
  * It notes what it took (`takenOver`): the line of the flat price by its id
  * and that price, so that a later change of the contract is told from one
  * made in the draft.
@@ -161,14 +169,14 @@ export async function layOutPeriod(
   contract: ContractRow,
   period: Pick<BilledPeriod, 'from' | 'until'>,
   today: IsoDate,
-  handed?: HandedLines,
+  kept?: KeptOfInvoice,
   // Who lays it out, for a draft the office makes; nobody for the deadline's.
   createdBy: string | null = null,
 ): Promise<DocumentRow> {
-  const customerId = handed?.customerId ?? contract.customerId
+  const customerId = kept?.customerId ?? contract.customerId
   const values = await periodValues(tx, contract, period, customerId)
-  const written = handed?.lines ?? [flatLine(contract, period, values.flatCents)]
-  const flatAt = handed ? handed.flatAt : 0
+  const written = kept?.lines ?? [flatLine(contract, period, values.flatCents)]
+  const flatAt = kept ? kept.flatAt : 0
   const ids = written.map(() => newId<'document-line'>())
   const flat = flatAt === null ? undefined : written[flatAt]
   const [created] = await tx
@@ -176,19 +184,24 @@ export async function layOutPeriod(
     .values({
       tenantId: contract.tenantId,
       customerId,
-      siteId: handed ? handed.siteId : contract.siteId,
+      siteId: kept ? kept.siteId : contract.siteId,
+      jobId: kept?.jobId ?? null,
+      installationId: kept?.installationId ?? null,
       kind: 'recurring_invoice',
       documentDate: today,
-      subject: `${contract.designation}, ${periodText(period)}`,
+      subject: kept ? kept.subject : `${contract.designation}, ${periodText(period)}`,
+      introText: kept?.introText ?? null,
+      closingText: kept?.closingText ?? null,
+      paymentTermDays: kept?.paymentTermDays ?? null,
       serviceFrom: period.from,
       serviceUntil: period.until,
       supplyOn: values.supplyOn,
       maintenanceContractId: contract.id,
-      taxTreatment: handed ? handed.taxTreatment : values.taxTreatment,
+      taxTreatment: kept ? kept.taxTreatment : values.taxTreatment,
       takenOver: {
         flatLineId: flat && flatAt !== null ? (ids[flatAt] ?? null) : null,
-        flatCents: flat ? (handed ? handed.taken.flatCents : flat.unitPriceCents) : null,
-        taxTreatment: handed ? handed.taken.taxTreatment : values.taxTreatment,
+        flatCents: flat ? (kept ? kept.taken.flatCents : flat.unitPriceCents) : null,
+        taxTreatment: kept ? kept.taken.taxTreatment : values.taxTreatment,
       },
       createdBy,
     })

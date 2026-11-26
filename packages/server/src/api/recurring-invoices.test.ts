@@ -677,34 +677,58 @@ describe('what has changed for a recurring invoice (#1037)', () => {
     }
   })
 
-  it('keeps on a period laid out again the price and tax treatment the office set', async () => {
+  it('keeps on a period laid out again everything the office set on the invoice', async () => {
     const made = await contract(addMonths(today, -1))
 
     await run(3)
 
     const issued = (await invoicesOf(made)).find((invoice) => invoice.status === 'issued')
     const id = String(issued?.id)
+    const job = newId<'job'>()
+    const installation = newId<'installation'>()
 
+    await admin.query(
+      `insert into jobs (id, tenant_id, customer_id, site_id, kind, status, designation)
+       values ($1, $2, $3, $4, 'service', 'active', 'Wartung Rheinstraße 12')`,
+      [job, north, customer, site],
+    )
+    await admin.query(
+      `insert into installations (id, tenant_id, site_id, kind, designation)
+       values ($1, $2, $3, 'meter_cabinet', 'Zählerschrank Keller')`,
+      [installation, north, site],
+    )
     // What the office set on it before it was issued.
     await pastTheTriggers(
       'update document_lines set unit_price_cents = 3500, net_cents = 3500 where document_id = $1',
       [id],
     )
-    await pastTheTriggers("update documents set tax_treatment = 'reverse_charge' where id = $1", [
-      id,
-    ])
+    await pastTheTriggers(
+      `update documents set tax_treatment = 'reverse_charge', payment_term_days = 30,
+         subject = 'Wartung nach Absprache', intro_text = 'Wie vereinbart.', closing_text = 'Danke.',
+         job_id = $2, installation_id = $3
+       where id = $1`,
+      [id, job, installation],
+    )
 
     const answer = await request(app.getHttpServer())
       .post(`/documents/${id}/renewal`)
       .set('x-test-identity', office())
       .expect(201)
-    const { renewed } = answer.body as { renewed: { id: string; taxTreatment: string } }
+    const { renewed } = answer.body as { renewed: { id: string } }
     const { rows } = await admin.query<{ unit_price_cents: number }>(
       'select unit_price_cents from document_lines where document_id = $1',
       [renewed.id],
     )
 
-    expect(renewed.taxTreatment).toBe('reverse_charge')
+    expect(renewed).toMatchObject({
+      taxTreatment: 'reverse_charge',
+      paymentTermDays: 30,
+      subject: 'Wartung nach Absprache',
+      introText: 'Wie vereinbart.',
+      closingText: 'Danke.',
+      jobId: job,
+      installationId: installation,
+    })
     expect(rows).toEqual([{ unit_price_cents: 3_500 }])
     // The contract did not change: nothing to tell, nothing to undo.
     expect((await check(renewed.id).expect(200)).body).toEqual({ changes: [] })

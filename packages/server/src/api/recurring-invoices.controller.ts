@@ -394,7 +394,13 @@ export class RecurringInvoicesController {
           flatAt: flatAt === -1 ? null : flatAt,
           customerId: document.customerId,
           siteId: document.siteId,
+          jobId: document.jobId,
+          installationId: document.installationId,
+          subject: document.subject,
+          introText: document.introText,
+          closingText: document.closingText,
           taxTreatment: document.taxTreatment,
+          paymentTermDays: document.paymentTermDays,
           // What it had taken; one laid out before it noted that took what it billed.
           taken: {
             flatCents:
