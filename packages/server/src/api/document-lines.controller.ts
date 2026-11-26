@@ -411,12 +411,15 @@ export class DocumentLinesController {
 /**
  * What the document adds up to.
  *
- * A route of its own rather than a field on the document, and that is the
+ * A route of its own rather than a field the office writes, and that is the
  * whole point of issue #54: a total kept on the head would be the same number
- * in a second place, and two places drift. This one is worked out from the
+ * in a second place, and two places drift. A draft is worked out from the
  * lines every time it is asked for, by the rules of the day its tax belongs
  * to (`totalsFor`, #1017). A day the rules do not cover is refused with their
- * sentence, as issuing the document refuses it.
+ * sentence, as issuing the document refuses it. An issued document answers
+ * with the totals it froze (#1035), which the database copies from its
+ * snapshot and lets nobody change, so that the answer is the one on its PDF
+ * whatever the rules of a later version say about its day.
  */
 @Controller('documents/:documentId/totals')
 export class DocumentTotalsController {
@@ -433,6 +436,10 @@ export class DocumentTotalsController {
 
       if (!document) {
         throw new NotFoundException()
+      }
+
+      if (document.issuedTotals) {
+        return document.issuedTotals
       }
 
       // The kind comes along so that a title stays out of the tax groups.

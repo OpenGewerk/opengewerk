@@ -3533,6 +3533,9 @@ describe('the documents issued before 0159', () => {
   const issued = newId<'document'>()
   const cancelled = newId<'document'>()
   const draft = newId<'document'>()
+  // A snapshot without totals, which no version wrote: it stays without, and
+  // the migration goes on.
+  const bare = newId<'document'>()
   const totals = (netCents: number) => ({
     netCents,
     taxCents: netCents * 0.16,
@@ -3559,37 +3562,61 @@ describe('the documents issued before 0159', () => {
       "insert into customers (id, tenant_id, kind, name) values ($1, $2, 'private', 'Familie Arslan')",
       [customer, tenant.id],
     )
-    for (const document of [issued, cancelled, draft]) {
+    for (const document of [issued, cancelled, draft, bare]) {
       await admin.query(
         `insert into documents (id, tenant_id, customer_id, kind, document_date)
          values ($1, $2, $3, 'final_invoice', '2021-01-04')`,
         [document, tenant.id, customer],
       )
     }
-    for (const [index, document] of [issued, cancelled].entries()) {
+    for (const [index, document] of [issued, cancelled, bare].entries()) {
       await admin.query(
         `update documents set status = 'issued', number = $2, issued_at = now() where id = $1`,
         [document, `RE-2021-000${String(index + 1)}`],
       )
       await admin.query(
         'insert into document_snapshots (tenant_id, document_id, content) values ($1, $2, $3)',
-        [tenant.id, document, { version: 15, totals: totals(10000 * (index + 1)) }],
+        [
+          tenant.id,
+          document,
+          document === bare
+            ? { version: 15 }
+            : { version: 15, totals: totals(10000 * (index + 1)) },
+        ],
       )
     }
     await admin.query(`update documents set status = 'cancelled' where id = $1`, [cancelled])
+
+    const sequences = async () =>
+      Object.fromEntries(
+        (
+          await admin.query<{ id: string; change_sequence: string }>(
+            'select id, change_sequence from documents where id = any($1)',
+            [[issued, cancelled, draft]],
+          )
+        ).rows.map((row) => [row.id, BigInt(row.change_sequence)]),
+      )
+    const stampedBefore = await sequences()
 
     await runMigrations(ownerDatabaseUrl(), migrationsFolder)
 
     const { rows } = await admin.query<{ id: string; issued_totals: unknown }>(
       'select id, issued_totals from documents where id = any($1)',
-      [[issued, cancelled, draft]],
+      [[issued, cancelled, draft, bare]],
     )
+    const stampedAfter = await sequences()
 
     expect(Object.fromEntries(rows.map((row) => [row.id, row.issued_totals]))).toEqual({
       [issued]: totals(10000),
       [cancelled]: totals(20000),
       [draft]: null,
+      [bare]: null,
     })
+    // A device that pulled them before the update gets them with its next
+    // exchange, which asks for what changed since its cursor.
+    expect(stampedAfter[issued]).toBeGreaterThan(stampedBefore[issued] ?? 0n)
+    expect(stampedAfter[cancelled]).toBeGreaterThan(stampedBefore[cancelled] ?? 0n)
+    expect(stampedAfter[draft]).toBe(stampedBefore[draft])
   })
 })
 

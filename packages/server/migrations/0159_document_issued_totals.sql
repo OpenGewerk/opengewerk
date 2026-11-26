@@ -81,8 +81,13 @@ CREATE FUNCTION "document_takes_its_issued_totals"() RETURNS trigger
 	SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
+	-- Only where it changes something: an update that changes nothing meets the
+	-- last refusal of `document_stays_fixed`, and the snapshot would not be
+	-- written. A snapshot without totals, which no version of the application
+	-- writes, leaves the document as it is.
 	UPDATE public.documents SET issued_totals = new.content -> 'totals'
-		WHERE tenant_id = new.tenant_id AND id = new.document_id;
+		WHERE tenant_id = new.tenant_id AND id = new.document_id
+			AND issued_totals IS DISTINCT FROM new.content -> 'totals';
 	RETURN NULL;
 END;
 $$;--> statement-breakpoint
@@ -96,7 +101,8 @@ UPDATE "documents" d
 	SET "issued_totals" = s.content -> 'totals'
 	FROM "document_snapshots" s
 	WHERE s.tenant_id = d.tenant_id AND s.document_id = d.id
-		AND d.status IN ('issued', 'cancelled');--> statement-breakpoint
+		AND d.status IN ('issued', 'cancelled')
+		AND d.issued_totals IS DISTINCT FROM s.content -> 'totals';--> statement-breakpoint
 SELECT set_config('app.reason', '', true);--> statement-breakpoint
 ALTER TABLE "audit_entries" FORCE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "document_snapshots" FORCE ROW LEVEL SECURITY;--> statement-breakpoint

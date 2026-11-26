@@ -56,6 +56,8 @@ const jsonbColumns: Readonly<Record<string, NamingRow | null>> = {
       ],
     )
   },
+  // The totals an issued document froze (#1035), figures and no file.
+  'documents.issued_totals': null,
   'early_start_requests.wording': null,
   'funding_programs.evidence': null,
   'instance_settings.measures': null,

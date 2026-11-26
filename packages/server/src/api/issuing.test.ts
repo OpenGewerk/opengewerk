@@ -110,21 +110,32 @@ async function issuedTotalsOf(documentId: string) {
 }
 
 /**
- * An issued document as one from before 0159 holds it (#1035): its snapshot,
- * and no totals on the document yet. Past the triggers, which is what a
- * superuser in replica mode is for; nothing else gets there.
+ * A change past the triggers that keep an issued document fixed, which is what
+ * a superuser in replica mode is for; nothing else gets there. The checks of
+ * the tables still hold.
  */
-async function asBeforeTheTotals(documentId: string) {
+async function pastTheTriggers(statement: string, values: readonly unknown[]) {
   const client = await admin.connect()
 
   try {
     await client.query('begin')
     await client.query("set local session_replication_role = 'replica'")
-    await client.query('update documents set issued_totals = null where id = $1', [documentId])
+    await client.query(statement, [...values])
     await client.query('commit')
+  } catch (error) {
+    await client.query('rollback')
+    throw error
   } finally {
     client.release()
   }
+}
+
+/**
+ * An issued document as one from before 0159 holds it (#1035): its snapshot,
+ * and no totals on the document yet.
+ */
+async function asBeforeTheTotals(documentId: string) {
+  await pastTheTriggers('update documents set issued_totals = null where id = $1', [documentId])
 }
 
 const letterhead = {
@@ -485,6 +496,25 @@ describe('the totals an issued document froze', () => {
     )
 
     expect(await issuedTotalsOf(document)).toEqual((await snapshotOf(document))?.totals)
+  })
+
+  it('are what the route of the totals answers, whatever the lines add up to now', async () => {
+    const document = await draft(await customer(invoiceable))
+    await issue(document).expect(201)
+
+    // The lines as a later version might read them: worked out again, they
+    // no longer come to the figures on the PDF.
+    await pastTheTriggers("update document_lines set vat_rate = 'reduced' where document_id = $1", [
+      document,
+    ])
+
+    const answer = await http()
+      .get(`/documents/${document}/totals`)
+      .set('x-test-identity', office())
+      .expect(200)
+
+    expect(answer.body).toEqual((await snapshotOf(document))?.totals)
+    expect((answer.body as { grossCents: number }).grossCents).toBe(119000)
   })
 
   it('are held by no draft', async () => {

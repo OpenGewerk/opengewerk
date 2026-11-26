@@ -73,6 +73,7 @@ interface DocumentRow {
   readonly number: string | null
   readonly predecessorDocumentId: string | null
   readonly documentDate: string
+  readonly issuedTotals?: unknown
 }
 
 interface LineRow {
