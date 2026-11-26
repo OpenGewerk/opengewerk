@@ -7,6 +7,12 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ## [Unreleased]
 
+### Geändert
+
+- Der Renderer für die PDFs läuft auf browserless/chromium 2.64.4 statt 2.64.3, im Betrieb wie in der Prüfung der
+  E-Rechnung (#1125). Warum: Es ist die neueste Fassung. Sie behebt einen Fehler in den Netzfiltern von BrowserQL, die
+  OpenGewerk nicht nutzt, und die CI prüft die PDFs mit demselben Renderer, mit dem eine Instanz sie erzeugt.
+
 ### Behoben
 
 - `docker/start.sh` lehnt in einem Checkout eine eingetragene Fassung ab, zu der ein Dienst kein Abbild hat, und sagt,
