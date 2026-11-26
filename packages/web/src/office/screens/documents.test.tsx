@@ -3584,7 +3584,7 @@ describe('what has changed for a recurring invoice (#1037)', () => {
       },
     }))
 
-    await mount('/belege/d-1', {
+    const { client } = await mount('/belege/d-1', {
       documents: [
         recurring({
           status: 'issued',
@@ -3607,6 +3607,14 @@ describe('what has changed for a recurring invoice (#1037)', () => {
       ),
     ).toBeDefined()
     expect(screen.queryByRole('heading', { level: 1, name: 'Dauerrechnung' })).toBeNull()
+
+    // A later exchange brings it: the way to it is there.
+    server.put('documents', recurring({ id: 'd-3', status: 'draft', number: null }))
+    await client.synchronise()
+
+    const way = await screen.findByRole('link', { name: 'Zum neuen Entwurf' })
+
+    expect(way.getAttribute('href')).toBe('/belege/d-3')
   })
 
   it('offers to lay an issued invoice out again only to whoever issues documents', async () => {

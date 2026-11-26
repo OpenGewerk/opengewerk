@@ -8,9 +8,9 @@ import {
 import { Button } from '@opengewerk/platform-web'
 import { date, euros, percent } from '@opengewerk/platform-web/format'
 import { NoteBox } from '@opengewerk/platform-web/office'
-import { maybeText, useSync, useSyncStatus } from '@opengewerk/platform-web/sync'
+import { maybeText, useRecord, useSync, useSyncStatus } from '@opengewerk/platform-web/sync'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { Check, RotateCcw, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
 
@@ -106,6 +106,10 @@ export function RecurringNotice({ document }: { readonly document: RecordState }
   // still holds it: the screen says so until the exchange brings the new one.
   const [takenAt, setTakenAt] = useState<unknown>(null)
   const waiting = takenAt !== null && takenAt === document['version']
+  // The new draft of a period laid out again, kept for when a later exchange
+  // brings it here: the screen then offers the way to it.
+  const [renewedId, setRenewedId] = useState<string | null>(null)
+  const renewedHere = useRecord('documents', renewedId ?? undefined)
   const asked = status === 'draft' || status === 'issued'
   const check = useQuery({
     // Asked again after every exchange too: the contract or the customer may
@@ -119,13 +123,23 @@ export function RecurringNotice({ document }: { readonly document: RecordState }
   // Without a connection neither button can act, and what the server said
   // may be out of date: nothing to say until it is back. What a step that
   // went through on the server said stays, also then.
+  const alert = trouble ? (
+    <p role="alert" className="text-body font-semibold text-conflict">
+      {trouble}
+      {renewedHere && renewedId ? (
+        <>
+          {' '}
+          <Link to={`/belege/${renewedId}`} className="text-copper-text underline">
+            Zum neuen Entwurf
+          </Link>
+        </>
+      ) : null}
+    </p>
+  ) : null
+
   if (!online || !asked || changes.length === 0) {
-    if (trouble) {
-      return (
-        <p role="alert" className="text-body font-semibold text-conflict">
-          {trouble}
-        </p>
-      )
+    if (alert) {
+      return alert
     }
 
     return waiting ? (
@@ -197,13 +211,14 @@ export function RecurringNotice({ document }: { readonly document: RecordState }
     // Done on the server. The screen moves on to the new draft once the
     // exchange has brought it here; until then it stays and says so. An
     // exchange that fails does not throw, it leaves the draft away.
-    const renewedId = String(renewed['id'])
+    const created = String(renewed['id'])
 
     await client.synchronise().catch(() => undefined)
     setWorking(false)
 
-    if (client.get('documents', renewedId) === null) {
+    if (client.get('documents', created) === null) {
       setRenewing(false)
+      setRenewedId(created)
       setTrouble(
         'Storniert und neu angelegt. Den neuen Entwurf bringt der Abgleich, sobald er wieder ' +
           'durchgeht.',
@@ -212,14 +227,8 @@ export function RecurringNotice({ document }: { readonly document: RecordState }
       return
     }
 
-    await navigate({ to: `/belege/${renewedId}` })
+    await navigate({ to: `/belege/${created}` })
   }
-
-  const alert = trouble ? (
-    <p role="alert" className="text-body font-semibold text-conflict">
-      {trouble}
-    </p>
-  ) : null
 
   if (status === 'draft') {
     return (
