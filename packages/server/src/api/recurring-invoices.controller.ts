@@ -118,10 +118,12 @@ async function draftChanges(
     return []
   }
 
-  const values = await periodValues(tx, contract, {
-    from: document.serviceFrom as IsoDate,
-    until: document.serviceUntil as IsoDate,
-  })
+  const values = await periodValues(
+    tx,
+    contract,
+    { from: document.serviceFrom as IsoDate, until: document.serviceUntil as IsoDate },
+    document.customerId,
+  )
   const changes: RecurringChange[] = []
   const flat = takenFlatLine(document, lines)
 
@@ -387,7 +389,12 @@ export class RecurringInvoicesController {
         contract,
         { from: document.serviceFrom as IsoDate, until: document.serviceUntil as IsoDate },
         todayInGermany(),
-        { lines, flatAt: flatAt === -1 ? null : flatAt },
+        {
+          lines,
+          flatAt: flatAt === -1 ? null : flatAt,
+          customerId: document.customerId,
+          siteId: document.siteId,
+        },
         identity.userId,
       )
 

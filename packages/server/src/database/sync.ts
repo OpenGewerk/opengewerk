@@ -742,6 +742,13 @@ interface Noted {
   readonly drafts: ReadonlyMap<string, readonly string[]>
   /** The drafts its operations touched, worked out once at its end. */
   readonly touched: Set<string>
+  /**
+   * The drafts whose period its operations changed (#1037): a recurring
+   * invoice among them takes the day of the maintenance its period pays for
+   * now, as the route gives it. Any other change leaves that day alone, and
+   * a contract changed since is for the notice to tell.
+   */
+  readonly moved: Set<string>
 }
 
 const noted = new WeakMap<TenantTransaction, Noted>()
@@ -941,6 +948,7 @@ async function lockDocumentsOf(
       calls.map((call) => [call.id, draftsOfJobs.get(canonical(call.recordId)) ?? []]),
     ),
     touched: new Set(),
+    moved: new Set(),
   })
 }
 
@@ -1016,7 +1024,11 @@ async function afterSurchargeWrite(
   values: Record<string, unknown>,
   current: RecordState | null,
 ): Promise<void> {
-  const note = noted.get(tx) ?? { drafts: new Map(), touched: new Set<string>() }
+  const note = noted.get(tx) ?? {
+    drafts: new Map(),
+    touched: new Set<string>(),
+    moved: new Set<string>(),
+  }
 
   noted.set(tx, note)
 
@@ -1053,6 +1065,10 @@ async function afterSurchargeWrite(
     surchargeTermsOfDocument.some((field) => values[field] !== undefined)
   ) {
     note.touched.add(canonical(operation.recordId))
+
+    if (values['serviceFrom'] !== undefined || values['serviceUntil'] !== undefined) {
+      note.moved.add(canonical(operation.recordId))
+    }
   } else if (operation.entity === 'jobs') {
     for (const draft of note.drafts.get(operation.id) ?? []) {
       note.touched.add(draft)
@@ -1066,13 +1082,11 @@ async function afterSurchargeWrite(
  * its first write (`lockDocumentsOf`).
  */
 async function refreshTouchedDrafts(tx: TenantTransaction): Promise<void> {
-  const touched = [...(noted.get(tx)?.touched ?? [])].sort()
-
-  await refreshSurchargeLines(tx, touched)
+  await refreshSurchargeLines(tx, [...(noted.get(tx)?.touched ?? [])].sort())
 
   // A recurring invoice whose period moved takes the day of the maintenance
-  // that period pays for (#1037), as the route gives it.
-  for (const draft of touched) {
+  // that period pays for (#1037), as the route gives it; nothing else does.
+  for (const draft of [...(noted.get(tx)?.moved ?? [])].sort()) {
     await followPeriod(tx, draft)
   }
 }

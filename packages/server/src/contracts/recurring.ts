@@ -74,12 +74,14 @@ export function flatLineOf<Line extends Pick<PeriodLine, 'kind' | 'unit'>>(
  * maintenance where the contract names it, so that one of a time the
  * business claimed section 19 for stays without VAT when it is billed after,
  * and otherwise the end of the period, when a running service is done. Until
- * #1037 it was the first day of the period.
+ * #1037 it was the first day of the period. For the customer the invoice
+ * goes to, which is the contract's unless the office has sent it elsewhere.
  */
 export async function periodValues(
   tx: TenantTransaction,
   contract: ContractRow,
   period: Pick<BilledPeriod, 'from' | 'until'>,
+  customerId: string = contract.customerId,
 ): Promise<{
   readonly taxTreatment: TaxTreatment
   readonly supplyOn: IsoDate | null
@@ -95,11 +97,7 @@ export async function periodValues(
   )
 
   return {
-    taxTreatment: await proposedTreatment(
-      tx,
-      contract.customerId as CustomerId,
-      supplyOn ?? period.until,
-    ),
+    taxTreatment: await proposedTreatment(tx, customerId as CustomerId, supplyOn ?? period.until),
     supplyOn,
     flatCents: contract.flatCents,
   }
@@ -129,11 +127,17 @@ export function flatLine(
   }
 }
 
-/** Lines handed to a period laid out again, and which of them carries the flat price. */
+/**
+ * What a period laid out again keeps of the invoice it replaces (#1037): its
+ * lines, which of them carries the flat price, and whom it went to, where the
+ * office had sent it to another customer or site than the contract's.
+ */
 export interface HandedLines {
   readonly lines: readonly PeriodLine[]
   /** Where in `lines` the line of the flat price stands, or null for none. */
   readonly flatAt: number | null
+  readonly customerId: DocumentRow['customerId']
+  readonly siteId: DocumentRow['siteId']
 }
 
 /**
@@ -154,7 +158,8 @@ export async function layOutPeriod(
   // Who lays it out, for a draft the office makes; nobody for the deadline's.
   createdBy: string | null = null,
 ): Promise<DocumentRow> {
-  const values = await periodValues(tx, contract, period)
+  const customerId = handed?.customerId ?? contract.customerId
+  const values = await periodValues(tx, contract, period, customerId)
   const written = handed?.lines ?? [flatLine(contract, period, values.flatCents)]
   const flatAt = handed ? handed.flatAt : 0
   const ids = written.map(() => newId<'document-line'>())
@@ -163,8 +168,8 @@ export async function layOutPeriod(
     .insert(documents)
     .values({
       tenantId: contract.tenantId,
-      customerId: contract.customerId,
-      siteId: contract.siteId,
+      customerId,
+      siteId: handed ? handed.siteId : contract.siteId,
       kind: 'recurring_invoice',
       documentDate: today,
       subject: `${contract.designation}, ${periodText(period)}`,
