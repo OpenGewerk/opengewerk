@@ -159,9 +159,16 @@ export const chargingRcdTripCurrentRange: LimitCalculator = (_field, { rules, on
  * protocol names, and without one of U0 = 230 V, rounded up to whole kiloohms
  * so that it is never looser. A circuit above 500 V counts per volt of its own
  * nominal voltage, which the chart does not name, and the protocol says so
- * rather than judge it by another.
+ * rather than judge it by another. Version 3 of the protocol (#1120) has no
+ * limit per volt either where the protocol itself names more than 500 V,
+ * whatever the chart says of a circuit up to 500 V; SELV and PELV keep their
+ * 0,25 MΩ. Version 2 counts per volt of any voltage its head names, as it was
+ * shipped, so that a protocol filled in it is judged as it was.
  */
-function recurringInsulation(loads: 'with_loads' | 'without_loads'): LimitCalculator {
+function recurringInsulation(
+  loads: 'with_loads' | 'without_loads',
+  headUpTo500: boolean,
+): LimitCalculator {
   return (_field, { rules, on, item }) => {
     const voltageClass = circuitOf(item)?.voltageClass ?? 'up_to_500'
     const conditions = conditionsOf(item)
@@ -192,6 +199,12 @@ function recurringInsulation(loads: 'with_loads' | 'without_loads'): LimitCalcul
     const voltageMilli =
       conditions?.nominalVoltageMilli ?? (ordinary ? ordinary.value * 1000 : undefined)
 
+    if (headUpTo500 && voltageMilli !== undefined && voltageMilli > 500_000) {
+      return {
+        none: 'Die Nennspannung des Protokolls liegt über 500 V, und dafür ist kein Grenzwert hinterlegt.',
+      }
+    }
+
     if (!perVolt || voltageMilli === undefined) {
       return { none: 'Für diesen Tag ist kein Grenzwert hinterlegt.' }
     }
@@ -207,10 +220,16 @@ function recurringInsulation(loads: 'with_loads' | 'without_loads'): LimitCalcul
 }
 
 /** The insulation of the recurring inspection without the loads connected (#1022). */
-export const recurringInsulationWithoutLoads = recurringInsulation('without_loads')
+export const recurringInsulationWithoutLoads = recurringInsulation('without_loads', false)
 
 /** The insulation of the recurring inspection with the loads connected and switched on (#1022). */
-export const recurringInsulationWithLoads = recurringInsulation('with_loads')
+export const recurringInsulationWithLoads = recurringInsulation('with_loads', false)
+
+/** The same without the loads in version 3, per volt only up to 500 V in the head (#1120). */
+export const recurringInsulationUpTo500WithoutLoads = recurringInsulation('without_loads', true)
+
+/** The same with the loads in version 3, per volt only up to 500 V in the head (#1120). */
+export const recurringInsulationUpTo500WithLoads = recurringInsulation('with_loads', true)
 
 /** The tripping time at IΔn: at most that of an RCD without delay, or the range of a selective one. */
 export const rcdTripTime: LimitCalculator = (_field, { rules, on, item }) => {

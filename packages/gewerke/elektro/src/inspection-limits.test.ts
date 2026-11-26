@@ -286,6 +286,61 @@ describe('version 2 of the recurring inspection (#1022)', () => {
   })
 })
 
+describe('version 3 of the recurring inspection (#1120)', () => {
+  const judged = (
+    version: number,
+    key: string,
+    milli: number,
+    voltageMilli: number,
+    circuit: CircuitFacts | null = ordinary,
+  ) =>
+    limitVerdict(measurementOf(version, key, 'vde-0105-100'), milli, {
+      rules: elektroRules,
+      on,
+      circuit,
+      conditions: { nominalVoltageMilli: voltageMilli },
+    })
+  const keys = ['insulation_without_loads', 'insulation_with_loads']
+
+  it('has no limit of the insulation where the protocol names more than 500 V', () => {
+    for (const key of keys) {
+      // 690 V would ask 0,690 MΩ without and 0,207 MΩ with the loads, and 0,700 MΩ held.
+      expect(judged(3, key, 700, 690_000)).toMatchObject({
+        within: null,
+        limitMilli: null,
+        text: 'Die Nennspannung des Protokolls liegt über 500 V, und dafür ist kein Grenzwert hinterlegt.',
+      })
+      expect(judged(3, key, 100, 690_000, null).within).toBeNull()
+      expect(judged(3, key, 100, 500_001).within).toBeNull()
+    }
+  })
+
+  it('counts per volt up to 500 V in the head, and keeps 0,25 MΩ for SELV and PELV', () => {
+    for (const key of keys) {
+      expect(judged(3, key, 100, 400_000).within).toBe(false)
+      // Exactly 500 V is still counted per volt.
+      expect(judged(3, key, 100, 500_000).within).toBe(false)
+      expect(
+        judged(3, key, 249, 690_000, { ...ordinary, voltageClass: 'selv_pelv' }),
+      ).toMatchObject({ within: false, limitMilli: 250 })
+    }
+    expect(judged(3, 'insulation_without_loads', 229, 230_000)).toMatchObject({
+      within: false,
+      limitMilli: 230,
+    })
+  })
+
+  it('leaves version 2 counting per volt of any voltage its head names, as it was shipped', () => {
+    for (const key of keys) {
+      expect(judged(2, key, 100, 690_000).within).toBe(false)
+    }
+    expect(judged(2, 'insulation_without_loads', 700, 690_000)).toMatchObject({
+      within: true,
+      limitMilli: 690,
+    })
+  })
+})
+
 describe('version 2 of the commissioning protocol of a wallbox (#1075)', () => {
   function chargingMeasurement(version: number, key: string): MeasurementField {
     const definition = elektroRegistry.definitionFor('vde-0100-722', version) as FormDefinition

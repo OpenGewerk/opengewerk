@@ -15,6 +15,7 @@ import vde0100600v3 from '../formulare/vde-0100-600.v3.json' with { type: 'json'
 import vde0100600v4 from '../formulare/vde-0100-600.v4.json' with { type: 'json' }
 import vde0105100v1 from '../formulare/vde-0105-100.v1.json' with { type: 'json' }
 import vde0105100v2 from '../formulare/vde-0105-100.v2.json' with { type: 'json' }
+import vde0105100v3 from '../formulare/vde-0105-100.v3.json' with { type: 'json' }
 import dguvV3v1 from '../formulare/dguv-v3.v1.json' with { type: 'json' }
 import dguvV3v2 from '../formulare/dguv-v3.v2.json' with { type: 'json' }
 import dguvV3v3 from '../formulare/dguv-v3.v3.json' with { type: 'json' }
@@ -73,7 +74,10 @@ export const elektroManifest: TradeManifest = manifest
  * (#301); its version 2 asks for the points of section 3.3 of the DGUV
  * Information 203-072 that version 1 left out and for the environment of each
  * circuit, and judges the insulation after the whole of table 11 and the loop
- * impedance and tripping current as version 4 of the first inspection (#1022). The test of a appliance after DGUV Vorschrift 3 the third, the first
+ * impedance and tripping current as version 4 of the first inspection (#1022);
+ * version 3 gives no limit of the insulation per volt where the head names
+ * more than 500 V, as for a circuit above 500 V, and SELV and PELV keep their
+ * 0,25 MΩ (#1120). The test of a appliance after DGUV Vorschrift 3 the third, the first
  * that hangs on an appliance of the register and not on an installation (#303);
  * its version 2 adds a photo from the files of the appliance (#817), version 3
  * works out the protective conductor current (#816), and version 4 asks for it
@@ -95,6 +99,7 @@ export const elektroForms: readonly FormDefinition[] = [
   vde0100600v4 as FormDefinition,
   vde0105100v1 as FormDefinition,
   vde0105100v2 as FormDefinition,
+  vde0105100v3 as FormDefinition,
   dguvV3v1 as FormDefinition,
   dguvV3v2 as FormDefinition,
   dguvV3v3 as FormDefinition,

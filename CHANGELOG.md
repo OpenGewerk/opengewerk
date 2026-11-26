@@ -9,6 +9,14 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Die Wiederholungsprüfung gibt in Fassung 3 für die Isolation keinen Mindestwert je Volt, wenn der Kopf des
+  Protokolls eine Nennspannung über 500 V nennt (#1120, Paket Elektro 0.17.0). Warum: Bei 690 V im Kopf rechnete Fassung 2 für jeden
+  Stromkreis bis 500 V einen Mindestwert je Volt dieser 690 V, bei 1000 Ω je Volt also 0,690 MΩ, und ließ 0,700 MΩ
+  als in Ordnung gelten. Über 500 V gilt der Mindestwert aber je Volt der Nennspannung des Stromkreises, und die
+  kennt das Stromkreisverzeichnis nicht; einen Stromkreis über 500 V beurteilte das Protokoll schon bisher deshalb
+  nicht. SELV und PELV behalten ihre 0,25 MΩ, bei genau 500 V wird weiter je Volt gerechnet, und die Legende im PDF
+  sagt „bis 500 V“. Ein schon ausgefülltes Protokoll urteilt weiter nach Fassung 2, damit sich das Urteil eines
+  unterschriebenen Protokolls nicht nachträglich ändert.
 - Das Kapitel „Update“ im Handbuch, `docs/betrieb.md` und die Seite „Aktualisierung“ sagen für einen Checkout des Quelltexts, dass `start.sh` nur aus dem Quelltext baut, solange `OPENGEWERK_VERSION` in `docker/.env` leer ist, und was zu tun ist, wenn dort eine Fassung steht; eine Fassung vor 0.9.0 passt in einen Checkout ab 0.9.0 nicht mehr. Das Beispiel im Handbuch nennt keinen alten Tag mehr (#1114). `start.sh` sagt in einem Checkout mit eingetragener Fassung nicht mehr, es hole „die signierten Abbilder“, denn geprüft wird die Signatur nur beim Start aus einem Paket. Warum: Wer eine Fassung eingetragen hatte und der alten Anleitung folgte, blieb nach `git pull` unbemerkt auf ihr stehen, und wer das Beispiel abschrieb, landete auf 0.3.1.
 
 ### Sicherheit

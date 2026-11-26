@@ -72,6 +72,8 @@ export interface TradeFormTerms {
     | 'rcd_trip_time'
     | 'recurring_insulation_without_loads'
     | 'recurring_insulation_with_loads'
+    | 'recurring_insulation_up_to_500v_without_loads'
+    | 'recurring_insulation_up_to_500v_with_loads'
     | 'appliance_insulation'
     | 'appliance_protective_conductor'
     | 'appliance_protective_conductor_current'
