@@ -22,7 +22,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   ihre Fassung aber weiter aus der `.env`, und Gesundheitsprüfung, Anmeldung und „Aktualisierung“ nannten dann eine
   Fassung, die gar nicht lief. `docker/kit-images.sh` schreibt die Fassung jetzt als Wert dorthin; der Ausdruck bleibt
   als Kommentar dahinter, weil `start.sh` und der Updater jeder Fassung die Fassung eines Pakets dort lesen.
-- `docker/test-start.sh` läuft auch, wenn `/bin/sh` eine bash ist, etwa unter macOS oder in Git Bash (#1116). Warum:
+- `docker/test-start.sh` läuft auch, wenn `/bin/sh` eine bash ist, etwa in Git Bash unter Windows (#1116). Warum:
   Der Ersatz für Docker las den Pfad der `compose.yaml` mit `${*#...}`, und wie das auf `$*` wirkt, lässt POSIX offen.
   Auch eine in der Shell exportierte `OPENGEWERK_VERSION` lässt ihn nicht mehr in Fall 1 abbrechen (#1124).
 - Die Wiederholungsprüfung gibt in Fassung 3 für die Isolation keinen Mindestwert je Volt, wenn der Kopf des
