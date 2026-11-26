@@ -466,6 +466,8 @@ describe('the jobs as the boards draw them (#219)', () => {
       number: 'A-2026-0091',
       documentDate: '2026-09-15',
       subject: 'Störung Treppenhauslicht',
+      // What it froze, as the server sends it since #1035: nothing, without lines.
+      issuedTotals: '{"netCents":0,"taxCents":0,"grossCents":0,"byRate":[],"taxNote":null}',
     },
     {
       id: 'd-2',

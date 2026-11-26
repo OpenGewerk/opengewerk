@@ -517,6 +517,21 @@ describe('the totals an issued document froze', () => {
     expect((answer.body as { grossCents: number }).grossCents).toBe(119000)
   })
 
+  it('are not worked out again by the route where a document holds none', async () => {
+    const document = await draft(await customer(invoiceable))
+    await issue(document).expect(201)
+    await asBeforeTheTotals(document)
+
+    const answer = await http()
+      .get(`/documents/${document}/totals`)
+      .set('x-test-identity', office())
+      .expect(422)
+
+    expect((answer.body as { message: string }).message).toBe(
+      'Für diesen Beleg sind keine festgeschriebenen Summen gespeichert.',
+    )
+  })
+
   it('are held by no draft', async () => {
     const document = await draft(await customer(invoiceable))
 

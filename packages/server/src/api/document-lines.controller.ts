@@ -442,6 +442,15 @@ export class DocumentTotalsController {
         return document.issuedTotals
       }
 
+      // Issued without totals of its own would be a snapshot without any,
+      // which no version writes. Worked out again, its figures could be
+      // others than the ones on its PDF, so it is refused instead.
+      if (document.status === 'issued' || document.status === 'cancelled') {
+        throw new UnprocessableEntityException(
+          'Für diesen Beleg sind keine festgeschriebenen Summen gespeichert.',
+        )
+      }
+
       // The kind comes along so that a title stays out of the tax groups.
       const lines = await tx
         .select({
