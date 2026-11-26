@@ -231,7 +231,8 @@ async function recurringDocument(
  * ways to act on it (#1037, Feature-Gliederung 3.5). A draft takes over the
  * values its contract and customer have today; an issued invoice stays as it
  * is, and laying its period out again cancels it and makes a new draft with
- * the same lines and today's values, which the office issues.
+ * all it had and the day of the maintenance of today, which the office
+ * issues.
  */
 @Controller('documents/:documentId')
 export class RecurringInvoicesController {
@@ -340,8 +341,9 @@ export class RecurringInvoicesController {
 
   /**
    * Cancels an issued recurring invoice and lays its period out again as a
-   * draft with the same lines and today's values. One step, so that the
-   * period is never left without an invoice in between.
+   * draft with all it had (`KeptOfInvoice`) and the day of the maintenance of
+   * today. One step, so that the period is never left without an invoice in
+   * between.
    */
   @Post('renewal')
   @RequiresPermission('document.issue')

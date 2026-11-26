@@ -28,18 +28,22 @@ function rateDayText(day: IsoDate | null): string {
   return day === null ? 'vom Ende des Zeitraums' : `vom Tag der Wartung am ${date(day)}`
 }
 
-/** One sentence per value that differs, in the words of the board "Dauerrechnung im Entwurf". */
+/**
+ * One sentence per value that differs, in the words of the board
+ * "Dauerrechnung im Entwurf". Said against what the draft took, which is true
+ * of a draft laid out again too: its contract may have changed before it.
+ */
 function draftSentence(changes: readonly RecurringChange[]): string {
   const fromContract = changes.some(
     (change) => change.field === 'flatCents' || change.field === 'supplyOn',
   )
   const fromTreatment = changes.some((change) => change.field === 'taxTreatment')
-  const subject =
+  const lead =
     fromContract && fromTreatment
-      ? 'haben sich der Vertrag und der Steuerfall geändert'
+      ? 'Vertrag und Kunde nennen heute andere Werte, als dieser Entwurf übernommen hat.'
       : fromContract
-        ? 'hat sich der Vertrag geändert'
-        : 'hat sich der Steuerfall geändert'
+        ? 'Der Vertrag nennt heute andere Werte, als dieser Entwurf übernommen hat.'
+        : 'Für den Kunden gilt heute ein anderer Steuerfall, als dieser Entwurf übernommen hat.'
   const parts = changes.flatMap((change): string[] => {
     switch (change.field) {
       case 'flatCents':
@@ -55,7 +59,7 @@ function draftSentence(changes: readonly RecurringChange[]): string {
     }
   })
 
-  return [`Seit dieser Entwurf angelegt wurde, ${subject}.`, ...parts].join(' ')
+  return [lead, ...parts].join(' ')
 }
 
 /** The sentence of the board "Dauerrechnung festgeschrieben, ihr Steuersatz hat sich geändert". */
@@ -257,9 +261,10 @@ export function RecurringNotice({ document }: { readonly document: RecordState }
           <StepText>
             Stornieren schreibt eine Stornorechnung mit der nächsten Rechnungsnummer, die jeden
             Betrag dieser Rechnung mit umgekehrtem Vorzeichen wiederholt. Danach entsteht die
-            Dauerrechnung für denselben Zeitraum neu als Entwurf, mit denselben Positionen und den
-            Werten von heute. Prüfe sie und schreibe sie fest; der Kunde bekommt sie wie jede
-            Rechnung.
+            Dauerrechnung für denselben Zeitraum neu als Entwurf, mit allem, was an dieser Rechnung
+            steht, und dem Tag der Leistung nach dem Vertrag von heute. Was Vertrag und Kunde heute
+            anders nennen, sagt danach der Hinweis im Entwurf. Prüfe sie und schreibe sie fest; der
+            Kunde bekommt sie wie jede Rechnung.
           </StepText>
         </StepPanel>
       ) : (

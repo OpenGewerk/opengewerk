@@ -1092,7 +1092,7 @@ describe('what has changed for a recurring invoice (#1037)', () => {
     })
   })
 
-  it('cancels an issued invoice and lays its period out again with its lines and the values of today', async () => {
+  it('cancels an issued invoice and lays its period out again with what it billed and the day of today', async () => {
     const made = await contract(addMonths(today, -1))
 
     await run(3)

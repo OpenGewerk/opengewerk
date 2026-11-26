@@ -3462,7 +3462,7 @@ describe('what has changed for a recurring invoice (#1037)', () => {
 
     expect(
       await screen.findByText(
-        /Seit dieser Entwurf angelegt wurde, hat sich der Vertrag geändert\. Pauschale: 42,00\s€ statt 39,00\s€\. Steuersatz: vom Tag der Wartung am 15\.07\.2026 statt vom Ende des Zeitraums\./,
+        /Der Vertrag nennt heute andere Werte, als dieser Entwurf übernommen hat\. Pauschale: 42,00\s€ statt 39,00\s€\. Steuersatz: vom Tag der Wartung am 15\.07\.2026 statt vom Ende des Zeitraums\./,
       ),
     ).toBeDefined()
 

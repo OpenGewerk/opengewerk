@@ -312,7 +312,8 @@ export function refreshRecurring(
 
 /**
  * Cancels an issued recurring invoice and lays its period out again as a
- * draft with the same lines and today's values. The answer names both.
+ * draft with all it had and the day of the maintenance of today. The answer
+ * names both.
  */
 export function renewRecurring(
   id: string,
