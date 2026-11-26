@@ -394,6 +394,15 @@ export class RecurringInvoicesController {
           flatAt: flatAt === -1 ? null : flatAt,
           customerId: document.customerId,
           siteId: document.siteId,
+          taxTreatment: document.taxTreatment,
+          // What it had taken; one laid out before it noted that took what it billed.
+          taken: {
+            flatCents:
+              document.takenOver !== null
+                ? document.takenOver.flatCents
+                : (old[flatAt]?.unitPriceCents ?? null),
+            taxTreatment: document.takenOver?.taxTreatment ?? document.taxTreatment,
+          },
         },
         identity.userId,
       )

@@ -677,6 +677,70 @@ describe('what has changed for a recurring invoice (#1037)', () => {
     }
   })
 
+  it('keeps on a period laid out again the price and tax treatment the office set', async () => {
+    const made = await contract(addMonths(today, -1))
+
+    await run(3)
+
+    const issued = (await invoicesOf(made)).find((invoice) => invoice.status === 'issued')
+    const id = String(issued?.id)
+
+    // What the office set on it before it was issued.
+    await pastTheTriggers(
+      'update document_lines set unit_price_cents = 3500, net_cents = 3500 where document_id = $1',
+      [id],
+    )
+    await pastTheTriggers("update documents set tax_treatment = 'reverse_charge' where id = $1", [
+      id,
+    ])
+
+    const answer = await request(app.getHttpServer())
+      .post(`/documents/${id}/renewal`)
+      .set('x-test-identity', office())
+      .expect(201)
+    const { renewed } = answer.body as { renewed: { id: string; taxTreatment: string } }
+    const { rows } = await admin.query<{ unit_price_cents: number }>(
+      'select unit_price_cents from document_lines where document_id = $1',
+      [renewed.id],
+    )
+
+    expect(renewed.taxTreatment).toBe('reverse_charge')
+    expect(rows).toEqual([{ unit_price_cents: 3_500 }])
+    // The contract did not change: nothing to tell, nothing to undo.
+    expect((await check(renewed.id).expect(200)).body).toEqual({ changes: [] })
+  })
+
+  it('tells a period laid out again what has changed for its customer since', async () => {
+    const made = await contract(addMonths(today, -1))
+
+    await run(3)
+
+    const issued = (await invoicesOf(made)).find((invoice) => invoice.status === 'issued')
+    const construction = (value: boolean) =>
+      admin.query('update customers set is_construction_service_recipient = $2 where id = $1', [
+        customer,
+        value,
+      ])
+
+    try {
+      // The customer turned out to receive construction work after it was issued.
+      await construction(true)
+
+      const answer = await request(app.getHttpServer())
+        .post(`/documents/${String(issued?.id)}/renewal`)
+        .set('x-test-identity', office())
+        .expect(201)
+      const { renewed } = answer.body as { renewed: { id: string; taxTreatment: string } }
+
+      expect(renewed.taxTreatment).toBe('standard')
+      expect((await check(renewed.id).expect(200)).body).toEqual({
+        changes: [{ field: 'taxTreatment', was: 'standard', now: 'reverse_charge' }],
+      })
+    } finally {
+      await construction(false)
+    }
+  })
+
   it('lays a period out again for the customer and site the invoice went to', async () => {
     const made = await contract(addMonths(today, -1))
 

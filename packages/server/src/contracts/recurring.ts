@@ -129,8 +129,12 @@ export function flatLine(
 
 /**
  * What a period laid out again keeps of the invoice it replaces (#1037): its
- * lines, which of them carries the flat price, and whom it went to, where the
- * office had sent it to another customer or site than the contract's.
+ * lines, which of them carries the flat price, whom it went to, how it was
+ * taxed, and what it had taken from its contract and its customer. So what
+ * the office set on it stays the office's, and the notice of the new draft
+ * tells only what has changed there since. Only the day of the maintenance
+ * is worked out anew, from the contract of today: that day is what laying a
+ * period out again is for.
  */
 export interface HandedLines {
   readonly lines: readonly PeriodLine[]
@@ -138,16 +142,19 @@ export interface HandedLines {
   readonly flatAt: number | null
   readonly customerId: DocumentRow['customerId']
   readonly siteId: DocumentRow['siteId']
+  readonly taxTreatment: DocumentRow['taxTreatment']
+  /** What the invoice had taken: the flat price and the tax treatment. */
+  readonly taken: { readonly flatCents: number | null; readonly taxTreatment: string }
 }
 
 /**
  * The draft of the recurring invoice of a period, with the values of its
  * contract and customer of today (`periodValues`), and with the flat price as
- * its one line unless it is handed the lines to take (#1037): laying a
- * period out again after a cancellation keeps what the invoice billed. It
- * notes what it took (`takenOver`): the line of the flat price by its id and
- * the price that line has, so that a later change of the contract is told
- * from one made in the draft.
+ * its one line unless it is handed what to keep (#1037): laying a period out
+ * again after a cancellation keeps what the invoice billed (`HandedLines`).
+ * It notes what it took (`takenOver`): the line of the flat price by its id
+ * and that price, so that a later change of the contract is told from one
+ * made in the draft.
  */
 export async function layOutPeriod(
   tx: TenantTransaction,
@@ -177,11 +184,11 @@ export async function layOutPeriod(
       serviceUntil: period.until,
       supplyOn: values.supplyOn,
       maintenanceContractId: contract.id,
-      taxTreatment: values.taxTreatment,
+      taxTreatment: handed ? handed.taxTreatment : values.taxTreatment,
       takenOver: {
         flatLineId: flat && flatAt !== null ? (ids[flatAt] ?? null) : null,
-        flatCents: flat?.unitPriceCents ?? null,
-        taxTreatment: values.taxTreatment,
+        flatCents: flat ? (handed ? handed.taken.flatCents : flat.unitPriceCents) : null,
+        taxTreatment: handed ? handed.taken.taxTreatment : values.taxTreatment,
       },
       createdBy,
     })
