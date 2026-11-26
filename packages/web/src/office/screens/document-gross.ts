@@ -10,11 +10,12 @@ import { inOrder, totalsOf } from './document-lines.js'
  * The gross amount of every document, by id, for the lists that show one
  * (#219): the belege of a customer, the list of all of them.
  *
- * Worked out from the lines on the device, with the same function and the
- * same rules as the screen of a document, because a document carries no total
- * of its own over the sync. Null for a document without prices, a report, and
- * for one whose date the rules do not cover; a list shows nothing there rather
- * than a figure it cannot stand behind.
+ * Taken the way the screen of a document takes its totals (`totalsOf`): an
+ * issued document gives the ones it froze, which travel with it since #1035,
+ * and a draft is worked out from its lines on the device. Null for a document
+ * without prices, a report, for one whose date the rules do not cover and for
+ * an issued one whose totals this device does not hold yet; a list shows
+ * nothing there rather than a figure it cannot stand behind.
  */
 export function useGrossByDocument(): ReadonlyMap<string, number | null> {
   const documents = useRecords('documents')

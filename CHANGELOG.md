@@ -15,6 +15,16 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Ein ausgestellter oder stornierter Beleg zeigt in Büro und Baustelle die Summen, die er beim Festschreiben
+  festgehalten hat, auch ohne Netz (#1035). Warum: Beide Bildschirme rechneten sie aus den Positionen und dem
+  Regelpaket der laufenden Fassung neu, während PDF, E-Rechnung und Zahlungen den festgeschriebenen Stand lesen.
+  Hätte eine spätere Fassung geändert, was für einen vergangenen Tag gilt, wäre die Anzeige vom verschickten PDF
+  abgewichen. Die Datenbank schreibt die Summen jetzt beim Festschreiben aus diesem Stand an den Beleg, Migration 0159
+  trägt sie für die schon ausgestellten Belege nach, und der Abgleich bringt sie auf die Geräte; neu gerechnet wird nur,
+  was noch nicht festgeschrieben ist. Auch `GET /documents/{id}/totals` antwortet für einen ausgestellten Beleg mit diesen Summen. Hält ein
+  Gerät einen ausgestellten Beleg noch aus der Zeit vor dem Update, steht dort bis zum nächsten Abgleich ein Satz dazu
+  und keine Summe.
+
 - `docker/start.sh` lehnt in einem Checkout eine eingetragene Fassung ab, zu der ein Dienst kein Abbild hat, und sagt,
   was zu ändern ist (#1115). Warum: Mit `OPENGEWERK_VERSION=0.8.0` in der `.env` fehlte das Abbild des Dienstes
   `updater`, den es erst ab 0.9.0 gibt. Docker Compose brach dann mit einem Satz zur Verbindung zu ghcr.io ab, obwohl

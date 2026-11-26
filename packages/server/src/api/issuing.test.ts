@@ -100,6 +100,44 @@ async function snapshotOf(documentId: string) {
   return rows[0]?.content
 }
 
+async function issuedTotalsOf(documentId: string) {
+  const { rows } = await admin.query<{ issued_totals: unknown }>(
+    'select issued_totals from documents where id = $1',
+    [documentId],
+  )
+
+  return rows[0]?.issued_totals
+}
+
+/**
+ * A change past the triggers that keep an issued document fixed, which is what
+ * a superuser in replica mode is for; nothing else gets there. The checks of
+ * the tables still hold.
+ */
+async function pastTheTriggers(statement: string, values: readonly unknown[]) {
+  const client = await admin.connect()
+
+  try {
+    await client.query('begin')
+    await client.query("set local session_replication_role = 'replica'")
+    await client.query(statement, [...values])
+    await client.query('commit')
+  } catch (error) {
+    await client.query('rollback')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+/**
+ * An issued document as one from before 0159 holds it (#1035): its snapshot,
+ * and no totals on the document yet.
+ */
+async function asBeforeTheTotals(documentId: string) {
+  await pastTheTriggers('update documents set issued_totals = null where id = $1', [documentId])
+}
+
 const letterhead = {
   companyName: 'Elektro Nord GmbH',
   street: 'Hafenstraße',
@@ -322,6 +360,16 @@ describe('the snapshot written at issuing', () => {
     expect(snapshot?.totals.grossCents).toBe(119000)
   })
 
+  it('gives the document the totals it froze, and the answer carries them (#1035)', async () => {
+    const document = await draft(await customer(invoiceable))
+    const issued = await issue(document).expect(201)
+    const snapshot = await snapshotOf(document)
+
+    expect(snapshot?.totals.grossCents).toBe(119000)
+    expect(await issuedTotalsOf(document)).toEqual(snapshot?.totals)
+    expect((issued.body as { issuedTotals: unknown }).issuedTotals).toEqual(snapshot?.totals)
+  })
+
   it('does not follow the customer when the customer moves', async () => {
     const customerId = await customer(invoiceable)
     const document = await draft(customerId)
@@ -397,5 +445,102 @@ describe('the snapshot written at issuing', () => {
     expect((await snapshotOf(document))?.lines.map((line) => line.designation)).toEqual([
       'Unterverteilung und Zählerplatz erneuert',
     ])
+  })
+})
+
+/**
+ * The totals on an issued document (#1035) are a copy of the snapshot, kept by
+ * the database for whoever connects there: they are the snapshot's or none,
+ * nothing changes along with them, and a draft holds none.
+ */
+describe('the totals an issued document froze', () => {
+  it('are those of its snapshot and no others', async () => {
+    const document = await draft(await customer(invoiceable))
+    await issue(document).expect(201)
+
+    const changed = await refusedBy(
+      admin.query(
+        `update documents set issued_totals = jsonb_set(issued_totals, '{grossCents}', '1')
+          where id = $1`,
+        [document],
+      ),
+    )
+
+    expect(changed.code).toBe('OG001')
+    expect(await issuedTotalsOf(document)).toEqual((await snapshotOf(document))?.totals)
+  })
+
+  it('come alone, with nothing else of the document changed along with them', async () => {
+    const document = await draft(await customer(invoiceable))
+    await issue(document).expect(201)
+    await asBeforeTheTotals(document)
+
+    const along = await refusedBy(
+      admin.query(
+        `update documents d set issued_totals = s.content -> 'totals', subject = 'Nachträglich'
+           from document_snapshots s
+          where s.document_id = d.id and d.id = $1`,
+        [document],
+      ),
+    )
+
+    expect(along.code).toBe('OG001')
+    expect(await issuedTotalsOf(document)).toBeNull()
+
+    // Alone, as 0159 writes them for the documents issued before.
+    await admin.query(
+      `update documents d set issued_totals = s.content -> 'totals'
+         from document_snapshots s
+        where s.document_id = d.id and d.id = $1`,
+      [document],
+    )
+
+    expect(await issuedTotalsOf(document)).toEqual((await snapshotOf(document))?.totals)
+  })
+
+  it('are what the route of the totals answers, whatever the lines add up to now', async () => {
+    const document = await draft(await customer(invoiceable))
+    await issue(document).expect(201)
+
+    // The lines as a later version might read them: worked out again, they
+    // no longer come to the figures on the PDF.
+    await pastTheTriggers("update document_lines set vat_rate = 'reduced' where document_id = $1", [
+      document,
+    ])
+
+    const answer = await http()
+      .get(`/documents/${document}/totals`)
+      .set('x-test-identity', office())
+      .expect(200)
+
+    expect(answer.body).toEqual((await snapshotOf(document))?.totals)
+    expect((answer.body as { grossCents: number }).grossCents).toBe(119000)
+  })
+
+  it('are not worked out again by the route where a document holds none', async () => {
+    const document = await draft(await customer(invoiceable))
+    await issue(document).expect(201)
+    await asBeforeTheTotals(document)
+
+    const answer = await http()
+      .get(`/documents/${document}/totals`)
+      .set('x-test-identity', office())
+      .expect(422)
+
+    expect((answer.body as { message: string }).message).toBe(
+      'Für diesen Beleg sind keine festgeschriebenen Summen gespeichert.',
+    )
+  })
+
+  it('are held by no draft', async () => {
+    const document = await draft(await customer(invoiceable))
+
+    const held = await refusedBy(
+      admin.query(`update documents set issued_totals = '{"netCents": 0}' where id = $1`, [
+        document,
+      ]),
+    )
+
+    expect(held.code).toBe('23514')
   })
 })

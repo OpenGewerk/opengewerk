@@ -222,6 +222,23 @@ function document(over: Row = {}): Row {
   }
 }
 
+/**
+ * The totals an issued document froze, as the server sends them since #1035:
+ * the text of their JSON, at one rate.
+ */
+function frozenAt(netCents: number, basisPoints = 1900): string {
+  const taxCents = Math.round((netCents * basisPoints) / 10_000)
+  const grossCents = netCents + taxCents
+
+  return JSON.stringify({
+    netCents,
+    taxCents,
+    grossCents,
+    byRate: [{ rate: 'standard', basisPoints, netCents, taxCents, grossCents }],
+    taxNote: null,
+  })
+}
+
 function line(id: string, position: number, over: Row = {}): Row {
   const quantityMilli = Number(over['quantityMilli'] ?? 1000)
   const unitPriceCents = Number(over['unitPriceCents'] ?? 120000)
@@ -1665,6 +1682,7 @@ describe('invoices in the chain', () => {
           number: 'RE-2026-0001',
           serviceFrom: '2026-09-01',
           serviceUntil: '2026-09-15',
+          issuedTotals: frozenAt(120_000),
         }),
       ],
       document_lines: [line('l-1', 1)],
@@ -1831,9 +1849,13 @@ describe('cancelling an invoice', () => {
     status: 'issued',
     number: 'RE-2026-0001',
     documentDate: '2026-09-18',
+    issuedTotals: frozenAt(120_000),
   })
 
-  /** The cancellation the server writes for `d-1`, with its lines turned round. */
+  /**
+   * The cancellation the server writes for `d-1`, with its lines and the
+   * totals it froze turned round.
+   */
   function stornoOf(original: Row, over: Row = {}): { head: Row; lines: Row[] } {
     return {
       head: document({
@@ -1842,6 +1864,7 @@ describe('cancelling an invoice', () => {
         status: 'issued',
         number: 'RE-2026-0002',
         predecessorDocumentId: String(original['id']),
+        issuedTotals: frozenAt(-120_000),
         ...over,
       }),
       lines: [line('l-9', 1, { documentId: 'd-2', quantityMilli: -1000 })],
@@ -1986,13 +2009,19 @@ describe('cancelling an invoice', () => {
     )
   })
 
-  it('counts the tax at the rates of the invoice it takes back, not of its own date', async () => {
-    const old = { ...invoice, status: 'cancelled', documentDate: '2020-09-01' }
-    const { head, lines } = stornoOf(old)
+  it('shows the tax at the rates of the invoice it takes back, as it froze them (#1035)', async () => {
+    const old = {
+      ...invoice,
+      status: 'cancelled',
+      documentDate: '2020-09-01',
+      issuedTotals: frozenAt(120_000, 1600),
+    }
+    const { head, lines } = stornoOf(old, { issuedTotals: frozenAt(-120_000, 1600) })
 
     await mount('/belege/d-2', { documents: [old, head], document_lines: lines })
 
-    // Sixteen percent in the second half of 2020, as the invoice stated it.
+    // Sixteen percent in the second half of 2020, as the invoice stated it and
+    // the cancellation froze it, although its own date lies in 2026.
     expect(await screen.findByText(/Umsatzsteuer 16\s%/)).toBeDefined()
     expect(screen.getByText('Gesamtbetrag').nextElementSibling?.textContent).toMatch(
       /-1\.392,00\s€/,

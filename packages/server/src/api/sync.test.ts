@@ -710,6 +710,27 @@ describe('what a device may not do without a connection', () => {
       fields: ['issuedBy'],
     })
 
+    // Nor give it the totals of an issued one, which come from its snapshot (#1035).
+    const totalled = await push(office(), 'telefon-anna', [
+      change({
+        entity: 'documents',
+        recordId: draft.body.id,
+        patches: [
+          {
+            field: 'issuedTotals',
+            from: null,
+            to: '{"netCents":0,"taxCents":0,"grossCents":0,"byRate":[],"taxNote":null}',
+          },
+        ],
+      }),
+    ])
+
+    expect(totalled.receipts[0]).toMatchObject({
+      outcome: 'conflict',
+      reason: 'set_by_server',
+      fields: ['issuedTotals'],
+    })
+
     const documents = await http().get('/documents').set('x-test-identity', office()).expect(200)
     const after = (documents.body as { id: string; status: string; number: string | null }[]).find(
       (document) => document.id === draft.body.id,
@@ -1623,6 +1644,48 @@ describe('what a device gets back', () => {
     // at the customer, and the answer says to come back.
     expect(first.hasMore).toBe(true)
     expect(second.hasMore).toBe(false)
+  })
+
+  /**
+   * The totals an issued document froze (#1035) reach the device as the text
+   * of their JSON, the form every value of JSON travels in and the one the
+   * screens read; as an object they would be refused there.
+   */
+  it('hands the totals an issued document froze as the text of their JSON', async () => {
+    const draft = await issuableDraft(app, office(), customerId)
+
+    await http().post(`/documents/${draft}/issue`).set('x-test-identity', office()).expect(201)
+
+    const { rows } = await admin.query<{ totals: unknown }>(
+      "select content -> 'totals' as totals from document_snapshots where document_id = $1",
+      [draft],
+    )
+    let cursor = 0
+    let found: Record<string, unknown> | undefined
+
+    for (let page = 0; page < 50 && !found; page += 1) {
+      const answer = (
+        await http()
+          .get(`/sync?since=${String(cursor)}`)
+          .set('x-test-identity', office())
+      ).body as {
+        changes: { entity: string; rows: Record<string, unknown>[] }[]
+        cursor: number
+        hasMore: boolean
+      }
+
+      found = answer.changes
+        .find((change) => change.entity === 'documents')
+        ?.rows.find((row) => row['id'] === draft)
+      cursor = answer.cursor
+
+      if (!answer.hasMore) {
+        break
+      }
+    }
+
+    expect(typeof found?.['issuedTotals']).toBe('string')
+    expect(JSON.parse(String(found?.['issuedTotals']))).toEqual(rows[0]?.totals)
   })
 })
 

@@ -498,6 +498,60 @@ describe('the invoice made on site (#292)', () => {
     expect(screen.queryByText(/Umsatzsteuer 19/)).toBeNull()
   })
 
+  it('shows an issued invoice with the totals it froze, not worked out again (#1035)', async () => {
+    // The same work of December 2020, which the rules of this version tax at
+    // sixteen percent. The invoice went out at nineteen, and that is what it
+    // says on paper, so that is what the site shows.
+    const frozen = {
+      netCents: 10000,
+      taxCents: 1900,
+      grossCents: 11900,
+      byRate: [
+        { rate: 'standard', basisPoints: 1900, netCents: 10000, taxCents: 1900, grossCents: 11900 },
+      ],
+      taxNote: null,
+    }
+
+    await mount('/auftraege/j-1/rechnungen/inv-3', {
+      documents: [
+        report,
+        {
+          id: 'inv-3',
+          customerId: 'c-1',
+          jobId: 'j-1',
+          kind: 'final_invoice',
+          status: 'issued',
+          number: 'RE-2021-0001',
+          documentDate: '2021-01-04',
+          predecessorDocumentId: 'r-1',
+          taxTreatment: 'standard',
+          serviceFrom: '2020-12-14',
+          serviceUntil: '2020-12-15',
+          // As the sync carries a value of JSON: its text.
+          issuedTotals: JSON.stringify(frozen),
+        },
+      ],
+      document_lines: [
+        {
+          id: 'il-3',
+          documentId: 'inv-3',
+          kind: 'item',
+          position: 1,
+          designation: 'Herdanschlussdose getauscht',
+          quantityMilli: 1000,
+          unit: 'piece',
+          unitPriceCents: 10000,
+          netCents: 10000,
+          vatRate: 'standard',
+        },
+      ],
+    })
+
+    expect(await screen.findByText(/Umsatzsteuer 19/)).toBeTruthy()
+    expect(screen.queryByText(/Umsatzsteuer 16/)).toBeNull()
+    expect(screen.getByText('119,00 €')).toBeTruthy()
+  })
+
   it('is not offered under a report nobody signed', async () => {
     await mount('/auftraege/j-1/berichte/r-1', {
       documents: [{ ...report, status: 'draft' }],

@@ -2,6 +2,7 @@ import {
   documentKinds,
   documentStatuses,
   documentTextLimits,
+  type DocumentTotals,
   longestFormValues,
   longestPaymentTermDays,
   taxTreatments,
@@ -21,6 +22,7 @@ import {
   foreignKey,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   type PgTableExtraConfigValue,
@@ -95,6 +97,15 @@ export const documents = pgTable(
      * for every document issued before the column.
      */
     issuedBy: text('issued_by'),
+    /**
+     * The totals the document froze when it was issued (#1035), copied from
+     * its snapshot by the trigger `document_snapshots_give_their_totals`, so
+     * that a device shows them without a connection instead of working them
+     * out again by the rules of a later version. Null for a draft and a signed
+     * report. Reserved in the sync; `document_stays_fixed` lets it be set to
+     * what the snapshot holds and nothing else.
+     */
+    issuedTotals: jsonb('issued_totals').$type<DocumentTotals>(),
     /**
      * The account that made it (#786), written by the server and reserved in
      * the sync: whoever made a draft may delete it. No foreign key, for the
@@ -222,6 +233,11 @@ export const documents = pgTable(
       sql`${table.fieldValues} is null
         or (${table.fieldsVersion} > 0
           and char_length(${table.fieldValues}) <= ${sql.raw(String(longestFormValues))})`,
+    ),
+    // Only what has been issued has frozen totals (#1035).
+    check(
+      'documents_issued_totals',
+      sql`${table.issuedTotals} is null or ${table.status} in ('issued', 'cancelled')`,
     ),
     // `documentTextLimits`, asked by the routes and the sync before.
     check(

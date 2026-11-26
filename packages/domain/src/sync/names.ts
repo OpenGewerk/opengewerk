@@ -87,6 +87,7 @@ export const syncFieldNames: Readonly<Record<string, string>> = {
   emergencyNamedVatBasisPoints: 'Genannter Notdienstzuschlag, Umsatzsteuer',
   maintenanceContractId: 'Wartungsvertrag',
   followsCall: 'Notdienstzuschlag folgt dem Anruf',
+  issuedTotals: 'Festgeschriebene Summen',
   maintenanceDueOn: 'Wartung fällig am',
   yieldForecastKwh: 'Ertragsprognose',
   yieldForecastSource: 'Quelle der Ertragsprognose',

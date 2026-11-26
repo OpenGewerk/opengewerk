@@ -111,6 +111,9 @@ export const syncPolicies: Readonly<Record<string, SyncPolicy>> = {
       // Whether the line of the surcharge follows the call (#1097) is the
       // server's to say, as the mark of the line is.
       'followsCall',
+      // What an issued document froze (#1035), copied by the database from
+      // its snapshot.
+      'issuedTotals',
     ],
     createdAs: { status: 'draft' },
   },

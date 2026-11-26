@@ -73,6 +73,7 @@ interface DocumentRow {
   readonly number: string | null
   readonly predecessorDocumentId: string | null
   readonly documentDate: string
+  readonly issuedTotals?: unknown
 }
 
 interface LineRow {
@@ -298,6 +299,24 @@ describe('cancelling an invoice', () => {
     })
     expect(mirror?.billed.grossCents).toBe(-(original?.billed.grossCents ?? 0))
     expect((original?.billed.taxCents ?? 0) + (mirror?.billed.taxCents ?? 0)).toBe(0)
+  })
+
+  /**
+   * The totals both froze travel on the documents (#1035): the cancellation
+   * gets its own, mirrored, and the invoice keeps its own as it is cancelled.
+   */
+  it('gives the cancellation the totals it froze, and leaves the invoice its own', async () => {
+    const invoice = await issuedInvoice()
+    const answer = await cancel(invoice.id).expect(201)
+    const storno = answer.body as DocumentRow
+
+    const original = await snapshotOf(invoice.id)
+    const mirror = await snapshotOf(storno.id)
+
+    expect(mirror?.totals.grossCents).toBe(-(original?.totals.grossCents ?? 0))
+    expect(storno.issuedTotals).toEqual(mirror?.totals)
+    expect((await documentRow(storno.id)).issuedTotals).toEqual(mirror?.totals)
+    expect((await documentRow(invoice.id)).issuedTotals).toEqual(original?.totals)
   })
 
   /**
