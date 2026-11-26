@@ -12,4 +12,4 @@ Ein Wartungsvertrag hängt an einem Kunden und seinen Anlagen. Er nennt Interval
 
 ## Wenn sich etwas ändert
 
-Ändert sich nach dem Anlegen einer Dauerrechnung der Vertrag oder der Steuerfall des Kunden, zeigt der Entwurf einen Hinweis, und „Neue Werte übernehmen“ setzt die Werte von heute. Bringt ein Update für den Tag der Leistung einer festgeschriebenen Dauerrechnung einen anderen Steuersatz, nennt sie beide Sätze. „Stornieren und neu anlegen“ schreibt dann die Stornorechnung und legt die Rechnung für denselben Zeitraum neu als Entwurf an.
+Ändert sich nach dem Anlegen einer Dauerrechnung der Vertrag oder der Steuerfall des Kunden, zeigt der Entwurf einen Hinweis, und „Neue Werte übernehmen“ setzt die Werte von heute. Was im Entwurf von Hand geändert wurde, bleibt, wie es ist, und der Hinweis nennt es nicht. Bringt ein Update für den Tag der Leistung einer festgeschriebenen Dauerrechnung einen anderen Steuersatz, nennt sie beide Sätze. „Stornieren und neu anlegen“ schreibt dann die Stornorechnung und legt die Rechnung für denselben Zeitraum neu als Entwurf an.

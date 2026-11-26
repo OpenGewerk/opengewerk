@@ -16,7 +16,7 @@ import {
 import { Database, type TenantTransaction } from '@opengewerk/platform-server'
 import { and, asc, eq, isNull } from 'drizzle-orm'
 
-import { type PeriodLine, layOutPeriod, periodValues } from '../contracts/recurring.js'
+import { flatLineOf, type PeriodLine, layOutPeriod, periodValues } from '../contracts/recurring.js'
 import { documentLines, documents, maintenanceContracts } from '../database/schema/index.js'
 import { todayInGermany } from '../today.js'
 import { RequiresPermission } from './authorization.js'
@@ -64,13 +64,6 @@ function isFullPeriod(contract: ContractRow, document: DocumentRow): boolean {
   )
 }
 
-/** The one line that carries the flat price, as the deadline wrote it. */
-function flatLineOf(lines: readonly LineRow[]): LineRow | null {
-  const flat = lines.filter((line) => line.unit === 'flat_rate' && line.kind === 'item')
-
-  return flat.length === 1 ? (flat[0] ?? null) : null
-}
-
 async function linesOf(tx: TenantTransaction, documentId: DocumentId): Promise<LineRow[]> {
   return tx
     .select()
@@ -95,13 +88,21 @@ async function contractOf(
   return contract ?? null
 }
 
-/** The values of a draft that differ from those of its contract and customer today. */
+/**
+ * The values of a draft that its contract and customer have otherwise today,
+ * of those it still holds as it took them (`takenOver`). A value the office
+ * changed in the draft is the office's, and nothing offers to undo it. Of a
+ * draft laid out before the field, what it took is not known, and it hears
+ * only of the day of the maintenance, which the server alone writes.
+ */
 async function draftChanges(
   tx: TenantTransaction,
   document: DocumentRow,
   contract: ContractRow,
   lines: readonly LineRow[],
 ): Promise<RecurringChange[]> {
+  const taken = document.takenOver
+
   if (document.serviceFrom === null || document.serviceUntil === null) {
     return []
   }
@@ -115,6 +116,8 @@ async function draftChanges(
 
   if (
     flat !== null &&
+    taken !== null &&
+    flat.unitPriceCents === taken.flatCents &&
     values.flatCents !== null &&
     flat.unitPriceCents !== values.flatCents &&
     isFullPeriod(contract, document)
@@ -122,16 +125,18 @@ async function draftChanges(
     changes.push({ field: 'flatCents', was: flat.unitPriceCents, now: values.flatCents })
   }
 
-  if (document.taxTreatment !== values.taxTreatment) {
+  if (
+    taken !== null &&
+    document.taxTreatment === taken.taxTreatment &&
+    document.taxTreatment !== values.taxTreatment
+  ) {
     changes.push({ field: 'taxTreatment', was: document.taxTreatment, now: values.taxTreatment })
   }
 
-  if ((document.supplyOn ?? null) !== values.supplyOn) {
-    changes.push({
-      field: 'supplyOn',
-      was: (document.supplyOn as IsoDate | null) ?? null,
-      now: values.supplyOn,
-    })
+  const supplyOn = (document.supplyOn as IsoDate | null) ?? null
+
+  if (supplyOn !== values.supplyOn) {
+    changes.push({ field: 'supplyOn', was: supplyOn, now: values.supplyOn })
   }
 
   return changes
@@ -274,21 +279,28 @@ export class RecurringInvoicesController {
       const lines = await linesOf(tx, document.id)
       const changes = await draftChanges(tx, document, contract, lines)
 
+      if (changes.length === 0) {
+        return { applied: [] }
+      }
+
+      // What it takes now is what it took, for the next change to be told
+      // from one the office makes after. A draft without it hears only of
+      // the day, which is not in it.
+      const set: Partial<typeof documents.$inferInsert> = {}
+      let takenOver = document.takenOver
+
       for (const change of changes) {
         if (change.field === 'taxTreatment') {
-          await tx
-            .update(documents)
-            .set({ taxTreatment: change.now as DocumentRow['taxTreatment'] })
-            .where(eq(documents.id, document.id))
+          set.taxTreatment = change.now as DocumentRow['taxTreatment']
+          takenOver = takenOver && { ...takenOver, taxTreatment: change.now }
         } else if (change.field === 'supplyOn') {
-          await tx
-            .update(documents)
-            .set({ supplyOn: change.now })
-            .where(eq(documents.id, document.id))
+          set.supplyOn = change.now
         } else if (change.field === 'flatCents') {
           const flat = flatLineOf(lines)
 
           if (flat !== null && change.now !== null) {
+            takenOver = takenOver && { ...takenOver, flatCents: change.now }
+
             await tx
               .update(documentLines)
               .set({
@@ -303,6 +315,11 @@ export class RecurringInvoicesController {
           }
         }
       }
+
+      await tx
+        .update(documents)
+        .set({ ...set, takenOver })
+        .where(eq(documents.id, document.id))
 
       return { applied: changes }
     })
@@ -343,6 +360,8 @@ export class RecurringInvoicesController {
         priceBase: line.priceBase,
         vatRate: line.vatRate,
         netCents: line.netCents,
+        articleId: line.articleId,
+        emergencySurcharge: line.emergencySurcharge,
       }))
       // Its own checks: issued and nothing that builds on it or came in on it.
       const cancellation = await cancelInvoice(tx, identity, document.id)

@@ -746,6 +746,24 @@ describe('what a device may not do without a connection', () => {
       fields: ['supplyOn'],
     })
 
+    // Nor what a recurring invoice took from its contract, which the notice
+    // tells a change of the contract from one in the draft by (#1037).
+    const taken = await push(office(), 'telefon-anna', [
+      change({
+        entity: 'documents',
+        recordId: draft.body.id,
+        patches: [
+          { field: 'takenOver', from: null, to: '{"flatCents":0,"taxTreatment":"standard"}' },
+        ],
+      }),
+    ])
+
+    expect(taken.receipts[0]).toMatchObject({
+      outcome: 'conflict',
+      reason: 'set_by_server',
+      fields: ['takenOver'],
+    })
+
     const documents = await http().get('/documents').set('x-test-identity', office()).expect(200)
     const after = (documents.body as { id: string; status: string; number: string | null }[]).find(
       (document) => document.id === draft.body.id,

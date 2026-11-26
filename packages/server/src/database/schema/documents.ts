@@ -5,6 +5,7 @@ import {
   type DocumentTotals,
   longestFormValues,
   longestPaymentTermDays,
+  type RecurringTakenOver,
   taxTreatments,
 } from '@opengewerk/domain'
 import {
@@ -86,6 +87,14 @@ export const documents = pgTable(
      * same. Written by the server alone and reserved in the sync.
      */
     supplyOn: date('supply_on'),
+    /**
+     * What a recurring invoice took from its contract and its customer
+     * (#1037): the flat price of its one flat line and how it is taxed. Its
+     * draft hears of a change only for a value it still holds as it took it.
+     * Written by the server alone and reserved in the sync; null on every
+     * other document and on one laid out before.
+     */
+    takenOver: jsonb('taken_over').$type<RecurringTakenOver>(),
     // The maintenance contract a recurring invoice bills a period of (#295), one
     // per contract and start of a period; written by the deadline engine.
     maintenanceContractId: reference<'maintenance-contract'>('maintenance_contract_id'),
@@ -255,6 +264,10 @@ export const documents = pgTable(
     check(
       'documents_supply_on',
       sql`${table.supplyOn} is null or ${table.kind} in ('recurring_invoice', 'cancellation_invoice')`,
+    ),
+    check(
+      'documents_taken_over',
+      sql`${table.takenOver} is null or ${table.kind} = 'recurring_invoice'`,
     ),
     // `documentTextLimits`, asked by the routes and the sync before.
     check(

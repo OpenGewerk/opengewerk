@@ -89,6 +89,7 @@ export const syncFieldNames: Readonly<Record<string, string>> = {
   followsCall: 'Notdienstzuschlag folgt dem Anruf',
   issuedTotals: 'Festgeschriebene Summen',
   supplyOn: 'Tag der Leistung',
+  takenOver: 'Aus dem Vertrag übernommen',
   maintenanceDueOn: 'Wartung fällig am',
   yieldForecastKwh: 'Ertragsprognose',
   yieldForecastSource: 'Quelle der Ertragsprognose',

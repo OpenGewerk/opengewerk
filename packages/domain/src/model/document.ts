@@ -1,6 +1,7 @@
 import type { IsoDate, StoreId, Synced } from '@opengewerk/platform-domain'
 
 import type { DocumentTotals } from '../rules/invoice.js'
+import type { RecurringTakenOver } from './maintenance-contract.js'
 import type {
   CustomerId,
   DocumentId,
@@ -498,6 +499,13 @@ export interface Document extends Synced {
    * document.
    */
   readonly supplyOn: IsoDate | null
+  /**
+   * What a recurring invoice took from its contract and its customer (#1037),
+   * so that its draft hears of a change there and not of one made in it.
+   * Written by the server alone; null for every other document and for a
+   * recurring invoice laid out before the field.
+   */
+  readonly takenOver: RecurringTakenOver | null
   /**
    * The maintenance contract a recurring invoice bills a period of (#295),
    * written by the server when the deadline makes it; one per contract and

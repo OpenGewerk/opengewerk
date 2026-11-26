@@ -391,6 +391,21 @@ export type RecurringChange =
       readonly now: number
     }
 
+/**
+ * What a recurring invoice took from its contract and its customer when it
+ * was laid out, or when the office last took over the values of today
+ * (#1037). A draft hears of a change only for a value it still holds as it
+ * took it: a value the office changed in the draft is the office's, and the
+ * notice does not offer to undo it. The flat price is that of the one flat
+ * line, null where there was none to compare. The day of the maintenance is
+ * not in it: only the server writes that day, so a draft always holds it as
+ * it took it.
+ */
+export interface RecurringTakenOver {
+  readonly flatCents: number | null
+  readonly taxTreatment: string
+}
+
 /** "01.12.2026 bis 31.12.2026". */
 export function periodText(period: Pick<BilledPeriod, 'from' | 'until'>): string {
   return `${germanDay(period.from)} bis ${germanDay(period.until)}`

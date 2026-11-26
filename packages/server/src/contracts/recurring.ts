@@ -30,7 +30,11 @@ type ContractRow = typeof maintenanceContracts.$inferSelect
 
 type DocumentRow = typeof documents.$inferSelect
 
-/** A line of a recurring invoice as it is written. */
+/**
+ * A line of a recurring invoice as it is written. Laid out again after a
+ * cancellation, a line keeps its article and the mark of the surcharge of an
+ * emergency call (#1037), as a document made from another one does.
+ */
 export interface PeriodLine {
   readonly kind: LineKind
   readonly position: number
@@ -42,6 +46,21 @@ export interface PeriodLine {
   readonly priceBase: PriceBase
   readonly vatRate: VatRate
   readonly netCents: number
+  readonly articleId: (typeof documentLines.$inferSelect)['articleId']
+  readonly emergencySurcharge: boolean
+}
+
+/**
+ * The one line that carries the flat price, as the deadline writes it, or
+ * null where there is none or more than one: then there is no flat price of
+ * the invoice to hold against the contract's.
+ */
+export function flatLineOf<Line extends Pick<PeriodLine, 'kind' | 'unit'>>(
+  lines: readonly Line[],
+): Line | null {
+  const flat = lines.filter((line) => line.unit === 'flat_rate' && line.kind === 'item')
+
+  return flat.length === 1 ? (flat[0] ?? null) : null
 }
 
 /**
@@ -93,6 +112,8 @@ export function flatLine(
     priceBase: 1,
     vatRate: 'standard',
     netCents: flatCents ?? 0,
+    articleId: null,
+    emergencySurcharge: false,
   }
 }
 
@@ -100,7 +121,9 @@ export function flatLine(
  * The draft of the recurring invoice of a period, with the values of its
  * contract and customer of today (`periodValues`), and with the flat price as
  * its one line unless it is handed the lines to take (#1037): laying a
- * period out again after a cancellation keeps what the invoice billed.
+ * period out again after a cancellation keeps what the invoice billed. It
+ * notes what it took (`takenOver`), the price as its flat line has it, so
+ * that a later change of the contract is told from one made in the draft.
  */
 export async function layOutPeriod(
   tx: TenantTransaction,
@@ -112,6 +135,7 @@ export async function layOutPeriod(
   createdBy: string | null = null,
 ): Promise<DocumentRow> {
   const values = await periodValues(tx, contract, period)
+  const written = lines ?? [flatLine(contract, period, values.flatCents)]
   const [created] = await tx
     .insert(documents)
     .values({
@@ -126,6 +150,10 @@ export async function layOutPeriod(
       supplyOn: values.supplyOn,
       maintenanceContractId: contract.id,
       taxTreatment: values.taxTreatment,
+      takenOver: {
+        flatCents: flatLineOf(written)?.unitPriceCents ?? null,
+        taxTreatment: values.taxTreatment,
+      },
       createdBy,
     })
     .returning()
@@ -133,8 +161,6 @@ export async function layOutPeriod(
   if (!created) {
     throw new Error('The recurring invoice was written and is not readable afterwards.')
   }
-
-  const written = lines ?? [flatLine(contract, period, values.flatCents)]
 
   if (written.length > 0) {
     await tx

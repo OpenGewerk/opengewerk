@@ -503,6 +503,8 @@ function hangsOnClaim(document: RecordState): boolean {
     documentDate: text(document, 'documentDate') as IsoDate,
     serviceFrom: maybeText(document, 'serviceFrom') as IsoDate | null,
     serviceUntil: maybeText(document, 'serviceUntil') as IsoDate | null,
+    // The day of the maintenance of a recurring invoice (#1037), as the server asks.
+    supplyOn: maybeText(document, 'supplyOn') as IsoDate | null,
   })
 
   return claimableTransitions(shippedRules).some(

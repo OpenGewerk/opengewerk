@@ -2116,6 +2116,47 @@ describe('the e-invoice', () => {
     expect(link.getAttribute('href')).toBe('/einstellungen/steuern')
   })
 
+  it('points there for a recurring invoice whose maintenance was in 2027, its period not (#1037)', async () => {
+    serverSays('GET', '/documents/d-1/recurring-check', () => ({
+      status: 200,
+      body: { changes: [] },
+    }))
+    serverSays('GET', '/documents/d-1/e-invoice', () => ({
+      status: 200,
+      body: {
+        ...toBusiness,
+        duty: {
+          required: true,
+          reason:
+            'Pflicht: die Ausnahme für einen Gesamtumsatz im Vorjahr bis 800.000 Euro hat der ' +
+            'Betrieb nicht in Anspruch genommen (§ 27 Abs. 38 Satz 1 Nr. 2 UStG).',
+        },
+        issued: false,
+        xrechnung: { missing: [] },
+        zugferd: { missing: [] },
+      },
+    }))
+
+    // January 2028 pays for the maintenance of 15 December 2027, and that
+    // day is the one the server asks the transition about.
+    await mount('/belege/d-1', {
+      documents: [
+        document({
+          kind: 'recurring_invoice',
+          documentDate: '2028-01-01',
+          serviceFrom: '2028-01-01',
+          serviceUntil: '2028-01-31',
+          supplyOn: '2027-12-15',
+        }),
+      ],
+      document_lines: [line('l-1', 1)],
+    })
+
+    const card = within(await screen.findByRole('region', { name: 'E-Rechnung' }))
+
+    expect(await card.findByRole('link', { name: /unter „Steuern“/ })).toBeDefined()
+  })
+
   it('offers both forms once the invoice is issued and lacks nothing', async () => {
     serverSays('GET', '/documents/d-1/e-invoice', () => ({
       status: 200,

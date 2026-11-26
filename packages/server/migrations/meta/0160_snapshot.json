@@ -1,5 +1,5 @@
 {
-  "id": "429e494d-6ba2-4a64-9881-09e04bbb24ab",
+  "id": "1317c11d-36d6-46a7-9f53-17a357163e13",
   "prevId": "4b15c8d8-8087-4fa6-a6f7-9dc97f380b32",
   "version": "7",
   "dialect": "postgresql",
@@ -8571,6 +8571,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "taken_over": {
+          "name": "taken_over",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "maintenance_contract_id": {
           "name": "maintenance_contract_id",
           "type": "uuid",
@@ -9001,6 +9007,10 @@
         "documents_supply_on": {
           "name": "documents_supply_on",
           "value": "\"documents\".\"supply_on\" is null or \"documents\".\"kind\" in ('recurring_invoice', 'cancellation_invoice')"
+        },
+        "documents_taken_over": {
+          "name": "documents_taken_over",
+          "value": "\"documents\".\"taken_over\" is null or \"documents\".\"kind\" = 'recurring_invoice'"
         },
         "documents_texts_fit": {
           "name": "documents_texts_fit",

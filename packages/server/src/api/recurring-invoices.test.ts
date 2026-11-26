@@ -434,6 +434,35 @@ describe('the day of the rate of a recurring invoice (#1037)', () => {
     expect(JSON.stringify(july?.content)).toContain('"basisPoints":1900')
   })
 
+  it('stays the day of the invoice on its cancellation, whatever the contract says since', async () => {
+    const made = await contract('2020-06-01', { termMonths: 2, firstVisitOn: '2020-06-15' })
+
+    await run(3)
+
+    const july = (await invoicesOf(made)).find((invoice) => invoice.status === 'issued')
+
+    await request(app.getHttpServer())
+      .patch(`/maintenance-contracts/${made}`)
+      .set('x-test-identity', office())
+      .send({ rateDay: 'period_end' })
+      .expect(200)
+
+    const storno = (
+      await request(app.getHttpServer())
+        .post(`/documents/${String(july?.id)}/cancellation`)
+        .set('x-test-identity', office())
+        .expect(201)
+    ).body as { id: string }
+    const { rows } = await admin.query<{
+      content: { supplyOn: string; totals: { taxCents: number } }
+    }>('select content from document_snapshots where document_id = $1', [storno.id])
+
+    expect(await supplyOf(storno.id)).toBe('2020-06-15')
+    expect(rows[0]?.content.supplyOn).toBe('2020-06-15')
+    // The 19 per cent of the invoice turned round, not the 16 of the end of July.
+    expect(rows[0]?.content.totals.taxCents).toBe(-741)
+  })
+
   it('is the end of the period for a contract that wants it, which names no day', async () => {
     const made = await contract('2020-06-01', {
       termMonths: 2,
@@ -492,6 +521,73 @@ describe('what has changed for a recurring invoice (#1037)', () => {
     )
 
     expect(rows).toEqual([{ unit_price_cents: 4_200, net_cents: 4_200 }])
+
+    // What it took over now is what the next change is told against.
+    await request(app.getHttpServer())
+      .patch(`/maintenance-contracts/${made}`)
+      .set('x-test-identity', office())
+      .send({ flatCents: 4_500 })
+      .expect(200)
+
+    expect((await check(id).expect(200)).body).toEqual({
+      changes: [{ field: 'flatCents', was: 4_200, now: 4_500 }],
+    })
+  })
+
+  it('does not tell a draft of a value the office changed in it, nor offer to undo it', async () => {
+    const made = await contract(addMonths(today, -1), { issueByItself: false })
+
+    await run(2)
+
+    const [first] = await invoicesOf(made)
+    const id = String(first?.id)
+
+    // The office prices the month itself and taxes it otherwise.
+    await admin.query(
+      'update document_lines set unit_price_cents = 3500, net_cents = 3500 where document_id = $1',
+      [id],
+    )
+    await admin.query("update documents set tax_treatment = 'reverse_charge' where id = $1", [id])
+
+    expect((await check(id).expect(200)).body).toEqual({ changes: [] })
+
+    // Nor once the contract changes its price: the office holds this one.
+    await request(app.getHttpServer())
+      .patch(`/maintenance-contracts/${made}`)
+      .set('x-test-identity', office())
+      .send({ flatCents: 4_200 })
+      .expect(200)
+
+    expect((await check(id).expect(200)).body).toEqual({ changes: [] })
+  })
+
+  it('tells a draft laid out before the notice only of the day of its maintenance', async () => {
+    const made = await contract(addMonths(today, -1), { issueByItself: false })
+
+    await run(2)
+
+    const [first] = await invoicesOf(made)
+    const id = String(first?.id)
+
+    // As a draft from before 0160: what it took is not known.
+    await admin.query('update documents set taken_over = null where id = $1', [id])
+    await request(app.getHttpServer())
+      .patch(`/maintenance-contracts/${made}`)
+      .set('x-test-identity', office())
+      .send({ flatCents: 4_200, rateDay: 'period_end' })
+      .expect(200)
+
+    expect((await check(id).expect(200)).body).toEqual({
+      changes: [{ field: 'supplyOn', was: expect.any(String) as string, now: null }],
+    })
+
+    await request(app.getHttpServer())
+      .post(`/documents/${id}/recurring-refresh`)
+      .set('x-test-identity', office())
+      .expect(201)
+
+    expect((await check(id).expect(200)).body).toEqual({ changes: [] })
+    expect(await supplyOf(id)).toBeNull()
   })
 
   it('leaves the price of a period cut short by the end of the contract to the office', async () => {
@@ -552,6 +648,18 @@ describe('what has changed for a recurring invoice (#1037)', () => {
 
     const issued = (await invoicesOf(made)).find((invoice) => invoice.status === 'issued')
     const id = String(issued?.id)
+    const { rows: articles } = await admin.query<{ id: string }>(
+      "insert into articles (tenant_id, number, designation, unit) values ($1, '1042', 'Prüfprotokoll', 'flat_rate') returning id",
+      [north],
+    )
+    const article = String(articles[0]?.id)
+
+    // Its line as one taken from an article and marked as the surcharge of
+    // an emergency call, which the new draft keeps as it is.
+    await pastTheTriggers(
+      'update document_lines set article_id = $2, emergency_surcharge = true where document_id = $1',
+      [id, article],
+    )
 
     // The contract changed meanwhile; the new draft keeps what was billed.
     await request(app.getHttpServer())
@@ -589,12 +697,22 @@ describe('what has changed for a recurring invoice (#1037)', () => {
     expect((await invoicesOf(made)).find((invoice) => invoice.id === id)?.status).toBe('cancelled')
     expect(await supplyOf(renewed.id)).toBeNull()
 
-    const { rows } = await admin.query<{ unit_price_cents: number }>(
-      'select unit_price_cents from document_lines where document_id = $1',
+    const { rows } = await admin.query<{
+      unit_price_cents: number
+      article_id: string | null
+      emergency_surcharge: boolean
+    }>(
+      'select unit_price_cents, article_id, emergency_surcharge from document_lines where document_id = $1',
       [renewed.id],
     )
 
-    expect(rows).toEqual([{ unit_price_cents: 3_900 }])
+    expect(rows).toEqual([
+      { unit_price_cents: 3_900, article_id: article, emergency_surcharge: true },
+    ])
+    // And hears of the price the contract has today.
+    expect((await check(renewed.id).expect(200)).body).toEqual({
+      changes: [{ field: 'flatCents', was: 3_900, now: 4_200 }],
+    })
 
     // Once, as a cancellation is.
     await request(app.getHttpServer())

@@ -106,7 +106,9 @@ export function RecurringNotice({ document }: { readonly document: RecordState }
   })
   const changes = check.data?.changes ?? []
 
-  if (!asked || changes.length === 0) {
+  // Without a connection neither button can act, and what the server said
+  // may be out of date: nothing to say until it is back.
+  if (!online || !asked || changes.length === 0) {
     return null
   }
 
@@ -116,7 +118,19 @@ export function RecurringNotice({ document }: { readonly document: RecordState }
 
     try {
       await refreshRecurring(documentId)
-      await client.synchronise()
+    } catch (error) {
+      setTrouble(
+        reasonOf(error, 'Keine Verbindung. Neue Werte übernimmt der Entwurf mit Verbindung.'),
+      )
+      setWorking(false)
+
+      return
+    }
+
+    try {
+      // Taken over on the server; the exchange brings it here, and one that
+      // fails now brings it with the next.
+      await client.synchronise().catch(() => undefined)
       await queries.invalidateQueries({ queryKey: ['recurring-check', documentId] })
     } catch (error) {
       setTrouble(
@@ -131,11 +145,10 @@ export function RecurringNotice({ document }: { readonly document: RecordState }
     setWorking(true)
     setTrouble(null)
 
-    try {
-      const { renewed } = await renewRecurring(documentId)
+    let renewed: RecordState
 
-      await client.synchronise()
-      await navigate({ to: `/belege/${String(renewed['id'])}` })
+    try {
+      renewed = (await renewRecurring(documentId)).renewed
     } catch (error) {
       setTrouble(
         reasonOf(
@@ -144,9 +157,16 @@ export function RecurringNotice({ document }: { readonly document: RecordState }
             'Rechnungsnummer vergibt.',
         ),
       )
-    } finally {
       setWorking(false)
+
+      return
     }
+
+    // Done on the server: the new draft is there whether or not the exchange
+    // that brings it here goes through now, and the screen moves on to it.
+    await client.synchronise().catch(() => undefined)
+    setWorking(false)
+    await navigate({ to: `/belege/${String(renewed['id'])}` })
   }
 
   const alert = trouble ? (

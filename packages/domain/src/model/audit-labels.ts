@@ -195,6 +195,7 @@ export const auditTables: Readonly<Record<string, AuditTableWords>> = {
       issued_at: 'Festgeschrieben am',
       issued_totals: 'Festgeschriebene Summen',
       supply_on: 'Tag der Leistung',
+      taken_over: 'Aus dem Vertrag übernommen',
       issued_by: 'Festgeschrieben von',
       created_by: 'Angelegt von',
       store_id: 'Material aus',

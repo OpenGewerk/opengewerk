@@ -6,12 +6,17 @@
 -- default after, so no row is updated.
 --
 -- A recurring invoice names that day as `supply_on`, and so does its
--- cancellation. One invoice per contract and period, but a cancelled one no
--- longer counts: the office lays the period out again after cancelling it.
+-- cancellation. It notes what it took from its contract and its customer as
+-- `taken_over`, so that its draft hears of a change there and not of one the
+-- office made in it; one from before has none and hears of nothing. One
+-- invoice per contract and period, but a cancelled one no longer counts: the
+-- office lays the period out again after cancelling it.
 ALTER TABLE "documents" DROP CONSTRAINT "documents_maintenance_period_key";--> statement-breakpoint
 ALTER TABLE "documents" ADD COLUMN "supply_on" date;--> statement-breakpoint
+ALTER TABLE "documents" ADD COLUMN "taken_over" jsonb;--> statement-breakpoint
 ALTER TABLE "maintenance_contracts" ADD COLUMN "rate_day" text DEFAULT 'period_end' NOT NULL;--> statement-breakpoint
 ALTER TABLE "maintenance_contracts" ALTER COLUMN "rate_day" SET DEFAULT 'visit';--> statement-breakpoint
 CREATE UNIQUE INDEX "documents_maintenance_period_key" ON "documents" USING btree ("maintenance_contract_id","service_from") WHERE "documents"."status" <> 'cancelled';--> statement-breakpoint
 ALTER TABLE "documents" ADD CONSTRAINT "documents_supply_on" CHECK ("documents"."supply_on" is null or "documents"."kind" in ('recurring_invoice', 'cancellation_invoice'));--> statement-breakpoint
+ALTER TABLE "documents" ADD CONSTRAINT "documents_taken_over" CHECK ("documents"."taken_over" is null or "documents"."kind" = 'recurring_invoice');--> statement-breakpoint
 ALTER TABLE "maintenance_contracts" ADD CONSTRAINT "maintenance_contracts_rate_day" CHECK ("maintenance_contracts"."rate_day" in ('visit', 'period_end'));
