@@ -64,6 +64,17 @@ function isFullPeriod(contract: ContractRow, document: DocumentRow): boolean {
   )
 }
 
+/**
+ * The line that carries the flat price of the contract, as the invoice named
+ * it when it took it (#1037), or null where it named none or the office has
+ * taken the line away. A flat line the office adds is never it.
+ */
+function takenFlatLine(document: DocumentRow, lines: readonly LineRow[]): LineRow | null {
+  const id = document.takenOver?.flatLineId ?? null
+
+  return id === null ? null : (lines.find((line) => line.id === id) ?? null)
+}
+
 async function linesOf(tx: TenantTransaction, documentId: DocumentId): Promise<LineRow[]> {
   return tx
     .select()
@@ -112,7 +123,7 @@ async function draftChanges(
     until: document.serviceUntil as IsoDate,
   })
   const changes: RecurringChange[] = []
-  const flat = flatLineOf(lines)
+  const flat = takenFlatLine(document, lines)
 
   if (
     flat !== null &&
@@ -296,7 +307,7 @@ export class RecurringInvoicesController {
         } else if (change.field === 'supplyOn') {
           set.supplyOn = change.now
         } else if (change.field === 'flatCents') {
-          const flat = flatLineOf(lines)
+          const flat = takenFlatLine(document, lines)
 
           if (flat !== null && change.now !== null) {
             takenOver = takenOver && { ...takenOver, flatCents: change.now }
@@ -349,7 +360,13 @@ export class RecurringInvoicesController {
         throw new ConflictException('Diese Dauerrechnung gehört zu keinem Wartungsvertrag mehr.')
       }
 
-      const lines: PeriodLine[] = (await linesOf(tx, document.id)).map((line) => ({
+      const old = await linesOf(tx, document.id)
+      // The line of the flat price as the invoice named it; one laid out
+      // before it named any has its one flat line for it.
+      const flatId =
+        document.takenOver !== null ? document.takenOver.flatLineId : (flatLineOf(old)?.id ?? null)
+      const flatAt = old.findIndex((line) => line.id === flatId)
+      const lines: PeriodLine[] = old.map((line) => ({
         kind: line.kind,
         position: line.position,
         designation: line.designation,
@@ -370,7 +387,7 @@ export class RecurringInvoicesController {
         contract,
         { from: document.serviceFrom as IsoDate, until: document.serviceUntil as IsoDate },
         todayInGermany(),
-        lines,
+        { lines, flatAt: flatAt === -1 ? null : flatAt },
         identity.userId,
       )
 

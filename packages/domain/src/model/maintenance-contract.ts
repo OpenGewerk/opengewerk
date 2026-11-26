@@ -396,12 +396,14 @@ export type RecurringChange =
  * was laid out, or when the office last took over the values of today
  * (#1037). A draft hears of a change only for a value it still holds as it
  * took it: a value the office changed in the draft is the office's, and the
- * notice does not offer to undo it. The flat price is that of the one flat
- * line, null where there was none to compare. The day of the maintenance is
- * not in it: only the server writes that day, so a draft always holds it as
- * it took it.
+ * notice does not offer to undo it. The flat price is that of the line that
+ * carries the flat price of the contract, named by its id, so that a flat
+ * line the office adds is never taken for it; both are null where there was
+ * no such line. The day of the maintenance is not in it: only the server
+ * writes that day, so a draft always holds it as it took it.
  */
 export interface RecurringTakenOver {
+  readonly flatLineId: string | null
   readonly flatCents: number | null
   readonly taxTreatment: string
 }

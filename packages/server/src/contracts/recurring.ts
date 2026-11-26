@@ -18,7 +18,7 @@ import {
   type TaxTreatment,
   type VatRate,
 } from '@opengewerk/domain'
-import type { TenantTransaction } from '@opengewerk/platform-server'
+import { newId, type TenantTransaction } from '@opengewerk/platform-server'
 import { and, eq, isNull } from 'drizzle-orm'
 
 import { contentForIssuing, issueWith } from '../api/documents.controller.js'
@@ -52,8 +52,8 @@ export interface PeriodLine {
 
 /**
  * The one line that carries the flat price, as the deadline writes it, or
- * null where there is none or more than one: then there is no flat price of
- * the invoice to hold against the contract's.
+ * null where there is none or more than one. Asked of an invoice laid out
+ * before it named that line (`takenOver`), when its period is laid out again.
  */
 export function flatLineOf<Line extends Pick<PeriodLine, 'kind' | 'unit'>>(
   lines: readonly Line[],
@@ -69,6 +69,11 @@ export function flatLineOf<Line extends Pick<PeriodLine, 'kind' | 'unit'>>(
  * pays for where the contract wants the rate of that day, and the flat price.
  * A draft that holds other values than these was made before a change; the
  * office hears of it and takes them over.
+ *
+ * Taxed as of the day of the supply, as its rate is: the maintenance where
+ * the contract names it, so that one of a year the business claimed section
+ * 19 for stays without VAT when it is billed in the next, and otherwise the
+ * first day of the period, as before.
  */
 export async function periodValues(
   tx: TenantTransaction,
@@ -79,16 +84,22 @@ export async function periodValues(
   readonly supplyOn: IsoDate | null
   readonly flatCents: number | null
 }> {
+  const supplyOn = supplyDayOf(
+    {
+      rateDay: contract.rateDay as ContractRateDay,
+      firstVisitOn: contract.firstVisitOn as IsoDate,
+      intervalMonths: contract.intervalMonths,
+    },
+    period,
+  )
+
   return {
-    taxTreatment: await proposedTreatment(tx, contract.customerId as CustomerId, period.from),
-    supplyOn: supplyDayOf(
-      {
-        rateDay: contract.rateDay as ContractRateDay,
-        firstVisitOn: contract.firstVisitOn as IsoDate,
-        intervalMonths: contract.intervalMonths,
-      },
-      period,
+    taxTreatment: await proposedTreatment(
+      tx,
+      contract.customerId as CustomerId,
+      supplyOn ?? period.from,
     ),
+    supplyOn,
     flatCents: contract.flatCents,
   }
 }
@@ -117,25 +128,36 @@ export function flatLine(
   }
 }
 
+/** Lines handed to a period laid out again, and which of them carries the flat price. */
+export interface HandedLines {
+  readonly lines: readonly PeriodLine[]
+  /** Where in `lines` the line of the flat price stands, or null for none. */
+  readonly flatAt: number | null
+}
+
 /**
  * The draft of the recurring invoice of a period, with the values of its
  * contract and customer of today (`periodValues`), and with the flat price as
  * its one line unless it is handed the lines to take (#1037): laying a
  * period out again after a cancellation keeps what the invoice billed. It
- * notes what it took (`takenOver`), the price as its flat line has it, so
- * that a later change of the contract is told from one made in the draft.
+ * notes what it took (`takenOver`): the line of the flat price by its id and
+ * the price that line has, so that a later change of the contract is told
+ * from one made in the draft.
  */
 export async function layOutPeriod(
   tx: TenantTransaction,
   contract: ContractRow,
   period: Pick<BilledPeriod, 'from' | 'until'>,
   today: IsoDate,
-  lines?: readonly PeriodLine[],
+  handed?: HandedLines,
   // Who lays it out, for a draft the office makes; nobody for the deadline's.
   createdBy: string | null = null,
 ): Promise<DocumentRow> {
   const values = await periodValues(tx, contract, period)
-  const written = lines ?? [flatLine(contract, period, values.flatCents)]
+  const written = handed?.lines ?? [flatLine(contract, period, values.flatCents)]
+  const flatAt = handed ? handed.flatAt : 0
+  const ids = written.map(() => newId<'document-line'>())
+  const flat = flatAt === null ? undefined : written[flatAt]
   const [created] = await tx
     .insert(documents)
     .values({
@@ -151,7 +173,8 @@ export async function layOutPeriod(
       maintenanceContractId: contract.id,
       taxTreatment: values.taxTreatment,
       takenOver: {
-        flatCents: flatLineOf(written)?.unitPriceCents ?? null,
+        flatLineId: flat && flatAt !== null ? (ids[flatAt] ?? null) : null,
+        flatCents: flat?.unitPriceCents ?? null,
         taxTreatment: values.taxTreatment,
       },
       createdBy,
@@ -163,11 +186,14 @@ export async function layOutPeriod(
   }
 
   if (written.length > 0) {
-    await tx
-      .insert(documentLines)
-      .values(
-        written.map((line) => ({ ...line, tenantId: contract.tenantId, documentId: created.id })),
-      )
+    await tx.insert(documentLines).values(
+      written.map((line, index) => ({
+        ...line,
+        id: ids[index],
+        tenantId: contract.tenantId,
+        documentId: created.id,
+      })),
+    )
   }
 
   return created

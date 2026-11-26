@@ -36,6 +36,7 @@ import {
   Panel,
   SelectField,
   Status,
+  statusIcons,
   type StatusTone,
   TablePanel,
   TextArea,
@@ -526,7 +527,10 @@ function ContractView({ contract }: { readonly contract: MaintenanceContractEntr
                       from: text(document, 'serviceFrom') as IsoDate,
                       until: text(document, 'serviceUntil') as IsoDate,
                     }),
-                    sub: maybeText(document, 'number') ?? 'Entwurf',
+                    sub:
+                      documentStatusOf(document) === 'cancelled'
+                        ? `${maybeText(document, 'number') ?? 'Dauerrechnung'}, storniert`
+                        : (maybeText(document, 'number') ?? 'Entwurf'),
                   })),
                 ]}
                 note={
@@ -566,6 +570,12 @@ function ContractView({ contract }: { readonly contract: MaintenanceContractEntr
                       <Cell>
                         {documentStatusOf(document) === 'draft' ? (
                           <Status tone="draft">Entwurf</Status>
+                        ) : documentStatusOf(document) === 'cancelled' ? (
+                          // Laid out again after it (#1037), the period then
+                          // has a second invoice beside it.
+                          <Status tone="neutral" icon={statusIcons.ban}>
+                            Storniert
+                          </Status>
                         ) : (
                           <Status tone="locked">Festgeschrieben</Status>
                         )}
