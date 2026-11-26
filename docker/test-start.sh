@@ -339,7 +339,12 @@ pulled '0\.6\.0'
 first_pull=$(grep -n 'pull --policy missing' "$CALLS" | head -n 1 | cut -d: -f1)
 last_check=$(grep -n '^cosign|' "$CALLS" | tail -n 1 | cut -d: -f1)
 test "$last_check" -lt "$first_pull"
-printf '%s' "$out" | grep -q 'gilt nur für einen Checkout'
+printf '%s' "$out" | grep -q 'In der .env steht OPENGEWERK_VERSION=0.2.1. Dieses Paket ist die Fassung 0.6.0'
+out=$(env OPENGEWERK_VERSION=0.2.5 OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null 2>&1)
+printf '%s' "$out" | grep -q 'In der Umgebung steht OPENGEWERK_VERSION=0.2.5. Dieses Paket ist die Fassung 0.6.0' || {
+  printf 'FEHLER: start.sh nannte eine Fassung aus der Umgebung nicht als solche:\n%s\n' "$out"
+  exit 1
+}
 printf '%s' "$out" | grep -q 'Die Signaturen der Abbilder sind geprüft.'
 check 'Paket mit Digest: seine Fassung, jede Signatur geprüft, bevor etwas geholt wird'
 
@@ -634,7 +639,13 @@ printf '%s' "$out" | grep -qF 'In der Umgebung steht OPENGEWERK_VERSION=0.8.9.' 
   printf 'FEHLER: start.sh sagte zu 0.8.9 in der Umgebung:\n%s\n' "$out"
   exit 1
 }
-printf '%s' "$out" | grep -qF '(unset OPENGEWERK_VERSION)'
+printf '%s' "$out" | grep -qF '(unset OPENGEWERK_VERSION) werden die Abbilder aus dem Quelltext gebaut'
+pin 0.9.1
+refused_version OPENGEWERK_VERSION=0.8.0
+printf '%s' "$out" | grep -qF '(unset OPENGEWERK_VERSION) gilt die Fassung 0.9.1 aus der .env' || {
+  printf 'FEHLER: start.sh sagte zu 0.8.0 in der Umgebung und 0.9.1 in der .env:\n%s\n' "$out"
+  exit 1
+}
 pin 0.9.0
 start
 pulled '0\.9\.0'

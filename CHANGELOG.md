@@ -15,7 +15,8 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   das Netz in Ordnung war, oder baute den Dienst aus dem Quelltext unter dem Tag der alten Fassung. Jetzt nennt der
   Dienst in `compose.yaml` unter `x-since` die erste Fassung mit seinem Abbild, und der Start sagt vorher, dass die
   Zeile in der `.env` leer sein oder eine Fassung ab 0.9.0 nennen muss; bei einer Variable aus der Umgebung nennt er
-  `unset`.
+  `unset` und was danach gilt, auch eine Fassung aus der `.env`. Der Hinweis eines Pakets mit Digests zu einer
+  eingetragenen Fassung sagt jetzt ebenso, ob sie aus der Umgebung oder aus der `.env` kommt.
 - In einem Paket mit Digests meldet die Anwendung die Fassung des Pakets, auch wenn in der `.env` noch eine ältere
   steht und ohne `start.sh` gestartet wird (#1118). Warum: Die Abbilder waren fest, die Umgebung der Anwendung las
   ihre Fassung aber weiter aus der `.env`, und Gesundheitsprüfung, Anmeldung und „Aktualisierung“ nannten dann eine

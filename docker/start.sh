@@ -166,10 +166,13 @@ compose() {
 version_variable="${APPLICATION_PREFIX}_VERSION"
 eval "pinned=\${${version_variable}:-}"
 pinned_in_environment=$pinned
+# The line of the .env as well when the environment wins: what is said about
+# a version from the environment names what holds without it (#1115).
+pinned_in_file=$(LC_ALL=C sed -n "s/^${version_variable}=//p" "$here/.env" | head -n 1 |
+  LC_ALL=C sed 's/[[:space:]]#.*//' | LC_ALL=C tr -d "\r\"' ")
 
 if [ -z "$pinned" ]; then
-  pinned=$(LC_ALL=C sed -n "s/^${version_variable}=//p" "$here/.env" | head -n 1 |
-    LC_ALL=C sed 's/[[:space:]]#.*//' | LC_ALL=C tr -d "\r\"' ")
+  pinned=$pinned_in_file
 fi
 
 shipped=$(sed -n "s/.*${version_variable}:-\([^}]*\)}.*/\1/p" "$here/compose.yaml" | head -n 1)
@@ -182,7 +185,9 @@ signed=$(sed -n "s/^[[:space:]]*image:[[:space:]]*\([^[:space:]]*:${shipped}@sha
 if [ -n "$signed" ]; then
   # A kit with digests starts its own version and no other, its images being
   # these bytes. A version in the .env is for a checkout.
-  if [ -n "$pinned" ] && [ "$pinned" != "$shipped" ]; then
+  if [ -n "$pinned_in_environment" ] && [ "$pinned" != "$shipped" ]; then
+    say "In der Umgebung steht ${version_variable}=${pinned}. Dieses Paket ist die Fassung ${shipped} und nennt seine Abbilder mit Digest, die Variable gilt nur für einen Checkout und kann weg."
+  elif [ -n "$pinned" ] && [ "$pinned" != "$shipped" ]; then
     say "In der .env steht ${version_variable}=${pinned}. Dieses Paket ist die Fassung ${shipped} und nennt seine Abbilder mit Digest, die Zeile gilt nur für einen Checkout und kann weg."
   fi
   version=$shipped
@@ -223,6 +228,12 @@ if [ -n "$pinned" ] && [ "$version" = "$pinned" ]; then
           *) without="startet die Fassung $shipped dieses Pakets" ;;
         esac
         if [ -n "$pinned_in_environment" ]; then
+          # Without the variable the line of the .env holds, where it names a
+          # version.
+          case "$pinned_in_file" in
+            '' | latest | source) ;;
+            *) without="gilt die Fassung $pinned_in_file aus der .env" ;;
+          esac
           fail "In der Umgebung steht ${version_variable}=${version}. Zu dieser Fassung gibt es kein Abbild für den Dienst $service, den erst die Fassung $since mitbringt. Ohne die Variable (unset ${version_variable}) $without, sonst eine Fassung ab $since setzen. Geholt und gestartet wird nichts, eine laufende Instanz arbeitet unverändert weiter."
         fi
         fail "In der .env steht ${version_variable}=${version}. Zu dieser Fassung gibt es kein Abbild für den Dienst $service, den erst die Fassung $since mitbringt. Ist die Zeile leer, $without, sonst eine Fassung ab $since eintragen. Geholt und gestartet wird nichts, eine laufende Instanz arbeitet unverändert weiter."
