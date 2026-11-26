@@ -165,10 +165,14 @@ compose() {
 # holds a byte from another encoding, and a part of it would stay behind.
 version_variable="${APPLICATION_PREFIX}_VERSION"
 eval "pinned=\${${version_variable}:-}"
+pinned_in_environment=$pinned
+# The line of the .env as well when the environment wins: what is said about
+# a version from the environment names what holds without it (#1115).
+pinned_in_file=$(LC_ALL=C sed -n "s/^${version_variable}=//p" "$here/.env" | head -n 1 |
+  LC_ALL=C sed 's/[[:space:]]#.*//' | LC_ALL=C tr -d "\r\"' ")
 
 if [ -z "$pinned" ]; then
-  pinned=$(LC_ALL=C sed -n "s/^${version_variable}=//p" "$here/.env" | head -n 1 |
-    LC_ALL=C sed 's/[[:space:]]#.*//' | LC_ALL=C tr -d "\r\"' ")
+  pinned=$pinned_in_file
 fi
 
 shipped=$(sed -n "s/.*${version_variable}:-\([^}]*\)}.*/\1/p" "$here/compose.yaml" | head -n 1)
@@ -181,12 +185,63 @@ signed=$(sed -n "s/^[[:space:]]*image:[[:space:]]*\([^[:space:]]*:${shipped}@sha
 if [ -n "$signed" ]; then
   # A kit with digests starts its own version and no other, its images being
   # these bytes. A version in the .env is for a checkout.
-  if [ -n "$pinned" ] && [ "$pinned" != "$shipped" ]; then
+  if [ -n "$pinned_in_environment" ] && [ "$pinned" != "$shipped" ]; then
+    say "In der Umgebung steht ${version_variable}=${pinned}. Dieses Paket ist die Fassung ${shipped} und nennt seine Abbilder mit Digest, die Variable gilt nur für einen Checkout und kann weg."
+  elif [ -n "$pinned" ] && [ "$pinned" != "$shipped" ]; then
     say "In der .env steht ${version_variable}=${pinned}. Dieses Paket ist die Fassung ${shipped} und nennt seine Abbilder mit Digest, die Zeile gilt nur für einen Checkout und kann weg."
   fi
   version=$shipped
 else
   version=${pinned:-$shipped}
+fi
+
+# A version from the .env or the environment that is older than a service of
+# this compose.yaml has no image of that service (#1115): the release
+# workflow builds it from the version that brought the service, which the
+# service names under x-since. Docker Compose would either not pull it, which
+# reads like a network that is down, or build it from the source under the
+# tag of the old version. A kit with digests starts its own version, which
+# has an image of each of its services, and is not asked.
+if [ -z "$signed" ] && [ -n "$pinned" ] && [ "$version" = "$pinned" ]; then
+  case "$version" in
+    [0-9]*.[0-9]*.[0-9]*)
+      newer=$(awk -v version="$version" '
+        function later(a, b,   x, y, i) {
+          split(a, x, ".")
+          split(b, y, ".")
+          for (i = 1; i <= 3; i++) if (x[i] + 0 != y[i] + 0) return x[i] + 0 > y[i] + 0
+          return 0
+        }
+        /^services:/ { inside = 1; next }
+        /^[^[:space:]#]/ { inside = 0 }
+        inside && /^  [a-z][a-z0-9-]*:[[:space:]]*$/ { service = $1; sub(/:$/, "", service) }
+        inside && /^    x-since:/ {
+          since = $2
+          gsub(/["\047]/, "", since)
+          if (later(since, version)) { print service " " since; exit }
+        }' "$here/compose.yaml")
+      if [ -n "$newer" ]; then
+        service=${newer% *}
+        since=${newer#* }
+        case "$shipped" in
+          '' | latest | source) without='werden die Abbilder aus dem Quelltext gebaut' ;;
+          *) without="startet die Fassung $shipped dieses Pakets" ;;
+        esac
+        if [ -n "$pinned_in_environment" ]; then
+          # Without the variable the line of the .env holds: a version it
+          # names, the source it names, or with nothing in it what the folder
+          # brings.
+          case "$pinned_in_file" in
+            '') ;;
+            latest | source) without='werden die Abbilder aus dem Quelltext gebaut' ;;
+            *) without="gilt die Fassung $pinned_in_file aus der .env" ;;
+          esac
+          fail "In der Umgebung steht ${version_variable}=${version}. Zu dieser Fassung gibt es kein Abbild für den Dienst $service, den erst die Fassung $since mitbringt. Ohne die Variable (unset ${version_variable}) $without, sonst eine Fassung ab $since setzen. Geholt und gestartet wird nichts, eine laufende Instanz arbeitet unverändert weiter."
+        fi
+        fail "In der .env steht ${version_variable}=${version}. Zu dieser Fassung gibt es kein Abbild für den Dienst $service, den erst die Fassung $since mitbringt. Ist die Zeile leer, $without, sonst eine Fassung ab $since eintragen. Geholt und gestartet wird nichts, eine laufende Instanz arbeitet unverändert weiter."
+      fi
+      ;;
+  esac
 fi
 
 # That the images of a kit are the ones the release workflow of this

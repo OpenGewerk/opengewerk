@@ -9,6 +9,22 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- `docker/start.sh` lehnt in einem Checkout eine eingetragene Fassung ab, zu der ein Dienst kein Abbild hat, und sagt,
+  was zu ändern ist (#1115). Warum: Mit `OPENGEWERK_VERSION=0.8.0` in der `.env` fehlte das Abbild des Dienstes
+  `updater`, den es erst ab 0.9.0 gibt. Docker Compose brach dann mit einem Satz zur Verbindung zu ghcr.io ab, obwohl
+  das Netz in Ordnung war, oder baute den Dienst aus dem Quelltext unter dem Tag der alten Fassung. Jetzt nennt der
+  Dienst in `compose.yaml` unter `x-since` die erste Fassung mit seinem Abbild, und der Start sagt vorher, dass die
+  Zeile in der `.env` leer sein oder eine Fassung ab 0.9.0 nennen muss; bei einer Variable aus der Umgebung nennt er
+  `unset` und was danach gilt, auch eine Fassung aus der `.env`. Der Hinweis eines Pakets mit Digests zu einer
+  eingetragenen Fassung sagt jetzt ebenso, ob sie aus der Umgebung oder aus der `.env` kommt.
+- In einem Paket mit Digests meldet die Anwendung die Fassung des Pakets, auch wenn in der `.env` noch eine ältere
+  steht und ohne `start.sh` gestartet wird (#1118). Warum: Die Abbilder waren fest, die Umgebung der Anwendung las
+  ihre Fassung aber weiter aus der `.env`, und Gesundheitsprüfung, Anmeldung und „Aktualisierung“ nannten dann eine
+  Fassung, die gar nicht lief. `docker/kit-images.sh` schreibt die Fassung jetzt als Wert dorthin; der Ausdruck bleibt
+  als Kommentar dahinter, weil `start.sh` und der Updater jeder Fassung die Fassung eines Pakets dort lesen.
+- `docker/test-start.sh` läuft auch, wenn `/bin/sh` eine bash ist, etwa in Git Bash unter Windows (#1116). Warum:
+  Der Ersatz für Docker las den Pfad der `compose.yaml` mit `${*#...}`, und wie das auf `$*` wirkt, lässt POSIX offen.
+  Auch eine in der Shell exportierte `OPENGEWERK_VERSION` lässt ihn nicht mehr in Fall 1 abbrechen (#1124).
 - Die Wiederholungsprüfung gibt in Fassung 3 für die Isolation keinen Mindestwert je Volt, wenn der Kopf des
   Protokolls eine Nennspannung über 500 V nennt (#1120, Paket Elektro 0.17.0). Warum: Bei 690 V im Kopf rechnete Fassung 2 für jeden
   Stromkreis bis 500 V einen Mindestwert je Volt dieser 690 V, bei 1000 Ω je Volt also 0,690 MΩ, und ließ 0,700 MΩ
