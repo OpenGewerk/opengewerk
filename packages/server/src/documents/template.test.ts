@@ -144,6 +144,14 @@ describe('the page', () => {
     expect(html).toContain('<th>Leistungsdatum</th><td>01.09.2026</td>')
   })
 
+  it('names the day of the maintenance a recurring invoice pays for beside its period (#1037)', () => {
+    const { html } = page({ supplyOn: '2026-07-15' })
+
+    expect(html).toContain('<th>Leistungszeitraum</th><td>01.09.2026 bis 15.09.2026</td>')
+    expect(html).toContain('<th>Tag der Leistung</th><td>15.07.2026, Wartung</td>')
+    expect(page().html).not.toContain('Tag der Leistung')
+  })
+
   it('breaks the tax down by rate, each with the amount it is on', () => {
     const { html } = page({}, { lines: [line(1, 80000), line(2, 20000, { vatRate: 'reduced' })] })
 

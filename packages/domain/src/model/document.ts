@@ -491,6 +491,14 @@ export interface Document extends Synced {
   readonly serviceFrom: IsoDate | null
   readonly serviceUntil: IsoDate | null
   /**
+   * The day of the supply apart from the period (#1037): on a recurring
+   * invoice of a contract whose flat price pays for its maintenances, the day
+   * of the maintenance the period pays for, and on its cancellation the same.
+   * Its rate is that day's. Written by the server alone; null for every other
+   * document.
+   */
+  readonly supplyOn: IsoDate | null
+  /**
    * The maintenance contract a recurring invoice bills a period of (#295),
    * written by the server when the deadline makes it; one per contract and
    * start of a period. Null for every other document.

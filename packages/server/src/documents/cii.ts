@@ -528,7 +528,9 @@ function buyer(content: DocumentContent): string {
  * Where and when the work was done. The site is the place of delivery, BG-15,
  * as soon as its address is complete enough for XRechnung, which wants town and
  * postal code; a single day of work is the actual delivery date, BT-72, and a
- * period is the invoicing period further down.
+ * period is the invoicing period further down. A recurring invoice that names
+ * the day of the maintenance its period pays for (#1037) has that day as the
+ * delivery date beside its period.
  */
 function delivery(content: DocumentContent): string {
   const { site } = content
@@ -537,9 +539,10 @@ function delivery(content: DocumentContent): string {
       ? `<ram:ShipToTradeParty>${element('ram:Name', site.designation)}${postalAddress(site)}</ram:ShipToTradeParty>`
       : ''
   const singleDay =
-    content.serviceFrom === null || content.serviceUntil === null
+    content.supplyOn ??
+    (content.serviceFrom === null || content.serviceUntil === null
       ? (content.serviceFrom ?? content.serviceUntil)
-      : null
+      : null)
   const delivered =
     singleDay !== null
       ? `<ram:ActualDeliverySupplyChainEvent><ram:OccurrenceDateTime>${date(singleDay)}</ram:OccurrenceDateTime></ram:ActualDeliverySupplyChainEvent>`

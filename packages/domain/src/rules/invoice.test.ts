@@ -586,3 +586,28 @@ describe('whatever the lines are', () => {
     )
   })
 })
+
+/**
+ * The day of the supply of a recurring invoice whose flat price pays for a
+ * maintenance (#1037) comes before its period: the maintenance of 15 June
+ * 2020 at 19 per cent, though the period ends in the time of 16.
+ */
+describe('the totals of a document that names the day of its supply (#1037)', () => {
+  const document = {
+    documentDate: '2026-11-26' as IsoDate,
+    serviceFrom: '2020-07-01' as IsoDate,
+    serviceUntil: '2020-07-31' as IsoDate,
+    taxTreatment: 'standard' as TaxTreatment,
+  }
+  const lines = [{ netCents: 10_000, vatRate: 'standard' as VatRate }]
+
+  it('take the rate of that day', () => {
+    expect(
+      totalsFor(shippedRules, lines, { ...document, supplyOn: '2020-06-15' as IsoDate }).taxCents,
+    ).toBe(1_900)
+  })
+
+  it('take the rate of the end of the period without one', () => {
+    expect(totalsFor(shippedRules, lines, { ...document, supplyOn: null }).taxCents).toBe(1_600)
+  })
+})

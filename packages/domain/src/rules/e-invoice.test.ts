@@ -267,6 +267,17 @@ describe('the duty', () => {
     ).toBe('2027-02-01')
   })
 
+  it('looks at the day of the maintenance a recurring invoice names before its period (#1037)', () => {
+    expect(
+      supplyDateOf({
+        documentDate: '2027-02-01',
+        serviceFrom: '2027-01-01',
+        serviceUntil: '2027-01-31',
+        supplyOn: '2026-12-15',
+      }),
+    ).toBe('2026-12-15')
+  })
+
   it('can only be relaxed by the claim, never made stricter', () => {
     const day = fc
       .integer({ min: 0, max: 5 * 366 })

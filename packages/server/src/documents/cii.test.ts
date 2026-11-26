@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { UnprocessableEntityException } from '@nestjs/common'
-import { eInvoiceGaps, RuleError } from '@opengewerk/domain'
+import { eInvoiceGaps, type IsoDate, RuleError } from '@opengewerk/domain'
 import { XmlDocument } from 'libxml2-wasm'
 import { describe, expect, it } from 'vitest'
 
@@ -349,6 +349,18 @@ describe('an e-invoice', () => {
         `${settlement}/ram:BillingSpecifiedPeriod//udt:DateTimeString`,
       ),
     ).toEqual(['20260901', '20260915'])
+  })
+
+  it('states the day of the maintenance a recurring invoice names as the day of delivery, beside its period (#1037)', () => {
+    const xml = ciiInvoice({ ...finalInvoice, supplyOn: '2026-07-15' as IsoDate }, 'en16931')
+
+    expect(read(xml, '//ram:ActualDeliverySupplyChainEvent//udt:DateTimeString')).toEqual([
+      '20260715',
+    ])
+    expect(read(xml, `${settlement}/ram:BillingSpecifiedPeriod//udt:DateTimeString`)).toEqual([
+      '20260901',
+      '20260915',
+    ])
   })
 
   it('names the site as the place of delivery only with a town and a postal code', () => {

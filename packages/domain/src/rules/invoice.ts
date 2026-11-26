@@ -91,13 +91,16 @@ export function totalsFor(
     readonly documentDate: IsoDate
     readonly serviceFrom: IsoDate | null
     readonly serviceUntil: IsoDate | null
+    /** The day of the maintenance a recurring invoice names (#1037), which comes first. */
+    readonly supplyOn?: IsoDate | null
     readonly taxTreatment: TaxTreatment
   },
 ): DocumentTotals {
   const positions = lines.filter((line) => line.kind !== 'title')
   // The rule of `supplyDateOf` in e-invoice.ts, written out here because that
   // module builds on this one.
-  const suppliedOn = document.serviceUntil ?? document.serviceFrom ?? document.documentDate
+  const suppliedOn =
+    document.supplyOn ?? document.serviceUntil ?? document.serviceFrom ?? document.documentDate
   const netCents = withoutNegativeZero(positions.reduce((sum, line) => sum + line.netCents, 0))
 
   if (document.taxTreatment !== 'standard') {

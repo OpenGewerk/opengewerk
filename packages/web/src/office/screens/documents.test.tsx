@@ -3378,3 +3378,163 @@ describe('the document as its boards draw it (#219)', () => {
     expect(positions.getByText(/Umsatzsteuer 19 % auf 1\.680,00\s€/)).toBeDefined()
   })
 })
+
+/**
+ * What has changed for a recurring invoice since it was made (#1037), the
+ * boards "Dauerrechnung im Entwurf, der Vertrag hat sich geändert" and
+ * "Dauerrechnung festgeschrieben, ihr Steuersatz hat sich geändert": the
+ * server says what, and the office takes the values over or cancels and
+ * lays the period out again.
+ */
+describe('what has changed for a recurring invoice (#1037)', () => {
+  const recurring = (over: Row = {}) =>
+    document({
+      kind: 'recurring_invoice',
+      jobId: null,
+      subject: 'Wartung Elektroanlage Rheinstraße 12, Dezember 2026',
+      serviceFrom: '2026-12-01',
+      serviceUntil: '2026-12-31',
+      maintenanceContractId: 'mc-1',
+      ...over,
+    })
+
+  it('tells a draft which values its contract has today, and takes them over', async () => {
+    serverSays('GET', '/documents/d-1/recurring-check', () => ({
+      status: 200,
+      body: {
+        changes: [
+          { field: 'flatCents', was: 3_900, now: 4_200 },
+          { field: 'supplyOn', was: null, now: '2026-07-15' },
+        ],
+      },
+    }))
+    serverSays('POST', '/documents/d-1/recurring-refresh', () => ({
+      status: 201,
+      body: { applied: [] },
+    }))
+
+    await mount('/belege/d-1', {
+      documents: [recurring()],
+      document_lines: [line('l-1', 1, { unit: 'flat_rate', unitPriceCents: 3_900 })],
+    })
+    const person = userEvent.setup()
+
+    expect(
+      await screen.findByText(
+        /Seit dieser Entwurf angelegt wurde, hat sich der Vertrag geändert\. Pauschale: 42,00\s€ statt 39,00\s€\. Steuersatz: vom Tag der Wartung am 15\.07\.2026 statt vom Ende des Zeitraums\./,
+      ),
+    ).toBeDefined()
+
+    await person.click(screen.getByRole('button', { name: 'Neue Werte übernehmen' }))
+
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (call) => call.method === 'POST' && call.path === '/documents/d-1/recurring-refresh',
+        ),
+      ).toBe(true)
+    })
+  })
+
+  it('tells an issued invoice the rate it stated and the one its day has now, and lays its period out again', async () => {
+    serverSays('GET', '/documents/d-1/recurring-check', () => ({
+      status: 200,
+      body: {
+        changes: [
+          { field: 'rate', rate: 'standard', supplyOn: '2026-11-30', was: 1900, now: 1600 },
+        ],
+      },
+    }))
+    serverSays('POST', '/documents/d-1/renewal', () => {
+      const renewed = recurring({ id: 'd-3', status: 'draft', number: null })
+
+      server.put('documents', renewed)
+      server.put('documents', { ...server.row('documents', 'd-1'), status: 'cancelled' })
+
+      return { status: 201, body: { cancellation: { id: 'd-2' }, renewed } }
+    })
+
+    await mount('/belege/d-1', {
+      documents: [
+        recurring({
+          status: 'issued',
+          number: 'RE-2026-0241',
+          serviceFrom: '2026-11-01',
+          serviceUntil: '2026-11-30',
+          issuedTotals: frozenAt(3_900),
+        }),
+      ],
+      document_lines: [line('l-1', 1, { unit: 'flat_rate', unitPriceCents: 3_900 })],
+    })
+    const person = userEvent.setup()
+
+    expect(
+      await screen.findByText(
+        /Diese Rechnung weist 19\s% Umsatzsteuer aus\. Für ihren Tag der Leistung, den 30\.11\.2026, gelten nach dieser Fassung 16\s%\./,
+      ),
+    ).toBeDefined()
+
+    await person.click(screen.getByRole('button', { name: 'Stornieren und neu anlegen' }))
+    await person.click(screen.getByRole('button', { name: 'Jetzt stornieren und neu anlegen' }))
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Dauerrechnung' })).toBeDefined()
+    expect(calls.filter((call) => call.path === '/documents/d-1/renewal')).toHaveLength(1)
+  })
+
+  it('offers to lay an issued invoice out again only to whoever issues documents', async () => {
+    serverSays('GET', '/documents/d-1/recurring-check', () => ({
+      status: 200,
+      body: {
+        changes: [
+          { field: 'rate', rate: 'standard', supplyOn: '2026-11-30', was: 1900, now: 1600 },
+        ],
+      },
+    }))
+
+    await mount(
+      '/belege/d-1',
+      {
+        documents: [
+          recurring({ status: 'issued', number: 'RE-2026-0241', issuedTotals: frozenAt(3_900) }),
+        ],
+        document_lines: [line('l-1', 1, { unit: 'flat_rate', unitPriceCents: 3_900 })],
+      },
+      ['technician'],
+    )
+
+    expect(await screen.findByText(/Diese Rechnung weist 19\s% Umsatzsteuer aus/)).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Stornieren und neu anlegen' })).toBeNull()
+  })
+})
+
+describe('an issued recurring invoice made by hand (#1037)', () => {
+  it('hears of the rate, and is cancelled at the top of the page like any invoice', async () => {
+    serverSays('GET', '/documents/d-1/recurring-check', () => ({
+      status: 200,
+      body: {
+        changes: [
+          { field: 'rate', rate: 'standard', supplyOn: '2026-11-30', was: 1900, now: 1600 },
+        ],
+      },
+    }))
+
+    await mount('/belege/d-1', {
+      documents: [
+        document({
+          kind: 'recurring_invoice',
+          status: 'issued',
+          number: 'RE-2026-0241',
+          serviceFrom: '2026-11-01',
+          serviceUntil: '2026-11-30',
+          maintenanceContractId: null,
+          issuedTotals: frozenAt(3_900),
+        }),
+      ],
+      document_lines: [line('l-1', 1, { unit: 'flat_rate', unitPriceCents: 3_900 })],
+    })
+
+    expect(await screen.findByText(/Diese Rechnung weist 19\s% Umsatzsteuer aus/)).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Stornieren und neu anlegen' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Stornieren' })).toBeDefined()
+  })
+})

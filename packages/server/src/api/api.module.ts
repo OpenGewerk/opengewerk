@@ -64,6 +64,7 @@ import { DocumentFiles } from './document-files.js'
 import { DocumentInstructionsController } from './document-instructions.controller.js'
 import { OpenPaymentsController, PaymentsController } from './payments.controller.js'
 import { DocumentLinesController, DocumentTotalsController } from './document-lines.controller.js'
+import { RecurringInvoicesController } from './recurring-invoices.controller.js'
 import { DocumentMailController } from './document-mail.controller.js'
 import { DocumentPdfController } from './document-pdf.controller.js'
 import { DocumentsController } from './documents.controller.js'
@@ -367,6 +368,7 @@ export class ApiModule {
         DocumentsController,
         DocumentLinesController,
         DocumentTotalsController,
+        RecurringInvoicesController,
         DocumentPdfController,
         EInvoiceController,
         DocumentMailController,

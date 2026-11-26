@@ -9,6 +9,15 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Geändert
 
+- Eine Dauerrechnung nimmt den Steuersatz vom Tag der Wartung, für die ihr Zeitraum zahlt, wenn der Wartungsvertrag
+  das so festlegt; bei einer laufenden Leistung wie einer Bereitschaft bleibt es das Ende des Zeitraums (#1037).
+  Warum: Eine Wartung zu einem Tag ist keine Dauerleistung, ihr Satz ist der vom Tag der Wartung. Ein neuer Vertrag
+  steht auf dem Tag der Wartung, einer von vor dieser Fassung behält das Ende des Zeitraums, bis das Büro es am
+  Vertrag ändert. Die Rechnung nennt den Tag neben dem Leistungszeitraum, im PDF und in der E-Rechnung. Weichen im
+  Entwurf einer Dauerrechnung Pauschale, Steuerfall oder dieser Tag vom heutigen Stand ab, sagt ein Hinweis welche,
+  und „Neue Werte übernehmen“ setzt sie. Kennt eine neue Fassung für den Tag einer festgeschriebenen Dauerrechnung
+  einen anderen Satz, bleibt die Rechnung, wie sie ist, und ein Hinweis bietet „Stornieren und neu anlegen“ an: die
+  Stornorechnung und ein neuer Entwurf für denselben Zeitraum mit denselben Positionen.
 - Der Renderer für die PDFs läuft auf browserless/chromium 2.64.4 statt 2.64.3, im Betrieb wie in der Prüfung der
   E-Rechnung (#1125). Warum: Es ist die neueste Fassung. Sie behebt einen Fehler in den Netzfiltern von BrowserQL, die
   OpenGewerk nicht nutzt, und die CI prüft die PDFs mit demselben Renderer, mit dem eine Instanz sie erzeugt.

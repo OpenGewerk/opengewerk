@@ -920,213 +920,7 @@ export class DocumentsController {
   @Post(':id/cancellation')
   @RequiresPermission('document.issue')
   async cancel(@CurrentIdentity() identity: RequestIdentity, @Param('id') id: string) {
-    return this.database.forTenant(identity, async (tx) => {
-      // Locked before the checks below, which guard state that others write:
-      // issuing a successor reads this invoice with a share lock and a
-      // payment locks it for update, so the cancellation waits for them or
-      // they wait for it, and whichever comes second sees what the first left.
-      const [original] = await tx
-        .select()
-        .from(documents)
-        .where(and(eq(documents.id, id as DocumentId), isNull(documents.deletedAt)))
-        .for('update')
-
-      if (!original) {
-        throw new NotFoundException()
-      }
-
-      if (original.kind === 'cancellation_invoice') {
-        throw new BadRequestException(
-          'Eine Stornorechnung wird nicht storniert. Soll die Leistung wieder berechnet werden, ' +
-            'entsteht dafür eine neue Rechnung.',
-        )
-      }
-
-      if (!isCancellable(original.kind)) {
-        throw new BadRequestException(
-          'Storniert wird nur eine Rechnung. Ein anderer Beleg, der nicht mehr gilt, wird durch ' +
-            'einen neuen ersetzt.',
-        )
-      }
-
-      if (original.status === 'draft') {
-        throw new ConflictException(
-          'Ein Entwurf wird nicht storniert, sondern gelöscht: er steht noch in keinen Büchern.',
-        )
-      }
-
-      if (original.status !== 'issued') {
-        throw new ConflictException('Die Rechnung ist schon storniert.')
-      }
-
-      const [later] = await tx
-        .select({ kind: documents.kind, number: documents.number })
-        .from(documents)
-        .where(
-          and(
-            eq(documents.predecessorDocumentId, original.id),
-            eq(documents.status, 'issued'),
-            isNull(documents.deletedAt),
-          ),
-        )
-        .limit(1)
-
-      if (later) {
-        // A final invoice that builds on this one takes it off, which is what
-        // makes it a Schlussrechnung (#132).
-        const title = later.kind === 'final_invoice' ? 'Schlussrechnung' : documentTitle(later.kind)
-
-        throw new ConflictException(
-          `Auf diese Rechnung baut die ${title} ${later.number ?? ''} auf. ` +
-            'Erst jene stornieren, dann diese.',
-        )
-      }
-
-      const [paid] = await tx
-        .select({ id: payments.id })
-        .from(payments)
-        .where(eq(payments.documentId, original.id))
-        .limit(1)
-
-      if (paid) {
-        // Money that came in on a cancelled invoice would count nowhere: a
-        // final invoice passes a cancelled progress invoice over (#189). It
-        // belongs to the invoice that replaces this one, and somebody who
-        // knows moves it there, rather than the cancellation guessing.
-        throw new ConflictException(
-          'Auf diese Rechnung sind Zahlungseingänge erfasst. Eine stornierte Rechnung zählt ' +
-            'nirgends mehr mit, deshalb die Eingänge vor dem Stornieren entfernen und an der ' +
-            'Rechnung erfassen, die diese ersetzt.',
-        )
-      }
-
-      const [snapshot] = await tx
-        .select({ content: documentSnapshots.content })
-        .from(documentSnapshots)
-        .where(eq(documentSnapshots.documentId, original.id))
-
-      if (!snapshot) {
-        throw new UnprocessableEntityException(
-          'Für diese Rechnung ist nicht festgehalten, was sie gestellt hat, deshalb lässt sich ' +
-            'ihr Spiegel nicht schreiben.',
-        )
-      }
-
-      // One moment for the date, the number and the issue, so that a
-      // cancellation made around midnight does not carry the day before its
-      // issue (#1039, the review).
-      const issuedAt = new Date()
-      const documentDate = todayInGermany(issuedAt)
-      const content = cancellationOf(currentContent(snapshot.content), {
-        number: null,
-        documentDate,
-        issuer: await issuerOf(tx, identity.tenantId),
-      })
-      // Not held back for the e-invoice, unlike an invoice: a cancellation that
-      // cannot be written leaves an invoice standing that should not stand,
-      // which is worse than a cancellation whose e-invoice lacks a value. It
-      // names the same customer as the invoice, so on that side it lacks at
-      // most what the invoice lacked, and the office sees it on its screen.
-      const missing = missingDetails(shippedRules, content)
-
-      if (missing.length > 0) {
-        throw lacking(missing)
-      }
-
-      await tx.execute(sql`select set_config('app.cancelling', 'on', true)`)
-
-      const [created] = await tx
-        .insert(documents)
-        .values({
-          tenantId: identity.tenantId,
-          createdBy: identity.userId,
-          customerId: original.customerId,
-          jobId: original.jobId,
-          siteId: original.siteId,
-          installationId: original.installationId,
-          predecessorDocumentId: original.id,
-          kind: 'cancellation_invoice',
-          documentDate,
-          serviceFrom: original.serviceFrom,
-          serviceUntil: original.serviceUntil,
-          subject: original.subject,
-          taxTreatment: original.taxTreatment,
-        })
-        .returning()
-
-      if (!created) {
-        throw new Error('The cancellation was written and is not readable afterwards.')
-      }
-
-      const lines = await tx
-        .select()
-        .from(documentLines)
-        .where(and(eq(documentLines.documentId, original.id), isNull(documentLines.deletedAt)))
-        .orderBy(asc(documentLines.position), asc(documentLines.id))
-
-      if (lines.length > 0) {
-        await tx.insert(documentLines).values(
-          lines.map((line) => ({
-            tenantId: identity.tenantId,
-            documentId: created.id,
-            kind: line.kind,
-            position: line.position,
-            designation: line.designation,
-            description: line.description,
-            // The mirror: the quantity turned round, the price as it was, so
-            // the total comes out turned round by the same arithmetic.
-            quantityMilli: -line.quantityMilli || 0,
-            unit: line.unit,
-            unitPriceCents: line.unitPriceCents,
-            priceBase: line.priceBase,
-            vatRate: line.vatRate,
-            netCents: -line.netCents || 0,
-          })),
-        )
-      }
-
-      const number = await assignDocumentNumber(
-        tx,
-        identity.tenantId,
-        'cancellation_invoice',
-        issuedAt,
-      )
-
-      const [issued] = await tx
-        .update(documents)
-        .set({ status: 'issued', number, issuedAt, issuedBy: identity.userId, updatedAt: issuedAt })
-        .where(and(eq(documents.id, created.id), eq(documents.status, 'draft')))
-        .returning()
-
-      await tx.insert(documentSnapshots).values({
-        tenantId: identity.tenantId,
-        documentId: created.id,
-        content: await withStoredLogo(tx, identity.tenantId, { ...content, number }),
-      })
-
-      // The status and nothing else, which is exactly what the trigger on the
-      // table lets through for an issued document. Checked on `issued` again:
-      // two cancellations of the same invoice at the same moment would both
-      // have passed the check above, and the second finds nothing to cancel
-      // here and takes its own cancellation back with it.
-      const [cancelled] = await tx
-        .update(documents)
-        .set({ status: 'cancelled', updatedAt: issuedAt })
-        .where(
-          and(
-            eq(documents.id, original.id),
-            eq(documents.status, 'issued'),
-            isNull(documents.deletedAt),
-          ),
-        )
-        .returning({ id: documents.id })
-
-      if (!issued || !cancelled) {
-        throw new ConflictException('Die Rechnung ist inzwischen storniert worden.')
-      }
-
-      return withIssuedTotals(tx, issued)
-    })
+    return this.database.forTenant(identity, (tx) => cancelInvoice(tx, identity, id))
   }
 
   /**
@@ -1261,6 +1055,221 @@ async function datedForIssue(
 /** A report the customer signed and nobody issued yet, which a signature fixed without a number. */
 function isSignedReport(document: Pick<DocumentRow, 'kind' | 'status'>): boolean {
   return document.status === 'signed' && document.kind === 'time_and_material_report'
+}
+
+/**
+ * Cancels an issued invoice (#74): the cancellation invoice with every figure
+ * turned round, issued at once, and the invoice cancelled, in the transaction
+ * of the caller. The route of the cancellation calls it, and so does laying
+ * the period of a recurring invoice out again (#1037).
+ */
+export async function cancelInvoice(
+  tx: TenantTransaction,
+  identity: RequestIdentity,
+  id: string,
+): Promise<DocumentRow> {
+  // Locked before the checks below, which guard state that others write:
+  // issuing a successor reads this invoice with a share lock and a
+  // payment locks it for update, so the cancellation waits for them or
+  // they wait for it, and whichever comes second sees what the first left.
+  const [original] = await tx
+    .select()
+    .from(documents)
+    .where(and(eq(documents.id, id as DocumentId), isNull(documents.deletedAt)))
+    .for('update')
+
+  if (!original) {
+    throw new NotFoundException()
+  }
+
+  if (original.kind === 'cancellation_invoice') {
+    throw new BadRequestException(
+      'Eine Stornorechnung wird nicht storniert. Soll die Leistung wieder berechnet werden, ' +
+        'entsteht dafür eine neue Rechnung.',
+    )
+  }
+
+  if (!isCancellable(original.kind)) {
+    throw new BadRequestException(
+      'Storniert wird nur eine Rechnung. Ein anderer Beleg, der nicht mehr gilt, wird durch ' +
+        'einen neuen ersetzt.',
+    )
+  }
+
+  if (original.status === 'draft') {
+    throw new ConflictException(
+      'Ein Entwurf wird nicht storniert, sondern gelöscht: er steht noch in keinen Büchern.',
+    )
+  }
+
+  if (original.status !== 'issued') {
+    throw new ConflictException('Die Rechnung ist schon storniert.')
+  }
+
+  const [later] = await tx
+    .select({ kind: documents.kind, number: documents.number })
+    .from(documents)
+    .where(
+      and(
+        eq(documents.predecessorDocumentId, original.id),
+        eq(documents.status, 'issued'),
+        isNull(documents.deletedAt),
+      ),
+    )
+    .limit(1)
+
+  if (later) {
+    // A final invoice that builds on this one takes it off, which is what
+    // makes it a Schlussrechnung (#132).
+    const title = later.kind === 'final_invoice' ? 'Schlussrechnung' : documentTitle(later.kind)
+
+    throw new ConflictException(
+      `Auf diese Rechnung baut die ${title} ${later.number ?? ''} auf. ` +
+        'Erst jene stornieren, dann diese.',
+    )
+  }
+
+  const [paid] = await tx
+    .select({ id: payments.id })
+    .from(payments)
+    .where(eq(payments.documentId, original.id))
+    .limit(1)
+
+  if (paid) {
+    // Money that came in on a cancelled invoice would count nowhere: a
+    // final invoice passes a cancelled progress invoice over (#189). It
+    // belongs to the invoice that replaces this one, and somebody who
+    // knows moves it there, rather than the cancellation guessing.
+    throw new ConflictException(
+      'Auf diese Rechnung sind Zahlungseingänge erfasst. Eine stornierte Rechnung zählt ' +
+        'nirgends mehr mit, deshalb die Eingänge vor dem Stornieren entfernen und an der ' +
+        'Rechnung erfassen, die diese ersetzt.',
+    )
+  }
+
+  const [snapshot] = await tx
+    .select({ content: documentSnapshots.content })
+    .from(documentSnapshots)
+    .where(eq(documentSnapshots.documentId, original.id))
+
+  if (!snapshot) {
+    throw new UnprocessableEntityException(
+      'Für diese Rechnung ist nicht festgehalten, was sie gestellt hat, deshalb lässt sich ' +
+        'ihr Spiegel nicht schreiben.',
+    )
+  }
+
+  // One moment for the date, the number and the issue, so that a
+  // cancellation made around midnight does not carry the day before its
+  // issue (#1039, the review).
+  const issuedAt = new Date()
+  const documentDate = todayInGermany(issuedAt)
+  const content = cancellationOf(currentContent(snapshot.content), {
+    number: null,
+    documentDate,
+    issuer: await issuerOf(tx, identity.tenantId),
+  })
+  // Not held back for the e-invoice, unlike an invoice: a cancellation that
+  // cannot be written leaves an invoice standing that should not stand,
+  // which is worse than a cancellation whose e-invoice lacks a value. It
+  // names the same customer as the invoice, so on that side it lacks at
+  // most what the invoice lacked, and the office sees it on its screen.
+  const missing = missingDetails(shippedRules, content)
+
+  if (missing.length > 0) {
+    throw lacking(missing)
+  }
+
+  await tx.execute(sql`select set_config('app.cancelling', 'on', true)`)
+
+  const [created] = await tx
+    .insert(documents)
+    .values({
+      tenantId: identity.tenantId,
+      createdBy: identity.userId,
+      customerId: original.customerId,
+      jobId: original.jobId,
+      siteId: original.siteId,
+      installationId: original.installationId,
+      predecessorDocumentId: original.id,
+      kind: 'cancellation_invoice',
+      documentDate,
+      serviceFrom: original.serviceFrom,
+      serviceUntil: original.serviceUntil,
+      // The day of the maintenance its invoice paid for (#1037).
+      supplyOn: original.supplyOn,
+      subject: original.subject,
+      taxTreatment: original.taxTreatment,
+    })
+    .returning()
+
+  if (!created) {
+    throw new Error('The cancellation was written and is not readable afterwards.')
+  }
+
+  const lines = await tx
+    .select()
+    .from(documentLines)
+    .where(and(eq(documentLines.documentId, original.id), isNull(documentLines.deletedAt)))
+    .orderBy(asc(documentLines.position), asc(documentLines.id))
+
+  if (lines.length > 0) {
+    await tx.insert(documentLines).values(
+      lines.map((line) => ({
+        tenantId: identity.tenantId,
+        documentId: created.id,
+        kind: line.kind,
+        position: line.position,
+        designation: line.designation,
+        description: line.description,
+        // The mirror: the quantity turned round, the price as it was, so
+        // the total comes out turned round by the same arithmetic.
+        quantityMilli: -line.quantityMilli || 0,
+        unit: line.unit,
+        unitPriceCents: line.unitPriceCents,
+        priceBase: line.priceBase,
+        vatRate: line.vatRate,
+        netCents: -line.netCents || 0,
+      })),
+    )
+  }
+
+  const number = await assignDocumentNumber(tx, identity.tenantId, 'cancellation_invoice', issuedAt)
+
+  const [issued] = await tx
+    .update(documents)
+    .set({ status: 'issued', number, issuedAt, issuedBy: identity.userId, updatedAt: issuedAt })
+    .where(and(eq(documents.id, created.id), eq(documents.status, 'draft')))
+    .returning()
+
+  await tx.insert(documentSnapshots).values({
+    tenantId: identity.tenantId,
+    documentId: created.id,
+    content: await withStoredLogo(tx, identity.tenantId, { ...content, number }),
+  })
+
+  // The status and nothing else, which is exactly what the trigger on the
+  // table lets through for an issued document. Checked on `issued` again:
+  // two cancellations of the same invoice at the same moment would both
+  // have passed the check above, and the second finds nothing to cancel
+  // here and takes its own cancellation back with it.
+  const [cancelled] = await tx
+    .update(documents)
+    .set({ status: 'cancelled', updatedAt: issuedAt })
+    .where(
+      and(
+        eq(documents.id, original.id),
+        eq(documents.status, 'issued'),
+        isNull(documents.deletedAt),
+      ),
+    )
+    .returning({ id: documents.id })
+
+  if (!issued || !cancelled) {
+    throw new ConflictException('Die Rechnung ist inzwischen storniert worden.')
+  }
+
+  return withIssuedTotals(tx, issued)
 }
 
 /**

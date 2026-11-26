@@ -82,6 +82,7 @@ import { LinesPanel, useDocumentFigures } from './document-lines.js'
 import { DocumentMarker } from './document-marker.js'
 import { PaymentsCard } from './document-payments.js'
 import { CancelPanel, IssuePanel, reasonOf } from './document-steps.js'
+import { RecurringNotice } from './recurring-notice.js'
 import { claimableTransitions } from './taxes.js'
 
 /** Oldest first, the order the chain was written in. The id breaks a tie. */
@@ -927,6 +928,8 @@ function DocumentView({ document }: { readonly document: RecordState }) {
           {trouble}
         </p>
       ) : null}
+
+      {kind === 'recurring_invoice' ? <RecurringNotice document={document} /> : null}
 
       {issuing && issuable ? (
         <IssuePanel

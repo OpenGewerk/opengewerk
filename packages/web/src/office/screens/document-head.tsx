@@ -170,6 +170,10 @@ function HeaderFacts({
     { label: 'Betreff', value: text(document, 'subject') },
     { label: 'Belegdatum', value: date(document['documentDate']) },
     ...(isInvoice(kind) ? [{ label: 'Leistungszeitraum', value: servicePeriod(document) }] : []),
+    // The maintenance the period of a recurring invoice pays for (#1037).
+    ...(maybeText(document, 'supplyOn')
+      ? [{ label: 'Tag der Leistung', value: `${date(document['supplyOn'])}, Wartung` }]
+      : []),
     { label: 'Umsatzsteuer', value: taxTreatmentLabel[taxTreatmentOf(document)] },
     ...(statesTerm
       ? [

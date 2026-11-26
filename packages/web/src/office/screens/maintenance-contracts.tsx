@@ -1,5 +1,6 @@
 import {
   type ContractPriceKind,
+  type ContractRateDay,
   type ContractTerms,
   consumerTermsNotice,
   contractStanding,
@@ -15,6 +16,7 @@ import {
   type PaymentRhythm,
   periodText,
   priceUnitLabel,
+  rateDayLabel,
   type RecordState,
   type RenewalKind,
   renewalLabel,
@@ -407,6 +409,10 @@ function ContractView({ contract }: { readonly contract: MaintenanceContractEntr
       label: 'Abrechnung',
       value: `${rhythmLabel[contract.paymentRhythm]}${contract.issueByItself ? '; ab der zweiten Rechnung ohne Zutun' : ''}`,
     },
+    // Which day decides the rate of its recurring invoices (#1037).
+    ...(contract.paymentRhythm === 'visit'
+      ? []
+      : [{ label: 'Steuersatz', value: rateDayLabel[contract.rateDay] }]),
   ]
   const termFacts = [
     { label: 'Beginn', value: date(contract.startsOn) },
@@ -811,6 +817,7 @@ interface Draft {
   readonly flat: string
   readonly paymentRhythm: PaymentRhythm
   readonly issueByItself: boolean
+  readonly rateDay: ContractRateDay
 }
 
 function draftOf(entry: MaintenanceContractEntry): Draft {
@@ -829,6 +836,7 @@ function draftOf(entry: MaintenanceContractEntry): Draft {
     flat: entry.flatCents === null ? '' : euros(entry.flatCents).replace(/\s*€$/, ''),
     paymentRhythm: entry.paymentRhythm,
     issueByItself: entry.issueByItself,
+    rateDay: entry.rateDay,
   }
 }
 
@@ -855,6 +863,7 @@ function valuesOf(draft: Draft): MaintenanceContractValues {
     flatCents: draft.priceKind === 'flat' ? flat : null,
     paymentRhythm: draft.paymentRhythm,
     issueByItself: draft.paymentRhythm !== 'visit' && draft.issueByItself,
+    rateDay: draft.rateDay,
   }
 }
 
@@ -936,6 +945,7 @@ export function NewMaintenanceContractScreen() {
         flat: total > 0 ? euros(total).replace(/\s*€$/, '') : '',
         paymentRhythm: 'visit',
         issueByItself: false,
+        rateDay: 'visit',
       }}
     />
   )
@@ -1340,6 +1350,23 @@ function ContractForm({
                 </div>
               ) : null}
               {draft.paymentRhythm !== 'visit' ? (
+                <div className="sm:w-[360px]">
+                  <SelectField
+                    label="Steuersatz der Dauerrechnungen"
+                    value={draft.rateDay}
+                    hint="Zahlt die Pauschale die Wartungen, gilt der Satz vom Tag der Wartung, für die der Zeitraum zahlt. Ist sie für eine laufende Leistung, etwa eine Bereitschaft, wähle „Vom Ende des Zeitraums“."
+                    problem={problems['rateDay']}
+                    options={(['visit', 'period_end'] as const).map((day) => ({
+                      value: day,
+                      label: rateDayLabel[day].replace(/^./, (first) => first.toUpperCase()),
+                    }))}
+                    onChange={(value) => {
+                      set('rateDay', value as ContractRateDay)
+                    }}
+                  />
+                </div>
+              ) : null}
+              {draft.paymentRhythm !== 'visit' ? (
                 <label className="flex items-start gap-2 text-[14px]">
                   <input
                     type="checkbox"
@@ -1361,7 +1388,7 @@ function ContractForm({
               <p className="text-[13px] leading-[1.4] text-ink-muted">
                 {draft.paymentRhythm === 'visit'
                   ? 'Abgerechnet wird je Wartung, nach der Ausführung.'
-                  : 'Zu Beginn jedes Zeitraums, oder früher, wenn die Frist „Rechnung eines Wartungsvertrags“ einen Vorlauf hat, entsteht eine Dauerrechnung über ihn, mit dem Steuersatz, der an seinem Ende gilt.'}
+                  : 'Zu Beginn jedes Zeitraums, oder früher, wenn die Frist „Rechnung eines Wartungsvertrags“ einen Vorlauf hat, entsteht eine Dauerrechnung über ihn, mit dem Steuersatz des Tages, den der Vertrag dafür nennt.'}
               </p>
             </div>
           </Panel>

@@ -1,14 +1,22 @@
 import { UnprocessableEntityException } from '@nestjs/common'
 import {
+  type BilledPeriod,
+  type ContractRateDay,
   type CustomerId,
   type IsoDate,
   lastServiceDay,
+  type LineKind,
+  type LineUnit,
   type MaintenanceContractId,
   nextPeriod,
   type PaymentRhythm,
   periodText,
+  type PriceBase,
   priceUnitLabel,
   type RenewalKind,
+  supplyDayOf,
+  type TaxTreatment,
+  type VatRate,
 } from '@opengewerk/domain'
 import type { TenantTransaction } from '@opengewerk/platform-server'
 import { and, eq, isNull } from 'drizzle-orm'
@@ -17,6 +25,127 @@ import { contentForIssuing, issueWith } from '../api/documents.controller.js'
 import { documentLines, documents, maintenanceContracts } from '../database/schema/index.js'
 import type { DeadlineRow } from '../deadlines/engine.js'
 import { proposedTreatment } from '../documents/treatment.js'
+
+type ContractRow = typeof maintenanceContracts.$inferSelect
+
+type DocumentRow = typeof documents.$inferSelect
+
+/** A line of a recurring invoice as it is written. */
+export interface PeriodLine {
+  readonly kind: LineKind
+  readonly position: number
+  readonly designation: string
+  readonly description: string | null
+  readonly quantityMilli: number
+  readonly unit: LineUnit
+  readonly unitPriceCents: number
+  readonly priceBase: PriceBase
+  readonly vatRate: VatRate
+  readonly netCents: number
+}
+
+/**
+ * What a recurring invoice takes from its contract and its customer when it
+ * is made (#1037): how it is taxed, the day of the maintenance its period
+ * pays for where the contract wants the rate of that day, and the flat price.
+ * A draft that holds other values than these was made before a change; the
+ * office hears of it and takes them over.
+ */
+export async function periodValues(
+  tx: TenantTransaction,
+  contract: ContractRow,
+  period: Pick<BilledPeriod, 'from' | 'until'>,
+): Promise<{
+  readonly taxTreatment: TaxTreatment
+  readonly supplyOn: IsoDate | null
+  readonly flatCents: number | null
+}> {
+  return {
+    taxTreatment: await proposedTreatment(tx, contract.customerId as CustomerId, period.from),
+    supplyOn: supplyDayOf(
+      {
+        rateDay: contract.rateDay as ContractRateDay,
+        firstVisitOn: contract.firstVisitOn as IsoDate,
+        intervalMonths: contract.intervalMonths,
+      },
+      period,
+    ),
+    flatCents: contract.flatCents,
+  }
+}
+
+/** The one line of a recurring invoice: the flat price of the period. */
+export function flatLine(
+  contract: ContractRow,
+  period: Pick<BilledPeriod, 'from' | 'until'>,
+  flatCents: number | null,
+): PeriodLine {
+  const rhythm = contract.paymentRhythm as PaymentRhythm
+
+  return {
+    kind: 'item',
+    position: 1,
+    designation: contract.designation,
+    description: `Pauschale ${priceUnitLabel[rhythm]} nach dem Wartungsvertrag ${contract.number}, Leistungszeitraum ${periodText(period)}.`,
+    quantityMilli: 1000,
+    unit: 'flat_rate',
+    unitPriceCents: flatCents ?? 0,
+    priceBase: 1,
+    vatRate: 'standard',
+    netCents: flatCents ?? 0,
+  }
+}
+
+/**
+ * The draft of the recurring invoice of a period, with the values of its
+ * contract and customer of today (`periodValues`), and with the flat price as
+ * its one line unless it is handed the lines to take (#1037): laying a
+ * period out again after a cancellation keeps what the invoice billed.
+ */
+export async function layOutPeriod(
+  tx: TenantTransaction,
+  contract: ContractRow,
+  period: Pick<BilledPeriod, 'from' | 'until'>,
+  today: IsoDate,
+  lines?: readonly PeriodLine[],
+  // Who lays it out, for a draft the office makes; nobody for the deadline's.
+  createdBy: string | null = null,
+): Promise<DocumentRow> {
+  const values = await periodValues(tx, contract, period)
+  const [created] = await tx
+    .insert(documents)
+    .values({
+      tenantId: contract.tenantId,
+      customerId: contract.customerId,
+      siteId: contract.siteId,
+      kind: 'recurring_invoice',
+      documentDate: today,
+      subject: `${contract.designation}, ${periodText(period)}`,
+      serviceFrom: period.from,
+      serviceUntil: period.until,
+      supplyOn: values.supplyOn,
+      maintenanceContractId: contract.id,
+      taxTreatment: values.taxTreatment,
+      createdBy,
+    })
+    .returning()
+
+  if (!created) {
+    throw new Error('The recurring invoice was written and is not readable afterwards.')
+  }
+
+  const written = lines ?? [flatLine(contract, period, values.flatCents)]
+
+  if (written.length > 0) {
+    await tx
+      .insert(documentLines)
+      .values(
+        written.map((line) => ({ ...line, tenantId: contract.tenantId, documentId: created.id })),
+      )
+  }
+
+  return created
+}
 
 /**
  * The invoice of a period of a maintenance contract paid per period (#295),
@@ -84,39 +213,7 @@ export async function contractInvoice(
     return
   }
 
-  const [created] = await tx
-    .insert(documents)
-    .values({
-      tenantId: contract.tenantId,
-      customerId: contract.customerId,
-      siteId: contract.siteId,
-      kind: 'recurring_invoice',
-      documentDate: today,
-      subject: `${contract.designation}, ${periodText(period)}`,
-      serviceFrom: period.from,
-      serviceUntil: period.until,
-      maintenanceContractId: contract.id,
-      taxTreatment: await proposedTreatment(tx, contract.customerId as CustomerId, period.from),
-    })
-    .returning()
-
-  if (!created) {
-    throw new Error('The recurring invoice was written and is not readable afterwards.')
-  }
-
-  await tx.insert(documentLines).values({
-    tenantId: contract.tenantId,
-    documentId: created.id,
-    kind: 'item',
-    position: 1,
-    designation: contract.designation,
-    description: `Pauschale ${priceUnitLabel[rhythm]} nach dem Wartungsvertrag ${contract.number}, Leistungszeitraum ${periodText(period)}.`,
-    quantityMilli: 1000,
-    unit: 'flat_rate',
-    unitPriceCents: contract.flatCents,
-    vatRate: 'standard',
-    netCents: contract.flatCents,
-  })
+  const created = await layOutPeriod(tx, contract, period, today)
 
   if (made.length === 0 || !contract.issueByItself || period.cut) {
     return

@@ -95,3 +95,23 @@ describe('the totals of an issued document in the office (#1035)', () => {
     })
   })
 })
+
+/**
+ * A draft recurring invoice that names the day of the maintenance its period
+ * pays for (#1037) is taxed by that day: 19 per cent on 15 June 2020, though
+ * its period ends in July, at 16.
+ */
+describe('the totals of a draft that names the day of its maintenance (#1037)', () => {
+  it('take the rate of that day', () => {
+    const draft = {
+      ...invoice,
+      kind: 'recurring_invoice',
+      serviceFrom: '2020-07-01',
+      serviceUntil: '2020-07-31',
+      supplyOn: '2020-06-15',
+    }
+
+    expect(totalsOf(draft, [line], null)).toMatchObject({ taxCents: 1900 })
+    expect(totalsOf({ ...draft, supplyOn: null }, [line], null)).toMatchObject({ taxCents: 1600 })
+  })
+})

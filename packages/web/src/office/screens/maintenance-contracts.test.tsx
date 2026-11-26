@@ -422,6 +422,27 @@ describe('the maintenance contracts of the office (#294)', () => {
     })
   })
 
+  /**
+   * The board "Wartungsvertrag bearbeiten, Abrechnung je Zeitraum" (#1037):
+   * which day decides the rate of the recurring invoices, the maintenance
+   * unless the office says the flat price pays for a running service.
+   */
+  it('takes the day whose rate the recurring invoices take, the maintenance unless told otherwise', async () => {
+    const user = userEvent.setup()
+    await mount('/wartungsvertraege/neu/q-2')
+
+    await user.selectOptions(await screen.findByLabelText('Abrechnung'), 'monthly')
+
+    const day = screen.getByLabelText('Steuersatz der Dauerrechnungen')
+
+    expect((day as HTMLSelectElement).value).toBe('visit')
+
+    await user.selectOptions(day, 'period_end')
+    await user.click(screen.getByRole('button', { name: 'Speichern' }))
+
+    expect(posted[0]).toMatchObject({ body: { paymentRhythm: 'monthly', rateDay: 'period_end' } })
+  })
+
   it('shows the contracts of an installation in its card', async () => {
     await mount('/karte')
 

@@ -31,6 +31,7 @@ export type MaintenanceContractValues = Pick<
   | 'flatCents'
   | 'paymentRhythm'
   | 'issueByItself'
+  | 'rateDay'
 >
 
 /** Which contracts a card asks for: those of a customer, a site, an installation or a quote. */
