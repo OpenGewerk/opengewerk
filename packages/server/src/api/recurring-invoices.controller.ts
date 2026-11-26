@@ -16,7 +16,7 @@ import {
 import { Database, type TenantTransaction } from '@opengewerk/platform-server'
 import { and, asc, eq, isNull } from 'drizzle-orm'
 
-import { flatLineOf, type PeriodLine, layOutPeriod, periodValues } from '../contracts/recurring.js'
+import { type PeriodLine, layOutPeriod, periodValues } from '../contracts/recurring.js'
 import { documentLines, documents, maintenanceContracts } from '../database/schema/index.js'
 import { todayInGermany } from '../today.js'
 import { RequiresPermission } from './authorization.js'
@@ -363,11 +363,10 @@ export class RecurringInvoicesController {
       }
 
       const old = await linesOf(tx, document.id)
-      // The line of the flat price as the invoice named it; one laid out
-      // before it named any has its one flat line for it.
-      const flatId =
-        document.takenOver !== null ? document.takenOver.flatLineId : (flatLineOf(old)?.id ?? null)
-      const flatAt = old.findIndex((line) => line.id === flatId)
+      // The line of the flat price as the invoice named it. One laid out
+      // before it named any is not guessed at: its draft hears only of the day.
+      const taken = document.takenOver
+      const flatAt = taken === null ? -1 : old.findIndex((line) => line.id === taken.flatLineId)
       const lines: PeriodLine[] = old.map((line) => ({
         kind: line.kind,
         position: line.position,
@@ -402,13 +401,7 @@ export class RecurringInvoicesController {
           taxTreatment: document.taxTreatment,
           paymentTermDays: document.paymentTermDays,
           // What it had taken; one laid out before it noted that took what it billed.
-          taken: {
-            flatCents:
-              document.takenOver !== null
-                ? document.takenOver.flatCents
-                : (old[flatAt]?.unitPriceCents ?? null),
-            taxTreatment: document.takenOver?.taxTreatment ?? document.taxTreatment,
-          },
+          taken: taken && { flatCents: taken.flatCents, taxTreatment: taken.taxTreatment },
         },
         identity.userId,
       )

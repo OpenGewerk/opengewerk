@@ -734,6 +734,39 @@ describe('what has changed for a recurring invoice (#1037)', () => {
     expect((await check(renewed.id).expect(200)).body).toEqual({ changes: [] })
   })
 
+  it('does not guess, laying a period out again, what an invoice from before 0160 had taken', async () => {
+    const made = await contract(addMonths(today, -1))
+
+    await run(3)
+
+    const issued = (await invoicesOf(made)).find((invoice) => invoice.status === 'issued')
+    const id = String(issued?.id)
+
+    // As before 0160, with a price and a tax treatment the office may have set.
+    await pastTheTriggers(
+      "update documents set taken_over = null, tax_treatment = 'reverse_charge' where id = $1",
+      [id],
+    )
+    await pastTheTriggers(
+      'update document_lines set unit_price_cents = 3500, net_cents = 3500 where document_id = $1',
+      [id],
+    )
+
+    const answer = await request(app.getHttpServer())
+      .post(`/documents/${id}/renewal`)
+      .set('x-test-identity', office())
+      .expect(201)
+    const { renewed } = answer.body as { renewed: { id: string } }
+    const { rows } = await admin.query<{ taken_over: unknown }>(
+      'select taken_over from documents where id = $1',
+      [renewed.id],
+    )
+
+    // Like a draft from before: it hears of the day alone, and the day is the same.
+    expect(rows).toEqual([{ taken_over: null }])
+    expect((await check(renewed.id).expect(200)).body).toEqual({ changes: [] })
+  })
+
   it('tells a period laid out again what has changed for its customer since', async () => {
     const made = await contract(addMonths(today, -1))
 

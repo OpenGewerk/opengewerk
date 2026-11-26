@@ -51,19 +51,6 @@ export interface PeriodLine {
 }
 
 /**
- * The one line that carries the flat price, as the deadline writes it, or
- * null where there is none or more than one. Asked of an invoice laid out
- * before it named that line (`takenOver`), when its period is laid out again.
- */
-export function flatLineOf<Line extends Pick<PeriodLine, 'kind' | 'unit'>>(
-  lines: readonly Line[],
-): Line | null {
-  const flat = lines.filter((line) => line.unit === 'flat_rate' && line.kind === 'item')
-
-  return flat.length === 1 ? (flat[0] ?? null) : null
-}
-
-/**
  * What a recurring invoice takes from its contract and its customer when it
  * is made (#1037): how it is taxed, the day of the maintenance its period
  * pays for where the contract wants the rate of that day, and the flat price.
@@ -151,8 +138,12 @@ export interface KeptOfInvoice {
   readonly closingText: DocumentRow['closingText']
   readonly taxTreatment: DocumentRow['taxTreatment']
   readonly paymentTermDays: DocumentRow['paymentTermDays']
-  /** What the invoice had taken: the flat price and the tax treatment. */
-  readonly taken: { readonly flatCents: number | null; readonly taxTreatment: string }
+  /**
+   * What the invoice had taken: the flat price and the tax treatment. Null
+   * for one laid out before it noted that: what it took is not known, and
+   * the new draft, as a draft from before, hears only of the day.
+   */
+  readonly taken: { readonly flatCents: number | null; readonly taxTreatment: string } | null
 }
 
 /**
@@ -198,11 +189,17 @@ export async function layOutPeriod(
       supplyOn: values.supplyOn,
       maintenanceContractId: contract.id,
       taxTreatment: kept ? kept.taxTreatment : values.taxTreatment,
-      takenOver: {
-        flatLineId: flat && flatAt !== null ? (ids[flatAt] ?? null) : null,
-        flatCents: flat ? (kept ? kept.taken.flatCents : flat.unitPriceCents) : null,
-        taxTreatment: kept ? kept.taken.taxTreatment : values.taxTreatment,
-      },
+      takenOver: !kept
+        ? {
+            flatLineId: flat && flatAt !== null ? (ids[flatAt] ?? null) : null,
+            flatCents: flat?.unitPriceCents ?? null,
+            taxTreatment: values.taxTreatment,
+          }
+        : kept.taken && {
+            flatLineId: flat && flatAt !== null ? (ids[flatAt] ?? null) : null,
+            flatCents: flat ? kept.taken.flatCents : null,
+            taxTreatment: kept.taken.taxTreatment,
+          },
       createdBy,
     })
     .returning()
