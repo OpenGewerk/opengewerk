@@ -400,7 +400,9 @@ export type RecurringChange =
  * carries the flat price of the contract, named by its id, so that a flat
  * line the office adds is never taken for it; both are null where there was
  * no such line. The day of the maintenance is not in it: only the server
- * writes that day, so a draft always holds it as it took it.
+ * writes that day, from the contract and the period the draft holds
+ * (`followPeriod` on the server), so a draft always holds it as it would
+ * take it.
  */
 export interface RecurringTakenOver {
   readonly flatLineId: string | null

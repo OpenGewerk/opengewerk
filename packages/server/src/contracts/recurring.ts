@@ -70,10 +70,11 @@ export function flatLineOf<Line extends Pick<PeriodLine, 'kind' | 'unit'>>(
  * A draft that holds other values than these was made before a change; the
  * office hears of it and takes them over.
  *
- * Taxed as of the day of the supply, as its rate is: the maintenance where
- * the contract names it, so that one of a year the business claimed section
- * 19 for stays without VAT when it is billed in the next, and otherwise the
- * first day of the period, as before.
+ * Taxed as of the day of the supply, the day its rate is of as well: the
+ * maintenance where the contract names it, so that one of a time the
+ * business claimed section 19 for stays without VAT when it is billed after,
+ * and otherwise the end of the period, when a running service is done. Until
+ * #1037 it was the first day of the period.
  */
 export async function periodValues(
   tx: TenantTransaction,
@@ -97,7 +98,7 @@ export async function periodValues(
     taxTreatment: await proposedTreatment(
       tx,
       contract.customerId as CustomerId,
-      supplyOn ?? period.from,
+      supplyOn ?? period.until,
     ),
     supplyOn,
     flatCents: contract.flatCents,

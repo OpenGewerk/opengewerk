@@ -65,11 +65,12 @@ export interface DocumentTotals {
  *
  * A change of section 12 UStG applies to supplies carried out from the day it
  * comes into force (section 27 (1) sentence 1 UStG), so the rate is the one of
- * the day of the supply: the end of its period, its only day, or, where nobody
- * entered one, the date of the document (`supplyDateOf`, the same day the
- * e-invoice asks about). Until #1017 it was the date of the document, and work
- * finished in June 2020 and invoiced in July came out at sixteen percent
- * instead of nineteen. Not today either, which is the whole point of the
+ * the day of the supply: the day of the maintenance a recurring invoice pays
+ * for where it names one (#1037), else the end of its period, its only day,
+ * or, where nobody entered one, the date of the document (`supplyDateOf`, the
+ * same day the e-invoice asks about). Until #1017 it was the date of the
+ * document, and work finished in June 2020 and invoiced in July came out at
+ * sixteen percent instead of nineteen. Not today either, which is the whole point of the
  * engine: an invoice for work of the second half of 2020 is still one at
  * sixteen percent in 2030. Nothing here reads a clock.
  *

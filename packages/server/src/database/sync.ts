@@ -60,6 +60,7 @@ import {
   takesOverSurcharge,
 } from '../service-calls/on-call.js'
 import { consentGiven, correctionRefusal } from '../time/entries.js'
+import { followPeriod } from '../contracts/period-day.js'
 import { proposedTreatment } from '../documents/treatment.js'
 import { pvLinkRefusal } from '../electrical/structure.js'
 import { tradeForms } from '../forms/registry.js'
@@ -1065,7 +1066,15 @@ async function afterSurchargeWrite(
  * its first write (`lockDocumentsOf`).
  */
 async function refreshTouchedDrafts(tx: TenantTransaction): Promise<void> {
-  await refreshSurchargeLines(tx, [...(noted.get(tx)?.touched ?? [])].sort())
+  const touched = [...(noted.get(tx)?.touched ?? [])].sort()
+
+  await refreshSurchargeLines(tx, touched)
+
+  // A recurring invoice whose period moved takes the day of the maintenance
+  // that period pays for (#1037), as the route gives it.
+  for (const draft of touched) {
+    await followPeriod(tx, draft)
+  }
 }
 
 /**

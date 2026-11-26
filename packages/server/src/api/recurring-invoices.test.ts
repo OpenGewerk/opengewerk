@@ -496,6 +496,41 @@ describe('the day of the rate of a recurring invoice (#1037)', () => {
     }
   })
 
+  it('taxes the period as of its end for a contract that wants the end, as its rate', async () => {
+    // Section 19 until 30 June 2020; the first period ends on 14 July.
+    await admin.query(
+      `insert into tenant_parameters (tenant_id, key, valid_from, valid_until, unit, value)
+         values ($1, 'small_business.claimed', '2020-01-01', '2020-06-30', 'flag', 1)`,
+      [north],
+    )
+
+    try {
+      const made = await contract('2020-06-15', {
+        termMonths: 2,
+        firstVisitOn: '2020-06-20',
+        rateDay: 'period_end',
+      })
+
+      await run(3)
+
+      const { rows } = await admin.query<{ service_from: string; tax_treatment: string }>(
+        `select to_char(service_from, 'YYYY-MM-DD') as service_from, tax_treatment
+           from documents where maintenance_contract_id = $1 order by service_from`,
+        [made],
+      )
+
+      expect(rows).toEqual([
+        { service_from: '2020-06-15', tax_treatment: 'standard' },
+        { service_from: '2020-07-15', tax_treatment: 'standard' },
+      ])
+    } finally {
+      await admin.query(
+        "delete from tenant_parameters where tenant_id = $1 and key = 'small_business.claimed'",
+        [north],
+      )
+    }
+  })
+
   it('is the end of the period for a contract that wants it, which names no day', async () => {
     const made = await contract('2020-06-01', {
       termMonths: 2,
@@ -675,6 +710,62 @@ describe('what has changed for a recurring invoice (#1037)', () => {
       { designation: 'Wartung Elektroanlage Rheinstraße 12', unit_price_cents: 4_200 },
       { designation: 'Anfahrt pauschal', unit_price_cents: 1_500 },
     ])
+  })
+
+  it('moves the day of its maintenance with a period the office moves, and blames no contract', async () => {
+    const start = addMonths(today, -1)
+    const made = await contract(start, {
+      issueByItself: false,
+      firstVisitOn: start,
+      intervalMonths: 6,
+    })
+
+    await run(2)
+
+    const [first] = await invoicesOf(made)
+    const id = String(first?.id)
+    const later = { from: addMonths(start, 7), until: addDays(addMonths(start, 8), -1) }
+
+    expect(await supplyOf(id)).toBe(start)
+
+    // Through the route: seven months on, the period pays for the second maintenance.
+    await request(app.getHttpServer())
+      .patch(`/documents/${id}`)
+      .set('x-test-identity', office())
+      .send({ serviceFrom: later.from, serviceUntil: later.until })
+      .expect(200)
+
+    expect(await supplyOf(id)).toBe(addMonths(start, 6))
+    expect((await check(id).expect(200)).body).toEqual({ changes: [] })
+
+    // Through the sync, as the screen of the office writes it: back again.
+    const pushed = await request(app.getHttpServer())
+      .post('/sync')
+      .set('x-test-identity', JSON.stringify({ ...JSON.parse(office()), deviceId: 'office-tab' }))
+      .send({
+        deviceId: 'office-tab',
+        operations: [
+          {
+            id: newId<'operation'>(),
+            entity: 'documents',
+            recordId: id,
+            kind: 'update',
+            baseVersion: null,
+            patches: [
+              { field: 'serviceFrom', from: later.from, to: first?.service_from },
+              { field: 'serviceUntil', from: later.until, to: first?.service_until },
+            ],
+            recordedAt: new Date().toISOString(),
+          },
+        ],
+      })
+      .expect(201)
+
+    expect((pushed.body as { receipts: { outcome: string }[] }).receipts[0]?.outcome).toBe(
+      'applied',
+    )
+    expect(await supplyOf(id)).toBe(start)
+    expect((await check(id).expect(200)).body).toEqual({ changes: [] })
   })
 
   it('tells a draft laid out before the notice only of the day of its maintenance', async () => {

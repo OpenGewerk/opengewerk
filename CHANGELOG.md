@@ -13,10 +13,11 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   das so festlegt; bei einer laufenden Leistung wie einer Bereitschaft bleibt es das Ende des Zeitraums (#1037).
   Warum: Eine Wartung zu einem Tag ist keine Dauerleistung, ihr Satz ist der vom Tag der Wartung. Ein neuer Vertrag
   steht auf dem Tag der Wartung, einer von vor dieser Fassung behält das Ende des Zeitraums, bis das Büro es am
-  Vertrag ändert. Die Rechnung nennt den Tag neben dem Leistungszeitraum, im PDF und in der E-Rechnung. Nach diesem
-  Tag richtet sich auch der Steuerfall, etwa die Kleinunternehmerregelung. Weichen im Entwurf einer Dauerrechnung
-  Pauschale, Steuerfall oder dieser Tag vom heutigen Stand ab, sagt ein Hinweis welche, und „Neue Werte übernehmen“
-  setzt sie. Was das Büro im Entwurf selbst geändert hat, nennt er nicht. Kennt eine neue Fassung für den Tag einer
+  Vertrag ändert. Die Rechnung nennt den Tag neben dem Leistungszeitraum, im PDF und in der E-Rechnung. Ändert das
+  Büro den Zeitraum eines Entwurfs, geht der Tag mit. Den Steuerfall, etwa die Kleinunternehmerregelung, nimmt sie vom
+  selben Tag wie den Satz und nicht mehr vom Beginn des Zeitraums. Weichen im Entwurf einer Dauerrechnung Pauschale,
+  Steuerfall oder dieser Tag vom heutigen Stand ab, sagt ein Hinweis welche, und „Neue Werte übernehmen“ setzt sie.
+  Was das Büro im Entwurf selbst geändert hat, nennt er nicht. Kennt eine neue Fassung für den Tag einer
   festgeschriebenen Dauerrechnung einen anderen Satz, bleibt die Rechnung, wie sie ist, und ein Hinweis bietet
   „Stornieren und neu anlegen“ an: die Stornorechnung und ein neuer Entwurf für denselben Zeitraum mit denselben
   Positionen.

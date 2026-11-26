@@ -72,6 +72,7 @@ import {
 import { articlePricesOn, type PriceOfDay, pricedFromArticle } from '../documents/article-prices.js'
 import { contentAndGapsOf, issuerOf, withStoredLogo } from '../documents/content.js'
 import { contractFlatLineFor } from '../contracts/invoice.js'
+import { followPeriod } from '../contracts/period-day.js'
 import {
   followCall,
   refreshSurchargeLine,
@@ -384,6 +385,12 @@ export class DocumentsController {
         // and one whose tax changes works it out with that tax.
         if (surchargeTermsOfDocument.some((field) => values[field] !== undefined)) {
           await refreshSurchargeLine(tx, updated.id)
+        }
+
+        // A recurring invoice whose period moves takes the day of the
+        // maintenance that period pays for (#1037).
+        if (values['serviceFrom'] !== undefined || values['serviceUntil'] !== undefined) {
+          return (await followPeriod(tx, updated.id)) ?? updated
         }
 
         return updated
