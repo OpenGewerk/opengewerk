@@ -653,6 +653,19 @@ printf '%s' "$out" | grep -qF '(unset OPENGEWERK_VERSION) gilt die Fassung 0.9.1
   printf 'FEHLER: start.sh sagte zu 0.8.0 in der Umgebung und 0.9.1 in der .env:\n%s\n' "$out"
   exit 1
 }
+# A kit without digests, as the CI packs one: with nothing in the .env its
+# own version holds after the unset, with "source" there the source.
+sed 's/OPENGEWERK_VERSION:-source}/OPENGEWERK_VERSION:-0.10.0}/' "$source_dir/compose.yaml" > "$work/docker/compose.yaml"
+pin ''
+refused_version OPENGEWERK_VERSION=0.8.0
+printf '%s' "$out" | grep -qF '(unset OPENGEWERK_VERSION) startet die Fassung 0.10.0 dieses Pakets'
+pin source
+refused_version OPENGEWERK_VERSION=0.8.0
+printf '%s' "$out" | grep -qF '(unset OPENGEWERK_VERSION) werden die Abbilder aus dem Quelltext gebaut' || {
+  printf 'FEHLER: start.sh sagte zu 0.8.0 in der Umgebung und source in der .env:\n%s\n' "$out"
+  exit 1
+}
+cp "$source_dir/compose.yaml" "$work/docker/compose.yaml"
 pin 0.9.0
 start
 pulled '0\.9\.0'

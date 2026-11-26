@@ -228,10 +228,12 @@ if [ -z "$signed" ] && [ -n "$pinned" ] && [ "$version" = "$pinned" ]; then
           *) without="startet die Fassung $shipped dieses Pakets" ;;
         esac
         if [ -n "$pinned_in_environment" ]; then
-          # Without the variable the line of the .env holds, where it names a
-          # version.
+          # Without the variable the line of the .env holds: a version it
+          # names, the source it names, or with nothing in it what the folder
+          # brings.
           case "$pinned_in_file" in
-            '' | latest | source) ;;
+            '') ;;
+            latest | source) without='werden die Abbilder aus dem Quelltext gebaut' ;;
             *) without="gilt die Fassung $pinned_in_file aus der .env" ;;
           esac
           fail "In der Umgebung steht ${version_variable}=${version}. Zu dieser Fassung gibt es kein Abbild für den Dienst $service, den erst die Fassung $since mitbringt. Ohne die Variable (unset ${version_variable}) $without, sonst eine Fassung ab $since setzen. Geholt und gestartet wird nichts, eine laufende Instanz arbeitet unverändert weiter."
