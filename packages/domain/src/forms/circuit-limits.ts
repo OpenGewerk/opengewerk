@@ -159,10 +159,11 @@ export const chargingRcdTripCurrentRange: LimitCalculator = (_field, { rules, on
  * protocol names, and without one of U0 = 230 V, rounded up to whole kiloohms
  * so that it is never looser. A circuit above 500 V counts per volt of its own
  * nominal voltage, which the chart does not name, and the protocol says so
- * rather than judge it by another. Version 3 of the protocol (#1120) has none
- * either where the protocol itself names more than 500 V, whatever the chart
- * says of a circuit; version 2 counts per volt of any voltage its head names,
- * as it was shipped, so that a protocol filled in it is judged as it was.
+ * rather than judge it by another. Version 3 of the protocol (#1120) has no
+ * limit per volt either where the protocol itself names more than 500 V,
+ * whatever the chart says of a circuit up to 500 V; SELV and PELV keep their
+ * 0,25 MΩ. Version 2 counts per volt of any voltage its head names, as it was
+ * shipped, so that a protocol filled in it is judged as it was.
  */
 function recurringInsulation(
   loads: 'with_loads' | 'without_loads',

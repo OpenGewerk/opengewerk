@@ -9,8 +9,8 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
-- Die Wiederholungsprüfung gibt in Fassung 3 für die Isolation keinen Grenzwert, wenn der Kopf des Protokolls eine
-  Nennspannung über 500 V nennt (#1120, Paket Elektro 0.17.0). Warum: Bei 690 V im Kopf rechnete Fassung 2 für jeden
+- Die Wiederholungsprüfung gibt in Fassung 3 für die Isolation keinen Mindestwert je Volt, wenn der Kopf des
+  Protokolls eine Nennspannung über 500 V nennt (#1120, Paket Elektro 0.17.0). Warum: Bei 690 V im Kopf rechnete Fassung 2 für jeden
   Stromkreis bis 500 V einen Mindestwert je Volt dieser 690 V, bei 1000 Ω je Volt also 0,690 MΩ, und ließ 0,700 MΩ
   als in Ordnung gelten. Über 500 V gilt der Mindestwert aber je Volt der Nennspannung des Stromkreises, und die
   kennt das Stromkreisverzeichnis nicht; einen Stromkreis über 500 V beurteilte das Protokoll schon bisher deshalb

@@ -75,8 +75,9 @@ export const elektroManifest: TradeManifest = manifest
  * Information 203-072 that version 1 left out and for the environment of each
  * circuit, and judges the insulation after the whole of table 11 and the loop
  * impedance and tripping current as version 4 of the first inspection (#1022);
- * version 3 gives no limit of the insulation where the head names more than
- * 500 V, as for a circuit above 500 V (#1120). The test of a appliance after DGUV Vorschrift 3 the third, the first
+ * version 3 gives no limit of the insulation per volt where the head names
+ * more than 500 V, as for a circuit above 500 V, and SELV and PELV keep their
+ * 0,25 MΩ (#1120). The test of a appliance after DGUV Vorschrift 3 the third, the first
  * that hangs on an appliance of the register and not on an installation (#303);
  * its version 2 adds a photo from the files of the appliance (#817), version 3
  * works out the protective conductor current (#816), and version 4 asks for it

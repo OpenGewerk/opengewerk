@@ -132,8 +132,12 @@ describe('a printed recurring inspection in version 3 (#1120)', () => {
   it('judges no insulation where the protocol names more than 500 V, and says so under the table', () => {
     // 300 Ω per volt at 690 V would ask 0,207 MΩ, and 0,100 MΩ fell short in version 2.
     expect(printed(3).match(/<td class="figure outside">/g)).toBeNull()
+    // Each column of the insulation with its own values per volt.
     expect(printed(3)).toContain(
-      'je Volt der Nennspannung des Protokolls bis 500 V, ohne Angabe 230 V, und 0,25 MΩ bei SELV und PELV',
+      '<strong>Isolationswiderstand Riso ohne Verbraucher:</strong> nach Umgebung und Netzform des Stromkreises mindestens 1000 Ω/V trocken, 500 Ω/V feucht, 50 Ω/V im IT-System, je Volt der Nennspannung des Protokolls bis 500 V, ohne Angabe 230 V, und 0,25 MΩ bei SELV und PELV',
+    )
+    expect(printed(3)).toContain(
+      '<strong>Isolationswiderstand Riso mit Verbrauchern:</strong> nach Umgebung und Netzform des Stromkreises mindestens 300 Ω/V trocken, 150 Ω/V feucht, 50 Ω/V im IT-System, je Volt der Nennspannung des Protokolls bis 500 V, ohne Angabe 230 V, und 0,25 MΩ bei SELV und PELV',
     )
     expect(printed(2).match(/<td class="figure outside">/g)).toHaveLength(1)
     expect(printed(2)).toContain('je Volt der Nennspannung des Protokolls, ohne Angabe 230 V')
