@@ -69,12 +69,19 @@ case "$*" in
   'compose -f '*' config --services')
     # The names at the second level of the compose.yaml named, as near to the
     # services as start.sh needs: whether one of them is the updater.
-    file=${*#compose -f }
+    # Taken whole first: how # acts on $* is left open by POSIX, dash cuts
+    # the whole string and bash each argument on its own (#1116).
+    all="$*"
+    file=${all#compose -f }
     sed -n 's/^  \([a-z][a-z-]*\):$/\1/p' "${file% config --services}"
     ;;
 esac
 FAKE
 chmod +x "$work/bin/docker"
+
+# The Docker of the machine, before the one above takes its place: case 9b
+# asks it what Docker Compose makes of a kit.
+real_docker=$(command -v docker || true)
 
 CALLS="$work/calls"
 PATH="$work/bin:$PATH"
@@ -167,38 +174,39 @@ pulled '0\.3\.0'
 check 'Paket: Fassung 0.3.0 geholt, nichts gebaut'
 
 # 3. A version in the .env wins over the kit, also written by hand on Windows.
-pin 0.2.1
+pin 0.9.1
 start
-pulled '0\.2\.1'
+pulled '0\.9\.1'
 check 'Fassung aus der .env geht vor'
 
-printf 'OPENGEWERK_VERSION="0.2.2" # pinned\r\n' > "$work/docker/.env.line"
+printf 'OPENGEWERK_VERSION="0.9.2" # pinned\r\n' > "$work/docker/.env.line"
 grep -v '^OPENGEWERK_VERSION=' "$work/docker/.env" >> "$work/docker/.env.line"
 mv "$work/docker/.env.line" "$work/docker/.env"
 start
-pulled '0\.2\.2'
+pulled '0\.9\.2'
 check 'Anführungszeichen, Kommentar und Zeilenende aus Windows gehören nicht zur Fassung'
 
 # A comment in another encoding than UTF-8 after the version, read by a shell
 # under UTF-8: it goes as a whole all the same. The line of 3b comes back
 # after, written whole, since a sed under UTF-8 would not replace this one.
-printf 'OPENGEWERK_VERSION=0.2.3 # f\374r den Test\n' > "$work/docker/.env.line"
+printf 'OPENGEWERK_VERSION=0.9.3 # f\374r den Test\n' > "$work/docker/.env.line"
 grep -v '^OPENGEWERK_VERSION=' "$work/docker/.env" >> "$work/docker/.env.line"
 mv "$work/docker/.env.line" "$work/docker/.env"
 LC_ALL=C.UTF-8
 export LC_ALL
 start
 unset LC_ALL
-pulled '0\.2\.3'
-printf 'OPENGEWERK_VERSION="0.2.2" # pinned\r\n' > "$work/docker/.env.line"
+pulled '0\.9\.3'
+printf 'OPENGEWERK_VERSION="0.9.2" # pinned\r\n' > "$work/docker/.env.line"
 grep -v '^OPENGEWERK_VERSION=' "$work/docker/.env" >> "$work/docker/.env.line"
 mv "$work/docker/.env.line" "$work/docker/.env"
 check 'ein Kommentar in einer anderen Kodierung gehört auch unter UTF-8 nicht zur Fassung'
 
-# 4. And the environment over the .env, as Docker Compose has it.
+# 4. And the environment over the .env, as Docker Compose has it. 0.10.0 is
+# later than the 0.9.0 the updater came with as a number, not as text.
 : > "$CALLS"
-OPENGEWERK_VERSION=0.4.0 OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null > /dev/null 2>&1
-pulled '0\.4\.0'
+OPENGEWERK_VERSION=0.10.0 OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null > /dev/null 2>&1
+pulled '0\.10\.0'
 check 'Fassung aus der Umgebung geht vor'
 
 # 5. An .env from before #155 says "latest". In a kit that would build with
@@ -334,6 +342,29 @@ test "$last_check" -lt "$first_pull"
 printf '%s' "$out" | grep -q 'gilt nur für einen Checkout'
 printf '%s' "$out" | grep -q 'Die Signaturen der Abbilder sind geprüft.'
 check 'Paket mit Digest: seine Fassung, jede Signatur geprüft, bevor etwas geholt wird'
+
+# 9b. And the application names that version, whatever the .env says
+# (#1118): kit-images.sh writes it as a value into its environment, the
+# expression behind it as a comment for start.sh and the updater. With a
+# Docker on the machine, as in the CI, Docker Compose itself says what the
+# application gets with 0.2.1 in the .env.
+grep -q "^      OPENGEWERK_VERSION: '0.6.0' # \${OPENGEWERK_VERSION:-0.6.0}\$" "$work/docker/compose.yaml" || {
+  echo 'FEHLER: das Paket mit Digest nennt seine Fassung nicht als Wert in der Umgebung der Anwendung'
+  grep -n 'OPENGEWERK_VERSION' "$work/docker/compose.yaml"
+  exit 1
+}
+if [ -n "$real_docker" ]; then
+  named=$("$real_docker" compose -f "$work/docker/compose.yaml" config --format json |
+    sed -n 's/.*"OPENGEWERK_VERSION": *"\([^"]*\)".*/\1/p' | sort -u)
+  test "$named" = 0.6.0 || {
+    printf 'FEHLER: Docker Compose gibt der Anwendung %s statt 0.6.0\n' "$named"
+    exit 1
+  }
+elif [ -n "${CI:-}" ]; then
+  echo 'FEHLER: in der CI fehlt docker für den Blick von Docker Compose'
+  exit 1
+fi
+check 'Paket mit Digest: die Anwendung nennt seine Fassung, auch mit einer anderen in der .env'
 
 # 10. A signature that does not hold stops the start before anything is
 # pulled or migrated, and says why.
@@ -575,5 +606,39 @@ printf '%s' "$out" | grep -q 'Im Browser: https://werkstatt.example.org$' || {
   exit 1
 }
 check 'Adresse im Browser: aus der Umgebung vor der .env, ohne Zeilenende aus Windows'
+
+# 17. A version older than a service of compose.yaml has no image of it
+# (#1115): the updater came with 0.9.0. The start refuses it before anything
+# is pulled, built or migrated and says what to change, in the .env or in
+# the environment; 0.9.0 itself starts.
+cp "$source_dir/compose.yaml" "$work/docker/compose.yaml"
+refused_version() {
+  : > "$CALLS"
+  if out=$(env "$@" OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null 2>&1); then
+    printf 'FEHLER: start.sh startete mit %s\n' "$*"
+    exit 1
+  fi
+  absent ' pull'
+  absent ' build'
+  absent ' run --rm migrate'
+}
+pin 0.8.0
+refused_version
+printf '%s' "$out" | grep -qF 'In der .env steht OPENGEWERK_VERSION=0.8.0. Zu dieser Fassung gibt es kein Abbild für den Dienst updater, den erst die Fassung 0.9.0 mitbringt. Ist die Zeile leer, werden die Abbilder aus dem Quelltext gebaut' || {
+  printf 'FEHLER: start.sh sagte zu 0.8.0 in der .env:\n%s\n' "$out"
+  exit 1
+}
+pin ''
+refused_version OPENGEWERK_VERSION=0.8.9
+printf '%s' "$out" | grep -qF 'In der Umgebung steht OPENGEWERK_VERSION=0.8.9.' || {
+  printf 'FEHLER: start.sh sagte zu 0.8.9 in der Umgebung:\n%s\n' "$out"
+  exit 1
+}
+printf '%s' "$out" | grep -qF '(unset OPENGEWERK_VERSION)'
+pin 0.9.0
+start
+pulled '0\.9\.0'
+pin ''
+check 'Fassung ohne Abbild eines Dienstes: abgelehnt mit dem Satz zur .env oder zur Umgebung, 0.9.0 startet'
 
 echo 'Startskript: alles in Ordnung.'

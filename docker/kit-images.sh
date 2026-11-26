@@ -48,3 +48,16 @@ done
 if [ "$#" -gt 0 ] && grep -Eq "image: [^ ]+:\\$\\{${prefix}_VERSION" "$compose"; then
   fail 'compose.yaml im Paket nennt ein Abbild der Anwendung ohne Digest.'
 fi
+
+# The application names the version its images run (#259). With digests a
+# version left in the .env changes no image, so it must not change that name
+# either (#1118): the line in the environment of the application gets the
+# version as a value. The expression stays behind it as a comment. Once the
+# images carry digests it is the only one left, and start.sh and the updater
+# of every version read the version of the kit from it; Docker Compose reads
+# no comment.
+if [ "$#" -gt 0 ]; then
+  sed -i "s|^\\( *\\)${prefix}_VERSION: \\\${${prefix}_VERSION:-${version}}\$|\\1${prefix}_VERSION: '${version}' # \\\${${prefix}_VERSION:-${version}}|" "$compose"
+  grep -Eq "^ +${prefix}_VERSION: '${version}' # " "$compose" ||
+    fail "compose.yaml im Paket nennt die Fassung der Anwendung nicht als ${prefix}_VERSION in ihrer Umgebung."
+fi

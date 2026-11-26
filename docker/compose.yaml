@@ -190,7 +190,10 @@ services:
       # health check and the foot of the sign in (#259). The release workflow
       # puts the version in place of "source" here as at the images, so a kit
       # knows it without a step of its own; a checkout says "source", which
-      # the application takes for no version at all.
+      # the application takes for no version at all. A kit with digests runs
+      # its own images whatever the .env says, and kit-images.sh writes its
+      # version here as a value, the expression behind it as a comment that
+      # start.sh and the updater read (#1118).
       OPENGEWERK_VERSION: ${OPENGEWERK_VERSION:-source}
       # Mail servers in the own network a business may use. Empty, only mail
       # servers on the internet are reached, on the ports for mail.
@@ -440,6 +443,10 @@ services:
     build:
       context: ./updater
     image: ghcr.io/opengewerk/updater:${OPENGEWERK_VERSION:-source}
+    # The first version whose release has an image of this service. start.sh
+    # refuses an older one in the .env or the environment and says what to
+    # change (#1115); a service the first release had needs no such line.
+    x-since: 0.9.0
     restart: unless-stopped
     logging: *logging
     <<: *hardening
