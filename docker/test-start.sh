@@ -87,9 +87,10 @@ CALLS="$work/calls"
 PATH="$work/bin:$PATH"
 export CALLS PATH
 # Which engine start.sh talks to is what case 13 checks; nothing of the
-# machine this runs on comes in.
+# machine this runs on comes in, a version exported in its shell neither
+# (#1124).
 unset DOCKER_CONTEXT DOCKER_HOST CONTEXT_FAILS CONTEXT_IN_USE DOCKER_SERVER DOCKER_SERVERS DOCKER_ID DOCKER_IDS \
-  WATCHED SETUP_NEEDED TRUSTED_ORIGINS APP_LOCKED
+  WATCHED SETUP_NEEDED TRUSTED_ORIGINS APP_LOCKED OPENGEWERK_VERSION
 
 check() {
   printf 'check: %s\n' "$1"

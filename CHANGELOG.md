@@ -24,6 +24,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   als Kommentar dahinter, weil `start.sh` und der Updater jeder Fassung die Fassung eines Pakets dort lesen.
 - `docker/test-start.sh` läuft auch, wenn `/bin/sh` eine bash ist, etwa unter macOS oder in Git Bash (#1116). Warum:
   Der Ersatz für Docker las den Pfad der `compose.yaml` mit `${*#...}`, und wie das auf `$*` wirkt, lässt POSIX offen.
+  Auch eine in der Shell exportierte `OPENGEWERK_VERSION` lässt ihn nicht mehr in Fall 1 abbrechen (#1124).
 - Die Wiederholungsprüfung gibt in Fassung 3 für die Isolation keinen Mindestwert je Volt, wenn der Kopf des
   Protokolls eine Nennspannung über 500 V nennt (#1120, Paket Elektro 0.17.0). Warum: Bei 690 V im Kopf rechnete Fassung 2 für jeden
   Stromkreis bis 500 V einen Mindestwert je Volt dieser 690 V, bei 1000 Ω je Volt also 0,690 MΩ, und ließ 0,700 MΩ
