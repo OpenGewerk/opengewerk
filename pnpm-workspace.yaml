@@ -42,6 +42,9 @@ overrides:
   # copies its own defaults with it; the patch below does that with
   # structuredClone, and this entry drops deepmerge from the tree.
   '@rollup/plugin-node-resolve>deepmerge': '-'
+  # GHSA-mrhx-c7xc-m3w5, under better-auth 1.7.28 and its packages, which
+  # still ask for ^4.5.4. Bounded to the 4 line the tree resolves.
+  'zod@>=4.0.0 <4.6.6': 4.6.7
 
 patchedDependencies:
   '@rollup/plugin-node-resolve@16.0.3': patches/@rollup__plugin-node-resolve@16.0.3.patch

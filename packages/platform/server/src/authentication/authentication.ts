@@ -1122,7 +1122,7 @@ export function createAuthentication({
        *
        * The plugin asks the browser for that confirmation, and with
        * `userVerification: 'required'` it refuses an answer without it itself
-       * in better-auth 1.7.18, unlike 1.7.11, with a code of its own that the
+       * since better-auth 1.7.18, unlike 1.7.11, with a code of its own that the
        * screen words (`passkeys.ts` of the web). The two checks after the
        * plugin's own were the only ones before that and stay as a second
        * line.
