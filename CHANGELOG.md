@@ -14,8 +14,8 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   Regelpaket der laufenden Fassung neu, während PDF, E-Rechnung und Zahlungen den festgeschriebenen Stand lesen.
   Hätte eine spätere Fassung geändert, was für einen vergangenen Tag gilt, wäre die Anzeige vom verschickten PDF
   abgewichen. Die Datenbank schreibt die Summen jetzt beim Festschreiben aus diesem Stand an den Beleg, Migration 0159
-  trägt sie für die schon ausgestellten Belege nach, und der Abgleich bringt sie auf die Geräte; neu gerechnet wird nur
-  ein Entwurf. Auch `GET /documents/{id}/totals` antwortet für einen ausgestellten Beleg mit diesen Summen. Hält ein
+  trägt sie für die schon ausgestellten Belege nach, und der Abgleich bringt sie auf die Geräte; neu gerechnet wird nur,
+  was noch nicht festgeschrieben ist. Auch `GET /documents/{id}/totals` antwortet für einen ausgestellten Beleg mit diesen Summen. Hält ein
   Gerät einen ausgestellten Beleg noch aus der Zeit vor dem Update, steht dort bis zum nächsten Abgleich ein Satz dazu
   und keine Summe.
 

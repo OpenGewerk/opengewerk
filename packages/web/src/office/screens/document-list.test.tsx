@@ -144,4 +144,64 @@ describe('the list of documents', () => {
     })
     expect(within(table).queryByRole('link', { name: 'ohne Nummer' })).toBeNull()
   })
+
+  it('shows an issued document with the gross amount it froze, a draft with the one of its lines (#1035)', async () => {
+    // Its line comes to 1.071,00 by the rules of this version; it went out at 1.190,00.
+    server.put('documents', {
+      id: 'd-3',
+      customerId: 'c-1',
+      kind: 'final_invoice',
+      status: 'issued',
+      number: 'RE-2026-0232',
+      documentDate: '2026-09-21',
+      subject: 'Unterverteilung erneuern',
+      taxTreatment: 'standard',
+      issuedTotals: JSON.stringify({
+        netCents: 100_000,
+        taxCents: 19_000,
+        grossCents: 119_000,
+        byRate: [
+          {
+            rate: 'standard',
+            basisPoints: 1900,
+            netCents: 100_000,
+            taxCents: 19_000,
+            grossCents: 119_000,
+          },
+        ],
+        taxNote: null,
+      }),
+      version: 1,
+    })
+    for (const [id, documentId, netCents] of [
+      ['l-3', 'd-3', 90_000],
+      ['l-2', 'd-2', 50_000],
+    ] as const) {
+      server.put('document_lines', {
+        id,
+        documentId,
+        kind: 'item',
+        position: 1,
+        designation: 'Arbeit',
+        quantityMilli: 1000,
+        unit: 'piece',
+        unitPriceCents: netCents,
+        netCents,
+        vatRate: 'standard',
+        version: 1,
+      })
+    }
+
+    await mount()
+
+    const table = await screen.findByRole('table', { name: 'Alle Belege des Betriebs' })
+    const issued = within(table).getByRole('link', { name: 'RE-2026-0232' }).closest('tr')
+    const quote = within(table).getByRole('link', { name: 'ohne Nummer' }).closest('tr')
+
+    await waitFor(() => {
+      expect(issued?.textContent).toContain('1.190,00')
+    })
+    expect(issued?.textContent).not.toContain('1.071,00')
+    expect(quote?.textContent).toContain('595,00')
+  })
 })
