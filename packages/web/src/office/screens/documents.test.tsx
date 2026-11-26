@@ -3477,6 +3477,33 @@ describe('what has changed for a recurring invoice (#1037)', () => {
     })
   })
 
+  it('says the values are taken over until the exchange brings them here', async () => {
+    let taken = false
+
+    serverSays('GET', '/documents/d-1/recurring-check', () => ({
+      status: 200,
+      body: { changes: taken ? [] : [{ field: 'flatCents', was: 3_900, now: 4_200 }] },
+    }))
+    // Taken over on the server, but this server never hands out the new version.
+    serverSays('POST', '/documents/d-1/recurring-refresh', () => {
+      taken = true
+
+      return { status: 201, body: { applied: [{ field: 'flatCents', was: 3_900, now: 4_200 }] } }
+    })
+
+    await mount('/belege/d-1', {
+      documents: [recurring()],
+      document_lines: [line('l-1', 1, { unit: 'flat_rate', unitPriceCents: 3_900 })],
+    })
+    const person = userEvent.setup()
+
+    await person.click(await screen.findByRole('button', { name: 'Neue Werte übernehmen' }))
+
+    expect(
+      await screen.findByText(/^Die neuen Werte sind übernommen\. Der Entwurf zeigt sie, sobald/),
+    ).toBeDefined()
+  })
+
   it('names in the head of the draft the day its tax is of', async () => {
     serverSays('GET', '/documents/d-1/recurring-check', () => ({
       status: 200,

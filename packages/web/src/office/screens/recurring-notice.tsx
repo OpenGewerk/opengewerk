@@ -102,6 +102,10 @@ export function RecurringNotice({ document }: { readonly document: RecordState }
   const [working, setWorking] = useState(false)
   const [renewing, setRenewing] = useState(false)
   const [trouble, setTrouble] = useState<string | null>(null)
+  // The version of the draft that took over on the server while this device
+  // still holds it: the screen says so until the exchange brings the new one.
+  const [takenAt, setTakenAt] = useState<unknown>(null)
+  const waiting = takenAt !== null && takenAt === document['version']
   const asked = status === 'draft' || status === 'issued'
   const check = useQuery({
     // Asked again after every exchange too: the contract or the customer may
@@ -116,14 +120,25 @@ export function RecurringNotice({ document }: { readonly document: RecordState }
   // may be out of date: nothing to say until it is back. What a step that
   // went through on the server said stays, also then.
   if (!online || !asked || changes.length === 0) {
-    return trouble ? (
-      <p role="alert" className="text-body font-semibold text-conflict">
-        {trouble}
+    if (trouble) {
+      return (
+        <p role="alert" className="text-body font-semibold text-conflict">
+          {trouble}
+        </p>
+      )
+    }
+
+    return waiting ? (
+      <p role="status" className="text-body text-ink-muted">
+        Die neuen Werte sind übernommen. Der Entwurf zeigt sie, sobald der Abgleich sie gebracht
+        hat.
       </p>
     ) : null
   }
 
   async function takeOver() {
+    const before = document['version']
+
     setWorking(true)
     setTrouble(null)
 
@@ -140,8 +155,14 @@ export function RecurringNotice({ document }: { readonly document: RecordState }
 
     try {
       // Taken over on the server; the exchange brings it here, and one that
-      // fails now brings it with the next.
+      // fails now brings it with the next. An exchange that fails does not
+      // throw, it leaves the draft as it was.
       await client.synchronise().catch(() => undefined)
+
+      if (client.get('documents', documentId)?.['version'] === before) {
+        setTakenAt(before)
+      }
+
       await queries.invalidateQueries({ queryKey: ['recurring-check', documentId] })
     } catch (error) {
       setTrouble(
