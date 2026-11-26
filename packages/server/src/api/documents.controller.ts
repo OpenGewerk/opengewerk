@@ -1125,7 +1125,7 @@ export class DocumentsController {
         throw new ConflictException('Die Rechnung ist inzwischen storniert worden.')
       }
 
-      return issued
+      return withIssuedTotals(tx, issued)
     })
   }
 
@@ -1306,7 +1306,21 @@ export async function issueWith(
     content: await withStoredLogo(tx, identity.tenantId, { ...content, number }),
   })
 
-  return issued
+  return withIssuedTotals(tx, issued)
+}
+
+/**
+ * The row of a document just issued, read again once its snapshot is written:
+ * the trigger on the snapshot copies its totals onto the document (#1035),
+ * after the update that issued it returned.
+ */
+async function withIssuedTotals(tx: TenantTransaction, issued: DocumentRow): Promise<DocumentRow> {
+  const [current] = await tx
+    .select()
+    .from(documents)
+    .where(and(eq(documents.tenantId, issued.tenantId), eq(documents.id, issued.id)))
+
+  return current ?? issued
 }
 
 /**

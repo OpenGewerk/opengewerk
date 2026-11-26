@@ -301,6 +301,24 @@ describe('cancelling an invoice', () => {
   })
 
   /**
+   * The totals both froze travel on the documents (#1035): the cancellation
+   * gets its own, mirrored, and the invoice keeps its own as it is cancelled.
+   */
+  it('gives the cancellation the totals it froze, and leaves the invoice its own', async () => {
+    const invoice = await issuedInvoice()
+    const answer = await cancel(invoice.id).expect(201)
+    const storno = answer.body as DocumentRow
+
+    const original = await snapshotOf(invoice.id)
+    const mirror = await snapshotOf(storno.id)
+
+    expect(mirror?.totals.grossCents).toBe(-(original?.totals.grossCents ?? 0))
+    expect(storno.issuedTotals).toEqual(mirror?.totals)
+    expect((await documentRow(storno.id)).issuedTotals).toEqual(mirror?.totals)
+    expect((await documentRow(invoice.id)).issuedTotals).toEqual(original?.totals)
+  })
+
+  /**
    * One moment for the date, the number and the issue of a cancellation: made
    * a second before midnight in Germany, with midnight passing while it is
    * written, it is dated on the day of its issue (#1039, the review).

@@ -710,6 +710,27 @@ describe('what a device may not do without a connection', () => {
       fields: ['issuedBy'],
     })
 
+    // Nor give it the totals of an issued one, which come from its snapshot (#1035).
+    const totalled = await push(office(), 'telefon-anna', [
+      change({
+        entity: 'documents',
+        recordId: draft.body.id,
+        patches: [
+          {
+            field: 'issuedTotals',
+            from: null,
+            to: '{"netCents":0,"taxCents":0,"grossCents":0,"byRate":[],"taxNote":null}',
+          },
+        ],
+      }),
+    ])
+
+    expect(totalled.receipts[0]).toMatchObject({
+      outcome: 'conflict',
+      reason: 'set_by_server',
+      fields: ['issuedTotals'],
+    })
+
     const documents = await http().get('/documents').set('x-test-identity', office()).expect(200)
     const after = (documents.body as { id: string; status: string; number: string | null }[]).find(
       (document) => document.id === draft.body.id,

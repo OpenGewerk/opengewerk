@@ -19,6 +19,7 @@ import { useMemo, useState } from 'react'
 
 import { berlinMoment } from '../../app/appointments.js'
 import { DocumentState } from '../../app/document-state.js'
+import { frozenTotalsOf } from '../../app/issued-totals.js'
 import {
   documentKindOf,
   documentStatusOf,
@@ -177,10 +178,12 @@ export function SiteInvoiceScreen() {
     )
   }
 
-  let totals: ReturnType<typeof totalsFor> | string
+  // What an issued invoice froze (#1035), the figures of its PDF; a draft adds
+  // up its lines by the rules of the day of the work.
+  let totals: ReturnType<typeof totalsFor> | string | null = frozenTotalsOf(invoice)
 
   try {
-    totals = totalsFor(
+    totals ??= totalsFor(
       shippedRules,
       lines.map((line) => ({
         netCents: count(line, 'netCents'),

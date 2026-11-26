@@ -1,4 +1,6 @@
 import type { IsoDate, StoreId, Synced } from '@opengewerk/platform-domain'
+
+import type { DocumentTotals } from '../rules/invoice.js'
 import type {
   CustomerId,
   DocumentId,
@@ -508,6 +510,12 @@ export interface Document extends Synced {
    * while it is a draft, and for a document fixed before anybody kept it.
    */
   readonly issuedBy: string | null
+  /**
+   * The totals it froze when it was issued (#1035), the ones of its snapshot,
+   * which the database copies here so that a device shows them too. Null for
+   * a draft and a signed report, whose totals are worked out from the lines.
+   */
+  readonly issuedTotals: DocumentTotals | null
   /**
    * The account that made it (#786), set by the server, never by a device.
    * Null for a document made before anybody kept it and not found in the

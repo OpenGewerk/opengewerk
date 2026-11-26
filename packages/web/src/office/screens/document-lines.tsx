@@ -84,6 +84,7 @@ import {
   vatRateLabel,
   vatRateOf,
 } from '../../app/labels.js'
+import { frozenTotalsOf } from '../../app/issued-totals.js'
 import { useMay } from '../../app/queries.js'
 import { type MetalOnDay, purchaseOf } from '../../session/articles.js'
 import { deductionsOf } from '../../session/documents.js'
@@ -131,10 +132,12 @@ export function inOrder(records: readonly RecordState[]): readonly ShownLine[] {
 }
 
 /**
- * What the lines add up to, by the rules of the day the tax belongs to: the
- * day of the document's work, or for a cancellation the one of the invoice it
- * takes back (#1017). The totals, or the sentence the rules answer with for a
- * day they do not cover.
+ * What a document adds up to. An issued or cancelled one shows the totals it
+ * froze (#1035), the ones on its PDF, whatever the rules of this version say
+ * about its day. A draft adds up its lines by the rules of the day the tax
+ * belongs to: the day of the document's work, or for a cancellation the one
+ * of the invoice it takes back (#1017). The totals, or the sentence the rules
+ * answer with for a day they do not cover.
  *
  * A cancellation undoes the tax that invoice stated, and should a rate change
  * between the two, its own day would work out a different tax from the same
@@ -146,6 +149,12 @@ export function totalsOf(
   lines: readonly ShownLine[],
   original: RecordState | null,
 ): DocumentTotals | string {
+  const frozen = frozenTotalsOf(document)
+
+  if (frozen !== null) {
+    return frozen
+  }
+
   const taxedBy = original ?? document
 
   try {

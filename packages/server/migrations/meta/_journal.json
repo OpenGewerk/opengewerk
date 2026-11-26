@@ -1114,6 +1114,13 @@
       "when": 1795568390300,
       "tag": "0158_job_named_vat",
       "breakpoints": true
+    },
+    {
+      "idx": 159,
+      "version": "7",
+      "when": 1795701261007,
+      "tag": "0159_document_issued_totals",
+      "breakpoints": true
     }
   ]
 }
