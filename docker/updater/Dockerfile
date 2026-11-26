@@ -2,7 +2,7 @@
 # update beside the stack and run start.sh in it, and cosign, to check the
 # signature of the kit before anything of it is unpacked. Both bases are
 # named by their digest, like every other here.
-FROM ghcr.io/sigstore/cosign/cosign:v3.1.5@sha256:191099139868a6cd02abae63f2919e0915dcaa7bcc22bda6fbd11fd0dd5599e7 AS cosign
+FROM ghcr.io/sigstore/cosign/cosign:v3.1.6@sha256:7d08ec40d6f6fd9ced81a498c367ee6d4dd90d73218f58a791f78661bdbef769 AS cosign
 
 FROM docker:29.10.0-cli@sha256:34507eb5069d8be82c95dd3b6987d4250fd5fee49b82e2509b7d7a7030740d6d
 
