@@ -202,7 +202,7 @@ fi
 # reads like a network that is down, or build it from the source under the
 # tag of the old version. A kit with digests starts its own version, which
 # has an image of each of its services, and is not asked.
-if [ -n "$pinned" ] && [ "$version" = "$pinned" ]; then
+if [ -z "$signed" ] && [ -n "$pinned" ] && [ "$version" = "$pinned" ]; then
   case "$version" in
     [0-9]*.[0-9]*.[0-9]*)
       newer=$(awk -v version="$version" '

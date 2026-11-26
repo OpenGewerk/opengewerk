@@ -340,6 +340,12 @@ first_pull=$(grep -n 'pull --policy missing' "$CALLS" | head -n 1 | cut -d: -f1)
 last_check=$(grep -n '^cosign|' "$CALLS" | tail -n 1 | cut -d: -f1)
 test "$last_check" -lt "$first_pull"
 printf '%s' "$out" | grep -q 'In der .env steht OPENGEWERK_VERSION=0.2.1. Dieses Paket ist die Fassung 0.6.0'
+# Its own version in the .env is not asked against x-since either: the
+# updater of this kit says 0.9.0, as copied from the checkout.
+pin 0.6.0
+said > /dev/null
+pulled '0\.6\.0'
+pin 0.2.1
 out=$(env OPENGEWERK_VERSION=0.2.5 OPENGEWERK_ADDRESS=http://127.0.0.1:23700 sh "$work/docker/start.sh" < /dev/null 2>&1)
 printf '%s' "$out" | grep -q 'In der Umgebung steht OPENGEWERK_VERSION=0.2.5. Dieses Paket ist die Fassung 0.6.0' || {
   printf 'FEHLER: start.sh nannte eine Fassung aus der Umgebung nicht als solche:\n%s\n' "$out"
