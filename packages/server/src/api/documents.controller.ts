@@ -374,7 +374,10 @@ export class DocumentsController {
               .select({ serviceFrom: documents.serviceFrom, serviceUntil: documents.serviceUntil })
               .from(documents)
               .where(and(eq(documents.id, id as DocumentId), isNull(documents.deletedAt)))
-              .for('update')
+              // The lock the update takes anyway, and no stronger one: a key
+              // share from a row that names the document, as its first PDF
+              // does, must not wait on it.
+              .for('no key update')
           : []
 
       const [updated] = await tx

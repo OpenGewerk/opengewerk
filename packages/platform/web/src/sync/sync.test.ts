@@ -349,6 +349,23 @@ describe('a device without a network', () => {
     expect(tried).toEqual({ outcome: 'refused', reason: 'record_is_fixed', fields: ['status'] })
   })
 
+  it('hands out a record as the server sent it, without the change that waits (#1037)', async () => {
+    const client = await start(transport)
+
+    await holding(
+      client,
+      transport,
+      { entity: 'letters', rows: [row({ id: 'letter-1', status: 'draft', number: null })] },
+      { entity: 'letter_lines', rows: [row({ id: 'line-1', letterId: 'letter-1', words: 10 })] },
+    )
+
+    transport.refuse = new TypeError('Failed to fetch')
+    await client.update('letter_lines', 'line-1', { words: 20 })
+
+    expect(client.get('letter_lines', 'line-1')?.['words']).toBe(20)
+    expect(client.confirmed('letter_lines', 'line-1')?.['words']).toBe(10)
+  })
+
   it('lets a line be written while its parent is still in that state', async () => {
     const client = await start(transport)
 

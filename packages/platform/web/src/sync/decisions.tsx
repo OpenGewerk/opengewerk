@@ -182,10 +182,12 @@ function ConflictCard({
   const record = known ?? conflict.wanted
   // What the system holds for a field: what the server put down with the
   // conflict, and where it put down only the field that stops the change, as
-  // for a record fixed in the meantime, the record as this device has it
-  // from the server. That is the state "Stand im System behalten" keeps.
+  // for a record fixed in the meantime, the record as the server last sent
+  // it, without what still waits in the outbox. That is the state "Stand im
+  // System behalten" keeps.
+  const confirmed = client.confirmed(conflict.entity, conflict.recordId)
   const inSystem = (field: string): SyncValue | undefined =>
-    Object.hasOwn(conflict.found, field) ? conflict.found[field] : known?.[field]
+    Object.hasOwn(conflict.found, field) ? conflict.found[field] : confirmed?.[field]
   const settled = words.settledElsewhere[conflict.entity]
 
   // Where the other way is open, the server names the field that stops the

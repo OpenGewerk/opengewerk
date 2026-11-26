@@ -744,6 +744,16 @@ export class SyncClient {
   }
 
   /**
+   * One record as the server last sent it, without what waits in the outbox
+   * laid over it, or null where this device has none from the server. What a
+   * conflict card says the system holds where the server put down no value
+   * of its own (#1037).
+   */
+  confirmed(entity: string, id: string): RecordState | null {
+    return this.records.get(entity)?.get(id) ?? null
+  }
+
+  /**
    * One record as the screen should show it, or null when it is gone.
    *
    * Cached until the next change, like the lists and for the same reason: a
