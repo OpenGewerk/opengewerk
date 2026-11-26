@@ -3477,6 +3477,22 @@ describe('what has changed for a recurring invoice (#1037)', () => {
     })
   })
 
+  it('names in the head of the draft the day its tax is of', async () => {
+    serverSays('GET', '/documents/d-1/recurring-check', () => ({
+      status: 200,
+      body: { changes: [] },
+    }))
+
+    await mount('/belege/d-1', {
+      documents: [recurring({ supplyOn: '2026-07-15' })],
+      document_lines: [line('l-1', 1, { unit: 'flat_rate', unitPriceCents: 3_900 })],
+    })
+
+    expect(
+      await screen.findByText(/^Tag der Leistung: 15\.07\.2026, Wartung\. Nach ihm richtet sich/),
+    ).toBeDefined()
+  })
+
   it('tells an issued invoice the rate it stated and the one its day has now, and lays its period out again', async () => {
     serverSays('GET', '/documents/d-1/recurring-check', () => ({
       status: 200,

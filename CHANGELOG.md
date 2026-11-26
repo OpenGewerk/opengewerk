@@ -13,15 +13,17 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   das so festlegt; bei einer laufenden Leistung wie einer Bereitschaft bleibt es das Ende des Zeitraums (#1037).
   Warum: Eine Wartung zu einem Tag ist keine Dauerleistung, ihr Satz ist der vom Tag der Wartung. Ein neuer Vertrag
   steht auf dem Tag der Wartung, einer von vor dieser Fassung behält das Ende des Zeitraums, bis das Büro es am
-  Vertrag ändert. Die Rechnung nennt den Tag neben dem Leistungszeitraum, im PDF und in der E-Rechnung. Ändert das
-  Büro den Zeitraum eines Entwurfs, geht der Tag mit. Den Steuerfall, etwa die Kleinunternehmerregelung, nimmt sie vom
-  selben Tag wie den Satz und nicht mehr vom Beginn des Zeitraums. Weichen im Entwurf einer Dauerrechnung Pauschale,
-  Steuerfall oder dieser Tag vom heutigen Stand ab, sagt ein Hinweis welche, und „Neue Werte übernehmen“ setzt sie.
-  Was das Büro im Entwurf selbst geändert hat, nennt er nicht. Kennt eine neue Fassung für den Tag einer
-  festgeschriebenen Dauerrechnung einen anderen Satz, bleibt die Rechnung, wie sie ist, und ein Hinweis bietet
-  „Stornieren und neu anlegen“ an: die Stornorechnung und ein neuer Entwurf für denselben Zeitraum mit allem, was das
-  Büro an der Rechnung gesetzt hatte (Kunde, Positionen, Texte, Steuerfall, Zahlungsziel), aber mit dem Tag der
-  Leistung nach dem heutigen Vertrag. Was sich sonst geändert hat, nennt danach der Hinweis im Entwurf.
+  Vertrag ändert. Die Rechnung nennt den Tag neben dem Leistungszeitraum, im PDF, in der E-Rechnung und schon im Kopf
+  des Entwurfs. Ändert das Büro den Zeitraum eines Entwurfs, geht der Tag mit. Den Steuerfall, etwa die
+  Kleinunternehmerregelung, nimmt sie vom selben Tag wie den Satz und nicht mehr vom Beginn des Zeitraums. Weichen im
+  Entwurf einer Dauerrechnung Pauschale, Steuerfall oder dieser Tag vom heutigen Stand ab, sagt ein Hinweis welche,
+  und „Neue Werte übernehmen“ setzt sie. Was das Büro im Entwurf selbst geändert hat, nennt er nicht. Kennt eine neue
+  Fassung für den Tag einer festgeschriebenen Dauerrechnung einen anderen Satz, bleibt die Rechnung, wie sie ist, und
+  ein Hinweis bietet „Stornieren und neu anlegen“ an: die Stornorechnung und ein neuer Entwurf für denselben Zeitraum
+  mit allem, was das Büro an der Rechnung gesetzt hatte (Kunde, Positionen, Texte, Steuerfall, Zahlungsziel), aber mit
+  dem Tag der Leistung nach dem heutigen Vertrag. Was sich sonst geändert hat, nennt danach der Hinweis im Entwurf.
+  Einen neuen Entwurf aus einem Konflikt an einer festgeschriebenen Dauerrechnung eines Vertrags bietet der Abgleich
+  nicht mehr an, weil er den Zeitraum ein zweites Mal abrechnen würde.
 - Der Renderer für die PDFs läuft auf browserless/chromium 2.64.4 statt 2.64.3, im Betrieb wie in der Prüfung der
   E-Rechnung (#1125). Warum: Es ist die neueste Fassung. Sie behebt einen Fehler in den Netzfiltern von BrowserQL, die
   OpenGewerk nicht nutzt, und die CI prüft die PDFs mit demselben Renderer, mit dem eine Instanz sie erzeugt.

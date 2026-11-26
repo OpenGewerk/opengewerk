@@ -71,7 +71,19 @@ export function fixedDocumentOf(client: SyncClient, conflict: SyncConflict): str
 
   const fixed = client.get('documents', documentId)
 
-  return fixed && fixed['kind'] !== 'cancellation_invoice' ? documentId : null
+  // Not a cancellation, and not the invoice of a period of a maintenance
+  // contract (#1037): a copy would bill the period a second time, outside its
+  // contract and without the day its rate is of. That one is laid out again
+  // with "Stornieren und neu anlegen" at the invoice.
+  if (
+    !fixed ||
+    fixed['kind'] === 'cancellation_invoice' ||
+    (fixed['kind'] === 'recurring_invoice' && typeof fixed['maintenanceContractId'] === 'string')
+  ) {
+    return null
+  }
+
+  return documentId
 }
 
 /**
