@@ -346,7 +346,7 @@ describe('adding a passkey', () => {
       userVerified: false,
     })
 
-    // The plugin refuses it itself in better-auth 1.7.18, before the check
+    // The plugin refuses it itself since better-auth 1.7.18, before the check
     // of our own behind it is asked; the screen words its code.
     expect(refused.status).toBe(400)
     expect((refused.body as { code: string }).code).toBe('FAILED_TO_VERIFY_REGISTRATION')
