@@ -184,13 +184,17 @@ function ConflictCard({
 
   // Where the other way is open, the server names the field that stops the
   // change, and that is no row anybody can decide on. What the device wrote
-  // is: the fields the way chooses, beside what the system holds.
+  // is: the fields the way chooses, beside what the system holds. So it is
+  // for a record fixed in the meantime with no other way open: what the
+  // device wrote stays to be seen, though only the system's state can stay.
   const involved =
     way && group !== null
       ? way.fields(conflict.wanted)
-      : conflict.fields.length > 0
-        ? conflict.fields
-        : Object.keys(conflict.wanted)
+      : conflict.reason === 'record_is_fixed' && Object.keys(conflict.wanted).length > 0
+        ? Object.keys(conflict.wanted)
+        : conflict.fields.length > 0
+          ? conflict.fields
+          : Object.keys(conflict.wanted)
   const onlyOnDevice = group !== null && known === null
   const deleting = group !== null && Object.keys(conflict.wanted).length === 0
   const entry = useEntry()

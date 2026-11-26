@@ -593,6 +593,8 @@ describe('the conflict screen', () => {
       await screen.findByText(/Das ist festgeschrieben und lässt sich nicht mehr ändern/),
     ).toBeDefined()
     expect(screen.queryByRole('button', { name: 'Als neuen Entwurf anlegen' })).toBeNull()
+    // What the device wrote stays to be seen.
+    expect(screen.getByText('Wie am Telefon besprochen.')).toBeDefined()
   })
 
   it('says so plainly when there is nothing to decide', async () => {
