@@ -30,9 +30,10 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
-- Ein Konflikt an einem inzwischen festgeschriebenen Beleg, für den es keinen anderen Weg gibt, zeigt, was das Gerät
-  geschrieben hat, und nicht mehr nur den Status (#1037). Warum: Bei einer Stornorechnung und jetzt auch bei einer
-  Dauerrechnung eines Vertrags, die keinen neuen Entwurf mehr anbietet, war sonst nicht zu sehen, was verloren geht.
+- Ein Konflikt an einem inzwischen festgeschriebenen Beleg, für den es keinen anderen Weg gibt, zeigt die Felder, die
+  das Gerät geschrieben hat, je mit dem Stand im System (#1037). Bisher stand dort nur der Status, an dem der Server
+  die Änderung abwies. Warum: Bei einer Stornorechnung und jetzt auch bei einer Dauerrechnung eines Vertrags, die
+  keinen neuen Entwurf mehr anbietet, war sonst nicht zu sehen, was verloren geht.
 - Am Wartungsvertrag steht eine stornierte Dauerrechnung in der Tabelle „Rechnungen“ als „Storniert“ und nicht mehr
   als „Festgeschrieben“, auf der Karte am Telefon mit „storniert“ hinter der Nummer (#1128). Warum: Nach „Stornieren
   und neu anlegen“ steht derselbe Zeitraum zweimal da, und man sah nicht, welche Rechnung noch gilt.

@@ -180,6 +180,12 @@ function ConflictCard({
   // the device wanted is the only thing that can name it.
   const known = client.get(conflict.entity, conflict.recordId)
   const record = known ?? conflict.wanted
+  // What the system holds for a field: what the server put down with the
+  // conflict, and where it put down only the field that stops the change, as
+  // for a record fixed in the meantime, the record as this device has it
+  // from the server. That is the state "Stand im System behalten" keeps.
+  const inSystem = (field: string): SyncValue | undefined =>
+    Object.hasOwn(conflict.found, field) ? conflict.found[field] : known?.[field]
   const settled = words.settledElsewhere[conflict.entity]
 
   // Where the other way is open, the server names the field that stops the
@@ -418,7 +424,7 @@ function ConflictCard({
               sub: (
                 <>
                   <span className="block">{`Auf dem Gerät: ${shown(words, field, conflict.wanted[field])}`}</span>
-                  <span className="block">{`Im System: ${shown(words, field, conflict.found[field])}`}</span>
+                  <span className="block">{`Im System: ${shown(words, field, inSystem(field))}`}</span>
                   <span className="block">{`Das Gerät sah: ${shown(words, field, conflict.seen[field])}`}</span>
                 </>
               ),
@@ -439,9 +445,7 @@ function ConflictCard({
                   <Cell className="font-semibold">
                     {shown(words, field, conflict.wanted[field])}
                   </Cell>
-                  <Cell className="font-semibold">
-                    {shown(words, field, conflict.found[field])}
-                  </Cell>
+                  <Cell className="font-semibold">{shown(words, field, inSystem(field))}</Cell>
                   <Cell>{shown(words, field, conflict.seen[field])}</Cell>
                 </tr>
               ))}
@@ -528,7 +532,7 @@ function ConflictCard({
             {onlyOnDevice ? null : (
               <>
                 <SiteVersion icon={Server} head="Im System">
-                  {shown(words, field, conflict.found[field])}
+                  {shown(words, field, inSystem(field))}
                 </SiteVersion>
                 <p className="text-[15px] text-ink-muted">
                   {`Das Gerät sah: ${shown(words, field, conflict.seen[field])}`}

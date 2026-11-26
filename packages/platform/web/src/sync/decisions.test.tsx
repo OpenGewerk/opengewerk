@@ -809,22 +809,29 @@ describe('the other way out of a conflict', () => {
   })
 
   it('shows what the device wrote of a record fixed in the meantime that no way is open for', async () => {
-    // A note fixed in the meantime: the probe has no other way for notes.
+    // A note fixed in the meantime: the probe has no other way for notes. The
+    // server puts down only the field that stops the change, as it does.
     server.open = [
       conflict({
         reason: 'record_is_fixed',
         fields: ['status'],
         wanted: { text: 'Regal vier umräumen' },
         seen: { text: 'Regal drei umräumen' },
-        found: { text: 'Regal drei umräumen' },
+        found: { status: 'done' },
       }),
     ]
     inOffice(await client({ notes: [note] }))
 
     const rows = screen.getAllByRole('rowheader').map((cell) => cell.textContent)
+    const text = screen.getByRole('row', { name: /^Text/ })
 
     expect(rows).toEqual(['Text'])
-    expect(screen.getByText('Regal vier umräumen')).toBeTruthy()
+    // The device's text, the system's as this device has it, and what it saw.
+    expect(
+      within(text)
+        .getAllByRole('cell')
+        .map((cell) => cell.textContent),
+    ).toEqual(['Regal vier umräumen', 'Regal drei umräumen', 'Regal drei umräumen'])
     expect(screen.queryByRole('button', { name: 'Als Abschrift anlegen' })).toBeNull()
   })
 

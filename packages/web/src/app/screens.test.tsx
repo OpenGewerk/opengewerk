@@ -555,8 +555,9 @@ describe('the conflict screen', () => {
         entity: 'documents',
         recordId: 'd-9',
         wanted: { introText: 'Wie am Telefon besprochen.' },
-        seen: { introText: null },
-        found: { introText: null },
+        seen: { introText: 'Vielen Dank für Ihren Auftrag.' },
+        // As the server puts it down: only the field that stops the change.
+        found: { status: 'issued' },
       }),
     ]
 
@@ -570,6 +571,7 @@ describe('the conflict screen', () => {
           customerId: 'c-1',
           maintenanceContractId: 'wv-2',
           subject: 'Wartung Elektroanlage, Juli 2020',
+          introText: 'Vielen Dank für Ihren Auftrag.',
           documentDate: '2020-07-01',
           serviceFrom: '2020-07-01',
           serviceUntil: '2020-07-31',
@@ -593,8 +595,10 @@ describe('the conflict screen', () => {
       await screen.findByText(/Das ist festgeschrieben und lässt sich nicht mehr ändern/),
     ).toBeDefined()
     expect(screen.queryByRole('button', { name: 'Als neuen Entwurf anlegen' })).toBeNull()
-    // What the device wrote stays to be seen.
+    // What the device wrote stays to be seen, beside what the system holds.
     expect(screen.getByText('Wie am Telefon besprochen.')).toBeDefined()
+    expect(screen.getAllByText('Vielen Dank für Ihren Auftrag.').length).toBeGreaterThan(0)
+    expect(screen.queryByText('leer')).toBeNull()
   })
 
   it('says so plainly when there is nothing to decide', async () => {
