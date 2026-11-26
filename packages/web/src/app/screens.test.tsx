@@ -548,6 +548,59 @@ describe('the conflict screen', () => {
     expect([...server.resolved].sort()).toEqual(['k-1', 'k-2', 'k-3'])
   })
 
+  it('offers no new draft of the invoice of a period of a maintenance contract (#1037)', async () => {
+    server.open = [
+      fixed({
+        id: 'k-1',
+        entity: 'documents',
+        recordId: 'd-9',
+        wanted: { introText: 'Wie am Telefon besprochen.' },
+        seen: { introText: 'Vielen Dank für Ihren Auftrag.' },
+        // As the server puts it down: only the field that stops the change.
+        found: { status: 'issued' },
+      }),
+    ]
+
+    const client = await withClient(server, {
+      documents: [
+        {
+          id: 'd-9',
+          kind: 'recurring_invoice',
+          status: 'issued',
+          number: 'RE-2026-0241',
+          customerId: 'c-1',
+          maintenanceContractId: 'wv-2',
+          subject: 'Wartung Elektroanlage, Juli 2020',
+          introText: 'Vielen Dank für Ihren Auftrag.',
+          documentDate: '2020-07-01',
+          serviceFrom: '2020-07-01',
+          serviceUntil: '2020-07-31',
+          supplyOn: '2020-06-15',
+          version: 3,
+          deletedAt: null,
+        },
+      ],
+    })
+
+    render(
+      <InApplication>
+        <SyncProvider client={client}>
+          <ConflictScreen />
+        </SyncProvider>
+      </InApplication>,
+    )
+
+    // As for a cancellation: it is fixed, and the state in the system stays.
+    expect(
+      await screen.findByText(/Das ist festgeschrieben und lässt sich nicht mehr ändern/),
+    ).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Als neuen Entwurf anlegen' })).toBeNull()
+    // What the device wrote stays to be seen, beside what the system holds.
+    expect(screen.getByText('Wie am Telefon besprochen.')).toBeDefined()
+    expect(screen.getAllByText('Vielen Dank für Ihren Auftrag.').length).toBeGreaterThan(0)
+    expect(screen.queryByText('leer')).toBeNull()
+  })
+
   it('says so plainly when there is nothing to decide', async () => {
     const client = await withClient(server)
 

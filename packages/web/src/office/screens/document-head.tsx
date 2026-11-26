@@ -170,6 +170,10 @@ function HeaderFacts({
     { label: 'Betreff', value: text(document, 'subject') },
     { label: 'Belegdatum', value: date(document['documentDate']) },
     ...(isInvoice(kind) ? [{ label: 'Leistungszeitraum', value: servicePeriod(document) }] : []),
+    // The maintenance the period of a recurring invoice pays for (#1037).
+    ...(maybeText(document, 'supplyOn')
+      ? [{ label: 'Tag der Leistung', value: `${date(document['supplyOn'])}, Wartung` }]
+      : []),
     { label: 'Umsatzsteuer', value: taxTreatmentLabel[taxTreatmentOf(document)] },
     ...(statesTerm
       ? [
@@ -487,6 +491,12 @@ function HeaderForm({
                 }}
                 {...(periodProblem === null ? {} : { problem: periodProblem })}
               />
+              {/* The day its tax is of (#1037), written by the server alone: shown, not entered. */}
+              {maybeText(document, 'supplyOn') ? (
+                <p className="text-[13px] leading-[1.4] text-ink-muted sm:col-span-2">
+                  {`Tag der Leistung: ${date(document['supplyOn'])}, Wartung. Nach ihm richtet sich die Umsatzsteuer, und er geht mit dem Leistungszeitraum.`}
+                </p>
+              ) : null}
             </>
           ) : null}
         </div>

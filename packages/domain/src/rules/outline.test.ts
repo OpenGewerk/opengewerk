@@ -236,8 +236,10 @@ describe('a snapshot written in the first shape', () => {
 
     const read = currentContent(first)
 
-    // Lifted all the way to today, one version at a time.
-    expect(read.version).toBe(15)
+    // Lifted all the way to today, one version at a time; no day of the
+    // supply apart from the period, which version 16 brought (#1037).
+    expect(read.version).toBe(16)
+    expect(read.supplyOn).toBeNull()
     expect(read.introText).toBeNull()
     expect(read.closingText).toBeNull()
     expect(read.signature).toBeNull()
@@ -308,7 +310,11 @@ describe('a snapshot written in the first shape', () => {
       kind: 'delivery_note' as const,
     } satisfies DocumentContentV13
 
-    expect(currentContent(thirteenth)).toMatchObject({ version: 15, delivers: null })
+    expect(currentContent(thirteenth)).toMatchObject({
+      version: 16,
+      delivers: null,
+      supplyOn: null,
+    })
 
     // Before version 15 no line carried a guarantee of durability (#433).
     const fourteenth = {
@@ -318,8 +324,9 @@ describe('a snapshot written in the first shape', () => {
     } satisfies DocumentContentV14
 
     expect(currentContent(fourteenth)).toMatchObject({
-      version: 15,
+      version: 16,
       lines: [{ ...plain, durability: null }],
+      supplyOn: null,
     })
   })
 })

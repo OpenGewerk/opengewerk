@@ -162,6 +162,8 @@ export function totalsOf(
       documentDate: text(taxedBy, 'documentDate'),
       serviceFrom: maybeText(taxedBy, 'serviceFrom'),
       serviceUntil: maybeText(taxedBy, 'serviceUntil'),
+      // The day of the maintenance a recurring invoice pays for (#1037).
+      supplyOn: maybeText(taxedBy, 'supplyOn'),
       taxTreatment: taxTreatmentOf(document),
     })
   } catch (error) {

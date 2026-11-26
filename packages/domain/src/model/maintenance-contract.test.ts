@@ -13,8 +13,10 @@ import {
   nextPeriod,
   nextVisitOn,
   periodText,
+  supplyDayOf,
   termEndOn,
   visitDescription,
+  visitPaidFor,
 } from './maintenance-contract.js'
 
 const day = (value: string) => value as IsoDate
@@ -309,5 +311,38 @@ describe('the periods of a contract paid per period (#295)', () => {
     ).toEqual({
       issueByItself: 'Ohne Zutun gehen nur Rechnungen je Zeitraum hinaus.',
     })
+  })
+})
+
+/**
+ * The maintenance a period of a recurring invoice pays for (#1037): the last
+ * one due on or before its last day, and before the first one the first.
+ * Every six months from the 15th of January 2026.
+ */
+describe('the maintenance a period pays for (#1037)', () => {
+  const every6 = { firstVisitOn: day('2026-01-15'), intervalMonths: 6 }
+
+  it('is the last one due by the end of the period', () => {
+    expect(visitPaidFor(every6, { until: day('2026-12-31') })).toBe('2026-07-15')
+    expect(visitPaidFor(every6, { until: day('2026-07-14') })).toBe('2026-01-15')
+    expect(visitPaidFor(every6, { until: day('2026-07-15') })).toBe('2026-07-15')
+  })
+
+  it('is the first for a period that ends before it', () => {
+    expect(visitPaidFor(every6, { until: day('2026-01-14') })).toBe('2026-01-15')
+  })
+
+  it('names the day only where the contract wants the rate of the maintenance', () => {
+    const period = { until: day('2026-12-31') }
+
+    expect(supplyDayOf({ ...every6, rateDay: 'visit' }, period)).toBe('2026-07-15')
+    expect(supplyDayOf({ ...every6, rateDay: 'period_end' }, period)).toBeNull()
+  })
+
+  it('is a day the contract states, and nothing else', () => {
+    expect(maintenanceContractProblems({ rateDay: 'payment' })['rateDay']).toBe(
+      'Nach welchem Tag sich der Steuersatz richtet, fehlt.',
+    )
+    expect(maintenanceContractProblems({ rateDay: 'visit' })['rateDay']).toBeUndefined()
   })
 })

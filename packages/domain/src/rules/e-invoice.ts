@@ -160,11 +160,17 @@ export function formatFor(
  * instead (FAQ on the e-invoice, question 7b): one issued before the duty
  * began needs no e-invoice, however late the work follows. Taking the planned
  * period is the stricter of the two readings; which one stays is open in #31.
+ *
+ * A recurring invoice of a contract whose flat price pays for its
+ * maintenances names the day of the maintenance (#1037), and that day comes
+ * first: the period says what is billed, the maintenance is what was done.
  */
 export function supplyDateOf(
-  content: Pick<DocumentContent, 'documentDate' | 'serviceFrom' | 'serviceUntil'>,
+  content: Pick<DocumentContent, 'documentDate' | 'serviceFrom' | 'serviceUntil'> & {
+    readonly supplyOn?: IsoDate | null
+  },
 ): IsoDate {
-  return content.serviceUntil ?? content.serviceFrom ?? content.documentDate
+  return content.supplyOn ?? content.serviceUntil ?? content.serviceFrom ?? content.documentDate
 }
 
 export interface Duty {
@@ -207,7 +213,9 @@ export interface Duty {
  */
 export function eInvoiceDuty(
   rules: RuleSet,
-  content: Pick<DocumentContent, 'documentDate' | 'serviceFrom' | 'serviceUntil'>,
+  content: Pick<DocumentContent, 'documentDate' | 'serviceFrom' | 'serviceUntil'> & {
+    readonly supplyOn?: IsoDate | null
+  },
   transitionClaimed: boolean,
   sentOn: IsoDate = content.documentDate,
 ): Duty {

@@ -114,6 +114,12 @@ export const syncPolicies: Readonly<Record<string, SyncPolicy>> = {
       // What an issued document froze (#1035), copied by the database from
       // its snapshot.
       'issuedTotals',
+      // The day of the maintenance a recurring invoice pays for (#1037),
+      // worked out by the server from its contract.
+      'supplyOn',
+      // What it took from its contract and customer (#1037), so that the
+      // notice tells a change there from one made in the draft.
+      'takenOver',
     ],
     createdAs: { status: 'draft' },
   },

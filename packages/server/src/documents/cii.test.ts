@@ -18,6 +18,7 @@ import {
   item,
   perHundred,
   photovoltaics,
+  recurringInvoice,
   reverseCharge,
   samples,
   secondProgress,
@@ -349,6 +350,23 @@ describe('an e-invoice', () => {
         `${settlement}/ram:BillingSpecifiedPeriod//udt:DateTimeString`,
       ),
     ).toEqual(['20260901', '20260915'])
+  })
+
+  it('states the day of the maintenance a recurring invoice names as the day of delivery, beside its period (#1037)', () => {
+    // The same sample the schema and the validators of the CI check.
+    const xml = ciiInvoice(recurringInvoice, 'en16931')
+
+    expect(read(xml, '//ram:ActualDeliverySupplyChainEvent//udt:DateTimeString')).toEqual([
+      '20200615',
+    ])
+    expect(read(xml, `${settlement}/ram:BillingSpecifiedPeriod//udt:DateTimeString`)).toEqual([
+      '20200701',
+      '20200731',
+    ])
+    // Taxed by the day of the maintenance: nineteen percent, not sixteen.
+    expect(read(xml, `${settlement}/ram:ApplicableTradeTax/ram:RateApplicablePercent`)).toEqual([
+      '19',
+    ])
   })
 
   it('names the site as the place of delivery only with a town and a postal code', () => {

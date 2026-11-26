@@ -1,22 +1,228 @@
 import { UnprocessableEntityException } from '@nestjs/common'
 import {
+  type BilledPeriod,
+  type ContractRateDay,
   type CustomerId,
   type IsoDate,
   lastServiceDay,
+  type LineKind,
+  type LineUnit,
   type MaintenanceContractId,
   nextPeriod,
   type PaymentRhythm,
   periodText,
+  type PriceBase,
   priceUnitLabel,
   type RenewalKind,
+  supplyDayOf,
+  type TaxTreatment,
+  type VatRate,
 } from '@opengewerk/domain'
-import type { TenantTransaction } from '@opengewerk/platform-server'
+import { newId, type TenantTransaction } from '@opengewerk/platform-server'
 import { and, eq, isNull } from 'drizzle-orm'
 
 import { contentForIssuing, issueWith } from '../api/documents.controller.js'
 import { documentLines, documents, maintenanceContracts } from '../database/schema/index.js'
 import type { DeadlineRow } from '../deadlines/engine.js'
 import { proposedTreatment } from '../documents/treatment.js'
+
+type ContractRow = typeof maintenanceContracts.$inferSelect
+
+type DocumentRow = typeof documents.$inferSelect
+
+/**
+ * A line of a recurring invoice as it is written. Laid out again after a
+ * cancellation, a line keeps its article and the mark of the surcharge of an
+ * emergency call (#1037), as a document made from another one does.
+ */
+export interface PeriodLine {
+  readonly kind: LineKind
+  readonly position: number
+  readonly designation: string
+  readonly description: string | null
+  readonly quantityMilli: number
+  readonly unit: LineUnit
+  readonly unitPriceCents: number
+  readonly priceBase: PriceBase
+  readonly vatRate: VatRate
+  readonly netCents: number
+  readonly articleId: (typeof documentLines.$inferSelect)['articleId']
+  readonly emergencySurcharge: boolean
+}
+
+/**
+ * What a recurring invoice takes from its contract and its customer when it
+ * is made (#1037): how it is taxed, the day of the maintenance its period
+ * pays for where the contract wants the rate of that day, and the flat price.
+ * A draft that holds other values than these was made before a change; the
+ * office hears of it and takes them over.
+ *
+ * Taxed as of the day of the supply, the day its rate is of as well: the
+ * maintenance where the contract names it, so that one of a time the
+ * business claimed section 19 for stays without VAT when it is billed after,
+ * and otherwise the end of the period, when a running service is done. Until
+ * #1037 it was the first day of the period. For the customer the invoice
+ * goes to, which is the contract's unless the office has sent it elsewhere.
+ */
+export async function periodValues(
+  tx: TenantTransaction,
+  contract: ContractRow,
+  period: Pick<BilledPeriod, 'from' | 'until'>,
+  customerId: string = contract.customerId,
+): Promise<{
+  readonly taxTreatment: TaxTreatment
+  readonly supplyOn: IsoDate | null
+  readonly flatCents: number | null
+}> {
+  const supplyOn = supplyDayOf(
+    {
+      rateDay: contract.rateDay as ContractRateDay,
+      firstVisitOn: contract.firstVisitOn as IsoDate,
+      intervalMonths: contract.intervalMonths,
+    },
+    period,
+  )
+
+  return {
+    taxTreatment: await proposedTreatment(tx, customerId as CustomerId, supplyOn ?? period.until),
+    supplyOn,
+    flatCents: contract.flatCents,
+  }
+}
+
+/** The one line of a recurring invoice: the flat price of the period. */
+export function flatLine(
+  contract: ContractRow,
+  period: Pick<BilledPeriod, 'from' | 'until'>,
+  flatCents: number | null,
+): PeriodLine {
+  const rhythm = contract.paymentRhythm as PaymentRhythm
+
+  return {
+    kind: 'item',
+    position: 1,
+    designation: contract.designation,
+    description: `Pauschale ${priceUnitLabel[rhythm]} nach dem Wartungsvertrag ${contract.number}, Leistungszeitraum ${periodText(period)}.`,
+    quantityMilli: 1000,
+    unit: 'flat_rate',
+    unitPriceCents: flatCents ?? 0,
+    priceBase: 1,
+    vatRate: 'standard',
+    netCents: flatCents ?? 0,
+    articleId: null,
+    emergencySurcharge: false,
+  }
+}
+
+/**
+ * What a period laid out again keeps of the invoice it replaces (#1037):
+ * everything the office can set on a draft, which is its lines, which of
+ * them carries the flat price, whom and what it is for, its texts, how it was
+ * taxed and its payment term, and what it had taken from its contract and its
+ * customer. So what the office set on it stays the office's, and the notice
+ * of the new draft tells only what has changed there since. Only the day of
+ * the maintenance is worked out anew, from the contract of today: that day
+ * is what laying a period out again is for. The date is the day it is laid
+ * out, as for any draft.
+ */
+export interface KeptOfInvoice {
+  readonly lines: readonly PeriodLine[]
+  /** Where in `lines` the line of the flat price stands, or null for none. */
+  readonly flatAt: number | null
+  readonly customerId: DocumentRow['customerId']
+  readonly siteId: DocumentRow['siteId']
+  /** Null where the invoice named a single day of service. */
+  readonly serviceUntil: DocumentRow['serviceUntil']
+  readonly jobId: DocumentRow['jobId']
+  readonly installationId: DocumentRow['installationId']
+  readonly subject: DocumentRow['subject']
+  readonly introText: DocumentRow['introText']
+  readonly closingText: DocumentRow['closingText']
+  readonly taxTreatment: DocumentRow['taxTreatment']
+  readonly paymentTermDays: DocumentRow['paymentTermDays']
+  /**
+   * What the invoice had taken: the flat price and the tax treatment. Null
+   * for one laid out before it noted that: what it took is not known, and
+   * the new draft, as a draft from before, hears only of the day.
+   */
+  readonly taken: { readonly flatCents: number | null; readonly taxTreatment: string } | null
+}
+
+/**
+ * The draft of the recurring invoice of a period, with the values of its
+ * contract and customer of today (`periodValues`), and with the flat price as
+ * its one line unless it is handed what to keep (#1037): laying a period out
+ * again after a cancellation keeps what the invoice billed (`KeptOfInvoice`).
+ * It notes what it took (`takenOver`): the line of the flat price by its id
+ * and that price, so that a later change of the contract is told from one
+ * made in the draft.
+ */
+export async function layOutPeriod(
+  tx: TenantTransaction,
+  contract: ContractRow,
+  period: Pick<BilledPeriod, 'from' | 'until'>,
+  today: IsoDate,
+  kept?: KeptOfInvoice,
+  // Who lays it out, for a draft the office makes; nobody for the deadline's.
+  createdBy: string | null = null,
+): Promise<DocumentRow> {
+  const customerId = kept?.customerId ?? contract.customerId
+  const values = await periodValues(tx, contract, period, customerId)
+  const written = kept?.lines ?? [flatLine(contract, period, values.flatCents)]
+  const flatAt = kept ? kept.flatAt : 0
+  const ids = written.map(() => newId<'document-line'>())
+  const flat = flatAt === null ? undefined : written[flatAt]
+  const [created] = await tx
+    .insert(documents)
+    .values({
+      tenantId: contract.tenantId,
+      customerId,
+      siteId: kept ? kept.siteId : contract.siteId,
+      jobId: kept?.jobId ?? null,
+      installationId: kept?.installationId ?? null,
+      kind: 'recurring_invoice',
+      documentDate: today,
+      subject: kept ? kept.subject : `${contract.designation}, ${periodText(period)}`,
+      introText: kept?.introText ?? null,
+      closingText: kept?.closingText ?? null,
+      paymentTermDays: kept?.paymentTermDays ?? null,
+      serviceFrom: period.from,
+      serviceUntil: kept ? kept.serviceUntil : period.until,
+      supplyOn: values.supplyOn,
+      maintenanceContractId: contract.id,
+      taxTreatment: kept ? kept.taxTreatment : values.taxTreatment,
+      takenOver: !kept
+        ? {
+            flatLineId: flat && flatAt !== null ? (ids[flatAt] ?? null) : null,
+            flatCents: flat?.unitPriceCents ?? null,
+            taxTreatment: values.taxTreatment,
+          }
+        : kept.taken && {
+            flatLineId: flat && flatAt !== null ? (ids[flatAt] ?? null) : null,
+            flatCents: flat ? kept.taken.flatCents : null,
+            taxTreatment: kept.taken.taxTreatment,
+          },
+      createdBy,
+    })
+    .returning()
+
+  if (!created) {
+    throw new Error('The recurring invoice was written and is not readable afterwards.')
+  }
+
+  if (written.length > 0) {
+    await tx.insert(documentLines).values(
+      written.map((line, index) => ({
+        ...line,
+        id: ids[index],
+        tenantId: contract.tenantId,
+        documentId: created.id,
+      })),
+    )
+  }
+
+  return created
+}
 
 /**
  * The invoice of a period of a maintenance contract paid per period (#295),
@@ -84,39 +290,7 @@ export async function contractInvoice(
     return
   }
 
-  const [created] = await tx
-    .insert(documents)
-    .values({
-      tenantId: contract.tenantId,
-      customerId: contract.customerId,
-      siteId: contract.siteId,
-      kind: 'recurring_invoice',
-      documentDate: today,
-      subject: `${contract.designation}, ${periodText(period)}`,
-      serviceFrom: period.from,
-      serviceUntil: period.until,
-      maintenanceContractId: contract.id,
-      taxTreatment: await proposedTreatment(tx, contract.customerId as CustomerId, period.from),
-    })
-    .returning()
-
-  if (!created) {
-    throw new Error('The recurring invoice was written and is not readable afterwards.')
-  }
-
-  await tx.insert(documentLines).values({
-    tenantId: contract.tenantId,
-    documentId: created.id,
-    kind: 'item',
-    position: 1,
-    designation: contract.designation,
-    description: `Pauschale ${priceUnitLabel[rhythm]} nach dem Wartungsvertrag ${contract.number}, Leistungszeitraum ${periodText(period)}.`,
-    quantityMilli: 1000,
-    unit: 'flat_rate',
-    unitPriceCents: contract.flatCents,
-    vatRate: 'standard',
-    netCents: contract.flatCents,
-  })
+  const created = await layOutPeriod(tx, contract, period, today)
 
   if (made.length === 0 || !contract.issueByItself || period.cut) {
     return

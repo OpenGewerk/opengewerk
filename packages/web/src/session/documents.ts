@@ -7,6 +7,7 @@ import type {
   MissingDetail,
   Payment,
   RecordState,
+  RecurringChange,
   SnippetPurpose,
 } from '@opengewerk/domain'
 import { RequestRefused, request } from '@opengewerk/platform-web/sync'
@@ -284,4 +285,41 @@ export function updateSnippet(id: string, values: SnippetValues): Promise<TextSn
 
 export function removeSnippet(id: string): Promise<unknown> {
   return request(`${snippets}/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+/**
+ * What has changed for a recurring invoice since it was made (#1037): for a
+ * draft the values of its contract and customer of today, for an issued one
+ * a rate the running version knows otherwise for its day of supply.
+ */
+export function recurringCheck(
+  id: string,
+): Promise<{ readonly changes: readonly RecurringChange[] }> {
+  return request<{ readonly changes: readonly RecurringChange[] }>(
+    `/documents/${encodeURIComponent(id)}/recurring-check`,
+  )
+}
+
+/** Takes the values of today over into a draft recurring invoice, nothing else. */
+export function refreshRecurring(
+  id: string,
+): Promise<{ readonly applied: readonly RecurringChange[] }> {
+  return request<{ readonly applied: readonly RecurringChange[] }>(
+    `/documents/${encodeURIComponent(id)}/recurring-refresh`,
+    { method: 'POST' },
+  )
+}
+
+/**
+ * Cancels an issued recurring invoice and lays its period out again as a
+ * draft with all it had and the day of the maintenance of today. The answer
+ * names both.
+ */
+export function renewRecurring(
+  id: string,
+): Promise<{ readonly cancellation: RecordState; readonly renewed: RecordState }> {
+  return request<{ readonly cancellation: RecordState; readonly renewed: RecordState }>(
+    `/documents/${encodeURIComponent(id)}/renewal`,
+    { method: 'POST' },
+  )
 }

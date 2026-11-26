@@ -64,6 +64,7 @@ const writableFields = [
   'flatCents',
   'paymentRhythm',
   'issueByItself',
+  'rateDay',
 ] as const
 
 type Writable = (typeof writableFields)[number]
@@ -121,6 +122,7 @@ function checked(
     installationIds: [],
     paymentRhythm: 'visit',
     issueByItself: false,
+    rateDay: 'visit',
     ...(existing ?? {}),
     ...stored,
   }

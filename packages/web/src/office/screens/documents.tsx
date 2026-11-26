@@ -82,6 +82,7 @@ import { LinesPanel, useDocumentFigures } from './document-lines.js'
 import { DocumentMarker } from './document-marker.js'
 import { PaymentsCard } from './document-payments.js'
 import { CancelPanel, IssuePanel, reasonOf } from './document-steps.js'
+import { RecurringNotice } from './recurring-notice.js'
 import { claimableTransitions } from './taxes.js'
 
 /** Oldest first, the order the chain was written in. The id breaks a tie. */
@@ -502,6 +503,8 @@ function hangsOnClaim(document: RecordState): boolean {
     documentDate: text(document, 'documentDate') as IsoDate,
     serviceFrom: maybeText(document, 'serviceFrom') as IsoDate | null,
     serviceUntil: maybeText(document, 'serviceUntil') as IsoDate | null,
+    // The day of the maintenance of a recurring invoice (#1037), as the server asks.
+    supplyOn: maybeText(document, 'supplyOn') as IsoDate | null,
   })
 
   return claimableTransitions(shippedRules).some(
@@ -927,6 +930,8 @@ function DocumentView({ document }: { readonly document: RecordState }) {
           {trouble}
         </p>
       ) : null}
+
+      {kind === 'recurring_invoice' ? <RecurringNotice document={document} /> : null}
 
       {issuing && issuable ? (
         <IssuePanel

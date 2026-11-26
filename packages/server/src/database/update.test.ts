@@ -3522,6 +3522,117 @@ describe('the drafts from before 0157 that follow their call', () => {
 })
 
 /**
+ * The day of the rate of the recurring invoices of a contract (0160,
+ * opengewerk#1037): a contract from before keeps the end of the period it
+ * had, one made after takes the day of the maintenance. Under FORCE, as an
+ * installation migrates.
+ */
+describe('the contracts from before 0160', () => {
+  const before = () =>
+    readMigrationIndex().findIndex((entry) => entry.tag === '0160_contract_rate_day')
+  const customer = newId<'customer'>()
+  const quotes = [newId<'document'>(), newId<'document'>()] as const
+  const contracts = [newId<'maintenance-contract'>(), newId<'maintenance-contract'>()] as const
+
+  async function contractOn(index: 0 | 1) {
+    await admin.query(
+      `insert into documents (id, tenant_id, customer_id, kind, document_date)
+       values ($1, $2, $3, 'quote', '2026-01-01')`,
+      [quotes[index], tenant.id, customer],
+    )
+    await admin.query(
+      `insert into maintenance_contracts (id, tenant_id, number, designation, customer_id, quote_id,
+         starts_on, first_visit_on, interval_months, term_months, renewal, notice_months, price_kind,
+         flat_cents, payment_rhythm)
+       values ($1, $2, $3, 'Wartung Elektroanlage', $4, $5, '2026-01-01', '2026-01-15', 6, 24,
+         'none', 0, 'flat', 3900, 'monthly')`,
+      [contracts[index], tenant.id, `WV-2026-000${String(index + 1)}`, customer, quotes[index]],
+    )
+  }
+
+  it('keep the end of the period, and a new one takes the day of the maintenance', async () => {
+    expect(before()).toBeGreaterThan(0)
+
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), releaseFolder(before()))
+    await admin.query('insert into tenants (id, name) values ($1, $2)', [tenant.id, tenant.name])
+    await admin.query(
+      "insert into customers (id, tenant_id, kind, name) values ($1, $2, 'business', 'Hausverwaltung Süd GmbH')",
+      [customer, tenant.id],
+    )
+    await contractOn(0)
+
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+    await contractOn(1)
+
+    const { rows } = await admin.query<{ id: string; rate_day: string }>(
+      'select id, rate_day from maintenance_contracts where id = any($1)',
+      [[...contracts]],
+    )
+
+    expect(Object.fromEntries(rows.map((row) => [row.id, row.rate_day]))).toEqual({
+      [contracts[0]]: 'period_end',
+      [contracts[1]]: 'visit',
+    })
+  })
+})
+
+/**
+ * The rollback of 0160 (opengewerk#1037): a period laid out again after a
+ * cancellation has two invoices, which the old key cannot hold. The rollback
+ * says so before it changes anything.
+ */
+describe('the rollback of the day of the rate', () => {
+  it('stops before it changes anything where a period was laid out again', async () => {
+    const customer = newId<'customer'>()
+    const quote = newId<'document'>()
+    const contract = newId<'maintenance-contract'>()
+    const first = newId<'document'>()
+
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+    await admin.query('insert into tenants (id, name) values ($1, $2)', [tenant.id, tenant.name])
+    await admin.query(
+      "insert into customers (id, tenant_id, kind, name) values ($1, $2, 'business', 'Hausverwaltung Süd GmbH')",
+      [customer, tenant.id],
+    )
+    await admin.query(
+      `insert into documents (id, tenant_id, customer_id, kind, document_date)
+       values ($1, $2, $3, 'quote', '2026-01-01')`,
+      [quote, tenant.id, customer],
+    )
+    await admin.query(
+      `insert into maintenance_contracts (id, tenant_id, number, designation, customer_id, quote_id,
+         starts_on, first_visit_on, interval_months, term_months, renewal, notice_months, price_kind,
+         flat_cents, payment_rhythm)
+       values ($1, $2, 'WV-2026-0001', 'Wartung Elektroanlage', $3, $4, '2026-01-01', '2026-01-15',
+         6, 24, 'none', 0, 'flat', 3900, 'monthly')`,
+      [contract, tenant.id, customer, quote],
+    )
+    await admin.query(
+      `insert into documents (id, tenant_id, customer_id, kind, document_date, service_from, service_until, maintenance_contract_id)
+       values ($1, $2, $3, 'recurring_invoice', '2026-01-01', '2026-01-01', '2026-01-31', $4)`,
+      [first, tenant.id, customer, contract],
+    )
+    await admin.query(
+      `update documents set status = 'issued', number = 'RE-2026-0001', issued_at = now() where id = $1`,
+      [first],
+    )
+    await admin.query(`update documents set status = 'cancelled' where id = $1`, [first])
+    await admin.query(
+      `insert into documents (tenant_id, customer_id, kind, document_date, service_from, service_until, maintenance_contract_id)
+       values ($1, $2, 'recurring_invoice', '2026-02-01', '2026-01-01', '2026-01-31', $3)`,
+      [tenant.id, customer, contract],
+    )
+
+    await expect(revertMigration(admin, '0160_contract_rate_day')).rejects.toThrow(
+      'die Rücknahme von 0160 hält das nicht',
+    )
+    expect(await columnNames(admin, 'maintenance_contracts')).toContain('rate_day')
+  })
+})
+
+/**
  * The totals of the documents issued before 0159 (opengewerk#1035): an issued
  * and a cancelled one take those of their snapshot, a draft none. Under FORCE,
  * as an installation migrates.

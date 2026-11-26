@@ -36,9 +36,10 @@ import type { InstructionTemplate, WithdrawalVariant } from './instruction.js'
  * the progress invoices it takes off, version 11 the fields a business gives
  * its reports, version 12 the graphic an instruction is printed as, version 13
  * how many units the price of a line is for, version 14 the order confirmation
- * a delivery note delivers.
+ * a delivery note delivers, version 15 the guarantee of durability of a line,
+ * version 16 the day of the supply apart from the period (#1037).
  */
-export const documentContentVersion = 15
+export const documentContentVersion = 16
 
 export interface LogoContent {
   readonly fileId: FileId
@@ -327,6 +328,15 @@ export interface DocumentContent {
    * every other kind, and for every document issued before version 14.
    */
   readonly delivers: DeliveredContent | null
+  /**
+   * The day of the supply, where it is not the end of the period of service
+   * (#1037): on a recurring invoice of a contract whose flat price pays for
+   * its maintenances, the day of the maintenance the period pays for. Its
+   * rate is that day's, and the document names it beside the period. Null
+   * for every other document, and for every document issued before
+   * version 16.
+   */
+  readonly supplyOn: IsoDate | null
 }
 
 /** One field of a report as it is printed: "Anfahrt", "25 km". */
@@ -335,8 +345,13 @@ export interface ReportFieldContent {
   readonly text: string
 }
 
+/** The fifteenth shape: every line may carry a guarantee of durability, and no day of the supply apart from the period yet. */
+export interface DocumentContentV15 extends Omit<DocumentContent, 'version' | 'supplyOn'> {
+  readonly version: 15
+}
+
 /** The fourteenth shape, from #299: a delivery note names its confirmation, and no line a guarantee of durability yet. */
-export interface DocumentContentV14 extends Omit<DocumentContent, 'version' | 'lines'> {
+export interface DocumentContentV14 extends Omit<DocumentContentV15, 'version' | 'lines'> {
   readonly version: 14
   readonly lines: readonly LineContentV14[]
 }
@@ -424,6 +439,7 @@ export interface DocumentContentV1 extends Omit<
 /** Any shape a snapshot may have been written in. */
 export type StoredDocumentContent =
   | DocumentContent
+  | DocumentContentV15
   | DocumentContentV14
   | DocumentContentV13
   | DocumentContentV12

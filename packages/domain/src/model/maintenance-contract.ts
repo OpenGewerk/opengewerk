@@ -70,6 +70,12 @@ export interface MaintenanceContract {
   readonly flatCents: number | null
   readonly paymentRhythm: PaymentRhythm
   /**
+   * Which day decides the rate of its recurring invoices (#1037). A new
+   * contract takes the day of the maintenance, one from before the day of
+   * its period.
+   */
+  readonly rateDay: ContractRateDay
+  /**
    * Whether the recurring invoices of a contract paid per period are issued
    * and sent by mail without anybody (#295), from the second on: the first of
    * a contract always waits as a draft.
@@ -308,6 +314,100 @@ export function nextPeriod(
   }
 
   return null
+}
+
+/**
+ * Which day decides the rate of the recurring invoices of a contract (#1037):
+ * the day of the maintenance a period pays for, or, for a flat price that
+ * pays for a running service such as standby, the end of the period.
+ */
+export const contractRateDays = ['visit', 'period_end'] as const
+
+export type ContractRateDay = (typeof contractRateDays)[number]
+
+/** The rate day in the words of the contract screen: "Steuersatz vom Tag der Wartung". */
+export const rateDayLabel: Readonly<Record<ContractRateDay, string>> = {
+  visit: 'vom Tag der Wartung',
+  period_end: 'vom Ende des Zeitraums',
+}
+
+/**
+ * The maintenance a period pays for (#1037): the last one due on or before
+ * its last day, and for a period that ends before the first maintenance the
+ * first. A maintenance on a day is no continuing service (the letter of the
+ * ministry on the reduced rates of 2020), so its day is the day of the supply.
+ */
+export function visitPaidFor(
+  contract: Pick<MaintenanceContract, 'firstVisitOn' | 'intervalMonths'>,
+  period: Pick<BilledPeriod, 'until'>,
+): IsoDate {
+  let paid = contract.firstVisitOn
+
+  if (contract.intervalMonths < 1) {
+    return paid
+  }
+
+  for (let index = 1; index < termsLooked; index += 1) {
+    const day = addMonths(contract.firstVisitOn, index * contract.intervalMonths)
+
+    if (day > period.until) {
+      break
+    }
+
+    paid = day
+  }
+
+  return paid
+}
+
+/**
+ * The day of the supply a recurring invoice names besides its period, for a
+ * contract whose flat price pays for its maintenances; null where the end of
+ * the period is that day, which every invoice takes without one.
+ */
+export function supplyDayOf(
+  contract: Pick<MaintenanceContract, 'rateDay' | 'firstVisitOn' | 'intervalMonths'>,
+  period: Pick<BilledPeriod, 'until'>,
+): IsoDate | null {
+  return contract.rateDay === 'visit' ? visitPaidFor(contract, period) : null
+}
+
+/**
+ * What has changed for a recurring invoice since it was made (#1037). A
+ * draft hears of the values it took from its contract and its customer:
+ * the flat price of a full period, how it is taxed, the day of the
+ * maintenance. An issued one hears of a rate the running version knows
+ * otherwise for its day of supply, in basis points.
+ */
+export type RecurringChange =
+  | { readonly field: 'flatCents'; readonly was: number | null; readonly now: number | null }
+  | { readonly field: 'taxTreatment'; readonly was: string; readonly now: string }
+  | { readonly field: 'supplyOn'; readonly was: IsoDate | null; readonly now: IsoDate | null }
+  | {
+      readonly field: 'rate'
+      readonly rate: string
+      readonly supplyOn: IsoDate
+      readonly was: number
+      readonly now: number
+    }
+
+/**
+ * What a recurring invoice took from its contract and its customer when it
+ * was laid out, or when the office last took over the values of today
+ * (#1037). A draft hears of a change only for a value it still holds as it
+ * took it: a value the office changed in the draft is the office's, and the
+ * notice does not offer to undo it. The flat price is that of the line that
+ * carries the flat price of the contract, named by its id, so that a flat
+ * line the office adds is never taken for it; both are null where there was
+ * no such line. The day of the maintenance is not in it: only the server
+ * writes that day, from the contract and the period the draft holds
+ * (`followPeriod` on the server), so a draft always holds it as it would
+ * take it.
+ */
+export interface RecurringTakenOver {
+  readonly flatLineId: string | null
+  readonly flatCents: number | null
+  readonly taxTreatment: string
 }
 
 /** "01.12.2026 bis 31.12.2026". */
@@ -567,6 +667,12 @@ export function maintenanceContractProblems(
     problems['issueByItself'] = 'Hier steht ja oder nein.'
   } else if (contract['issueByItself'] === true && rhythm === 'visit') {
     problems['issueByItself'] = 'Ohne Zutun gehen nur Rechnungen je Zeitraum hinaus.'
+  }
+
+  const rateDay = contract['rateDay']
+
+  if (rateDay !== undefined && !contractRateDays.includes(rateDay as ContractRateDay)) {
+    problems['rateDay'] = 'Nach welchem Tag sich der Steuersatz richtet, fehlt.'
   }
 
   const installationIds = contract['installationIds']

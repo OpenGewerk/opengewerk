@@ -24,6 +24,7 @@ import type {
   DocumentContentV12,
   DocumentContentV13,
   DocumentContentV14,
+  DocumentContentV15,
   DurabilityContent,
   InstructionContent,
   IssuerContent,
@@ -39,7 +40,7 @@ import { documentContentVersion } from '../model/document-content.js'
 import type { DocumentLine } from '../model/document-line.js'
 import { billedAfter, billedOf, totalsFor } from './invoice.js'
 import { paymentTermOf } from './payment.js'
-import type { RuleSet } from '@opengewerk/platform-domain'
+import type { IsoDate, RuleSet } from '@opengewerk/platform-domain'
 
 /** What a document is put together from. Gathering it is the caller's work. */
 export interface ContentSources {
@@ -54,7 +55,10 @@ export interface ContentSources {
     | 'introText'
     | 'closingText'
     | 'taxTreatment'
-  >
+  > & {
+    /** The day of the maintenance a recurring invoice names (#1037); none where it is left out. */
+    readonly supplyOn?: IsoDate | null
+  }
   readonly lines: readonly (Pick<DocumentLine, keyof LineContentV14> & {
     /** The guarantee of durability of the line's article (#433), where the document carries one. */
     readonly durability?: DurabilityContent | null
@@ -238,6 +242,7 @@ export function documentContent(rules: RuleSet, sources: ContentSources): Docume
     documentDate: document.documentDate,
     serviceFrom: document.serviceFrom,
     serviceUntil: document.serviceUntil,
+    supplyOn: document.supplyOn ?? null,
     subject: document.subject,
     introText: document.introText,
     closingText: document.closingText,
@@ -303,12 +308,17 @@ export function currentContent(stored: StoredDocumentContent): DocumentContent {
   switch (stored.version) {
     case documentContentVersion:
       return stored
-    case 14:
-      return {
+    case 15:
+      return { ...stored, version: documentContentVersion, supplyOn: null }
+    case 14: {
+      const fifteenth: DocumentContentV15 = {
         ...stored,
-        version: documentContentVersion,
+        version: 15,
         lines: stored.lines.map((line) => ({ ...line, durability: null })),
       }
+
+      return currentContent(fifteenth)
+    }
     case 13: {
       const fourteenth: DocumentContentV14 = { ...stored, version: 14, delivers: null }
 

@@ -180,17 +180,29 @@ function ConflictCard({
   // the device wanted is the only thing that can name it.
   const known = client.get(conflict.entity, conflict.recordId)
   const record = known ?? conflict.wanted
+  // What the system holds for a field: what the server put down with the
+  // conflict, and where it put down only the field that stops the change, as
+  // for a record fixed in the meantime, the record as the server last sent
+  // it, without what still waits in the outbox. That is the state "Stand im
+  // System behalten" keeps.
+  const confirmed = client.confirmed(conflict.entity, conflict.recordId)
+  const inSystem = (field: string): SyncValue | undefined =>
+    Object.hasOwn(conflict.found, field) ? conflict.found[field] : confirmed?.[field]
   const settled = words.settledElsewhere[conflict.entity]
 
   // Where the other way is open, the server names the field that stops the
   // change, and that is no row anybody can decide on. What the device wrote
-  // is: the fields the way chooses, beside what the system holds.
+  // is: the fields the way chooses, beside what the system holds. So it is
+  // for a record fixed in the meantime with no other way open: what the
+  // device wrote stays to be seen, though only the system's state can stay.
   const involved =
     way && group !== null
       ? way.fields(conflict.wanted)
-      : conflict.fields.length > 0
-        ? conflict.fields
-        : Object.keys(conflict.wanted)
+      : conflict.reason === 'record_is_fixed' && Object.keys(conflict.wanted).length > 0
+        ? Object.keys(conflict.wanted)
+        : conflict.fields.length > 0
+          ? conflict.fields
+          : Object.keys(conflict.wanted)
   const onlyOnDevice = group !== null && known === null
   const deleting = group !== null && Object.keys(conflict.wanted).length === 0
   const entry = useEntry()
@@ -414,7 +426,7 @@ function ConflictCard({
               sub: (
                 <>
                   <span className="block">{`Auf dem Gerät: ${shown(words, field, conflict.wanted[field])}`}</span>
-                  <span className="block">{`Im System: ${shown(words, field, conflict.found[field])}`}</span>
+                  <span className="block">{`Im System: ${shown(words, field, inSystem(field))}`}</span>
                   <span className="block">{`Das Gerät sah: ${shown(words, field, conflict.seen[field])}`}</span>
                 </>
               ),
@@ -435,9 +447,7 @@ function ConflictCard({
                   <Cell className="font-semibold">
                     {shown(words, field, conflict.wanted[field])}
                   </Cell>
-                  <Cell className="font-semibold">
-                    {shown(words, field, conflict.found[field])}
-                  </Cell>
+                  <Cell className="font-semibold">{shown(words, field, inSystem(field))}</Cell>
                   <Cell>{shown(words, field, conflict.seen[field])}</Cell>
                 </tr>
               ))}
@@ -524,7 +534,7 @@ function ConflictCard({
             {onlyOnDevice ? null : (
               <>
                 <SiteVersion icon={Server} head="Im System">
-                  {shown(words, field, conflict.found[field])}
+                  {shown(words, field, inSystem(field))}
                 </SiteVersion>
                 <p className="text-[15px] text-ink-muted">
                   {`Das Gerät sah: ${shown(words, field, conflict.seen[field])}`}

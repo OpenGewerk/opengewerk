@@ -403,6 +403,30 @@ describe('the maintenance contracts of the office (#294)', () => {
     ).toBeTruthy()
   })
 
+  it('names a cancelled invoice so, beside the draft that lays its period out again (#1037)', async () => {
+    server.put('documents', {
+      id: 'r-0',
+      customerId: 'c-1',
+      siteId: 's-1',
+      kind: 'recurring_invoice',
+      status: 'cancelled',
+      number: 'RE-2026-0240',
+      documentDate: billedFrom,
+      serviceFrom: billedFrom,
+      serviceUntil: addDays(on, -1),
+      maintenanceContractId: 'wv-2',
+    })
+    await mount('/wartungsvertraege/wv-2')
+
+    const invoices = await screen.findByRole('table', { name: 'Die Rechnungen der Zeiträume' })
+    const cancelled = within(invoices).getByRole('link', { name: 'RE-2026-0240' }).closest('tr')
+    const issued = within(invoices).getByRole('link', { name: 'RE-2026-0241' }).closest('tr')
+
+    expect(cancelled?.textContent).toContain('Storniert')
+    expect(cancelled?.textContent).not.toContain('Festgeschrieben')
+    expect(issued?.textContent).toContain('Festgeschrieben')
+  })
+
   it('takes a rhythm and the wish to issue by itself, only with a flat price', async () => {
     const user = userEvent.setup()
     await mount('/wartungsvertraege/neu/q-2')
@@ -420,6 +444,27 @@ describe('the maintenance contracts of the office (#294)', () => {
     expect(posted[0]).toMatchObject({
       body: { paymentRhythm: 'monthly', issueByItself: true, priceKind: 'flat', flatCents: 18_900 },
     })
+  })
+
+  /**
+   * The board "Wartungsvertrag bearbeiten, Abrechnung je Zeitraum" (#1037):
+   * which day decides the rate of the recurring invoices, the maintenance
+   * unless the office says the flat price pays for a running service.
+   */
+  it('takes the day whose rate the recurring invoices take, the maintenance unless told otherwise', async () => {
+    const user = userEvent.setup()
+    await mount('/wartungsvertraege/neu/q-2')
+
+    await user.selectOptions(await screen.findByLabelText('Abrechnung'), 'monthly')
+
+    const day = screen.getByLabelText('Steuersatz der Dauerrechnungen')
+
+    expect((day as HTMLSelectElement).value).toBe('visit')
+
+    await user.selectOptions(day, 'period_end')
+    await user.click(screen.getByRole('button', { name: 'Speichern' }))
+
+    expect(posted[0]).toMatchObject({ body: { paymentRhythm: 'monthly', rateDay: 'period_end' } })
   })
 
   it('shows the contracts of an installation in its card', async () => {

@@ -6,6 +6,7 @@ import {
   berlinClock,
   berlinInstant,
   type DocumentId,
+  permissionsOfRoles,
   type TenantId,
 } from '@opengewerk/domain'
 import { Database, newId } from '@opengewerk/platform-server'
@@ -284,8 +285,8 @@ describe('the recurring invoices of a contract (#295)', () => {
     ])
   })
 
-  it('tax a period by the rate of the period', async () => {
-    const made = await contract('2020-06-01', { termMonths: 2 })
+  it('tax a period by the rate of the period where the contract wants its end (#1037)', async () => {
+    const made = await contract('2020-06-01', { termMonths: 2, rateDay: 'period_end' })
 
     await run(3)
 
@@ -372,5 +373,927 @@ describe('the recurring invoices of a contract (#295)', () => {
     for (const notification of wanted) {
       expect(await documentToCustomer(database, north, notification)).toEqual([])
     }
+  })
+})
+
+async function pastTheTriggers(statement: string, values: readonly unknown[]) {
+  const client = await admin.connect()
+
+  try {
+    await client.query('begin')
+    await client.query("set local session_replication_role = 'replica'")
+    await client.query(statement, [...values])
+    await client.query('commit')
+  } catch (error) {
+    await client.query('rollback')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+async function supplyOf(documentId: string) {
+  const { rows } = await admin.query<{ supply_on: string | null }>(
+    `select to_char(supply_on, 'YYYY-MM-DD') as supply_on from documents where id = $1`,
+    [documentId],
+  )
+
+  return rows[0]?.supply_on ?? null
+}
+
+function check(documentId: string, identity = office()) {
+  return request(app.getHttpServer())
+    .get(`/documents/${documentId}/recurring-check`)
+    .set('x-test-identity', identity)
+}
+
+/**
+ * The day whose rate a recurring invoice takes (#1037): the maintenance its
+ * period pays for, where the contract says the flat price pays for its
+ * maintenances, which a new contract does. In the second half of 2020 the
+ * standard rate was 16 per cent, before it 19.
+ */
+describe('the day of the rate of a recurring invoice (#1037)', () => {
+  it('is the day of the maintenance its period pays for, not the end of the period', async () => {
+    const made = await contract('2020-06-01', { termMonths: 2, firstVisitOn: '2020-06-15' })
+
+    await run(3)
+
+    const { rows } = await admin.query<{ id: string; content: { supplyOn: string } }>(
+      `select d.id, s.content
+         from documents d join document_snapshots s on s.document_id = d.id
+        where d.maintenance_contract_id = $1 and d.service_from = '2020-07-01'`,
+      [made],
+    )
+    const [july] = rows
+
+    expect(rows).toHaveLength(1)
+
+    // July pays for the maintenance of 15 June, at 19 per cent, though the
+    // month ends in the time of 16.
+    expect(await supplyOf(String(july?.id))).toBe('2020-06-15')
+    expect(july?.content.supplyOn).toBe('2020-06-15')
+    expect(JSON.stringify(july?.content)).toContain('"basisPoints":1900')
+  })
+
+  it('stays the day of the invoice on its cancellation, whatever the contract says since', async () => {
+    const made = await contract('2020-06-01', { termMonths: 2, firstVisitOn: '2020-06-15' })
+
+    await run(3)
+
+    const july = (await invoicesOf(made)).find((invoice) => invoice.status === 'issued')
+
+    await request(app.getHttpServer())
+      .patch(`/maintenance-contracts/${made}`)
+      .set('x-test-identity', office())
+      .send({ rateDay: 'period_end' })
+      .expect(200)
+
+    const storno = (
+      await request(app.getHttpServer())
+        .post(`/documents/${String(july?.id)}/cancellation`)
+        .set('x-test-identity', office())
+        .expect(201)
+    ).body as { id: string }
+    const { rows } = await admin.query<{
+      content: { supplyOn: string; totals: { taxCents: number } }
+    }>('select content from document_snapshots where document_id = $1', [storno.id])
+
+    expect(await supplyOf(storno.id)).toBe('2020-06-15')
+    expect(rows[0]?.content.supplyOn).toBe('2020-06-15')
+    // The 19 per cent of the invoice turned round, not the 16 of the end of July.
+    expect(rows[0]?.content.totals.taxCents).toBe(-741)
+  })
+
+  it('taxes the period as of that day too, so that a maintenance under section 19 stays so', async () => {
+    // The business claimed section 19 for the first half of 2020 only.
+    await admin.query(
+      `insert into tenant_parameters (tenant_id, key, valid_from, valid_until, unit, value)
+         values ($1, 'small_business.claimed', '2020-01-01', '2020-06-30', 'flag', 1)`,
+      [north],
+    )
+
+    try {
+      const made = await contract('2020-06-01', { termMonths: 2, firstVisitOn: '2020-06-15' })
+
+      await run(3)
+
+      const { rows } = await admin.query<{ service_from: string; tax_treatment: string }>(
+        `select to_char(service_from, 'YYYY-MM-DD') as service_from, tax_treatment
+           from documents where maintenance_contract_id = $1 order by service_from`,
+        [made],
+      )
+
+      // July pays for the maintenance of 15 June, which the business did as
+      // a small business, though July itself is past it.
+      expect(rows).toEqual([
+        { service_from: '2020-06-01', tax_treatment: 'small_business' },
+        { service_from: '2020-07-01', tax_treatment: 'small_business' },
+      ])
+    } finally {
+      await admin.query(
+        "delete from tenant_parameters where tenant_id = $1 and key = 'small_business.claimed'",
+        [north],
+      )
+    }
+  })
+
+  it('taxes the period as of its end for a contract that wants the end, as its rate', async () => {
+    // Section 19 until 30 June 2020; the first period ends on 14 July.
+    await admin.query(
+      `insert into tenant_parameters (tenant_id, key, valid_from, valid_until, unit, value)
+         values ($1, 'small_business.claimed', '2020-01-01', '2020-06-30', 'flag', 1)`,
+      [north],
+    )
+
+    try {
+      const made = await contract('2020-06-15', {
+        termMonths: 2,
+        firstVisitOn: '2020-06-20',
+        rateDay: 'period_end',
+      })
+
+      await run(3)
+
+      const { rows } = await admin.query<{ service_from: string; tax_treatment: string }>(
+        `select to_char(service_from, 'YYYY-MM-DD') as service_from, tax_treatment
+           from documents where maintenance_contract_id = $1 order by service_from`,
+        [made],
+      )
+
+      expect(rows).toEqual([
+        { service_from: '2020-06-15', tax_treatment: 'standard' },
+        { service_from: '2020-07-15', tax_treatment: 'standard' },
+      ])
+    } finally {
+      await admin.query(
+        "delete from tenant_parameters where tenant_id = $1 and key = 'small_business.claimed'",
+        [north],
+      )
+    }
+  })
+
+  it('is the end of the period for a contract that wants it, which names no day', async () => {
+    const made = await contract('2020-06-01', {
+      termMonths: 2,
+      firstVisitOn: '2020-06-15',
+      rateDay: 'period_end',
+    })
+
+    await run(3)
+
+    const invoices = await invoicesOf(made)
+
+    expect(await Promise.all(invoices.map((invoice) => supplyOf(invoice.id)))).toEqual([null, null])
+  })
+})
+
+/**
+ * What has changed for a recurring invoice since it was made, and the two
+ * ways to act on it (#1037): a draft takes over the values of today, an
+ * issued invoice is cancelled and its period laid out again.
+ */
+describe('what has changed for a recurring invoice (#1037)', () => {
+  it('tells a draft the values its contract has today, and takes them over', async () => {
+    const made = await contract(addMonths(today, -1), { issueByItself: false })
+
+    await run(2)
+
+    const [first] = await invoicesOf(made)
+    const id = String(first?.id)
+
+    expect((await check(id).expect(200)).body).toEqual({ changes: [] })
+
+    await request(app.getHttpServer())
+      .patch(`/maintenance-contracts/${made}`)
+      .set('x-test-identity', office())
+      .send({ flatCents: 4_200, rateDay: 'period_end' })
+      .expect(200)
+
+    expect((await check(id).expect(200)).body).toEqual({
+      changes: [
+        { field: 'flatCents', was: 3_900, now: 4_200 },
+        { field: 'supplyOn', was: expect.any(String) as string, now: null },
+      ],
+    })
+
+    await request(app.getHttpServer())
+      .post(`/documents/${id}/recurring-refresh`)
+      .set('x-test-identity', office())
+      .expect(201)
+
+    expect((await check(id).expect(200)).body).toEqual({ changes: [] })
+    expect(await supplyOf(id)).toBeNull()
+
+    const { rows } = await admin.query<{ unit_price_cents: number; net_cents: number }>(
+      'select unit_price_cents, net_cents from document_lines where document_id = $1',
+      [id],
+    )
+
+    expect(rows).toEqual([{ unit_price_cents: 4_200, net_cents: 4_200 }])
+
+    // What it took over now is what the next change is told against.
+    await request(app.getHttpServer())
+      .patch(`/maintenance-contracts/${made}`)
+      .set('x-test-identity', office())
+      .send({ flatCents: 4_500 })
+      .expect(200)
+
+    expect((await check(id).expect(200)).body).toEqual({
+      changes: [{ field: 'flatCents', was: 4_200, now: 4_500 }],
+    })
+  })
+
+  it('tells a draft a tax treatment its customer has otherwise today, and takes it over', async () => {
+    const made = await contract(addMonths(today, -1), { issueByItself: false })
+
+    await run(2)
+
+    const [first] = await invoicesOf(made)
+    const id = String(first?.id)
+    const construction = (value: boolean) =>
+      admin.query('update customers set is_construction_service_recipient = $2 where id = $1', [
+        customer,
+        value,
+      ])
+
+    try {
+      // The customer turns out to receive construction work (section 13b).
+      await construction(true)
+
+      expect((await check(id).expect(200)).body).toEqual({
+        changes: [{ field: 'taxTreatment', was: 'standard', now: 'reverse_charge' }],
+      })
+
+      await request(app.getHttpServer())
+        .post(`/documents/${id}/recurring-refresh`)
+        .set('x-test-identity', office())
+        .expect(201)
+
+      const { rows } = await admin.query<{ tax_treatment: string }>(
+        'select tax_treatment from documents where id = $1',
+        [id],
+      )
+
+      expect(rows[0]?.tax_treatment).toBe('reverse_charge')
+
+      // And back: told against what it took over last.
+      await construction(false)
+
+      expect((await check(id).expect(200)).body).toEqual({
+        changes: [{ field: 'taxTreatment', was: 'reverse_charge', now: 'standard' }],
+      })
+    } finally {
+      await construction(false)
+    }
+  })
+
+  it('tells a draft the tax treatment of the customer it goes to, not of the contract', async () => {
+    const made = await contract(addMonths(today, -1), { issueByItself: false })
+
+    await run(2)
+
+    const [first] = await invoicesOf(made)
+    const id = String(first?.id)
+
+    try {
+      // The office sends it to another customer, who receives construction work.
+      await admin.query(
+        'update customers set is_construction_service_recipient = true where id = $1',
+        [silent],
+      )
+      await request(app.getHttpServer())
+        .patch(`/documents/${id}`)
+        .set('x-test-identity', office())
+        .send({ customerId: silent, siteId: null })
+        .expect(200)
+
+      expect((await check(id).expect(200)).body).toEqual({
+        changes: [{ field: 'taxTreatment', was: 'standard', now: 'reverse_charge' }],
+      })
+    } finally {
+      await admin.query(
+        'update customers set is_construction_service_recipient = false where id = $1',
+        [silent],
+      )
+    }
+  })
+
+  it('keeps on a period laid out again everything the office set on the invoice', async () => {
+    const made = await contract(addMonths(today, -1))
+
+    await run(3)
+
+    const issued = (await invoicesOf(made)).find((invoice) => invoice.status === 'issued')
+    const id = String(issued?.id)
+    const job = newId<'job'>()
+    const installation = newId<'installation'>()
+
+    await admin.query(
+      `insert into jobs (id, tenant_id, customer_id, site_id, kind, status, designation)
+       values ($1, $2, $3, $4, 'service', 'active', 'Wartung Rheinstraße 12')`,
+      [job, north, customer, site],
+    )
+    await admin.query(
+      `insert into installations (id, tenant_id, site_id, kind, designation)
+       values ($1, $2, $3, 'meter_cabinet', 'Zählerschrank Keller')`,
+      [installation, north, site],
+    )
+    // What the office set on it before it was issued.
+    await pastTheTriggers(
+      'update document_lines set unit_price_cents = 3500, net_cents = 3500 where document_id = $1',
+      [id],
+    )
+    await pastTheTriggers(
+      `update documents set tax_treatment = 'reverse_charge', payment_term_days = 30,
+         subject = 'Wartung nach Absprache', intro_text = 'Wie vereinbart.', closing_text = 'Danke.',
+         job_id = $2, installation_id = $3
+       where id = $1`,
+      [id, job, installation],
+    )
+
+    const answer = await request(app.getHttpServer())
+      .post(`/documents/${id}/renewal`)
+      .set('x-test-identity', office())
+      .expect(201)
+    const { renewed } = answer.body as { renewed: { id: string } }
+    const { rows } = await admin.query<{ unit_price_cents: number }>(
+      'select unit_price_cents from document_lines where document_id = $1',
+      [renewed.id],
+    )
+
+    expect(renewed).toMatchObject({
+      taxTreatment: 'reverse_charge',
+      paymentTermDays: 30,
+      subject: 'Wartung nach Absprache',
+      introText: 'Wie vereinbart.',
+      closingText: 'Danke.',
+      jobId: job,
+      installationId: installation,
+    })
+    expect(rows).toEqual([{ unit_price_cents: 3_500 }])
+    // The contract did not change: nothing to tell, nothing to undo.
+    expect((await check(renewed.id).expect(200)).body).toEqual({ changes: [] })
+  })
+
+  it('does not guess, laying a period out again, what an invoice from before 0160 had taken', async () => {
+    const made = await contract(addMonths(today, -1))
+
+    await run(3)
+
+    const issued = (await invoicesOf(made)).find((invoice) => invoice.status === 'issued')
+    const id = String(issued?.id)
+
+    // As before 0160, with a price and a tax treatment the office may have set.
+    await pastTheTriggers(
+      "update documents set taken_over = null, tax_treatment = 'reverse_charge' where id = $1",
+      [id],
+    )
+    await pastTheTriggers(
+      'update document_lines set unit_price_cents = 3500, net_cents = 3500 where document_id = $1',
+      [id],
+    )
+
+    const answer = await request(app.getHttpServer())
+      .post(`/documents/${id}/renewal`)
+      .set('x-test-identity', office())
+      .expect(201)
+    const { renewed } = answer.body as { renewed: { id: string } }
+    const { rows } = await admin.query<{ taken_over: unknown }>(
+      'select taken_over from documents where id = $1',
+      [renewed.id],
+    )
+
+    // Like a draft from before: it hears of the day alone, and the day is the same.
+    expect(rows).toEqual([{ taken_over: null }])
+    expect((await check(renewed.id).expect(200)).body).toEqual({ changes: [] })
+  })
+
+  it('tells a period laid out again what has changed for its customer since', async () => {
+    const made = await contract(addMonths(today, -1))
+
+    await run(3)
+
+    const issued = (await invoicesOf(made)).find((invoice) => invoice.status === 'issued')
+    const construction = (value: boolean) =>
+      admin.query('update customers set is_construction_service_recipient = $2 where id = $1', [
+        customer,
+        value,
+      ])
+
+    try {
+      // The customer turned out to receive construction work after it was issued.
+      await construction(true)
+
+      const answer = await request(app.getHttpServer())
+        .post(`/documents/${String(issued?.id)}/renewal`)
+        .set('x-test-identity', office())
+        .expect(201)
+      const { renewed } = answer.body as { renewed: { id: string; taxTreatment: string } }
+
+      expect(renewed.taxTreatment).toBe('standard')
+      expect((await check(renewed.id).expect(200)).body).toEqual({
+        changes: [{ field: 'taxTreatment', was: 'standard', now: 'reverse_charge' }],
+      })
+    } finally {
+      await construction(false)
+    }
+  })
+
+  it('lays a period out again for the customer and site the invoice went to', async () => {
+    const made = await contract(addMonths(today, -1))
+
+    await run(3)
+
+    const issued = (await invoicesOf(made)).find((invoice) => invoice.status === 'issued')
+    const id = String(issued?.id)
+
+    // Sent elsewhere by the office before it was issued.
+    await pastTheTriggers('update documents set customer_id = $2, site_id = null where id = $1', [
+      id,
+      silent,
+    ])
+
+    const answer = await request(app.getHttpServer())
+      .post(`/documents/${id}/renewal`)
+      .set('x-test-identity', office())
+      .expect(201)
+
+    expect((answer.body as { renewed: unknown }).renewed).toMatchObject({
+      customerId: silent,
+      siteId: null,
+    })
+  })
+
+  it('does not tell a draft of a value the office changed in it, nor offer to undo it', async () => {
+    const made = await contract(addMonths(today, -1), { issueByItself: false })
+
+    await run(2)
+
+    const [first] = await invoicesOf(made)
+    const id = String(first?.id)
+
+    // The office prices the month itself and taxes it otherwise.
+    await admin.query(
+      'update document_lines set unit_price_cents = 3500, net_cents = 3500 where document_id = $1',
+      [id],
+    )
+    await admin.query("update documents set tax_treatment = 'reverse_charge' where id = $1", [id])
+
+    expect((await check(id).expect(200)).body).toEqual({ changes: [] })
+
+    // Nor once the contract changes its price: the office holds this one.
+    await request(app.getHttpServer())
+      .patch(`/maintenance-contracts/${made}`)
+      .set('x-test-identity', office())
+      .send({ flatCents: 4_200 })
+      .expect(200)
+
+    expect((await check(id).expect(200)).body).toEqual({ changes: [] })
+  })
+
+  it('keeps to the line of the contract when the office adds a flat line of its own', async () => {
+    const made = await contract(addMonths(today, -1), { issueByItself: false })
+
+    await run(2)
+
+    const [first] = await invoicesOf(made)
+    const id = String(first?.id)
+
+    await admin.query(
+      `insert into document_lines (tenant_id, document_id, kind, position, designation, quantity_milli, unit, unit_price_cents, net_cents)
+       values ($1, $2, 'item', 2, 'Anfahrt pauschal', 1000, 'flat_rate', 1500, 1500)`,
+      [north, id],
+    )
+    await request(app.getHttpServer())
+      .patch(`/maintenance-contracts/${made}`)
+      .set('x-test-identity', office())
+      .send({ flatCents: 4_200 })
+      .expect(200)
+
+    expect((await check(id).expect(200)).body).toEqual({
+      changes: [{ field: 'flatCents', was: 3_900, now: 4_200 }],
+    })
+
+    await request(app.getHttpServer())
+      .post(`/documents/${id}/recurring-refresh`)
+      .set('x-test-identity', office())
+      .expect(201)
+
+    const { rows } = await admin.query<{ designation: string; unit_price_cents: number }>(
+      'select designation, unit_price_cents from document_lines where document_id = $1 order by position',
+      [id],
+    )
+
+    expect(rows).toEqual([
+      { designation: 'Wartung Elektroanlage Rheinstraße 12', unit_price_cents: 4_200 },
+      { designation: 'Anfahrt pauschal', unit_price_cents: 1_500 },
+    ])
+  })
+
+  it('moves the day of its maintenance with a period the office moves, and blames no contract', async () => {
+    const start = addMonths(today, -1)
+    const made = await contract(start, {
+      issueByItself: false,
+      firstVisitOn: start,
+      intervalMonths: 6,
+    })
+
+    await run(2)
+
+    const [first] = await invoicesOf(made)
+    const id = String(first?.id)
+    const later = { from: addMonths(start, 7), until: addDays(addMonths(start, 8), -1) }
+
+    expect(await supplyOf(id)).toBe(start)
+
+    // Through the route: seven months on, the period pays for the second maintenance.
+    await request(app.getHttpServer())
+      .patch(`/documents/${id}`)
+      .set('x-test-identity', office())
+      .send({ serviceFrom: later.from, serviceUntil: later.until })
+      .expect(200)
+
+    expect(await supplyOf(id)).toBe(addMonths(start, 6))
+    expect((await check(id).expect(200)).body).toEqual({ changes: [] })
+
+    // Through the sync, as the screen of the office writes it: back again.
+    const pushed = await request(app.getHttpServer())
+      .post('/sync')
+      .set('x-test-identity', JSON.stringify({ ...JSON.parse(office()), deviceId: 'office-tab' }))
+      .send({
+        deviceId: 'office-tab',
+        operations: [
+          {
+            id: newId<'operation'>(),
+            entity: 'documents',
+            recordId: id,
+            kind: 'update',
+            baseVersion: null,
+            patches: [
+              { field: 'serviceFrom', from: later.from, to: first?.service_from },
+              { field: 'serviceUntil', from: later.until, to: first?.service_until },
+            ],
+            recordedAt: new Date().toISOString(),
+          },
+        ],
+      })
+      .expect(201)
+
+    expect((pushed.body as { receipts: { outcome: string }[] }).receipts[0]?.outcome).toBe(
+      'applied',
+    )
+    expect(await supplyOf(id)).toBe(start)
+    expect((await check(id).expect(200)).body).toEqual({ changes: [] })
+  })
+
+  it('keeps the day of its maintenance when the route gets the period as it stands', async () => {
+    const made = await contract(addMonths(today, -1), { issueByItself: false })
+
+    await run(2)
+
+    const [first] = await invoicesOf(made)
+    const id = String(first?.id)
+    const day = await supplyOf(id)
+
+    await request(app.getHttpServer())
+      .patch(`/maintenance-contracts/${made}`)
+      .set('x-test-identity', office())
+      .send({ rateDay: 'period_end' })
+      .expect(200)
+    await request(app.getHttpServer())
+      .patch(`/documents/${id}`)
+      .set('x-test-identity', office())
+      .send({ serviceFrom: first?.service_from, serviceUntil: first?.service_until })
+      .expect(200)
+
+    // The contract changed, not the period: the notice still says so.
+    expect(await supplyOf(id)).toBe(day)
+    expect((await check(id).expect(200)).body).toEqual({
+      changes: [{ field: 'supplyOn', was: day, now: null }],
+    })
+  })
+
+  it('tells a draft of a single day of service of the day of its maintenance', async () => {
+    const start = addMonths(today, -1)
+    const made = await contract(start, { issueByItself: false, firstVisitOn: start })
+
+    await run(2)
+
+    const [first] = await invoicesOf(made)
+    const id = String(first?.id)
+
+    // The office named one day of service; the day of the maintenance stays.
+    await admin.query('update documents set service_until = null where id = $1', [id])
+    await request(app.getHttpServer())
+      .patch(`/maintenance-contracts/${made}`)
+      .set('x-test-identity', office())
+      .send({ rateDay: 'period_end' })
+      .expect(200)
+
+    expect((await check(id).expect(200)).body).toEqual({
+      changes: [{ field: 'supplyOn', was: start, now: null }],
+    })
+  })
+
+  it('lays out again an invoice of a single day of service, as a single day', async () => {
+    const made = await contract(addMonths(today, -1))
+
+    await run(3)
+
+    const issued = (await invoicesOf(made)).find((invoice) => invoice.status === 'issued')
+
+    await pastTheTriggers('update documents set service_until = null where id = $1', [
+      String(issued?.id),
+    ])
+
+    const answer = await request(app.getHttpServer())
+      .post(`/documents/${String(issued?.id)}/renewal`)
+      .set('x-test-identity', office())
+      .expect(201)
+
+    expect((answer.body as { renewed: unknown }).renewed).toMatchObject({
+      serviceFrom: issued?.service_from,
+      serviceUntil: null,
+    })
+  })
+
+  it('keeps the day of its maintenance when the sync changes something else of the draft', async () => {
+    const made = await contract(addMonths(today, -1), { issueByItself: false })
+
+    await run(2)
+
+    const [first] = await invoicesOf(made)
+    const id = String(first?.id)
+    const day = await supplyOf(id)
+
+    await request(app.getHttpServer())
+      .patch(`/maintenance-contracts/${made}`)
+      .set('x-test-identity', office())
+      .send({ rateDay: 'period_end' })
+      .expect(200)
+
+    const told = { changes: [{ field: 'supplyOn', was: day, now: null }] }
+
+    expect((await check(id).expect(200)).body).toEqual(told)
+
+    const { rows } = await admin.query<{
+      line: string
+      description: string | null
+      document_date: string
+    }>(
+      `select l.id as line, l.description, to_char(d.document_date, 'YYYY-MM-DD') as document_date
+         from document_lines l join documents d on d.id = l.document_id where d.id = $1`,
+      [id],
+    )
+    const [line] = rows
+    const pushed = await request(app.getHttpServer())
+      .post('/sync')
+      .set('x-test-identity', JSON.stringify({ ...JSON.parse(office()), deviceId: 'office-tab' }))
+      .send({
+        deviceId: 'office-tab',
+        operations: [
+          {
+            id: newId<'operation'>(),
+            entity: 'document_lines',
+            recordId: line?.line,
+            kind: 'update',
+            baseVersion: null,
+            patches: [
+              { field: 'description', from: line?.description, to: 'Wartung laut Vertrag' },
+            ],
+            recordedAt: new Date().toISOString(),
+          },
+          {
+            id: newId<'operation'>(),
+            entity: 'documents',
+            recordId: id,
+            kind: 'update',
+            baseVersion: null,
+            patches: [{ field: 'documentDate', from: line?.document_date, to: addDays(today, -1) }],
+            recordedAt: new Date().toISOString(),
+          },
+        ],
+      })
+      .expect(201)
+
+    expect(
+      (pushed.body as { receipts: { outcome: string }[] }).receipts.map((each) => each.outcome),
+    ).toEqual(['applied', 'applied'])
+    // The contract changed, not the period: the notice still says so.
+    expect(await supplyOf(id)).toBe(day)
+    expect((await check(id).expect(200)).body).toEqual(told)
+  })
+
+  it('tells a draft laid out before the notice only of the day of its maintenance', async () => {
+    const made = await contract(addMonths(today, -1), { issueByItself: false })
+
+    await run(2)
+
+    const [first] = await invoicesOf(made)
+    const id = String(first?.id)
+
+    // As a draft from before 0160: what it took is not known.
+    await admin.query('update documents set taken_over = null where id = $1', [id])
+    await request(app.getHttpServer())
+      .patch(`/maintenance-contracts/${made}`)
+      .set('x-test-identity', office())
+      .send({ flatCents: 4_200, rateDay: 'period_end' })
+      .expect(200)
+
+    expect((await check(id).expect(200)).body).toEqual({
+      changes: [{ field: 'supplyOn', was: expect.any(String) as string, now: null }],
+    })
+
+    await request(app.getHttpServer())
+      .post(`/documents/${id}/recurring-refresh`)
+      .set('x-test-identity', office())
+      .expect(201)
+
+    expect((await check(id).expect(200)).body).toEqual({ changes: [] })
+    expect(await supplyOf(id)).toBeNull()
+  })
+
+  it('leaves the price of a period cut short by the end of the contract to the office', async () => {
+    const quarters = addMonths(today, -3)
+    const made = await contract(quarters, { termMonths: 4, paymentRhythm: 'quarterly' })
+
+    await run(4)
+
+    const cut = (await invoicesOf(made))[1]
+
+    // A draft, so that it is the draft's rule that is asked.
+    expect(cut?.status).toBe('draft')
+
+    await request(app.getHttpServer())
+      .patch(`/maintenance-contracts/${made}`)
+      .set('x-test-identity', office())
+      .send({ flatCents: 9_900 })
+      .expect(200)
+
+    const answer = (await check(String(cut?.id)).expect(200)).body as {
+      changes: { field: string }[]
+    }
+
+    expect(answer.changes.map((change) => change.field)).not.toContain('flatCents')
+  })
+
+  it('tells an issued invoice a rate the running version knows otherwise for its day', async () => {
+    const made = await contract(addMonths(today, -1))
+
+    await run(3)
+
+    const issued = (await invoicesOf(made)).find((invoice) => invoice.status === 'issued')
+    const id = String(issued?.id)
+
+    expect((await check(id).expect(200)).body).toEqual({ changes: [] })
+
+    // As an earlier version would have issued it: at 16 per cent.
+    await pastTheTriggers(
+      `update documents set issued_totals = jsonb_set(issued_totals, '{byRate,0,basisPoints}', '1600')
+        where id = $1`,
+      [id],
+    )
+
+    expect((await check(id).expect(200)).body).toEqual({
+      changes: [
+        {
+          field: 'rate',
+          rate: 'standard',
+          supplyOn: expect.any(String) as string,
+          was: 1600,
+          now: 1900,
+        },
+      ],
+    })
+  })
+
+  it('cancels an issued invoice and lays its period out again with what it billed and the day of today', async () => {
+    const made = await contract(addMonths(today, -1))
+
+    await run(3)
+
+    const issued = (await invoicesOf(made)).find((invoice) => invoice.status === 'issued')
+    const id = String(issued?.id)
+    const { rows: articles } = await admin.query<{ id: string }>(
+      "insert into articles (tenant_id, number, designation, unit) values ($1, '1042', 'Prüfprotokoll', 'flat_rate') returning id",
+      [north],
+    )
+    const article = String(articles[0]?.id)
+
+    // Its line as one taken from an article and marked as the surcharge of
+    // an emergency call, which the new draft keeps as it is.
+    await pastTheTriggers(
+      'update document_lines set article_id = $2, emergency_surcharge = true where document_id = $1',
+      [id, article],
+    )
+    // And a flat line of the office beside it, which the new draft does not
+    // take for the line of the contract.
+    await pastTheTriggers(
+      `insert into document_lines (tenant_id, document_id, kind, position, designation, quantity_milli, unit, unit_price_cents, net_cents)
+       values ($1, $2, 'item', 2, 'Anfahrt pauschal', 1000, 'flat_rate', 1500, 1500)`,
+      [north, id],
+    )
+
+    // The contract changed meanwhile; the new draft keeps what was billed.
+    await request(app.getHttpServer())
+      .patch(`/maintenance-contracts/${made}`)
+      .set('x-test-identity', office())
+      .send({ flatCents: 4_200, rateDay: 'period_end' })
+      .expect(200)
+
+    const answer = await request(app.getHttpServer())
+      .post(`/documents/${id}/renewal`)
+      .set('x-test-identity', office())
+      .expect(201)
+    const { cancellation, renewed } = answer.body as {
+      cancellation: { kind: string; status: string; predecessorDocumentId: string }
+      renewed: {
+        id: string
+        status: string
+        serviceFrom: string
+        serviceUntil: string
+        createdBy: string
+      }
+    }
+
+    expect(cancellation).toMatchObject({
+      kind: 'cancellation_invoice',
+      status: 'issued',
+      predecessorDocumentId: id,
+    })
+    expect(renewed).toMatchObject({
+      status: 'draft',
+      serviceFrom: issued?.service_from,
+      serviceUntil: issued?.service_until,
+      createdBy: 'test',
+    })
+    expect((await invoicesOf(made)).find((invoice) => invoice.id === id)?.status).toBe('cancelled')
+    expect(await supplyOf(renewed.id)).toBeNull()
+
+    const { rows } = await admin.query<{
+      unit_price_cents: number
+      article_id: string | null
+      emergency_surcharge: boolean
+    }>(
+      `select unit_price_cents, article_id, emergency_surcharge from document_lines
+        where document_id = $1 order by position`,
+      [renewed.id],
+    )
+
+    expect(rows).toEqual([
+      { unit_price_cents: 3_900, article_id: article, emergency_surcharge: true },
+      { unit_price_cents: 1_500, article_id: null, emergency_surcharge: false },
+    ])
+    // And hears of the price the contract has today.
+    expect((await check(renewed.id).expect(200)).body).toEqual({
+      changes: [{ field: 'flatCents', was: 3_900, now: 4_200 }],
+    })
+
+    // Once, as a cancellation is.
+    await request(app.getHttpServer())
+      .post(`/documents/${id}/renewal`)
+      .set('x-test-identity', office())
+      .expect(409)
+  })
+
+  it('is acted on only with the right to change documents and to issue them', async () => {
+    const made = await contract(addMonths(today, -1))
+
+    await run(3)
+
+    const [draft, issued] = await invoicesOf(made)
+    const officeRights = [...permissionsOfRoles(['office'])]
+    const without = (right: string) =>
+      JSON.stringify({
+        userId: 'test',
+        tenantId: north,
+        roles: ['office'],
+        rights: officeRights.filter((each) => each !== right),
+      })
+
+    await request(app.getHttpServer())
+      .post(`/documents/${String(draft?.id)}/recurring-refresh`)
+      .set('x-test-identity', without('document.write'))
+      .expect(403)
+    await request(app.getHttpServer())
+      .post(`/documents/${String(issued?.id)}/renewal`)
+      .set('x-test-identity', without('document.issue'))
+      .expect(403)
+  })
+
+  it('keeps one invoice per period that counts, a cancelled one aside', async () => {
+    const made = await contract(addMonths(today, -1))
+
+    await run(2)
+
+    const [first] = await invoicesOf(made)
+    const twice = admin.query(
+      `insert into documents (tenant_id, customer_id, kind, document_date, service_from, service_until, maintenance_contract_id)
+       values ($1, $2, 'recurring_invoice', $3, $4, $5, $6)`,
+      [north, customer, today, first?.service_from, first?.service_until, made],
+    )
+
+    await expect(twice).rejects.toMatchObject({ code: '23505' })
   })
 })

@@ -382,6 +382,28 @@ export const perHundred = content(
   },
 )
 
+/**
+ * The invoice of a month of a maintenance contract whose flat price pays for
+ * its maintenances (#1037): July 2020, which pays for the maintenance of 15
+ * June, at nineteen percent, though July ends in the time of sixteen. The
+ * e-invoice states that day as the day of delivery (BT-72) beside the period
+ * (BG-14), and the validators see the two together.
+ */
+export const recurringInvoice = content(
+  {
+    kind: 'recurring_invoice',
+    number: 'RE-2020-0007',
+    documentDate: '2020-07-01',
+    serviceFrom: '2020-07-01',
+    serviceUntil: '2020-07-31',
+    supplyOn: '2020-06-15',
+    subject: 'Wartung Elektroanlage Rheinstraße 12, 01.07.2020 bis 31.07.2020',
+  },
+  {
+    lines: [item('Wartung Elektroanlage Rheinstraße 12', 1000, 3900, { unit: 'flat_rate' })],
+  },
+)
+
 export const samples: readonly {
   readonly name: string
   readonly profile: EInvoiceProfile
@@ -403,4 +425,6 @@ export const samples: readonly {
   { name: 'photovoltaics-en16931', profile: 'en16931', content: photovoltaics },
   { name: 'per-hundred-xrechnung', profile: 'xrechnung', content: perHundred },
   { name: 'per-hundred-en16931', profile: 'en16931', content: perHundred },
+  { name: 'recurring-invoice-xrechnung', profile: 'xrechnung', content: recurringInvoice },
+  { name: 'recurring-invoice-en16931', profile: 'en16931', content: recurringInvoice },
 ]

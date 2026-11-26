@@ -5,6 +5,7 @@ import {
   type DocumentTotals,
   longestFormValues,
   longestPaymentTermDays,
+  type RecurringTakenOver,
   taxTreatments,
 } from '@opengewerk/domain'
 import {
@@ -79,6 +80,21 @@ export const documents = pgTable(
      */
     serviceFrom: date('service_from'),
     serviceUntil: date('service_until'),
+    /**
+     * The day of the supply apart from the period (#1037): on a recurring
+     * invoice of a contract whose flat price pays for its maintenances, the
+     * day of the maintenance the period pays for, and on its cancellation the
+     * same. Written by the server alone and reserved in the sync.
+     */
+    supplyOn: date('supply_on'),
+    /**
+     * What a recurring invoice took from its contract and its customer
+     * (#1037): the flat price of its one flat line and how it is taxed. Its
+     * draft hears of a change only for a value it still holds as it took it.
+     * Written by the server alone and reserved in the sync; null on every
+     * other document and on one laid out before.
+     */
+    takenOver: jsonb('taken_over').$type<RecurringTakenOver>(),
     // The maintenance contract a recurring invoice bills a period of (#295), one
     // per contract and start of a period; written by the deadline engine.
     maintenanceContractId: reference<'maintenance-contract'>('maintenance_contract_id'),
@@ -156,7 +172,12 @@ export const documents = pgTable(
       foreignColumns: [maintenanceContracts.tenantId, maintenanceContracts.id],
       name: 'documents_maintenance_contract_in_tenant',
     }).onDelete('restrict'),
-    unique('documents_maintenance_period_key').on(table.maintenanceContractId, table.serviceFrom),
+    // One invoice per contract and period, but a cancelled one does not
+    // count: the office lays the period out again after a cancellation
+    // (#1037).
+    uniqueIndex('documents_maintenance_period_key')
+      .on(table.maintenanceContractId, table.serviceFrom)
+      .where(sql`${table.status} <> 'cancelled'`),
     check(
       'documents_maintenance_period',
       sql`${table.maintenanceContractId} is null or (${table.kind} = 'recurring_invoice' and ${table.serviceFrom} is not null)`,
@@ -238,6 +259,15 @@ export const documents = pgTable(
     check(
       'documents_issued_totals',
       sql`${table.issuedTotals} is null or ${table.status} in ('issued', 'cancelled')`,
+    ),
+    // The day of a maintenance is for a recurring invoice and its cancellation (#1037).
+    check(
+      'documents_supply_on',
+      sql`${table.supplyOn} is null or ${table.kind} in ('recurring_invoice', 'cancellation_invoice')`,
+    ),
+    check(
+      'documents_taken_over',
+      sql`${table.takenOver} is null or ${table.kind} = 'recurring_invoice'`,
     ),
     // `documentTextLimits`, asked by the routes and the sync before.
     check(

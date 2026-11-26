@@ -282,6 +282,12 @@ function information(content: DocumentContent): string {
     )
   }
 
+  // The maintenance the flat price of the period pays for (#1037): its day is
+  // the day of the supply, and the rate is that day's.
+  if (content.supplyOn !== null) {
+    rows.push(['Tag der Leistung', `${day(content.supplyOn)}, Wartung`])
+  }
+
   if (content.site !== null) {
     const place = [
       content.site.designation,

@@ -1,5 +1,6 @@
 import {
   contractPriceKinds,
+  contractRateDays,
   maintenanceContractLimits,
   paymentRhythms,
   renewalKinds,
@@ -70,6 +71,9 @@ export const maintenanceContracts = pgTable(
     flatCents: integer('flat_cents'),
     paymentRhythm: text('payment_rhythm').notNull().default('visit'),
     issueByItself: boolean('issue_by_itself').notNull().default(false),
+    // Which day decides the rate of its recurring invoices (#1037). A
+    // contract from before 0160 got the end of the period, which it had.
+    rateDay: text('rate_day').notNull().default('visit'),
     cancelledOn: date('cancelled_on'),
     endsOn: date('ends_on'),
     ...timestamps,
@@ -122,6 +126,10 @@ export const maintenanceContracts = pgTable(
         and ${table.paymentRhythm} in (${sql.raw(listOf(paymentRhythms))})
         and (${table.paymentRhythm} = 'visit' or ${table.priceKind} = 'flat')
         and (not ${table.issueByItself} or ${table.paymentRhythm} <> 'visit')`,
+    ),
+    check(
+      'maintenance_contracts_rate_day',
+      sql`${table.rateDay} in (${sql.raw(listOf(contractRateDays))})`,
     ),
     check(
       'maintenance_contracts_notice',

@@ -58,6 +58,8 @@ const jsonbColumns: Readonly<Record<string, NamingRow | null>> = {
   },
   // The totals an issued document froze (#1035), figures and no file.
   'documents.issued_totals': null,
+  // What a recurring invoice took from its contract (#1037), figures and no file.
+  'documents.taken_over': null,
   'early_start_requests.wording': null,
   'funding_programs.evidence': null,
   'instance_settings.measures': null,

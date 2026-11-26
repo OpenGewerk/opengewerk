@@ -346,6 +346,29 @@ describe('a maintenance contract out of a quote (#294)', () => {
     expect(changed.body).toMatchObject({ renewalMonths: null, flatCents: null })
   })
 
+  /**
+   * Which day decides the rate of its recurring invoices (#1037): the day of
+   * the maintenance for a new contract, the end of the period where the
+   * office says the flat price pays for a running service, and nothing else.
+   */
+  it('takes the rate of its recurring invoices from the day of the maintenance unless told the end of the period', async () => {
+    expect(await contract()).toMatchObject({ rateDay: 'visit' })
+
+    const running = await contract({ paymentRhythm: 'monthly', rateDay: 'period_end' })
+
+    expect(running).toMatchObject({ rateDay: 'period_end' })
+
+    const refused = refusal(
+      await http()
+        .patch(`/maintenance-contracts/${running.id}`)
+        .set('x-test-identity', office())
+        .send({ rateDay: 'payment' })
+        .expect(422),
+    )
+
+    expect(refused).toBe('Nach welchem Tag sich der Steuersatz richtet, fehlt.')
+  })
+
   it('ends after a notice with the term it was in time for, and runs on once the notice is taken back', async () => {
     const made = await contract()
     const lastDayForNotice = addDays(addMonths(today, 21), -1)
