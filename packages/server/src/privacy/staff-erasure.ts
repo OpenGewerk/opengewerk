@@ -523,6 +523,26 @@ export async function holdStaffYear(
   const written = sql`extract(year from (updated_at at time zone 'Europe/Berlin'))::int`
   const read = async (query: SQL) => (await tx.execute<{ id: string; written: number }>(query)).rows
 
+  // The account of the file as it is now, after the lock of the year: a file
+  // linked to another account between the list and the lock brings that
+  // account's records into the year, and its link took the lock of the year
+  // before the deletion did, so `people_link_only_kept_years` (0162) let it
+  // through. The year is then not the one read, and the next pass reads it
+  // with the account (opengewerk#1132), as `holdPerson` does for the file.
+  // The last year of a file that went takes the name with it (`takeName`),
+  // which changes the file and takes the answers of this account along: then
+  // the row is held from here on, so that the account stays the one read.
+  const gone = await fileGone(tx, year.personId)
+  const { rows: file } = await tx.execute<{ user_id: string | null }>(
+    gone
+      ? sql`select user_id from people where id = ${year.personId} ${held(waiting)}`
+      : sql`select user_id from people where id = ${year.personId}`,
+  )
+
+  if ((file[0]?.user_id ?? null) !== year.userId) {
+    return null
+  }
+
   const yearRows =
     year.userId === null
       ? []
@@ -566,12 +586,6 @@ export async function holdStaffYear(
 
   if (dueOn > today) {
     return null
-  }
-
-  // The last year of a file that went takes the name with it (`takeName`),
-  // which changes the file: held as well.
-  if (await fileGone(tx, year.personId)) {
-    await tx.execute(sql`select 1 from people where id = ${year.personId} ${held(waiting)}`)
   }
 
   return {
@@ -699,9 +713,9 @@ export async function takeStaffYear(
   // Nothing of the year left that came in after it was read: the year has one
   // line of the protocol (`erasures_once`), and a record left behind could
   // never go under it. Since 0161 a record of the year waits for the lock of
-  // the year and cannot come in through the four tables (opengewerk#1043);
-  // the file linked to an account with records of the year is still a way
-  // (opengewerk#1132). This stays as the net, and where it catches one, the
+  // the year and cannot come in through the four tables (opengewerk#1043),
+  // nor through a file linked to an account with records of the year (0162,
+  // opengewerk#1132). This stays as the net, and where it catches one, the
   // deletion is broken off and the next pass reads the year with it.
   const { rows: left } = await tx.execute<{ n: number }>(sql`
     select ${

@@ -35,8 +35,19 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   während das Jahr gelöscht wird, wartet er, bis das Löschen durch ist, und wird dann abgelehnt. Hat eine Übertragung
   vorher schon etwas anderes geschrieben, bricht PostgreSQL eins von beiden ab: Das Löschen löscht dann nichts und sagt
   das, eine Übertragung kommt wieder. Warum: Das Jahr hat genau eine Zeile im Protokoll, und ein Eintrag, der danach
-  dazukam, ließ sich nie mehr löschen. Einschränkung: Verknüpft das Büro die Akte danach mit einem Zugang, der in diesem
-  Jahr schon Arbeitszeit oder Rufbereitschaft hat, zählen diese noch zum gelöschten Jahr (#1132).
+  dazukam, ließ sich nie mehr löschen.
+- Eine Akte lässt sich nicht mehr mit einem Zugang verknüpfen, der Arbeitszeit oder Rufbereitschaft in einem Jahr der
+  Akte hat, das nach dem Löschkonzept gelöscht ist (#1132). Schreibt der Zugang gerade dann einen Eintrag in dieses
+  Jahr, wartet das eine auf das andere, und das zweite wird abgelehnt. Verknüpft das Büro die Akte, während das Jahr
+  gelöscht wird, wird die Verknüpfung abgelehnt, oder das Löschen lässt das Jahr liegen und nimmt es beim nächsten Mal
+  mit dem neuen Zugang ganz. Warum: Arbeitszeit und Rufbereitschaft eines Zugangs zählen zu der Akte, die ihn nennt, und
+  kamen so doch noch in das gelöschte Jahr, das sich danach nicht mehr löschen ließ und die Akte ihren Namen behalten
+  ließ.
+- Bricht die Datenbank eine Anfrage ab, weil sie sich mit einer anderen getroffen hat, antwortet der Server mit 503 und
+  „Gleichzeitig wurde etwas anderes gespeichert. Geändert ist nichts, bitte noch einmal versuchen.“ statt mit einer 500
+  ohne Satz (#1132). Ein Gerät sendet eine solche Übertragung von selbst wieder. Warum: Mit #1132 kann eine Verknüpfung
+  im Büro mit einer Übertragung desselben Zugangs so aufeinandertreffen, und eine 500 sagte weder, dass nichts geändert
+  ist, noch, dass ein zweiter Versuch reicht.
 - Eine Korrektur der Arbeitszeit zählt im Löschkonzept zum Jahr des Eintrags, mit dem ihre Kette beginnt, auch hinter
   dem hundertsten Glied (#1044). Jeder Zeiteintrag hält dieses Jahr jetzt selbst, und die Migration trägt es für
   bestehende Einträge nach, ohne zu ändern, wann sie erfasst wurden. Warum: Die Datenbank suchte den ersten Eintrag nur

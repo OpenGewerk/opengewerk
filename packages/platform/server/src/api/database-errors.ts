@@ -8,6 +8,7 @@ import {
   HttpException,
   InternalServerErrorException,
   PayloadTooLargeException,
+  ServiceUnavailableException,
 } from '@nestjs/common'
 import type { Response } from 'express'
 
@@ -23,6 +24,21 @@ const badRequestCodes = new Set([
 
 /** insufficient_privilege. What a row level security policy answers with. */
 const rowLevelSecurity = '42501'
+
+/**
+ * deadlock_detected and serialization_failure: the transaction met another
+ * one, and PostgreSQL broke it off and took back all it wrote. Nothing was
+ * wrong with the request, and the same one again goes through: a 503, which
+ * a device sends again by itself instead of keeping it as refused, with a
+ * sentence for the person who sent it from a page.
+ */
+const brokenOffCodes = new Set(['40P01', '40001'])
+
+function brokenOff(error: unknown): boolean {
+  const code = databaseCode(error)
+
+  return code !== undefined && brokenOffCodes.has(code)
+}
 
 /**
  * The classes the foundation itself raises, where the call was well formed
@@ -143,6 +159,12 @@ export function databaseErrors(conflicts: Readonly<Record<string, string>> = {})
       return new ForbiddenException('Kein Zugriff auf diesen Datensatz.')
     }
 
+    if (brokenOff(error)) {
+      return new ServiceUnavailableException(
+        'Gleichzeitig wurde etwas anderes gespeichert. Geändert ist nichts, bitte noch einmal versuchen.',
+      )
+    }
+
     const conflict = code === undefined ? undefined : ourConflicts.get(code)
 
     if (conflict !== undefined) {
@@ -167,8 +189,15 @@ export function databaseErrors(conflicts: Readonly<Record<string, string>> = {})
       // stack, or nobody learns what broke (#694). Registered for every route,
       // this filter stands in for the one of Nest that would have logged it.
       // What it knows, a refusal of the database or a body too large, is the
-      // doing of the caller and stays out of the log.
-      if (translated.getStatus() >= 500 && !(error instanceof HttpException)) {
+      // doing of the caller and stays out of the log. A transaction broken
+      // off is said there in a sentence of its own: it changed nothing, and
+      // it tells of locks that meet.
+      if (brokenOff(error)) {
+        console.error(
+          'Eine Anfrage traf sich mit einer anderen und wurde abgebrochen; geändert hat sie nichts.',
+          error,
+        )
+      } else if (translated.getStatus() >= 500 && !(error instanceof HttpException)) {
         console.error('Eine Anfrage scheiterte an einem unbekannten Fehler.', error)
       }
 
