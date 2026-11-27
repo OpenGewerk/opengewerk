@@ -920,6 +920,10 @@ describe('what of the staff is due (#846)', () => {
           "select set_config('app.tenant_id', $1, true), set_config('app.user_id', 'kurt', true)",
           [north],
         )
+        // PostgreSQL breaks off the session that looks for the deadlock
+        // first, and each looks after its own deadlock_timeout. This one looks
+        // last, so that it is the deletion, as the test means.
+        await client.query("set local deadlock_timeout = '10s'")
         await client.query(
           `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
              values ($1, 'kurt', 'work', $2, $3, 'heute')`,
