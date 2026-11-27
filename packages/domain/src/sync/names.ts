@@ -238,6 +238,7 @@ export const syncFieldNames: Readonly<Record<string, string>> = {
   confirmedRevision: 'Bestätigte Fassung',
   confirmedAt: 'Bestätigt am',
   correctsEntryId: 'Korrigiert',
+  chainYear: 'Jahr der Kette',
   withdrawn: 'Gestrichen',
   startLatitudeMicro: 'Breitengrad beim Start',
   startLongitudeMicro: 'Längengrad beim Start',

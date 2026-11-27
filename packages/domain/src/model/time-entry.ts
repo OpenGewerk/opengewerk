@@ -37,6 +37,14 @@ export interface TimeEntry extends Synced {
   readonly endedAt: Date
   readonly note: string | null
   readonly correctsEntryId: TimeEntryId | null
+  /**
+   * The year in Germany the chain of corrections of this entry began in
+   * (opengewerk#1044): the year it starts in for an entry that corrects
+   * nothing, that of the entry it corrects for a correction. Written by the
+   * database when the entry is made, and the year the deletion concept counts
+   * the entry with, however long its chain.
+   */
+  readonly chainYear: number
   readonly withdrawn: boolean
   readonly startLatitudeMicro: number | null
   readonly startLongitudeMicro: number | null

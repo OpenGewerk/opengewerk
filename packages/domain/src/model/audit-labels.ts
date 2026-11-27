@@ -743,6 +743,7 @@ export const auditTables: Readonly<Record<string, AuditTableWords>> = {
       ended_at: 'Ende',
       note: 'Notiz',
       corrects_entry_id: 'Korrigiert',
+      chain_year: 'Jahr der Kette',
       withdrawn: 'Gestrichen',
       start_latitude_micro: 'Standort beim Start, Breite',
       start_longitude_micro: 'Standort beim Start, Länge',

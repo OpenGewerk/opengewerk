@@ -542,6 +542,29 @@ async function eraseStaff(
     }
   }
 
+  // And each year it deletes, in the order of their keys (opengewerk#1043):
+  // a record that comes into such a year takes the same lock in the database
+  // first (`staff_year_stays_kept`, 0161), waits for the deletion and is then
+  // refused. A record of another year, or one while the file goes, waits for
+  // nothing here.
+  if (kind === 'staff_year') {
+    for (const key of [...new Set(chosen.map((record) => record.recordId.toLowerCase()))].sort()) {
+      const lock = sql`hashtextextended(${`staff-year:${key}`}, 0)`
+
+      if (waiting === 'wait') {
+        await tx.execute(sql`select pg_advisory_xact_lock(${lock})`)
+      } else {
+        const { rows } = await tx.execute<{ taken: boolean }>(
+          sql`select pg_try_advisory_xact_lock(${lock}) as taken`,
+        )
+
+        if (rows[0]?.taken !== true) {
+          throw busy()
+        }
+      }
+    }
+  }
+
   // Every record held before the first line of the protocol, and in the
   // order of their keys (opengewerk#1033): a line takes the counter and the
   // chain of the business until the end, and a write of the staff takes its
@@ -729,7 +752,23 @@ export function eraseRecords(
     case 'sickness':
     case 'staff_year':
     case 'person':
-      return eraseStaff(tx, input.kind, input)
+      // A write of a record of the year that met the deletion in a deadlock
+      // (0161, opengewerk#1043): a transmission that holds the counter of the
+      // business and then waits for the lock of the year. PostgreSQL broke the
+      // deletion off, and nothing went.
+      return eraseStaff(tx, input.kind, input).catch((error: unknown) => {
+        if (databaseCode(error) !== '40P01') {
+          throw error
+        }
+
+        throw new ErasureBusy(
+          input.automatic
+            ? `${erasureKindWords[input.kind].one}: gleichzeitig wurde ein Eintrag dafür geschrieben. ` +
+                'Gelöscht ist nichts; der nächste Lauf versucht es wieder.'
+            : `${erasureKindWords[input.kind].one}: gleichzeitig wurde ein Eintrag dafür geschrieben. ` +
+                'Gelöscht ist nichts; bitte noch einmal löschen.',
+        )
+      })
     case 'site':
       return eraseSites(tx, input)
   }

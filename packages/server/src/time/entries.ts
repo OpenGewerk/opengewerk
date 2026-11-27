@@ -10,11 +10,12 @@ export interface TimeEntryRefusal {
 }
 
 /**
- * How many corrections a chain takes (opengewerk#1033). The deletion concept
- * counts a correction with the year of the entry its chain began with, and
- * the database finds that entry a hundred links up at most
- * (`time_entry_year`, 0131); past that a link would count with another, a
- * year could hold the year of its own correction, and neither would ever go.
+ * How many corrections a chain takes (opengewerk#1033). Until 0161 the
+ * database found the entry a chain began with a hundred links up at most, and
+ * past that a correction counted with the year of another link. Since then
+ * every entry keeps the year of its chain (`chain_year`, opengewerk#1044), and
+ * the limit stays for the walk up the chain below: nobody corrects one entry
+ * a hundred times, and a chain that long is a mistake rather than a record.
  */
 export const mostCorrections = 100
 

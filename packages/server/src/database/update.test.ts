@@ -4121,3 +4121,67 @@ describe('an instance whose cluster lets every role create in public', () => {
     expect(await open()).toEqual({ creates: false, executes: true })
   })
 })
+
+/**
+ * The year of the chains of time from before 0161 (opengewerk#1044): every
+ * entry gets the year of the first of its chain, past a hundred links too,
+ * and keeps the moment it was written, without a line in the log. Under
+ * FORCE, as an installation migrates.
+ */
+describe('the records of time from before 0161', () => {
+  const before = () =>
+    readMigrationIndex().findIndex((entry) => entry.tag === '0161_time_entry_chain_year')
+
+  it('take the year their chain began in, past a hundred links, and keep when they were written (#1044)', async () => {
+    expect(before()).toBeGreaterThan(0)
+
+    await resetSchema(admin)
+    await runMigrations(ownerDatabaseUrl(), releaseFolder(before()))
+    await admin.query('insert into tenants (id, name) values ($1, $2)', [tenant.id, tenant.name])
+    // An entry on New Year's Eve 2019, a correction that moves it past New
+    // Year and a hundred corrections of that one, as an earlier version let
+    // them come; all written on 1 January 2020.
+    await admin.query(
+      `begin; set local app.user_id = 'kurt';
+       do $$
+       begin
+         for i in 0..101 loop
+           insert into time_entries (id, tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+           values (md5('kette' || i)::uuid, '${tenant.id}', 'kurt', 'work',
+                   case when i = 0 then '2019-12-31 22:00+01' else '2020-01-01 00:10+01' end::timestamptz,
+                   case when i = 0 then '2019-12-31 23:30+01' else '2020-01-01 01:00+01' end::timestamptz,
+                   'Kette', case when i = 0 then null else md5('kette' || (i - 1))::uuid end);
+         end loop;
+       end
+       $$;
+       set local session_replication_role = replica;
+       -- Each written at a moment of its own, to the microsecond.
+       update time_entries t
+          set updated_at = '2020-01-01 01:00:00.123456+01'::timestamptz + n.i * interval '1.000001 second'
+         from (select id, row_number() over (order by started_at, id) as i from time_entries) n
+        where t.id = n.id;
+       commit;`,
+    )
+
+    const written = async () =>
+      (
+        await admin.query<{ id: string; written: string }>(
+          `select id, to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS.US') as written
+             from time_entries order by id`,
+        )
+      ).rows
+    const stamped = await written()
+    const logged = await chain()
+
+    await runMigrations(ownerDatabaseUrl(), migrationsFolder)
+
+    const { rows } = await admin.query<{ chain_year: number; n: number }>(
+      'select chain_year, count(*)::int as n from time_entries group by 1',
+    )
+
+    expect(rows).toEqual([{ chain_year: 2019, n: 102 }])
+    expect(new Set(stamped.map((row) => row.written)).size).toBe(102)
+    expect(await written()).toEqual(stamped)
+    expect(await chain()).toEqual(logged)
+  })
+})
