@@ -372,9 +372,11 @@ jobs:
   # it when the office of an instance starts one (#1107). After
   # the release page, since the updater offers only the latest release and
   # fetches the kit from there with its signature. A release before has no
-  # updater before 0.9.0, and then the step says so and ends green. Red means
-  # the release is out, and an update to it from the office does not get
-  # through until a correction is.
+  # updater before 0.9.0, and then the step says so and ends green. Red with
+  # "ging nicht durch" means the release is out, and an update to it from the
+  # office does not get through until a correction is; red with "nicht
+  # geprüft" means the job did not get as far as the update, and running it
+  # again tries once more.
   update:
     name: Update von der vorigen Fassung prüfen
     needs: release

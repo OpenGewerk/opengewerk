@@ -1181,9 +1181,9 @@ abgelehnt wurde, scheiterte oder `/health` danach eine andere Fassung nennt, ist
 die Fassung schon erschienen, und ein Update aus dem Bereich der Instanz auf sie
 trägt nicht, bis eine Korrektur erschienen ist; im Bericht stehen das Ende von
 `run.json` und das Protokoll des Dienstes. Ließ sich die vorige Fassung nicht
-holen, prüfen oder starten oder erreichte der Dienst GitHub nicht, sagt der
-Bericht, dass das Update nicht geprüft ist; dann ist der nächste Schritt, den Job
-neu zu starten. Vor einem Release lässt sich das nicht prüfen: Der
+holen, prüfen, starten oder einrichten, nahm sie den Auftrag nicht an oder
+erreichte der Dienst GitHub nicht, sagt der Bericht, dass das Update nicht geprüft
+ist; dann ist der nächste Schritt, den Job neu zu starten. Vor einem Release lässt sich das nicht prüfen: Der
 Dienst nimmt nur ein Paket, das der Workflow "Release" seines Tags signiert hat.
 
 Eine Fassung, die eine Sicherheitslücke schließt, trägt in ihrem Abschnitt des

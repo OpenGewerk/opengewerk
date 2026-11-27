@@ -139,7 +139,7 @@ jq -n --arg code "$code" --arg password "$password" '{
   password: $password, setupCode: $code
 }' | curl --fail --silent --show-error --max-time 30 --output /dev/null \
   --header 'Content-Type: application/json' --data @- "$base/setup" ||
-  report "Die Einrichtung der Instanz schlug fehl."
+  fail "Die Fassung $previous ließ sich hier nicht einrichten; das Update ist nicht geprüft."
 
 # The updater asks GitHub once it starts; ready means it found a kit with
 # digests, the installation under its path and Docker answering.
@@ -157,11 +157,12 @@ if ! printf '%s\n' "${available:-}" | jq -e --arg new "$new" '.latest == $new an
     exit 0
   fi
   # GitHub not answering the updater, which asks without a token from the
-  # address of the runner, leaves the update untried rather than failed.
+  # address of the runner: red as well, but the update is untried, not failed.
   if trouble=$(printf '%s\n' "${available:-}" | jq -er '.error // empty' 2>/dev/null); then
     fail "Der Dienst für Aktualisierungen erreichte GitHub nicht ($trouble); das Update ist nicht geprüft."
   fi
-  report "Der Dienst bietet $new nicht an: $(printf '%s' "${available:-nichts}" | tr -d '\n')"
+  offered=$(printf '%s\n' "${available:-}" | jq -c '{latest, mode, reason}' 2>/dev/null) || offered=nichts
+  report "Der Dienst bietet $new nicht an: ${offered:-nichts}"
 fi
 
 # The request as the application writes it (update.ts): a file of its own,
@@ -174,7 +175,8 @@ const folder = "/var/lib/opengewerk/update-requests"
 const body = JSON.stringify({ id, version, by: "Prüfung des Release", at: new Date().toISOString() })
 fs.writeFileSync(`${folder}/.request-${id}.json`, body, { mode: 0o644 })
 fs.renameSync(`${folder}/.request-${id}.json`, `${folder}/request.json`)
-' "$id" "$new" || report "Der Auftrag ließ sich nicht in den Ordner update-requests schreiben."
+' "$id" "$new" ||
+  fail "Der Auftrag ließ sich in der Fassung $previous nicht in den Ordner update-requests schreiben; das Update ist nicht geprüft."
 
 # Taken within seconds; a run backs up, fetches, migrates and restarts,
 # which takes some minutes.
