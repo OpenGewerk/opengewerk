@@ -1311,6 +1311,50 @@ describe('what of the staff is due (#846)', () => {
     expect((await asked).status).toBe(201)
   })
 
+  it('refuses a record of any of the four kinds outside the years 1970 to the next, and takes the year after this one (GHSA-9f85-85g8-g7w3)', async () => {
+    const dennis = await kraft(false)
+    const next = thisYear + 1
+    const later = String(next + 1)
+    const sentence = (year: number | string) =>
+      `OpenGewerk nimmt Arbeitszeit, Rufbereitschaft, Abwesenheit und Urlaub für die Jahre 1970 bis ${String(next)} an, nicht für ${String(year)}.`
+    const written = (statement: string) =>
+      ownTransaction(async (client) => {
+        await client.query("select set_config('app.user_id', 'kurt', true)")
+        await client.query(statement)
+        await client.query('commit')
+
+        return 'went through'
+      }).catch((error: unknown) => (error as Error).message)
+
+    expect(
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
+         values ('${north}', 'kurt', 'work', '1969-06-02 07:00+01', '1969-06-02 15:00+01', 'zu früh')`),
+    ).toBe(sentence(1969))
+    expect(
+      await written(`insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note)
+         values ('${north}', 'kurt', '${later}-06-05 16:00+02', '${later}-06-06 07:00+02', 'zu spät')`),
+    ).toBe(sentence(later))
+    expect(
+      await written(`insert into absences (tenant_id, person_id, kind, state, first_day, last_day, note)
+         values ('${north}', '${dennis.person}', 'vacation', 'approved', '1969-09-01', '1969-09-02', 'zu früh')`),
+    ).toBe(sentence(1969))
+    expect(
+      await written(`insert into leave_entitlements (tenant_id, person_id, year, entitled_half_days, carried_half_days)
+         values ('${north}', '${dennis.person}', ${later}, 60, 0)`),
+    ).toBe(sentence(later))
+
+    // The year after this one stays open, for what is planned ahead, and 1970
+    // is the first year taken.
+    expect(
+      await written(`insert into leave_entitlements (tenant_id, person_id, year, entitled_half_days, carried_half_days)
+         values ('${north}', '${dennis.person}', ${String(next)}, 60, 0)`),
+    ).toBe('went through')
+    expect(
+      await written(`insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note)
+         values ('${north}', 'kurt', '1970-06-05 16:00+01', '1970-06-06 07:00+01', 'früh genug')`),
+    ).toBe('went through')
+  })
+
   it('refuses a record of any of the four kinds in a year that went, and takes one of a year kept (#1043)', async () => {
     const dennis = await kraft(false)
     const o = String(oldYear)

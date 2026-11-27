@@ -37,7 +37,7 @@ import {
 import { Database } from '../database/database.js'
 import { newId } from '../database/identifier.js'
 import { standingInLine } from '../database/test-database.js'
-import { serverSync } from './apply.js'
+import { lockedOneByOne, serverSync } from './apply.js'
 import { longestSyncText, syncParts, type SyncRoutes } from './controller.js'
 import { fingerprintOf } from './narrowing.js'
 import {
@@ -755,6 +755,149 @@ describe('sending an outbox', () => {
    * waits for the first. Sent off together and left to chance, one is through
    * before the other asks, and nothing is ever at stake.
    */
+  /**
+   * Notes to make, then a change of a note the test holds: the transmission
+   * waits at its last operation with everything before it taken, so what its
+   * session holds then is all it took.
+   */
+  async function heldAtTheEnd(count: number, text: string) {
+    const { noteId } = await shelfWithNote('Dachboden', text)
+    const before = Array.from({ length: count }, (_, index) =>
+      operation({ entity: 'notes', patches: [{ field: 'text', to: `${text} ${String(index)}` }] }),
+    )
+    const last = operation({
+      entity: 'notes',
+      recordId: noteId,
+      kind: 'update',
+      patches: [{ field: 'text', from: text, to: `${text}, erledigt` }],
+    })
+    const holder = await admin.connect()
+
+    await holder.query('begin')
+    await holder.query('select id from notes where id = $1 for update', [noteId])
+
+    return { before, operations: [...before, last], holder }
+  }
+
+  /** Sent at once, for a test that waits for it while it runs. */
+  function sending(operations: Parameters<typeof push>[1]) {
+    return push(olga(), operations).then((answer) => answer)
+  }
+
+  /** Until `sessions` wait for a lock, failing with the answer of one that ended first. */
+  async function waiting(sessions: number, ...sent: Promise<{ status: number; body: unknown }>[]) {
+    await Promise.race([
+      standingInLine(admin, sessions),
+      ...sent.map((one) =>
+        one.then((answer) => {
+          throw new Error(
+            `A transmission ended before it waited: ${String(answer.status)} ${JSON.stringify(answer.body)}`,
+          )
+        }),
+      ),
+    ])
+  }
+
+  function reasonFor(answer: { body: unknown }, operationId: string): string | null | undefined {
+    return (
+      answer.body as { receipts: { operationId: string; reason: string | null }[] }
+    ).receipts.find((receipt) => receipt.operationId === operationId)?.reason
+  }
+
+  it('takes one lock for a large transmission, however many operations it carries, and one more than its operations for a small one (GHSA-9f85-85g8-g7w3)', async () => {
+    const held = async (count: number) => {
+      const { operations, holder } = await heldAtTheEnd(count, `Sicherung ${String(count)}`)
+
+      try {
+        const sent = sending(operations)
+
+        await waiting(1, sent)
+
+        const { rows } = await admin.query<{ locks: number }>(
+          `select count(*)::int as locks from pg_locks
+            where locktype = 'advisory' and granted and pid = (
+              select pid from pg_stat_activity
+               where datname = current_database() and wait_event_type = 'Lock' limit 1)`,
+        )
+
+        await holder.query('commit')
+        expect((await sent).status).toBe(201)
+
+        return { operations: operations.length, locks: rows[0]?.locks }
+      } finally {
+        await holder.query('rollback')
+        holder.release()
+      }
+    }
+
+    expect(await held(lockedOneByOne + 10)).toEqual({ operations: lockedOneByOne + 11, locks: 1 })
+    expect(await held(3)).toEqual({ operations: 4, locks: 5 })
+  })
+
+  it('lets a large transmission and a small one with the same operation wait for each other, in either order (GHSA-9f85-85g8-g7w3)', async () => {
+    // The large one first, held at its end; the small one sends one of its
+    // operations again.
+    {
+      const large = await heldAtTheEnd(lockedOneByOne + 5, 'Groß zuerst')
+      const again = large.before[0]
+
+      try {
+        const sentLarge = sending(large.operations)
+
+        await waiting(1, sentLarge)
+
+        const sentSmall = sending(again === undefined ? [] : [again])
+
+        await waiting(2, sentLarge, sentSmall)
+        await large.holder.query('commit')
+
+        expect((await sentLarge).status).toBe(201)
+
+        const small = await sentSmall
+
+        expect(small.status).toBe(201)
+        expect(reasonFor(small, again?.id ?? '')).toBe('already_seen')
+      } finally {
+        await large.holder.query('rollback')
+        large.holder.release()
+      }
+    }
+
+    // The small one first, held at its end; the large one carries one of its
+    // operations.
+    {
+      const small = await heldAtTheEnd(2, 'Klein zuerst')
+      const again = small.before[0]
+      const others = Array.from({ length: lockedOneByOne + 5 }, (_, index) =>
+        operation({
+          entity: 'notes',
+          patches: [{ field: 'text', to: `Groß danach ${String(index)}` }],
+        }),
+      )
+
+      try {
+        const sentSmall = sending(small.operations)
+
+        await waiting(1, sentSmall)
+
+        const sentLarge = sending(again === undefined ? others : [again, ...others])
+
+        await waiting(2, sentSmall, sentLarge)
+        await small.holder.query('commit')
+
+        expect((await sentSmall).status).toBe(201)
+
+        const large = await sentLarge
+
+        expect(large.status).toBe(201)
+        expect(reasonFor(large, again?.id ?? '')).toBe('already_seen')
+      } finally {
+        await small.holder.query('rollback')
+        small.holder.release()
+      }
+    }
+  })
+
   it('takes an operation once when its transmission arrives twice at the same moment', async () => {
     const { noteId } = await shelfWithNote('Keller', 'Zähler ablesen')
     const reworded = operation({
