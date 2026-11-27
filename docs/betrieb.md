@@ -1177,15 +1177,18 @@ er, wenn der Lauf durchging und `/health` die neue Fassung nennt. Hat die Fassun
 davor noch keinen Dienst für Aktualisierungen (vor 0.9.0) oder ist die neue nicht
 die neueste auf GitHub, etwa eine Korrektur einer älteren Reihe, sagt er das und
 endet grün, denn der Dienst bietet nur die neueste an. Ist er rot, weil der Lauf
-abgelehnt wurde, scheiterte oder `/health` danach eine andere Fassung nennt, ist
-die Fassung schon erschienen, und ein Update aus dem Bereich der Instanz auf sie
-trägt nicht, bis eine Korrektur erschienen ist; im Bericht stehen das Ende von
-`run.json` und das Protokoll des Dienstes. Ließ sich die vorige Fassung nicht
-holen, prüfen, starten oder einrichten, bot ihr Dienst die neue Fassung nicht an
-oder nahm den Auftrag nicht an, wurde der Lauf in einer halben Stunde nicht fertig
-oder erreichte der Dienst GitHub nicht,
-sagt der Bericht, dass das Update nicht geprüft ist; dann ist der nächste Schritt,
-den Job neu zu starten. Vor einem Release lässt sich das nicht prüfen: Der
+abgelehnt wurde, in einem seiner Schritte scheiterte oder `/health` danach eine
+andere Fassung nennt, sagt der Bericht „ging nicht durch“, mit dem Schritt, dem
+Ende von `run.json` und dem Protokoll des Dienstes. Die Fassung ist dann schon
+erschienen, und ein Update aus dem Bereich der Instanz auf sie trägt nicht, bis
+eine Korrektur erschienen ist. Scheiterte der Lauf in Schritt 1 oder 2 an einem
+Netzfehler beim Holen von Paket oder Abbildern, was das Protokoll zeigt, lohnt
+vorher ein neuer Start des Jobs. Ließ sich die vorige Fassung nicht holen, prüfen,
+starten oder einrichten, bot ihr Dienst die neue Fassung nicht an oder nahm den
+Auftrag nicht an, startete der Container des Laufs nicht oder verschwand er, wurde
+der Lauf in einer halben Stunde nicht fertig oder erreichte der Dienst GitHub
+nicht, sagt der Bericht, dass das Update nicht geprüft ist; dann ist der nächste
+Schritt, den Job neu zu starten. Vor einem Release lässt sich das nicht prüfen: Der
 Dienst nimmt nur ein Paket, das der Workflow "Release" seines Tags signiert hat.
 
 Eine Fassung, die eine Sicherheitslücke schließt, trägt in ihrem Abschnitt des

@@ -63,6 +63,10 @@ fi
 not_latest() {
   latest=$(gh api "repos/$repository/releases/latest" --jq .tag_name) || return 1
   [ "$latest" != "v$new" ] || return 1
+  # Only a newer release is offered instead; an older answer is GitHub not
+  # having caught up with this one yet, and the updater tells then.
+  newest=$(printf '%s\n%s\n' "${latest#v}" "$new" | sort -V | tail -n 1)
+  [ "$newest" != "$new" ] || return 1
   say "Die neueste Fassung auf GitHub ist $latest, nicht v$new. Der Dienst für Aktualisierungen bietet nur die neueste an; ein Update auf $new lässt sich so nicht prüfen."
 }
 
@@ -214,7 +218,17 @@ case $state in
     diagnose
     fail "Der Dienst der Fassung $previous nahm den Auftrag in einer halben Stunde nicht an; das Update ist nicht geprüft."
     ;;
-  *) report "run.json sagt $state statt succeeded." ;;
+  *)
+    # A reason is the updater's own, when the container of the run did not
+    # start (docker) or went without saying how it ended (vanished): the
+    # runner, not the update. update.sh itself names none.
+    why=$(printf '%s\n' "$run" | jq -r '.reason // empty' 2>/dev/null) || why=''
+    if [ -n "$why" ]; then
+      diagnose
+      fail "Der Lauf endete mit dem Grund $why, ohne das Update auszuführen; das Update ist nicht geprüft."
+    fi
+    report "run.json sagt $state in Schritt $(printf '%s\n' "$run" | jq -r '.step // "?"') statt succeeded."
+    ;;
 esac
 
 # Asked apart: in a pipeline sh takes the status of its last command, and jq
