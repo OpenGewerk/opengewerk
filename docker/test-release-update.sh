@@ -11,10 +11,10 @@
 # on this machine, sets up the instance with an operator, writes a request
 # for the new version into the folder update-requests the way the
 # application does, and waits for run.json. The update went through when
-# run.json says so and /health names the new version. A release before 0.9.0
-# has no updater, and then there is nothing to try: it says so and ends
-# green. A release that is not the latest of GitHub, a patch of an older
-# line, is not offered by the updater either.
+# run.json says so and /health answers 200 with the new version. A release
+# before 0.9.0 has no updater, and then there is nothing to try: it says so
+# and ends green. A release that is not the latest of GitHub, a patch of an
+# older line, is not offered by the updater either.
 #
 #   sh docker/test-release-update.sh <version>
 #
@@ -24,6 +24,12 @@
 # Needs gh with a token that reads releases, cosign, jq, openssl,
 # curl, docker and sudo for reading the volume of the update status.
 set -eu
+
+# A run broken off ends through exit, so that what it set up goes again:
+# dash runs the trap on EXIT for an exit, not for a signal.
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 new=${1:-}
 repository=OpenGewerk/opengewerk
