@@ -7,7 +7,8 @@ name: Release
 # CHANGELOG.md for that version and the installation kit: the folder docker/
 # with the version in its compose.yaml, so that "sh docker/start.sh" and every
 # docker compose command in it pull this release instead of building. A second
-# job mirrors the images with their signatures to Docker Hub (#281).
+# job mirrors the images with their signatures to Docker Hub (#281), a third
+# tries a real update from the release before through the updater (#1107).
 
 on:
   push:
@@ -52,8 +53,10 @@ jobs:
           set -eu
           version="${GITHUB_REF_NAME#v}"
 
-          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Der Tag $GITHUB_REF_NAME hat nicht die Form v1.2.3." >&2
+          # Without leading zeros, as the updater and the check of the update
+          # after the release take a version (#1107).
+          if ! printf '%s' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "Der Tag $GITHUB_REF_NAME hat nicht die Form v1.2.3 ohne führende Nullen." >&2
             exit 1
           fi
 
@@ -366,6 +369,40 @@ jobs:
             "opengewerk-$VERSION.tar.gz" \
             "opengewerk-$VERSION.tar.gz.sha256" \
             "opengewerk-$VERSION.tar.gz.sigstore.json"
+
+  # A real update from the release before to this one, through the updater
+  # of an installation, with a request written the way the application writes
+  # it when the office of an instance starts one (#1107). After
+  # the release page, since the updater offers only the latest release and
+  # fetches the kit from there with its signature. Green as well, with a
+  # sentence, where the release before has no updater (before 0.9.0) or a
+  # newer release is the latest by now. Red with "ging nicht durch" means the
+  # run of the update failed or /health names another version, or the new one
+  # without getting ready: the release is
+  # out, and an update to it from the office does not get through until a
+  # correction is. Red with "nicht geprüft" means the job cannot tell whether
+  # an update gets through, and running it again tries once more.
+  update:
+    name: Update von der vorigen Fassung prüfen
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: cosign installieren
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      - name: Von der vorigen Fassung über den Dienst für Aktualisierungen aktualisieren
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: sh docker/test-release-update.sh "$VERSION"
 
   # The same images on Docker Hub, with their signatures, after the release
   # page exists (#281). Without the secrets the called workflow does nothing.
