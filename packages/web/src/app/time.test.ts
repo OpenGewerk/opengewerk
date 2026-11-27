@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 
-import type { RecordState } from '@opengewerk/domain'
+import { germanYear, type RecordState } from '@opengewerk/domain'
 import { openLocalStore } from '@opengewerk/platform-web/sync'
 import { TestServer } from '@opengewerk/platform-web/testing'
 import { describe, expect, it } from 'vitest'
@@ -103,7 +103,7 @@ describe('an entry typed by hand', () => {
         endedAt: '0026-09-21T09:00:00.000Z',
       }),
     ).toBe(
-      `OpenGewerk nimmt Arbeitszeit für die Jahre 1970 bis ${String(new Date().getFullYear() + 1)} an, nicht für 26.`,
+      `OpenGewerk nimmt Arbeitszeit für die Jahre 1970 bis ${String(germanYear(Date.now()) + 1)} an, nicht für 26.`,
     )
     expect(client.status().pending).toBe(0)
     expect(await recordEntry(client, entry)).toMatchObject({ outcome: 'queued' })
