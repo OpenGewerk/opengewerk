@@ -146,7 +146,7 @@ describe('a stopwatch that stops', () => {
     client.stop()
   })
 
-  it('keeps a year out of the outbox that a clock set wrong gives it (GHSA-9f85-85g8-g7w3)', async () => {
+  it('keeps a year before 1970 out of the outbox that a clock set back gives it (GHSA-9f85-85g8-g7w3)', async () => {
     const client = await SyncClient.start({
       store: await openLocalStore('zeiten-falsche-uhr'),
       transport: new TestServer(),

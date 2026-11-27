@@ -244,8 +244,10 @@ export async function stopStopwatch({
     startedAt: onTheMinute(new Date(running.startedAt)),
     endedAt: onTheMinute(now),
   }
-  // The year too: a clock of the device set wrong would send one the server
-  // refuses, and that holds the outbox up (GHSA-9f85-85g8-g7w3).
+  // The year too, as far as the device can tell: a clock set back before
+  // 1970 would send one the server refuses, and that holds the outbox up
+  // (GHSA-9f85-85g8-g7w3). A clock that runs ahead it cannot tell from its
+  // own; the server refuses that one and says why.
   const problem = timeEntryProblem(values) ?? timeEntryYearProblem(values.startedAt, now)
 
   if (problem) {
