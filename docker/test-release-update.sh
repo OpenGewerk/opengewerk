@@ -113,14 +113,20 @@ report() {
   fail "Die Fassung $new ist erschienen. Ein Update aus dem Bereich der Instanz von $previous auf sie trägt nicht, bis eine Korrektur erschienen ist."
 }
 
+# The installation goes again however the script ends, after what a failure
+# reports, and with the status it ended with: also after a start that got
+# half way.
+trap 'ended=$?; compose down --volumes > /dev/null 2>&1 || true; exit "$ended"' EXIT
+
 say "Update von $previous auf $new über den Dienst für Aktualisierungen."
 (cd "$install" && OPENGEWERK_ADDRESS="$base" sh docker/start.sh) ||
   fail "Die Fassung $previous ließ sich hier nicht starten; das Update ist nicht geprüft."
 
 # start.sh waits for the health of every service (compose up --wait); the
-# application answering from here is asked once more, for a minute at most.
+# application answering from here is asked once more, each time for five
+# seconds and thirty times at most.
 for _ in $(seq 1 30); do
-  curl --fail --silent --output /dev/null "$base/health" && break
+  curl --fail --silent --max-time 5 --output /dev/null "$base/health" && break
   sleep 2
 done
 
@@ -131,8 +137,9 @@ password=$(openssl rand -hex 24)
 jq -n --arg code "$code" --arg password "$password" '{
   company: "Prüfung GmbH", name: "Paula Prüfung", email: "betrieb@pruefung.example.de",
   password: $password, setupCode: $code
-}' | curl --fail --silent --show-error --output /dev/null --header 'Content-Type: application/json' \
-  --data @- "$base/setup" || report "Die Einrichtung der Instanz schlug fehl."
+}' | curl --fail --silent --show-error --max-time 30 --output /dev/null \
+  --header 'Content-Type: application/json' --data @- "$base/setup" ||
+  report "Die Einrichtung der Instanz schlug fehl."
 
 # The updater asks GitHub once it starts; ready means it found a kit with
 # digests, the installation under its path and Docker answering.
@@ -147,7 +154,6 @@ done
 
 if ! printf '%s\n' "${available:-}" | jq -e --arg new "$new" '.latest == $new and .mode == "ready"' > /dev/null 2>&1; then
   if not_latest; then
-    compose down --volumes > /dev/null 2>&1 || true
     exit 0
   fi
   report "Der Dienst bietet $new nicht an: $(printf '%s' "${available:-nichts}" | tr -d '\n')"
@@ -183,9 +189,8 @@ done
 
 [ "$state" = succeeded ] || report "run.json sagt ${state:-nichts} statt succeeded."
 
-running=$(curl --fail --silent --show-error "$base/health" | jq -r .version) ||
+running=$(curl --fail --silent --show-error --max-time 30 "$base/health" | jq -r .version) ||
   report "/health antwortet nicht."
 [ "$running" = "$new" ] || report "/health nennt $running statt $new."
 
 say "Das Update von $previous auf $new über den Dienst für Aktualisierungen ging durch, /health nennt $new."
-compose down --volumes > /dev/null 2>&1 || true
