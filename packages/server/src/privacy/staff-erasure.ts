@@ -438,9 +438,9 @@ async function takeName(
  * corrected in their row and held (`held`): a correction committed before
  * is seen, one after waits until the deletion is through and then finds
  * nothing. A record of time is never changed in its row, the application may
- * not; a correction is a record of its own, and one that comes in meanwhile is
- * not among those read and stays, or it corrects one of them and the deletion
- * of that one is refused (`on delete restrict`, `ErasureInterrupted`). What is
+ * not; a correction is a record of its own. Since 0161 a record of any of the
+ * four kinds that comes into the year meanwhile waits for the lock of the year
+ * the deletion took first, and is refused once it is through (opengewerk#1043). What is
  * deleted is what was read here, by its id. The rows are locked in the order
  * of their ids, so two deletions of the same year wait for each other in a
  * line.
@@ -690,9 +690,10 @@ export async function takeStaffYear(
 
   // Nothing of the year left that came in after it was read: the year has one
   // line of the protocol (`erasures_once`), and a record left behind could
-  // never go under it. It came between the reading and that line, the one
-  // moment it can, since the line holds the chain of the business; the
-  // deletion is broken off, and the next pass reads the year with it.
+  // never go under it. Since 0161 a record of the year waits for the lock of
+  // the year and cannot come in at all (opengewerk#1043); this stays as the
+  // net, and where it catches one, the deletion is broken off and the next
+  // pass reads the year with it.
   const { rows: left } = await tx.execute<{ n: number }>(sql`
     select ${
       year.userId === null
