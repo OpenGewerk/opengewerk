@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common'
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  ServiceUnavailableException,
+} from '@nestjs/common'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { databaseErrors, isUniqueViolation } from './database-errors.js'
@@ -53,6 +58,17 @@ describe('what a refusal of the database becomes', () => {
     expect(withoutAny(alreadySetUp).message).toBe('Diese Instanz ist bereits eingerichtet.')
     // And nothing of another application: its classes are its own.
     expect(withoutAny(fromTheDatabase({ code: 'ZZ001' })).getStatus()).toBe(500)
+  })
+
+  it('is a 503 with a sentence for a transaction the database broke off, which the same request again gets through', () => {
+    for (const code of ['40P01', '40001']) {
+      const answer = answerFor(fromTheDatabase({ code, message: 'deadlock detected' }))
+
+      expect(answer, code).toBeInstanceOf(ServiceUnavailableException)
+      expect(answer.message, code).toBe(
+        'Gleichzeitig wurde etwas anderes gespeichert. Geändert ist nichts, bitte noch einmal versuchen.',
+      )
+    }
   })
 
   it('is a 413 for a body over the limit, which is not the database but lands here too', () => {
@@ -114,6 +130,17 @@ describe('the filter', () => {
     expect(sent.status).toBe(500)
     expect(JSON.stringify(sent.body)).not.toContain('connection terminated')
     expect(log).toHaveBeenCalledWith('Eine Anfrage scheiterte an einem unbekannten Fehler.', broken)
+  })
+
+  it('says a transaction the database broke off in the log in a sentence of its own', () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const deadlock = fromTheDatabase({ code: '40P01', message: 'deadlock detected' })
+
+    expect(caught(deadlock).status).toBe(503)
+    expect(log).toHaveBeenCalledWith(
+      'Eine Anfrage traf sich mit einer anderen und wurde abgebrochen; geändert hat sie nichts.',
+      deadlock,
+    )
   })
 
   it('keeps what it knows out of the log: a refusal of the database and an answer that already is one', () => {

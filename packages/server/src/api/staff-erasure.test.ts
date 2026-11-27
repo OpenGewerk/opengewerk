@@ -1144,6 +1144,60 @@ describe('what of the staff is due (#846)', () => {
     ).toBe(0)
   })
 
+  it('answers a link that meets a transmission of the account in a ring with a sentence, and links nothing (#1132)', async () => {
+    const dennis = await kraft(false)
+    const y = String(thisYear)
+
+    // A transmission that wrote a customer first, and so holds the counter of
+    // the business; the link takes the lock of the account and waits for the
+    // counter; then the transmission writes a record of time of that account
+    // and waits for the lock. A ring, and PostgreSQL breaks one side off.
+    const transmitted = ownTransaction(async (transmission) => {
+      await transmission.query(
+        "select set_config('app.tenant_id', $1, true), set_config('app.user_id', 'lena', true)",
+        [north],
+      )
+      // PostgreSQL breaks off the session that looks for the ring first, and
+      // each looks after its own deadlock_timeout. This one looks last, so
+      // that it is the link, as the test means.
+      await transmission.query("set local deadlock_timeout = '10s'")
+      await transmission.query(
+        "insert into customers (tenant_id, kind, name) values ($1, 'private', 'Familie Ring')",
+        [north],
+      )
+
+      const linked = http()
+        .patch(`/people/${dennis.person}`)
+        .set('x-test-identity', owner)
+        .send({ userId: 'lena' })
+        .then((answer) => answer)
+
+      await waitingFor(admin, transmission, linked)
+      await transmission.query(
+        `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
+           values ($1, 'lena', 'work', $2, $3, 'im Ring')`,
+        [north, `${y}-01-05 07:00+01`, `${y}-01-05 15:00+01`],
+      )
+      await transmission.query('commit')
+
+      return linked
+    })
+
+    const answer = await transmitted
+
+    expect(answer.status).toBe(503)
+    expect(refusal(answer)).toBe(
+      'Gleichzeitig wurde etwas anderes gespeichert. Geändert ist nichts, bitte noch einmal versuchen.',
+    )
+    expect(
+      await count('select count(*) as n from people where id = $1 and user_id = $2', [
+        dennis.person,
+        'kurt',
+      ]),
+    ).toBe(1)
+    expect(await count("select count(*) as n from time_entries where note = 'im Ring'")).toBe(1)
+  })
+
   it('keeps a link that comes while the year goes waiting, and refuses it then (#1132)', async () => {
     // With the years after, so that the file stays and the deletion leaves
     // its row alone.

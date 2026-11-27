@@ -103,6 +103,11 @@ const sync = serverSync<FoundIdentity<ProbeSyncIdentity>>({
         throw new Error('Kein Platz mehr auf dem Datenträger.')
       }
 
+      // A transaction PostgreSQL broke off, as the driver raises it.
+      if (operation.entity === 'notes' && values['text'] === 'Ring') {
+        throw Object.assign(new Error('deadlock detected'), { code: '40P01' })
+      }
+
       return null
     },
   ],
@@ -833,6 +838,15 @@ describe('sending an outbox', () => {
       'Eine Übertragung ließ sich nicht anwenden.',
       expect.objectContaining({ message: 'Kein Platz mehr auf dem Datenträger.' }),
     )
+  })
+
+  it('names no operation over a transmission the database broke off, so that the device sends it again (opengewerk#1132)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const answer = await push(olga(), [
+      operation({ entity: 'notes', patches: [{ field: 'text', to: 'Ring' }] }),
+    ]).expect(503)
+
+    expect(answer.body).not.toHaveProperty('operationId')
   })
 })
 
