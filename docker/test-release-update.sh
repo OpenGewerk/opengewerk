@@ -77,6 +77,15 @@ if not_latest; then
   exit 0
 fi
 
+# Only on a machine without an installation of its own: the kit runs as the
+# compose project "opengewerk", and its start and the cleanup below would
+# take over the containers of one already there and remove its volumes.
+taken=$(docker ps --all --quiet --filter label=com.docker.compose.project=opengewerk)$(
+  docker volume ls --quiet --filter label=com.docker.compose.project=opengewerk) ||
+  fail "Docker sagt nicht, ob hier schon eine Installation läuft; das Update ist nicht geprüft."
+[ -z "$taken" ] ||
+  fail "Auf dieser Maschine gibt es schon eine Installation im Projekt opengewerk. Das Skript läuft nur auf einer Maschine ohne sie, etwa einem Runner; geprüft ist nichts."
+
 rm -rf "$work"
 mkdir -p "$work"
 kit="opengewerk-$previous.tar.gz"
@@ -124,15 +133,6 @@ report() {
   diagnose
   fail "Die Fassung $new ist erschienen. Ein Update aus dem Bereich der Instanz von $previous auf sie trägt nicht, bis eine Korrektur erschienen ist."
 }
-
-# Only on a machine without an installation of its own: the kit runs as the
-# compose project "opengewerk", and its start and the cleanup below would
-# take over the containers of one already there and remove its volumes.
-taken=$(docker ps --all --quiet --filter label=com.docker.compose.project=opengewerk)$(
-  docker volume ls --quiet --filter label=com.docker.compose.project=opengewerk) ||
-  fail "Docker sagt nicht, ob hier schon eine Installation läuft; das Update ist nicht geprüft."
-[ -z "$taken" ] ||
-  fail "Auf dieser Maschine gibt es schon eine Installation im Projekt opengewerk. Das Skript läuft nur auf einer Maschine ohne sie, etwa einem Runner; geprüft ist nichts."
 
 # The installation goes again however the script ends, after what a failure
 # reports, and with the status it ended with: also after a start that got
