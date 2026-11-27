@@ -178,10 +178,11 @@ export async function issuerOf(tx: TenantTransaction, tenantId: TenantId): Promi
  * before them in the chain billed, read from what those froze when they were
  * issued. Every other kind deducts nothing.
  *
- * Whether the business calculated its tax on the amounts received is read as
- * it stood on the document's date, like the small business claim that
- * proposed the treatment: an invoice of 2028 says what applied in 2028. The
- * payment term the same way, unless the document states its own.
+ * Whether the business calculated its tax on the amounts received is read on
+ * the day of the work (`supplyDateOf`, #1038), as the rate is: the work of
+ * December 2028 says what applied then, also on an invoice of January 2029.
+ * Whether the invoice has to say so depends on its own date. The payment term
+ * is read on the document's date, unless the document states its own.
  *
  * The instructions go in filled with the same letterhead the document prints,
  * and what they lack comes back beside the content, for the one caller that
