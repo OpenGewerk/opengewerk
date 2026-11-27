@@ -72,9 +72,12 @@ BEGIN
 
 	-- Its own year within the years OpenGewerk takes, before any lock (0163);
 	-- the year of its chain, for a correction, may be one from before. A
-	-- correction that stays in the year of its chain brings no new year, so
-	-- that an entry from before can still be withdrawn or put right there.
-	IF new.corrects_entry_id IS NULL OR extract(year FROM (new.started_at AT TIME ZONE 'Europe/Berlin'))::integer <> new.chain_year THEN
+	-- correction that stays in the year of its chain, or in the year of the
+	-- entry it corrects, brings no new year, so that an entry from before can
+	-- still be withdrawn with its own times or put right there.
+	IF new.corrects_entry_id IS NULL OR (extract(year FROM (new.started_at AT TIME ZONE 'Europe/Berlin'))::integer <> new.chain_year AND extract(year FROM (new.started_at AT TIME ZONE 'Europe/Berlin'))::integer IS DISTINCT FROM
+	     (SELECT extract(year FROM (t.started_at AT TIME ZONE 'Europe/Berlin'))::integer FROM public.time_entries t
+	       WHERE t.tenant_id = new.tenant_id AND t.id = new.corrects_entry_id)) THEN
 		PERFORM public.staff_year_within_bounds(extract(year FROM (new.started_at AT TIME ZONE 'Europe/Berlin'))::integer);
 	END IF;
 

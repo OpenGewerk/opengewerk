@@ -1426,6 +1426,108 @@ describe('what of the staff is due (#846)', () => {
       await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
          values ('${north}', 'kurt', 'work', '1499-03-02 07:00+01', '1499-03-02 15:00+01', 'noch falscher', '${await typed('falsch getippt')}')`),
     ).toBe(sentence(1499))
+
+    // A correction from before whose chain began in 1500 and whose own times
+    // lie in 1503: it is withdrawn with its own times, the year of the entry
+    // it corrects.
+    await admin.query(
+      `begin; set local app.user_id = 'kurt';
+       alter table time_entries disable trigger chain_year_of_time_entries;
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year)
+       values ('${north}', 'kurt', 'work', '1500-12-31 22:00+01', '1500-12-31 23:00+01', 'kette alt', 1500);
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year, corrects_entry_id)
+       select '${north}', 'kurt', 'work', '1503-01-02 07:00+01', '1503-01-02 08:00+01', 'kette quer', 1500, id
+         from time_entries where note = 'kette alt';
+       alter table time_entries enable trigger chain_year_of_time_entries;
+       commit;`,
+    )
+
+    expect(
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id, withdrawn)
+         values ('${north}', 'kurt', 'work', '1503-01-02 07:00+01', '1503-01-02 08:00+01', 'quer zurück', '${await typed('kette quer')}', true)`),
+    ).toBe('went through')
+  })
+
+  it('lets a correction of a year outside the bound and a deletion of that year meet without a record left in it, either way round (GHSA-9f85-85g8-g7w3)', async () => {
+    const dennis = await kraft(false)
+
+    // Records of 1501 and 1502 from before 0163, of the account of the file,
+    // last written then, so that both years are due.
+    await admin.query(
+      `begin; set local app.user_id = 'kurt';
+       alter table time_entries disable trigger chain_year_of_time_entries;
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year)
+       values ('${north}', 'kurt', 'work', '1501-03-02 07:00+01', '1501-03-02 15:00+01', 'alt 1501', 1501),
+              ('${north}', 'kurt', 'work', '1502-03-02 07:00+01', '1502-03-02 15:00+01', 'alt 1502', 1502);
+       alter table time_entries enable trigger chain_year_of_time_entries;
+       set local session_replication_role = replica;
+       update time_entries set updated_at = started_at where note like 'alt 15%';
+       commit;`,
+    )
+    await pass()
+
+    const idOf = async (note: string) =>
+      (await admin.query<{ id: string }>('select id from time_entries where note = $1', [note]))
+        .rows[0]?.id
+    const correcting = (year: number, corrects: string | undefined) =>
+      ownTransaction(async (client) => {
+        await client.query("select set_config('app.user_id', 'kurt', true)")
+        await client.query(
+          `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+             values ($1, 'kurt', 'work', $2, $3, 'gekürzt', $4)`,
+          [north, `${String(year)}-03-02 07:00+01`, `${String(year)}-03-02 14:00+01`, corrects],
+        )
+        await client.query('commit')
+
+        return 'went through'
+      }).catch((error: unknown) => (error as Error).message)
+    const left = (year: number) =>
+      count("select count(*) as n from time_entries where user_id = 'kurt' and chain_year = $1", [
+        year,
+      ])
+
+    // The correction first, while the deletion is held before its line of the
+    // protocol: the year asks no lock, so it goes through, and the deletion
+    // may not remove the record the correction points at, and takes nothing.
+    // Had it removed it, it would have found the correction it never read
+    // when it counts what is left.
+    {
+      const key = staffYearKey(dennis.person, 1501)
+      const stopped = holdQuery((statement) => protocolLine.test(statement))
+      const asked = erase('staff_year', [key]).then((answer) => answer)
+
+      await reachedBefore(stopped, asked)
+
+      const corrected = await correcting(1501, await idOf('alt 1501')).finally(stopped.release)
+
+      expect(corrected).toBe('went through')
+      expect((await asked).status).toBe(409)
+      expect(await count('select count(*) as n from erasures where record_id = $1', [key])).toBe(0)
+      expect(await left(1501)).toBe(2)
+    }
+
+    // The deletion first, held after it removed the records, before it counts
+    // what is left: the correction waits for the record it points at, which
+    // the deletion holds removed, and fails on it once the deletion is through.
+    {
+      const key = staffYearKey(dennis.person, 1502)
+      const stopped = holdQuery(
+        (statement) =>
+          /count\(\*\) from time_entries/.test(statement) &&
+          /from leave_entitlements/.test(statement),
+      )
+      const asked = erase('staff_year', [key]).then((answer) => answer)
+
+      await reachedBefore(stopped, asked)
+
+      const corrected = correcting(1502, await idOf('alt 1502'))
+
+      await untilWaiting(stopped.holder()).finally(stopped.release)
+
+      expect((await asked).status).toBe(201)
+      expect(await corrected).toMatch(/time_entries_correction_in_tenant/)
+      expect(await left(1502)).toBe(0)
+    }
   })
 
   it('keeps a link that comes while a year outside the bound goes waiting at the row of the file, and refuses it then (GHSA-9f85-85g8-g7w3)', async () => {

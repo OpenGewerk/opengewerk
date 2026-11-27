@@ -109,26 +109,35 @@ export function timeEntryProblem(entry: {
 /** The first year a record of time can lie in (GHSA-9f85-85g8-g7w3). */
 export const firstTimeEntryYear = 1970
 
-/** The year an instant lies in, in Germany, as the database counts it. */
-function germanYear(at: number): number {
-  return Number(
-    new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Berlin', year: 'numeric' }).format(
-      new Date(at),
-    ),
-  )
+/**
+ * The year an instant lies in, in Germany, as the database counts it: signed,
+ * so that a year before the common era is one below 1, not the year of its
+ * era that the calendar names.
+ */
+export function germanYear(at: number): number {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Berlin',
+    year: 'numeric',
+    era: 'short',
+  }).formatToParts(new Date(at))
+  const year = Number(parts.find((part) => part.type === 'year')?.value)
+  const era = parts.find((part) => part.type === 'era')?.value
+
+  return era === 'BC' ? 1 - year : year
 }
 
 /**
  * Why the year of an entry is not one OpenGewerk takes, or null: from 1970 to
  * the year after this one, in Germany, as the database counts it (0163). A
  * device asks it before the outbox, so that a year typed wrong does not hold
- * the outbox up. A correction that stays in the year its chain began in
- * brings no new year, and so an entry from before can still be put right.
+ * the outbox up. A correction that stays in a year it may keep, the year its
+ * chain began in or the year of the entry it corrects, brings no new year,
+ * and so an entry from before can still be put right there.
  */
 export function timeEntryYearProblem(
   startedAt: unknown,
   now: Date,
-  chainYear: number | null = null,
+  keptYears: readonly number[] = [],
 ): string | null {
   const start = instant(startedAt)
 
@@ -139,7 +148,7 @@ export function timeEntryYearProblem(
   const year = germanYear(start)
   const last = germanYear(now.getTime()) + 1
 
-  if ((year >= firstTimeEntryYear && year <= last) || year === chainYear) {
+  if ((year >= firstTimeEntryYear && year <= last) || keptYears.includes(year)) {
     return null
   }
 

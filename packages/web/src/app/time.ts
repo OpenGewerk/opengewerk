@@ -2,6 +2,7 @@ import {
   berlinDay,
   correctionProblem,
   effectiveEntries,
+  germanYear,
   type IsoDate,
   minutesBetween,
   type RecordState,
@@ -330,13 +331,20 @@ export async function recordEntry(
   corrects: string | null = null,
 ): Promise<EditResult | string> {
   const values = { ...entry, correctsEntryId: corrects }
-  // A correction may stay in the year its chain began in, one from before
-  // the bound included (GHSA-9f85-85g8-g7w3).
+  // A correction may stay in the year its chain began in or in the year of
+  // the entry it corrects, one from before the bound included
+  // (GHSA-9f85-85g8-g7w3).
   const corrected = corrects === null ? null : client.get('time_entries', corrects)
-  const chainYear = typeof corrected?.['chainYear'] === 'number' ? corrected['chainYear'] : null
+  const correctedStart = corrected === null ? null : Date.parse(String(corrected['startedAt']))
+  const keptYears = [
+    ...(typeof corrected?.['chainYear'] === 'number' ? [corrected['chainYear']] : []),
+    ...(correctedStart === null || Number.isNaN(correctedStart)
+      ? []
+      : [germanYear(correctedStart)]),
+  ]
   const problem =
     timeEntryProblem(values) ??
-    timeEntryYearProblem(values.startedAt, new Date(), chainYear) ??
+    timeEntryYearProblem(values.startedAt, new Date(), keptYears) ??
     correctionProblem(values)
 
   return problem ?? client.create('time_entries', values)
