@@ -88,9 +88,18 @@ volumes=$(docker volume ls --quiet --filter label=com.docker.compose.project=ope
 [ -z "$containers$volumes" ] ||
   fail "Auf dieser Maschine gibt es schon eine Installation im Projekt opengewerk. Das Skript läuft nur auf einer Maschine ohne sie, etwa einem Runner; geprüft ist nichts."
 
-# A folder of this run, made new: nothing there before is removed.
+# A folder of this run, made new: nothing there before is removed. It goes
+# with the run however that ends, also before the installation started.
+# What the containers wrote into it can belong to root, so sudo is asked for
+# that, without a prompt; a folder that stays is said.
+remove_work() {
+  [ -n "${work:-}" ] || return 0
+  rm -rf "$work" 2>/dev/null || sudo -n rm -rf "$work" 2>/dev/null ||
+    printf 'Der Arbeitsordner %s ließ sich nicht entfernen.\n' "$work"
+}
 work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/release-update.XXXXXX") ||
   fail "Es ließ sich kein Arbeitsordner anlegen; das Update ist nicht geprüft."
+trap 'ended=$?; remove_work; exit "$ended"' EXIT
 kit="opengewerk-$previous.tar.gz"
 
 gh release download "v$previous" --repo "$repository" --dir "$work" \
@@ -144,7 +153,8 @@ report() {
 # reports, and with the status it ended with: also after a start that got
 # half way. The container of an update still running runs beside Compose and
 # goes first, since it holds the volume of the status and writes into the
-# installation. A cleanup that fails is said, and the status stays.
+# installation. The folder of the run goes last, after the containers that
+# wrote into it. A cleanup that fails is said, and the status stays.
 cleanup() {
   ended=$?
   update_containers=$(docker ps --all --quiet --filter label=opengewerk.update.project=opengewerk 2>/dev/null) ||
@@ -156,6 +166,7 @@ cleanup() {
   fi
   compose down --volumes > /dev/null 2>&1 ||
     printf '%s\n' 'Die Installation ließ sich nicht ganz abbauen.'
+  remove_work
   exit "$ended"
 }
 trap cleanup EXIT
