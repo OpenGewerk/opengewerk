@@ -106,6 +106,46 @@ export function timeEntryProblem(entry: {
     : null
 }
 
+/** The first year a record of time can lie in (GHSA-9f85-85g8-g7w3). */
+export const firstTimeEntryYear = 1970
+
+/** The year an instant lies in, in Germany, as the database counts it. */
+function germanYear(at: number): number {
+  return Number(
+    new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Berlin', year: 'numeric' }).format(
+      new Date(at),
+    ),
+  )
+}
+
+/**
+ * Why the year of an entry is not one OpenGewerk takes, or null: from 1970 to
+ * the year after this one, in Germany, as the database counts it (0163). A
+ * device asks it before the outbox, so that a year typed wrong does not hold
+ * the outbox up. A correction that stays in the year its chain began in
+ * brings no new year, and so an entry from before can still be put right.
+ */
+export function timeEntryYearProblem(
+  startedAt: unknown,
+  now: Date,
+  chainYear: number | null = null,
+): string | null {
+  const start = instant(startedAt)
+
+  if (start === null) {
+    return null
+  }
+
+  const year = germanYear(start)
+  const last = germanYear(now.getTime()) + 1
+
+  if ((year >= firstTimeEntryYear && year <= last) || year === chainYear) {
+    return null
+  }
+
+  return `OpenGewerk nimmt Arbeitszeit für die Jahre ${String(firstTimeEntryYear)} bis ${String(last)} an, nicht für ${String(year)}.`
+}
+
 function named(value: unknown): boolean {
   return value !== null && value !== undefined && value !== ''
 }

@@ -71,8 +71,12 @@ BEGIN
 		extract(year FROM (new.started_at AT TIME ZONE 'Europe/Berlin'))::integer);
 
 	-- Its own year within the years OpenGewerk takes, before any lock (0163);
-	-- the year of its chain, for a correction, may be one from before.
-	PERFORM public.staff_year_within_bounds(extract(year FROM (new.started_at AT TIME ZONE 'Europe/Berlin'))::integer);
+	-- the year of its chain, for a correction, may be one from before. A
+	-- correction that stays in the year of its chain brings no new year, so
+	-- that an entry from before can still be withdrawn or put right there.
+	IF new.corrects_entry_id IS NULL OR extract(year FROM (new.started_at AT TIME ZONE 'Europe/Berlin'))::integer <> new.chain_year THEN
+		PERFORM public.staff_year_within_bounds(extract(year FROM (new.started_at AT TIME ZONE 'Europe/Berlin'))::integer);
+	END IF;
 
 	-- The account first, so that a link of a file to it waits for this record
 	-- or this record for the link, and the file below is the one after it.

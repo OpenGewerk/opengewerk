@@ -1,5 +1,6 @@
 import {
   effectiveEntries,
+  firstTimeEntryYear,
   hoursText,
   type IsoDate,
   lateRecordingText,
@@ -544,6 +545,7 @@ function EntryForm({ day, entry }: { readonly day: string; readonly entry?: Reco
           label="Tag"
           type="date"
           value={on}
+          min={`${String(firstTimeEntryYear)}-01-01`}
           max={today()}
           onChange={(event) => {
             setOn(event.target.value)

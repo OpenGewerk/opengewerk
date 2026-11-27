@@ -1401,6 +1401,31 @@ describe('what of the staff is due (#846)', () => {
       await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
          values ('${north}', 'kurt', 'work', '1969-06-02 07:00+01', '1969-06-02 15:00+01', 'zurück', '${kept.rows[0]?.id ?? ''}')`),
     ).toBe(sentence(1969))
+
+    // Two more from before: one is withdrawn with its own times, which stays
+    // in the year of its chain, and one moved into another year outside.
+    await admin.query(
+      `begin; set local app.user_id = 'kurt';
+       alter table time_entries disable trigger chain_year_of_time_entries;
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year)
+       values ('${north}', 'kurt', 'work', '1501-03-02 07:00+01', '1501-03-02 15:00+01', 'zweimal getippt', 1501),
+              ('${north}', 'kurt', 'work', '1502-03-02 07:00+01', '1502-03-02 15:00+01', 'falsch getippt', 1502);
+       alter table time_entries enable trigger chain_year_of_time_entries;
+       commit;`,
+    )
+
+    const typed = async (note: string) =>
+      (await admin.query<{ id: string }>('select id from time_entries where note = $1', [note]))
+        .rows[0]?.id ?? ''
+
+    expect(
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id, withdrawn)
+         values ('${north}', 'kurt', 'work', '1501-03-02 07:00+01', '1501-03-02 15:00+01', 'doppelt', '${await typed('zweimal getippt')}', true)`),
+    ).toBe('went through')
+    expect(
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+         values ('${north}', 'kurt', 'work', '1499-03-02 07:00+01', '1499-03-02 15:00+01', 'noch falscher', '${await typed('falsch getippt')}')`),
+    ).toBe(sentence(1499))
   })
 
   it('keeps a link that comes while a year outside the bound goes waiting at the row of the file, and refuses it then (GHSA-9f85-85g8-g7w3)', async () => {

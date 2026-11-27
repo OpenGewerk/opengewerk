@@ -94,6 +94,17 @@ describe('an entry typed by hand', () => {
     expect(await recordEntry(client, { ...entry, endedAt: '2026-09-21T04:00:00.000Z' })).toBe(
       'Das Ende liegt nicht nach dem Beginn.',
     )
+    // A year typed with two digits, which the server would refuse and so hold
+    // the outbox up (GHSA-9f85-85g8-g7w3).
+    expect(
+      await recordEntry(client, {
+        ...entry,
+        startedAt: '0026-09-21T05:00:00.000Z',
+        endedAt: '0026-09-21T09:00:00.000Z',
+      }),
+    ).toBe(
+      `OpenGewerk nimmt Arbeitszeit für die Jahre 1970 bis ${String(new Date().getFullYear() + 1)} an, nicht für 26.`,
+    )
     expect(client.status().pending).toBe(0)
     expect(await recordEntry(client, entry)).toMatchObject({ outcome: 'queued' })
     expect(client.status().pending).toBe(1)

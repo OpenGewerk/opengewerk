@@ -8,6 +8,7 @@ import {
   timeEntryKinds,
   type TimeEntryKind,
   timeEntryProblem,
+  timeEntryYearProblem,
 } from '@opengewerk/domain'
 import { accountQuery } from '@opengewerk/platform-web/session'
 import { maybeText, refusalFor, text, useRecords, useSync } from '@opengewerk/platform-web/sync'
@@ -329,7 +330,14 @@ export async function recordEntry(
   corrects: string | null = null,
 ): Promise<EditResult | string> {
   const values = { ...entry, correctsEntryId: corrects }
-  const problem = timeEntryProblem(values) ?? correctionProblem(values)
+  // A correction may stay in the year its chain began in, one from before
+  // the bound included (GHSA-9f85-85g8-g7w3).
+  const corrected = corrects === null ? null : client.get('time_entries', corrects)
+  const chainYear = typeof corrected?.['chainYear'] === 'number' ? corrected['chainYear'] : null
+  const problem =
+    timeEntryProblem(values) ??
+    timeEntryYearProblem(values.startedAt, new Date(), chainYear) ??
+    correctionProblem(values)
 
   return problem ?? client.create('time_entries', values)
 }

@@ -125,12 +125,12 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   trifft dieselbe Sperre. Ein Vorgang, den der Abgleich wiederholt, weil sein Datensatz sich zwischendurch geändert hat,
   lässt keine offene Ebene der Transaktion mehr zurück, die bis zum Ende einen Platz unter den Sperren hielt.
   Arbeitszeit und Rufbereitschaft nimmt OpenGewerk nur noch für die Jahre 1970 bis zum nächsten Jahr an, mit einem Satz,
-  der das sagt (Migration 0163). Ein Eintrag aus der Zeit davor in einem Jahr außerhalb davon lässt sich weiter
-  berichtigen, und beim Verknüpfen einer Akte prüft OpenGewerk solche Jahre ohne Sperre; das Löschen eines solchen
-  Jahres hält dafür die Akte. Warum: Alle Sitzungen einer Instanz teilen sich eine Tabelle für Sperren. Seit 0161 nimmt
-  jeder Eintrag des Personals dazu eine Sperre für sein Jahr, und die Jahre hatten keine Grenze. Mehrere große
-  Übertragungen zugleich konnten diese Tabelle füllen, und dann scheiterte jede andere Sitzung der Instanz, die eine
-  Sperre brauchte.
+  der das sagt (Migration 0163), und das Gerät prüft das schon vor dem Postausgang. Ein Eintrag aus der Zeit davor in
+  einem Jahr außerhalb davon lässt sich weiter berichtigen und zurückziehen, und beim Verknüpfen einer Akte prüft
+  OpenGewerk solche Jahre ohne Sperre; das Löschen eines solchen Jahres hält dafür die Akte. Warum: Alle Sitzungen einer
+  Instanz teilen sich eine Tabelle für Sperren. Seit 0161 nimmt jeder Eintrag des Personals dazu eine Sperre für sein
+  Jahr, und die Jahre hatten keine Grenze. Mehrere große Übertragungen zugleich konnten diese Tabelle füllen, und dann
+  scheiterte jede andere Sitzung der Instanz, die eine Sperre brauchte.
 
 ## [0.9.0] - 2026-11-25
 
