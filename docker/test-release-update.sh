@@ -104,7 +104,14 @@ containers=$(docker ps --all --quiet --filter label=com.docker.compose.project=o
   fail "Docker sagt nicht, ob hier schon eine Installation läuft; das Update ist nicht geprüft."
 volumes=$(docker volume ls --quiet --filter label=com.docker.compose.project=opengewerk) ||
   fail "Docker sagt nicht, ob hier schon eine Installation läuft; das Update ist nicht geprüft."
-[ -z "$containers$volumes" ] ||
+# And what a run before may have left beside Compose: the container of an
+# update and the volume of its status, which Docker makes anew without the
+# label of the project when such a container starts after the teardown.
+updates=$(docker ps --all --quiet --filter label=opengewerk.update.project=opengewerk) ||
+  fail "Docker sagt nicht, ob hier schon eine Installation läuft; das Update ist nicht geprüft."
+named=$(docker volume ls --quiet --filter name=opengewerk_update-status) ||
+  fail "Docker sagt nicht, ob hier schon eine Installation läuft; das Update ist nicht geprüft."
+[ -z "$containers$volumes$updates$named" ] ||
   fail "Auf dieser Maschine gibt es schon eine Installation im Projekt opengewerk. Das Skript läuft nur auf einer Maschine ohne sie, etwa einem Runner; geprüft ist nichts."
 
 # A folder of this run, made new: nothing there before is removed. It goes
@@ -212,6 +219,17 @@ cleanup() {
     printf '%s\n' 'Die Installation ließ sich nicht ganz abbauen.'
     torn=no
   }
+  # A start Docker took in only after the looks above cannot be held off from
+  # here, but it does not go unsaid: a container of an update or a volume of
+  # the project still there after all that is told, and the next run finds it
+  # and stops before it starts anything.
+  if ! late=$(docker ps --all --quiet --filter label=opengewerk.update.project=opengewerk 2>/dev/null) ||
+    ! stale=$(docker volume ls --quiet --filter label=com.docker.compose.project=opengewerk 2>/dev/null) ||
+    ! named=$(docker volume ls --quiet --filter name=opengewerk_update-status 2>/dev/null) ||
+    [ -n "$late$stale$named" ]; then
+    printf '%s\n' 'Nach dem Abbau ist vom Projekt opengewerk noch etwas übrig, oder Docker sagt es nicht.'
+    torn=no
+  fi
   # What is not torn down still needs its files to be.
   if [ "$torn" = yes ]; then
     remove_work
