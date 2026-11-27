@@ -132,9 +132,17 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  await app.close()
-  await database.close()
-  await admin.end()
+  // Each step on its own, so that a setup that failed half way still lets go
+  // of the connections it opened.
+  try {
+    await app?.close()
+  } finally {
+    try {
+      await database?.close()
+    } finally {
+      await admin?.end()
+    }
+  }
 })
 
 describe('a business that switches to accrual accounting at the turn of the year', () => {
