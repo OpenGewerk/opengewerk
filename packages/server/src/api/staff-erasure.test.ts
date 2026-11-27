@@ -1375,10 +1375,28 @@ describe('what of the staff is due (#846)', () => {
       "select id from time_entries where note = 'früh genug'",
     )
 
-    expect(
-      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
-         values ('${north}', 'kurt', 'work', '${String(thisYear)}-03-02 07:00+01', '${String(thisYear)}-03-02 15:00+01', 'berichtigt', '${typo}')`),
-    ).toBe('went through')
+    // And it asks the year 1500 of its chain without the lock of that year:
+    // all it holds is the lock of the account.
+    const corrected = await ownTransaction(async (client) => {
+      await client.query("select set_config('app.user_id', 'kurt', true)")
+      await client.query(
+        `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+           values ($1, 'kurt', 'work', $2, $3, 'berichtigt', $4)`,
+        [north, `${String(thisYear)}-03-02 07:00+01`, `${String(thisYear)}-03-02 15:00+01`, typo],
+      )
+
+      const { rows: held } = await client.query<{ n: number }>(
+        `select count(*)::int as n from pg_locks
+          where locktype = 'advisory' and pid = pg_backend_pid()`,
+      )
+
+      await client.query('commit')
+
+      return held[0]?.n
+    })
+
+    expect(corrected).toBe(1)
+    expect(await count("select count(*) as n from time_entries where note = 'berichtigt'")).toBe(1)
     expect(
       await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
          values ('${north}', 'kurt', 'work', '1969-06-02 07:00+01', '1969-06-02 15:00+01', 'zurück', '${kept.rows[0]?.id ?? ''}')`),
