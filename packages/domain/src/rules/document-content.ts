@@ -69,9 +69,10 @@ export interface ContentSources {
   readonly signature: SignatureContent | null
   /**
    * Whether the business calculated its VAT on the amounts it received, on the
-   * document's date: a tenant parameter, read by the caller like everything
-   * else here. Whether the document has to say so is decided below, from the
-   * rules of that date.
+   * day of the work (`supplyDateOf`, #1038): a tenant parameter, read by the
+   * caller like everything else here. Whether the document has to say so is
+   * decided below, from the rules of the document's date, since the duty to
+   * say it hangs on when the invoice is issued.
    */
   readonly cashAccounting: boolean
   /**
