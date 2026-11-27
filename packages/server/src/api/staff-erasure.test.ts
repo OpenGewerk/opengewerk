@@ -871,27 +871,30 @@ describe('what of the staff is due (#846)', () => {
 
     await reachedBefore(stopped, asked)
 
-    try {
-      // The office saves a time on call, an absence and days of leave of the
-      // year as their forms send them, with the fields the year is read from.
-      // A change in its year waits for no lock of the year and holds only its
-      // row, so the deletion waits for it and not the other way round, which
-      // would be a deadlock.
-      for (const statement of [
-        `update on_call_shifts set starts_at = starts_at, note = 'berichtigt'
-          where user_id = 'kurt' and extract(year from (starts_at at time zone 'Europe/Berlin'))::int = ${o}`,
-        `update absences set first_day = first_day, note = 'berichtigt' where id = '${dennis.vacation}'`,
-        `update leave_entitlements set year = year, carried_half_days = 5
-          where person_id = '${dennis.person}' and year = ${o}`,
-      ]) {
-        await ownTransaction(async (client) => {
-          await client.query("set local lock_timeout = '300ms'")
+    // The office saves a time on call, an absence and days of leave of the
+    // year as their forms send them, with the fields the year is read from.
+    // A change in its year waits for no lock of the year and holds only its
+    // row; the deletion, let go, waits for that row and not the other way
+    // round, which would be a deadlock. Rolled back, the rows stay as they were.
+    await ownTransaction(async (client) => {
+      try {
+        await client.query("set local lock_timeout = '300ms'")
+
+        for (const statement of [
+          `update on_call_shifts set starts_at = starts_at, note = 'berichtigt'
+            where user_id = 'kurt' and extract(year from (starts_at at time zone 'Europe/Berlin'))::int = ${o}`,
+          `update absences set first_day = first_day, note = 'berichtigt' where id = '${dennis.vacation}'`,
+          `update leave_entitlements set year = year, carried_half_days = 5
+            where person_id = '${dennis.person}' and year = ${o}`,
+        ]) {
           await client.query(statement)
-        })
+        }
+      } finally {
+        stopped.release()
       }
-    } finally {
-      stopped.release()
-    }
+
+      await waitingFor(admin, client, asked)
+    })
 
     expect((await asked).status).toBe(201)
   })
@@ -1371,6 +1374,29 @@ describe('what of the staff is due (#846)', () => {
       expect(await held()).toBeNull()
     })
   }
+
+  it('deletes an entry from before that names itself as the one it corrects, with its year (#1044)', async () => {
+    const dennis = await kraft(false)
+    const self = newId<'time-entry'>()
+    const o = String(oldYear)
+
+    // Only a statement of its own writes such a row, the transmission refuses
+    // it as a correction of nothing there. 0161 gives it the year it starts
+    // in, and so the year counts it; its deletion has to take it too.
+    await admin.query(
+      `begin; set local app.user_id = 'kurt';
+       insert into time_entries (id, tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+       values ('${self}', '${north}', 'kurt', 'work', '${o}-04-01 07:00+02', '${o}-04-01 15:00+02', 'sich selbst', '${self}');
+       set local session_replication_role = replica;
+       update time_entries set updated_at = '${o}-04-01 15:00+02' where id = '${self}';
+       commit;`,
+    )
+
+    await pass()
+    await erase('staff_year', [staffYearKey(dennis.person, oldYear)]).expect(201)
+
+    expect(await count('select count(*) as n from time_entries where id = $1', [self])).toBe(0)
+  })
 
   it('puts a whole chain of corrections into the year of its first entry, past a hundred links too, and deletes it with that year (#1044)', async () => {
     const dennis = await kraft(false)

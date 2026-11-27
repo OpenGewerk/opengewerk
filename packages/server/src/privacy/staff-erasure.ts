@@ -464,8 +464,10 @@ export interface HeldStaffYear {
  * chain from its end, each entry once (`time_entries_corrected_once` keeps a
  * chain a line). A recursive query did it before and read every entry of the
  * year again at each link, the length of a chain times the entries of the
- * year. An entry no end of a chain reaches, one that would correct itself, is
- * left out, as before.
+ * year. An entry that names itself as the one it corrects, which only a
+ * statement of its own writes and 0161 puts into the year it starts in, is
+ * the end of a chain of its own and goes in the first round
+ * (opengewerk#1044); before, it was left out, and its year never went.
  */
 function heightsOf(
   rows: readonly {
@@ -475,12 +477,16 @@ function heightsOf(
   }[],
 ): { readonly id: string; readonly height: number; readonly written: number }[] {
   const byId = new Map(rows.map((row) => [row.id, row]))
+  // What each entry corrects, with an entry that would correct itself as one
+  // that corrects nothing.
+  const corrects = (row: (typeof rows)[number]) =>
+    row.corrects_entry_id === row.id ? null : row.corrects_entry_id
   const corrected = new Set(
-    rows.flatMap((row) =>
-      row.corrects_entry_id !== null && byId.has(row.corrects_entry_id)
-        ? [row.corrects_entry_id]
-        : [],
-    ),
+    rows.flatMap((row) => {
+      const target = corrects(row)
+
+      return target !== null && byId.has(target) ? [target] : []
+    }),
   )
   const heights = new Map<string, number>()
 
@@ -495,7 +501,9 @@ function heightsOf(
     while (at !== undefined && !heights.has(at.id)) {
       heights.set(at.id, height)
       height += 1
-      at = at.corrects_entry_id === null ? undefined : byId.get(at.corrects_entry_id)
+      const target = corrects(at)
+
+      at = target === null ? undefined : byId.get(target)
     }
   }
 

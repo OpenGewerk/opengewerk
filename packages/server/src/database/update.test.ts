@@ -4155,21 +4155,33 @@ describe('the records of time from before 0161', () => {
        end
        $$;
        set local session_replication_role = replica;
-       update time_entries set updated_at = '2020-01-01 01:00+01';
+       -- Each written at a moment of its own, to the microsecond.
+       update time_entries t
+          set updated_at = '2020-01-01 01:00:00.123456+01'::timestamptz + n.i * interval '1.000001 second'
+         from (select id, row_number() over (order by started_at, id) as i from time_entries) n
+        where t.id = n.id;
        commit;`,
     )
 
+    const written = async () =>
+      (
+        await admin.query<{ id: string; written: string }>(
+          `select id, to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS.US') as written
+             from time_entries order by id`,
+        )
+      ).rows
+    const stamped = await written()
     const logged = await chain()
 
     await runMigrations(ownerDatabaseUrl(), migrationsFolder)
 
-    const { rows } = await admin.query<{ chain_year: number; written: string; n: number }>(
-      `select chain_year, to_char(updated_at at time zone 'Europe/Berlin', 'YYYY-MM-DD HH24:MI') as written,
-              count(*)::int as n
-         from time_entries group by 1, 2`,
+    const { rows } = await admin.query<{ chain_year: number; n: number }>(
+      'select chain_year, count(*)::int as n from time_entries group by 1',
     )
 
-    expect(rows).toEqual([{ chain_year: 2019, written: '2020-01-01 01:00', n: 102 }])
+    expect(rows).toEqual([{ chain_year: 2019, n: 102 }])
+    expect(new Set(stamped.map((row) => row.written)).size).toBe(102)
+    expect(await written()).toEqual(stamped)
     expect(await chain()).toEqual(logged)
   })
 })
