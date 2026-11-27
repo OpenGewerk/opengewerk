@@ -191,18 +191,23 @@ cleanup() {
     printf '%s\n' 'Der Dienst für Aktualisierungen ließ sich nicht anhalten.'
     torn=no
   }
-  if update_containers=$(docker ps --all --quiet --filter label=opengewerk.update.project=opengewerk 2>/dev/null); then
-    if [ -n "$update_containers" ]; then
-      # shellcheck disable=SC2086
-      docker rm --force $update_containers > /dev/null 2>&1 || {
-        printf '%s\n' 'Der Container des Updates ließ sich nicht entfernen.'
-        torn=no
-      }
+  # Twice, a moment apart: a start the updater sent just before it stopped
+  # can land after the first look.
+  for pass in 1 2; do
+    [ "$pass" = 1 ] || sleep 2
+    if ! update_containers=$(docker ps --all --quiet --filter label=opengewerk.update.project=opengewerk 2>/dev/null); then
+      printf '%s\n' 'Docker sagt nicht, ob der Container des Updates noch läuft.'
+      torn=no
+      break
     fi
-  else
-    printf '%s\n' 'Docker sagt nicht, ob der Container des Updates noch läuft.'
-    torn=no
-  fi
+    [ -n "$update_containers" ] || continue
+    # shellcheck disable=SC2086
+    docker rm --force $update_containers > /dev/null 2>&1 || {
+      printf '%s\n' 'Der Container des Updates ließ sich nicht entfernen.'
+      torn=no
+      break
+    }
+  done
   compose down --volumes > /dev/null 2>&1 || {
     printf '%s\n' 'Die Installation ließ sich nicht ganz abbauen.'
     torn=no
