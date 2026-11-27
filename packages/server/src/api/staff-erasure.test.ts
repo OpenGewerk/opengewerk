@@ -562,7 +562,7 @@ describe('what of the staff is due (#846)', () => {
     ).toBe(1)
   })
 
-  it('refuses a year that a record came into while it was deleted, and deletes nothing (#1033)', async () => {
+  it('lets a record that comes into a year while it is deleted wait, and refuses it then (#1043)', async () => {
     const dennis = await kraft(false)
     const late = newId<'absence'>()
     const key = staffYearKey(dennis.person, oldYear)
@@ -570,33 +570,35 @@ describe('what of the staff is due (#846)', () => {
     await pass()
 
     const stopped = holdQuery((statement) => protocolLine.test(statement))
-    const asked = erase('staff_year', [staffYearKey(dennis.person, oldYear)]).then(
-      (answer) => answer,
-    )
+    const asked = erase('staff_year', [key]).then((answer) => answer)
 
     await reachedBefore(stopped, asked)
-    // An absence of the old year that comes in after the deletion read the
-    // year and before its line of the protocol, the one moment one can: the
-    // line holds the chain of the business until the deletion is through.
-    await admin
+
+    // An absence of the old year that comes in while the deletion runs. It
+    // waits for the lock of the year the deletion took first, and once the
+    // deletion is through it would be a record that could never go.
+    const added = admin
       .query(
         `insert into absences (id, tenant_id, person_id, kind, state, first_day, last_day, note)
            values ($1, $2, $3, 'vacation', 'approved', $4, $5, 'nachgetragen')`,
         [late, north, dennis.person, `${String(oldYear)}-10-05`, `${String(oldYear)}-10-06`],
       )
-      .finally(stopped.release)
+      .then(
+        () => 'went through',
+        (error: unknown) => (error as Error).message,
+      )
 
-    // Left behind, it could never go: the year has one line of the protocol.
-    // So nothing goes, and the next pass reads the year with it.
-    const answer = await asked
-
-    expect(answer.status).toBe(409)
-    expect(refusal(answer)).toContain('während des Löschens geändert')
-    expect(await count('select count(*) as n from absences where id = $1', [late])).toBe(1)
-    expect(await count('select count(*) as n from absences where id = $1', [dennis.vacation])).toBe(
-      1,
+    await untilWaiting(stopped.holder(), 'advisory', 'insert into absences').finally(
+      stopped.release,
     )
-    expect(await count('select count(*) as n from erasures where record_id = $1', [key])).toBe(0)
+
+    expect((await asked).status).toBe(201)
+    expect(await added).toBe(
+      `Das Jahr ${String(oldYear)} dieser Person ist nach dem Löschkonzept gelöscht. ` +
+        'Für dieses Jahr nimmt OpenGewerk nichts mehr an.',
+    )
+    expect(await count('select count(*) as n from absences where id = $1', [late])).toBe(0)
+    expect(await count('select count(*) as n from erasures where record_id = $1', [key])).toBe(1)
   })
 
   it('keeps the file of somebody whose access opened again while the deletion read it (#1033)', async () => {
@@ -801,31 +803,23 @@ describe('what of the staff is due (#846)', () => {
     expect((await asked).status).toBe(201)
   })
 
-  it('answers a correction of time that came in while it deleted as a conflict, and deletes nothing (#1033)', async () => {
+  it('lets a correction of time that comes while its year is deleted wait, and refuses it then (#1043)', async () => {
     const dennis = await kraft(false)
     const n = String(nextYear)
     const key = staffYearKey(dennis.person, oldYear)
-    const rows = () =>
-      count(
-        `select (select count(*) from time_entries where user_id = 'kurt')
-              + (select count(*) from on_call_shifts where user_id = 'kurt')
-              + (select count(*) from absences where person_id = $1)
-              + (select count(*) from leave_entitlements where person_id = $1) as n`,
-        [dennis.person],
-      )
 
     await pass()
 
     expect(((await dueFor(owner)) ?? []).map((entry) => entry.recordId)).toContain(key)
 
-    const before = await rows()
     const stopped = holdQuery((statement) => protocolLine.test(statement))
     const asked = erase('staff_year', [key]).then((answer) => answer)
 
     await reachedBefore(stopped, asked)
-    // A correction of the correction after New Year, entered now: not among
-    // what the deletion read, and the one it corrects cannot go without it.
-    await ownTransaction(async (client) => {
+
+    // A correction of the correction after New Year, entered now: of the old
+    // year, since its chain began there, and not among what the deletion read.
+    const corrected = ownTransaction(async (client) => {
       // As the person whose time it is: the trigger takes the author from the
       // transaction.
       await client.query(
@@ -838,16 +832,77 @@ describe('what of the staff is due (#846)', () => {
         [north, `${n}-01-01 00:20+01`, `${n}-01-01 01:00+01`, dennis.correction],
       )
       await client.query('commit')
-    }).finally(stopped.release)
 
-    const answer = await asked
+      return 'went through'
+    }).catch((error: unknown) => (error as Error).message)
 
-    expect(answer.status).toBe(409)
-    expect(refusal(answer)).toContain('während des Löschens geändert')
-    // All of the year stays, the correction with it, and no line says
-    // otherwise.
-    expect(await rows()).toBe(before + 1)
-    expect(await count('select count(*) as n from erasures where record_id = $1', [key])).toBe(0)
+    await untilWaiting(stopped.holder(), 'advisory', 'insert into time_entries').finally(
+      stopped.release,
+    )
+
+    expect((await asked).status).toBe(201)
+    expect(await corrected).toBe(
+      `Das Jahr ${String(oldYear)} dieser Person ist nach dem Löschkonzept gelöscht. ` +
+        'Für dieses Jahr nimmt OpenGewerk nichts mehr an.',
+    )
+    // The year went whole, and the correction it never took is not there.
+    expect(
+      await count(
+        "select count(*) as n from time_entries where user_id = 'kurt' and chain_year = $1",
+        [oldYear],
+      ),
+    ).toBe(0)
+  })
+
+  it('refuses a record of any of the four kinds in a year that went, and takes one of a year kept (#1043)', async () => {
+    const dennis = await kraft(false)
+    const o = String(oldYear)
+    const sentence =
+      `Das Jahr ${o} dieser Person ist nach dem Löschkonzept gelöscht. ` +
+      'Für dieses Jahr nimmt OpenGewerk nichts mehr an.'
+    const written = (statement: string) =>
+      ownTransaction(async (client) => {
+        await client.query("select set_config('app.user_id', 'kurt', true)")
+        await client.query(statement)
+
+        return 'went through'
+      }).catch((error: unknown) => (error as Error).message)
+
+    await pass()
+    await erase('staff_year', [staffYearKey(dennis.person, oldYear)]).expect(201)
+
+    for (const statement of [
+      `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
+         values ('${north}', 'kurt', 'work', '${o}-06-02 07:00+02', '${o}-06-02 15:00+02', 'nachgetragen')`,
+      `insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note)
+         values ('${north}', 'kurt', '${o}-06-05 16:00+02', '${o}-06-06 07:00+02', 'nachgetragen')`,
+      `insert into absences (tenant_id, person_id, kind, state, first_day, last_day, note)
+         values ('${north}', '${dennis.person}', 'vacation', 'approved', '${o}-09-01', '${o}-09-02', 'nachgetragen')`,
+      `insert into leave_entitlements (tenant_id, person_id, year, entitled_half_days, carried_half_days)
+         values ('${north}', '${dennis.person}', ${o}, 60, 0)`,
+    ]) {
+      expect(await written(statement)).toBe(sentence)
+    }
+
+    // Moved into the year that went, an absence of a year kept is refused too.
+    await admin.query(
+      `insert into absences (tenant_id, person_id, kind, state, first_day, last_day, note)
+         values ($1, $2, 'vacation', 'approved', $3, $4, 'verschoben')`,
+      [north, dennis.person, `${String(thisYear)}-09-01`, `${String(thisYear)}-09-02`],
+    )
+
+    expect(
+      await written(
+        `update absences set first_day = '${o}-09-01', last_day = '${o}-09-02' where note = 'verschoben'`,
+      ),
+    ).toBe(sentence)
+    // A year kept takes records as before.
+    expect(
+      await written(
+        `insert into leave_entitlements (tenant_id, person_id, year, entitled_half_days, carried_half_days)
+           values ('${north}', '${dennis.person}', ${String(thisYear)}, 60, 0)`,
+      ),
+    ).toBe('went through')
   })
 
   it('writes the day of a sickness as read again into its line of the protocol (#1033)', async () => {
@@ -1100,8 +1155,8 @@ describe('what of the staff is due (#846)', () => {
     {
       kind: 'a record of time',
       insert: (n: string) =>
-        `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, created_at, updated_at)
-           values ('${north}', 'kurt', 'work', '${n}-12-31 21:00+01', '${n}-12-31 23:30+01', 'Silvester',
+        `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year, created_at, updated_at)
+           values ('${north}', 'kurt', 'work', '${n}-12-31 21:00+01', '${n}-12-31 23:30+01', 'Silvester', ${n},
                    '${n}-12-31 23:30+01', '${n}-12-31 23:30+01')`,
       prolong: (n: string) =>
         `update time_entries set ended_at = '${String(Number(n) + 1)}-01-01 01:00+01' where user_id = 'kurt' and note = 'Silvester'`,
@@ -1158,63 +1213,57 @@ describe('what of the staff is due (#846)', () => {
     })
   }
 
-  it('puts a record of time into the year of the entry its chain began with, as the deletion does, past a hundred corrections too (#1033)', async () => {
+  it('puts a whole chain of corrections into the year of its first entry, past a hundred links too, and deletes it with that year (#1044)', async () => {
     const dennis = await kraft(false)
     const before = String(oldYear - 1)
     const o = String(oldYear)
+    const key = staffYearKey(dennis.person, oldYear - 1)
 
     // An entry on New Year's Eve the year before, a correction that moves it
-    // past New Year, and a hundred corrections of that one, the last written
-    // only now. The last stands a hundred and one links from the first: as
-    // `time_entry_year` has it, it belongs to the year of the first
-    // correction, and so does the moment it was written.
+    // past New Year, and a hundred corrections of that one, all of them long
+    // ago. Until 0161 the last of them, a hundred and one links from the
+    // first, counted with the year of the first correction, and the two years
+    // held each other.
     await admin.query(
-      `begin; set local session_replication_role = replica;
-       insert into time_entries (id, tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id, created_at, updated_at)
-       select md5('${dennis.family}' || i)::uuid, '${north}', 'kurt', 'work',
-              case when i = 0 then '${before}-12-31 22:00+01' else '${o}-01-01 00:10+01' end::timestamptz,
-              case when i = 0 then '${before}-12-31 23:30+01' else '${o}-01-01 01:00+01' end::timestamptz,
-              'Kette', case when i = 0 then null else md5('${dennis.family}' || (i - 1))::uuid end,
-              case when i = 101 then now() else '${o}-01-01 01:00+01' end::timestamptz,
-              case when i = 101 then now() else '${o}-01-01 01:00+01' end::timestamptz
-         from generate_series(0, 101) as i;
+      `begin; set local app.user_id = 'kurt';
+       do $$
+       begin
+         for i in 0..101 loop
+           insert into time_entries (id, tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+           values (md5('${dennis.family}' || i)::uuid, '${north}', 'kurt', 'work',
+                   case when i = 0 then '${before}-12-31 22:00+01' else '${o}-01-01 00:10+01' end::timestamptz,
+                   case when i = 0 then '${before}-12-31 23:30+01' else '${o}-01-01 01:00+01' end::timestamptz,
+                   'Kette', case when i = 0 then null else md5('${dennis.family}' || (i - 1))::uuid end);
+         end loop;
+       end
+       $$;
+       set local session_replication_role = replica;
+       update time_entries set updated_at = '${o}-01-01 01:00+01' where note = 'Kette';
        commit;`,
     )
 
     expect(
       await count(
         `select count(*) as n from time_entries
-          where id = md5($1 || 101)::uuid and time_entry_year(id) = $2`,
-        [dennis.family, oldYear],
+          where note = 'Kette' and chain_year = $1 and time_entry_year(id) = $1`,
+        [oldYear - 1],
       ),
-    ).toBe(1)
+    ).toBe(102)
 
     await pass()
 
-    const listed = ((await dueFor(owner)) ?? []).map((entry) => entry.recordId)
+    expect(((await dueFor(owner)) ?? []).map((entry) => entry.recordId)).toContain(key)
 
-    // The year of the last link is the one it was written in, and not due.
-    // The year before is held by it: its hundredth link goes only after the
-    // one that corrects it, which goes with the later year.
-    expect(listed).not.toContain(staffYearKey(dennis.person, oldYear))
-    expect(listed).not.toContain(staffYearKey(dennis.person, oldYear - 1))
+    await erase('staff_year', [key]).expect(201)
 
-    // Read again for a list from before, the year before is held as well.
-    const year = {
-      key: staffYearKey(dennis.person, oldYear - 1),
-      personId: dennis.person,
-      personName: 'Dennis',
-      userId: 'kurt',
-      year: oldYear - 1,
-      countsFrom: oldYear,
-      dueOn: today,
-    }
-
+    // The whole chain went with the year before, and the old year keeps its own.
+    expect(await count("select count(*) as n from time_entries where note = 'Kette'")).toBe(0)
     expect(
-      await database.forTenant({ tenantId: north, userId: 'lena' }, (tx) =>
-        holdStaffYear(tx, year, today),
+      await count(
+        "select count(*) as n from time_entries where user_id = 'kurt' and chain_year = $1",
+        [oldYear],
       ),
-    ).toBeNull()
+    ).toBeGreaterThan(0)
   })
 
   it('shows a sickness to whoever keeps absences and a file only to whoever reads the files, in the list of deadlines as well', async () => {

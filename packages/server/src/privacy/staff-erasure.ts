@@ -158,25 +158,16 @@ function yearsOf(upTo: number | null): SQL {
 }
 
 /**
- * The records of time of the business, or of one account, as the two parts of
- * a `with recursive` that `yearsOf` reads (`time_years`): each account with
- * each year it has records of time in and the latest year one of them was
- * written or ends in (opengewerk#1033). The year of an entry is that of the
- * entry its chain of corrections began with, as `time_entry_year` (0131) has
- * it, here worked out for all of them at once: each chain walked down from its
- * first entry, one look into `time_entries_corrected_once` for each
- * correction, and an entry that nothing corrects costs none. Once for the
- * business and not once a person, and kept as one row for each account and
- * year (`materialized`), so that each person of the list reads that small
- * table and not the records: the list runs every minute and on every visit of
- * the page; with the
- * persons times the corrections of the business it grew with the square of
- * its size. Past a hundred links the function stops at the entry a hundred
- * links up and takes its year, and so does this, so that the list and the
- * deletion put an entry into the same year. Where that makes an entry of one
- * year the correction of an entry of another, the year it corrects is held
- * (`held_years`): its entry goes only after the correction, which belongs to
- * a later year and goes with that one, so the year is not offered until then.
+ * The records of time of the business, or of one account, as the part of a
+ * `with` that `yearsOf` reads (`time_years`): each account with each year it
+ * has records of time in and the latest year one of them was written or ends
+ * in (opengewerk#1033). The year of an entry is that of its chain of
+ * corrections, which the database wrote when the entry was made (`chain_year`,
+ * 0161, opengewerk#1044), so that a whole chain counts with one year, however
+ * long it is, as `time_entry_year` has it. Once for the business and not once
+ * a person, and kept as one row for each account and year (`materialized`),
+ * so that each person of the list reads that small table and not the records:
+ * the list runs every minute and on every visit of the page.
  */
 function timeEntryYears(user: SQL | null): SQL {
   const yearOf = (moment: SQL) =>
@@ -184,51 +175,14 @@ function timeEntryYears(user: SQL | null): SQL {
   // The moment an entry was last written or ends, whichever is later. The year
   // grows with the moment, so the latest year is that of the latest moment,
   // and a group turns one moment into a year, not each of its rows.
-  const written = (entry: SQL) =>
-    sql`greatest(${entry}.updated_at, ${entry}.ended_at - interval '1 millisecond')`
-  const ofTheAccount = user === null ? sql`true` : sql`f.user_id = ${user}`
+  const written = sql`greatest(t.updated_at, t.ended_at - interval '1 millisecond')`
+  const ofTheAccount = user === null ? sql`true` : sql`t.user_id = ${user}`
 
-  return sql`links as (
-      select n.id, n.tenant_id, n.user_id, f.id as first, f.started_at as first_started_at,
-             1 as depth, n.started_at, ${written(sql`n`)} as written
-        from time_entries f
-        join time_entries n on n.tenant_id = f.tenant_id and n.corrects_entry_id = f.id
-       where ${ofTheAccount} and f.corrects_entry_id is null
-      union all
-      select n.id, n.tenant_id, n.user_id, l.first, l.first_started_at, l.depth + 1,
-             n.started_at, n.written
-        from links l
-        cross join lateral (
-          -- One look into the index for each link. An entry is corrected
-          -- once at most, so the limit changes no row; it keeps the planner
-          -- from joining every correction of the business at each link,
-          -- which made a long chain cost its length times all of them.
-          select t.id, t.tenant_id, t.user_id, t.started_at, ${written(sql`t`)} as written
-            from time_entries t
-           where t.tenant_id = l.tenant_id and t.corrects_entry_id = l.id
-           limit 1
-        ) n
-    ), time_years as materialized (
-      select f.user_id, ${yearOf(sql`f.started_at`)} as year,
-             ${yearOf(sql`max(${written(sql`f`)})`)} as entered
-        from time_entries f
-       where ${ofTheAccount} and f.corrects_entry_id is null
+  return sql`time_years as materialized (
+      select t.user_id, t.chain_year as year, ${yearOf(sql`max(${written})`)} as entered
+        from time_entries t
+       where ${ofTheAccount}
        group by 1, 2
-      union all
-      select l.user_id, ${yearOf(sql`coalesce(up.started_at, l.first_started_at)`)},
-             ${yearOf(sql`max(l.written)`)}
-        from links l
-        left join links up on l.depth > 100 and up.first = l.first and up.depth = l.depth - 100
-       group by 1, 2
-    ), held_years as materialized (
-      select distinct l.user_id,
-             ${yearOf(sql`coalesce(before.started_at, l.first_started_at)`)} as year
-        from links l
-        join links up on up.first = l.first and up.depth = l.depth - 100
-        left join links before on before.first = l.first and before.depth = l.depth - 101
-       where l.depth > 100
-         and ${yearOf(sql`up.started_at`)}
-             <> ${yearOf(sql`coalesce(before.started_at, l.first_started_at)`)}
     )`
 }
 
@@ -258,10 +212,9 @@ export async function dueStaffYears(
     year: number
     entered: number
   }>(sql`
-    with recursive ${timeEntryYears(null)}
+    with ${timeEntryYears(null)}
     select p.id as person_id, p.name, p.user_id, y.year, max(y.entered) as entered
       from people p cross join lateral ${yearsOf(lastYearDue(today))} as y
-     where not exists (select 1 from held_years h where h.user_id = p.user_id and h.year = y.year)
      group by p.id, p.name, p.user_id, y.year
      order by y.year, p.name, p.id`)
 
@@ -293,7 +246,7 @@ export async function dueStaffYears(
 /** Whether anything of any year of a person is still kept. */
 async function keepsAYear(tx: TenantTransaction, personId: string): Promise<boolean> {
   const { rows } = await tx.execute<{ kept: boolean }>(sql`
-    with recursive ${timeEntryYears(sql`(select user_id from people where id = ${personId})`)}
+    with ${timeEntryYears(sql`(select user_id from people where id = ${personId})`)}
     select exists (select 1 from people p cross join lateral ${yearsOf(null)} as y
                     where p.id = ${personId}) as kept`)
 
@@ -506,8 +459,8 @@ export interface HeldStaffYear {
  * How far each entry of a year stands from the end of its chain of
  * corrections: 0 for one nothing of the year corrects, one more for each
  * correction after it. The entries go a level at a time, the end of every
- * chain first: the trigger works the year of a correction out of the entry it
- * corrects, which has to be there still. Worked out here in one walk up each
+ * chain first: an entry that a correction names goes only after it, since the
+ * key `time_entries_correction_in_tenant` holds it. Worked out here in one walk up each
  * chain from its end, each entry once (`time_entries_corrected_once` keeps a
  * chain a line). A recursive query did it before and read every entry of the
  * year again at each link, the length of a chain times the entries of the
@@ -570,24 +523,8 @@ export async function holdStaffYear(
             select id, corrects_entry_id,
                    greatest(${written}, extract(year from ((ended_at - interval '1 millisecond') at time zone 'Europe/Berlin'))::int) as written
               from time_entries
-             where user_id = ${year.userId} and time_entry_year(id) = ${year.year}`)
+             where user_id = ${year.userId} and chain_year = ${year.year}`)
         ).rows
-
-  // Held while an entry of a later year corrects one of its own, past a
-  // hundred links (`held_years`): that one goes first, with its year. The
-  // list leaves such a year out; this is for a list read before.
-  if (year.userId !== null && yearRows.length > 0) {
-    const { rows: held } = await tx.execute(sql`
-      select 1 from time_entries c
-       where c.user_id = ${year.userId}
-         and c.corrects_entry_id = any(${uuids(yearRows.map((row) => row.id))})
-         and time_entry_year(c.id) <> ${year.year}
-       limit 1`)
-
-    if (held.length > 0) {
-      return null
-    }
-  }
 
   const entries = heightsOf(yearRows)
   const onCall =
@@ -761,7 +698,7 @@ export async function takeStaffYear(
       year.userId === null
         ? sql`0`
         : sql`(select count(*) from time_entries
-                where user_id = ${year.userId} and time_entry_year(id) = ${year.year})
+                where user_id = ${year.userId} and chain_year = ${year.year})
             + (select count(*) from on_call_shifts
                 where user_id = ${year.userId}
                   and extract(year from (starts_at at time zone 'Europe/Berlin'))::int = ${year.year})`

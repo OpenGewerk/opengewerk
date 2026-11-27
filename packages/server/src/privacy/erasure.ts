@@ -542,6 +542,29 @@ async function eraseStaff(
     }
   }
 
+  // And each year it deletes, in the order of their keys (opengewerk#1043):
+  // a record that comes into such a year takes the same lock in the database
+  // first (`staff_year_stays_kept`, 0161), waits for the deletion and is then
+  // refused. A record of another year, or one while the file goes, waits for
+  // nothing here.
+  if (kind === 'staff_year') {
+    for (const key of [...new Set(chosen.map((record) => record.recordId.toLowerCase()))].sort()) {
+      const lock = sql`hashtextextended(${`staff-year:${key}`}, 0)`
+
+      if (waiting === 'wait') {
+        await tx.execute(sql`select pg_advisory_xact_lock(${lock})`)
+      } else {
+        const { rows } = await tx.execute<{ taken: boolean }>(
+          sql`select pg_try_advisory_xact_lock(${lock}) as taken`,
+        )
+
+        if (rows[0]?.taken !== true) {
+          throw busy()
+        }
+      }
+    }
+  }
+
   // Every record held before the first line of the protocol, and in the
   // order of their keys (opengewerk#1033): a line takes the counter and the
   // chain of the business until the end, and a write of the staff takes its

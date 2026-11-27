@@ -30,6 +30,15 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Ein Lohnjahr, das nach dem Löschkonzept gelöscht ist, nimmt keine Arbeitszeit, Rufbereitschaft oder Abwesenheit und
+  keinen Urlaubsanspruch mehr an, auch nicht, wenn ein solcher Eintrag in das Jahr verschoben wird (#1043). Kommt er,
+  während das Jahr gelöscht wird, wartet er, bis das Löschen durch ist, und wird dann abgelehnt. Warum: Das Jahr hat
+  genau eine Zeile im Protokoll, und ein Eintrag, der danach dazukam, ließ sich nie mehr löschen.
+- Eine Korrektur der Arbeitszeit zählt im Löschkonzept zum Jahr des Eintrags, mit dem ihre Kette beginnt, auch hinter
+  dem hundertsten Glied (#1044). Jeder Zeiteintrag hält dieses Jahr jetzt selbst, und die Migration trägt es für
+  bestehende Einträge nach, ohne zu ändern, wann sie erfasst wurden. Warum: Die Datenbank suchte den ersten Eintrag nur
+  hundert Glieder weit. Eine längere Kette aus einer früheren Fassung zählte dahinter zum Jahr eines anderen Glieds, und
+  zwei Jahre konnten sich gegenseitig festhalten, sodass keines gelöscht wurde.
 - Ein Konflikt an einem inzwischen festgeschriebenen Beleg, für den es keinen anderen Weg gibt, zeigt die Felder, die
   das Gerät geschrieben hat, je mit dem Stand im System (#1037). Bisher stand dort nur der Status, an dem der Server
   die Änderung abwies. Warum: Bei einer Stornorechnung und jetzt auch bei einer Dauerrechnung eines Vertrags, die
