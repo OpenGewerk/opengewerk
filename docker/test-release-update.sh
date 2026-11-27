@@ -171,13 +171,20 @@ report() {
 # The installation goes again however the script ends, after what a failure
 # reports, and with the status it ended with: also after a start that got
 # half way. The container of an update still running runs beside Compose and
-# goes first, since it holds the volume of the status and writes into the
-# installation. The folder of the run goes last, after the containers that
+# goes first, after the updater that starts it, since it holds the volume of
+# the status and writes into the installation. The folder of the run goes last, after the containers that
 # wrote into it, and only when they went. A cleanup that fails is said, and
 # the status stays.
 cleanup() {
   ended=$?
   torn=yes
+  # The updater stopped first: running, it could start the container of a
+  # request still lying there after the list below, and that container is no
+  # service of Compose.
+  compose stop updater > /dev/null 2>&1 || {
+    printf '%s\n' 'Der Dienst für Aktualisierungen ließ sich nicht anhalten.'
+    torn=no
+  }
   if update_containers=$(docker ps --all --quiet --filter label=opengewerk.update.project=opengewerk 2>/dev/null); then
     if [ -n "$update_containers" ]; then
       # shellcheck disable=SC2086
