@@ -385,8 +385,6 @@ jobs:
       - name: Repository auschecken
         uses: actions/checkout@v7
         with:
-          # The tags, to find the release before this one.
-          fetch-depth: 0
           persist-credentials: false
 
       - name: cosign installieren

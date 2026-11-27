@@ -18,7 +18,7 @@
 #
 #   sh docker/test-release-update.sh <version>
 #
-# Needs git with the tags, gh with a token that reads releases, cosign, jq,
+# Needs gh with a token that reads releases, cosign, jq, openssl,
 # curl, docker and sudo for reading the volume of the update status.
 set -eu
 
@@ -44,20 +44,29 @@ fail() {
 
 printf '%s\n' "$new" | grep -Eq "$statement" || fail "Aufruf: sh docker/test-release-update.sh <Fassung>, etwa 0.10.0."
 
-# The release before: the highest tag below this one.
-previous=$(git tag --list 'v*.*.*' | sed 's/^v//' | grep -E "$statement" | sort -V |
-  awk -v new="$new" '$0 == new { print last; found = 1; exit } { last = $0 } END { if (!found) exit 1 }') ||
-  fail "Den Tag v$new gibt es in diesem Checkout nicht."
+# The release before: the highest release published below this one. A tag
+# whose run failed before it wrote its page has no kit, and an installation
+# never ran it.
+releases=$(gh release list --repo "$repository" --exclude-drafts --exclude-pre-releases --limit 200 \
+  --json tagName --jq '.[].tagName') ||
+  fail "Die Releases auf GitHub ließen sich nicht lesen; das Update ist nicht geprüft."
+previous=$(printf '%s\nv%s\n' "$releases" "$new" | sed 's/^v//' | grep -E "$statement" |
+  sort -uV | awk -v new="$new" '$0 == new { print last; exit } { last = $0 }')
 
 if [ -z "$previous" ]; then
   say "Vor $new ist keine Fassung erschienen; ein Update auf sie lässt sich nicht prüfen."
   exit 0
 fi
 
-latest=$(gh api "repos/$repository/releases/latest" --jq .tag_name)
-
-if [ "$latest" != "v$new" ]; then
+# The updater offers only the latest release of GitHub. Asked again before a
+# failure over what it offers: a release published meanwhile is no failure.
+not_latest() {
+  latest=$(gh api "repos/$repository/releases/latest" --jq .tag_name) || return 1
+  [ "$latest" != "v$new" ] || return 1
   say "Die neueste Fassung auf GitHub ist $latest, nicht v$new. Der Dienst für Aktualisierungen bietet nur die neueste an; ein Update auf $new lässt sich so nicht prüfen."
+}
+
+if not_latest; then
   exit 0
 fi
 
@@ -108,6 +117,13 @@ say "Update von $previous auf $new über den Dienst für Aktualisierungen."
 (cd "$install" && OPENGEWERK_ADDRESS="$base" sh docker/start.sh) ||
   fail "Die Fassung $previous ließ sich hier nicht starten; das Update ist nicht geprüft."
 
+# start.sh waits for the health of every service (compose up --wait); the
+# application answering from here is asked once more, for a minute at most.
+for _ in $(seq 1 30); do
+  curl --fail --silent --output /dev/null "$base/health" && break
+  sleep 2
+done
+
 # The first operator, with the code from the .env (#215). The code and the
 # password go into no output.
 code=$(sed -n 's/^SETUP_CODE=//p' "$install/docker/.env")
@@ -130,6 +146,10 @@ for _ in $(seq 1 60); do
 done
 
 if ! printf '%s\n' "${available:-}" | jq -e --arg new "$new" '.latest == $new and .mode == "ready"' > /dev/null 2>&1; then
+  if not_latest; then
+    compose down --volumes > /dev/null 2>&1 || true
+    exit 0
+  fi
   report "Der Dienst bietet $new nicht an: $(printf '%s' "${available:-nichts}" | tr -d '\n')"
 fi
 
