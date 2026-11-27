@@ -131,10 +131,16 @@ tar --no-same-owner -xzf "$work/$kit" -C "$work"
 install="$work/opengewerk"
 
 # The service came with 0.9.0 (x-since in compose.yaml). A file that cannot
-# be read tells nothing about it.
-[ -r "$install/docker/compose.yaml" ] ||
+# be read tells nothing about it: only grep finding nothing (1) means a
+# release without the service, an error of grep (2) leaves it untried.
+[ -f "$install/docker/compose.yaml" ] && [ -r "$install/docker/compose.yaml" ] ||
   fail "Im Paket von $previous fehlt docker/compose.yaml; das Update ist nicht geprüft."
-if ! grep -Eq '^  updater:' "$install/docker/compose.yaml"; then
+if grep -Eq '^  updater:' "$install/docker/compose.yaml"; then
+  :
+else
+  searched=$?
+  [ "$searched" -eq 1 ] ||
+    fail "docker/compose.yaml im Paket von $previous ließ sich nicht lesen; das Update ist nicht geprüft."
   say "Die Fassung $previous hat noch keinen Dienst für Aktualisierungen, er kam mit 0.9.0. Ein Update über ihn lässt sich von ihr aus nicht prüfen."
   exit 0
 fi
