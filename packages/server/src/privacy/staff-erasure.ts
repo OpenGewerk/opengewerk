@@ -691,9 +691,10 @@ export async function takeStaffYear(
   // Nothing of the year left that came in after it was read: the year has one
   // line of the protocol (`erasures_once`), and a record left behind could
   // never go under it. Since 0161 a record of the year waits for the lock of
-  // the year and cannot come in at all (opengewerk#1043); this stays as the
-  // net, and where it catches one, the deletion is broken off and the next
-  // pass reads the year with it.
+  // the year and cannot come in through the four tables (opengewerk#1043);
+  // the file linked to an account with records of the year is still a way
+  // (opengewerk#1132). This stays as the net, and where it catches one, the
+  // deletion is broken off and the next pass reads the year with it.
   const { rows: left } = await tx.execute<{ n: number }>(sql`
     select ${
       year.userId === null
