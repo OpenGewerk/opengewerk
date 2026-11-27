@@ -367,6 +367,37 @@ jobs:
             "opengewerk-$VERSION.tar.gz.sha256" \
             "opengewerk-$VERSION.tar.gz.sigstore.json"
 
+  # A real update from the release before to this one, through the updater
+  # of an installation, as the office of an instance starts it (#1107). After
+  # the release page, since the updater offers only the latest release and
+  # fetches the kit from there with its signature. A release before has no
+  # updater before 0.9.0, and then the step says so and ends green. Red means
+  # the release is out, and an update to it from the office does not get
+  # through until a correction is.
+  update:
+    name: Update von der vorigen Fassung prüfen
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v7
+        with:
+          # The tags, to find the release before this one.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: cosign installieren
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      - name: Von der vorigen Fassung über den Dienst für Aktualisierungen aktualisieren
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: sh docker/test-release-update.sh "$VERSION"
+
   # The same images on Docker Hub, with their signatures, after the release
   # page exists (#281). Without the secrets the called workflow does nothing.
   docker-hub:

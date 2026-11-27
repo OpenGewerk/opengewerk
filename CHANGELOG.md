@@ -7,6 +7,16 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ## [Unreleased]
 
+### Hinzugefügt
+
+- Nach jedem Release prüft ein Job im Workflow „Release“ ein echtes Update von der Fassung davor über den Dienst für
+  Aktualisierungen (#1107): Paket der vorigen Fassung holen und prüfen, starten, einen Betreiber anlegen, ein Update auf
+  die neue Fassung beauftragen und warten, bis der Lauf durch ist und `/health` sie nennt. Warum: Bisher prüften die
+  Tests jeden Schritt des Updates nur mit Attrappen, ein echtes Update von einer erschienenen Fassung auf die nächste
+  prüfte nichts. Vor einem Release geht das nicht, weil der Dienst nur ein Paket annimmt, das der Workflow seines Tags
+  signiert hat. Der erste echte Lauf kommt mit der Fassung nach 0.9.0. Hat die vorige Fassung keinen solchen Dienst
+  (vor 0.9.0) oder ist die neue nicht die neueste auf GitHub, sagt der Job das und endet grün.
+
 ### Geändert
 
 - Eine Dauerrechnung nimmt den Steuersatz vom Tag der Wartung, für die ihr Zeitraum zahlt, wenn der Wartungsvertrag

@@ -1168,6 +1168,19 @@ Aktualisierungen mit ihren Signaturen nach Docker Hub, als `opengewerk/opengewer
 Fassung (#281). Das Paket holt weiter aus ghcr.io, denn Docker Hub
 begrenzt anonyme Pulls; eine ältere Fassung holt der Workflow "Docker Hub" von Hand
 nach, vor 0.9.0 ohne den Dienst für Aktualisierungen, den es da noch nicht gab.
+Ein dritter Job prüft danach ein echtes Update über diesen Dienst (#1107,
+`docker/test-release-update.sh`): Er holt das Paket der Fassung davor von ihrer
+Release-Seite, prüft seine Signatur, startet es, richtet die Instanz mit einem
+Betreiber ein, legt einen Auftrag für die neue Fassung in den Ordner
+`update-requests`, wie es die Anwendung tut, und wartet auf `run.json`. Grün ist
+er, wenn der Lauf durchging und `/health` die neue Fassung nennt. Hat die Fassung
+davor noch keinen Dienst für Aktualisierungen (vor 0.9.0) oder ist die neue nicht
+die neueste auf GitHub, etwa eine Korrektur einer älteren Reihe, sagt er das und
+endet grün, denn der Dienst bietet nur die neueste an. Ist er rot, ist die Fassung
+schon erschienen, und ein Update aus dem Bereich der Instanz auf sie trägt nicht,
+bis eine Korrektur erschienen ist; im Bericht stehen das Ende von `run.json` und
+das Protokoll des Dienstes. Vor einem Release lässt sich das nicht prüfen: Der
+Dienst nimmt nur ein Paket, das der Workflow "Release" seines Tags signiert hat.
 
 Eine Fassung, die eine Sicherheitslücke schließt, trägt in ihrem Abschnitt des
 CHANGELOG den Unterabschnitt `### Sicherheit`, und ihre Release-Seite beginnt
