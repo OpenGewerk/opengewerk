@@ -21,7 +21,7 @@
 # Only on a machine without an installation of OpenGewerk, such as a runner:
 # it stops before it starts anything when the compose project "opengewerk" is there.
 #
-# Needs gh with a token that reads releases, cosign, jq, openssl,
+# Needs gh with a token that reads releases, cosign, jq, openssl, flock,
 # curl, docker and sudo for reading the volume of the update status.
 set -eu
 
@@ -30,6 +30,12 @@ set -eu
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
+
+# Start and cleanup take the project, files, profiles, version and port the
+# kit names, not ones this shell inherited: COMPOSE_PROJECT_NAME would move
+# both into a project that the check before the start never looked at.
+unset COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_PROFILES COMPOSE_ENV_FILES \
+  OPENGEWERK_VERSION OPENGEWERK_PORT
 
 new=${1:-}
 repository=OpenGewerk/opengewerk
@@ -86,7 +92,14 @@ fi
 # compose project "opengewerk", and its start and the cleanup below would
 # take over the containers of one already there and remove its volumes.
 # Each question on its own, since an assignment keeps only the status of its
-# last substitution.
+# last substitution. One run on this machine at a time: two would both find
+# it without an installation, and the end of one would take the installation
+# of the other. The lock goes with the process, also when it is killed.
+command -v flock > /dev/null ||
+  fail "flock fehlt auf dieser Maschine; das Update ist nicht geprüft."
+exec 9>> /tmp/opengewerk-release-update.lock
+flock -n 9 ||
+  fail "Auf dieser Maschine läuft schon eine Prüfung des Updates; geprüft ist nichts."
 containers=$(docker ps --all --quiet --filter label=com.docker.compose.project=opengewerk) ||
   fail "Docker sagt nicht, ob hier schon eine Installation läuft; das Update ist nicht geprüft."
 volumes=$(docker volume ls --quiet --filter label=com.docker.compose.project=opengewerk) ||
@@ -160,19 +173,33 @@ report() {
 # half way. The container of an update still running runs beside Compose and
 # goes first, since it holds the volume of the status and writes into the
 # installation. The folder of the run goes last, after the containers that
-# wrote into it. A cleanup that fails is said, and the status stays.
+# wrote into it, and only when they went. A cleanup that fails is said, and
+# the status stays.
 cleanup() {
   ended=$?
-  update_containers=$(docker ps --all --quiet --filter label=opengewerk.update.project=opengewerk 2>/dev/null) ||
-    update_containers=''
-  if [ -n "$update_containers" ]; then
-    # shellcheck disable=SC2086
-    docker rm --force $update_containers > /dev/null 2>&1 ||
-      printf '%s\n' 'Der Container des Updates ließ sich nicht entfernen.'
+  torn=yes
+  if update_containers=$(docker ps --all --quiet --filter label=opengewerk.update.project=opengewerk 2>/dev/null); then
+    if [ -n "$update_containers" ]; then
+      # shellcheck disable=SC2086
+      docker rm --force $update_containers > /dev/null 2>&1 || {
+        printf '%s\n' 'Der Container des Updates ließ sich nicht entfernen.'
+        torn=no
+      }
+    fi
+  else
+    printf '%s\n' 'Docker sagt nicht, ob der Container des Updates noch läuft.'
+    torn=no
   fi
-  compose down --volumes > /dev/null 2>&1 ||
+  compose down --volumes > /dev/null 2>&1 || {
     printf '%s\n' 'Die Installation ließ sich nicht ganz abbauen.'
-  remove_work
+    torn=no
+  }
+  # What is not torn down still needs its files to be.
+  if [ "$torn" = yes ]; then
+    remove_work
+  else
+    printf 'Der Arbeitsordner %s bleibt für den Abbau von Hand stehen.\n' "$work"
+  fi
   exit "$ended"
 }
 trap cleanup EXIT
@@ -240,10 +267,9 @@ fs.renameSync(`${folder}/.request-${id}.json`, `${folder}/request.json`)
 ' "$id" "$new" ||
   fail "Der Auftrag ließ sich in der Fassung $previous nicht in den Ordner update-requests schreiben; das Update ist nicht geprüft."
 
-# Taken within seconds; a run backs up, fetches, migrates and restarts,
-# which takes some minutes.
-state=''
-for _ in $(seq 1 180); do
+# What the updater says about this request, and only this one: a refusal
+# ends the check, a run gives its state.
+look() {
   refusal=$(status_file refusal.json) || refusal=''
   # A refusal is the doing of the updater of the release before, which
   # decides before anything of the new one runs: the update is untried.
@@ -254,16 +280,26 @@ for _ in $(seq 1 180); do
   run=$(status_file run.json) || run=''
   if [ -n "$run" ] && [ "$(printf '%s\n' "$run" | jq -r .id)" = "$id" ]; then
     state=$(printf '%s\n' "$run" | jq -r .state)
-    [ "$state" = running ] || break
   fi
+}
+
+# Taken within seconds; a run backs up, fetches, migrates and restarts,
+# which takes some minutes.
+state=''
+for _ in $(seq 1 180); do
+  look
+  case $state in
+    '' | running) ;;
+    *) break ;;
+  esac
   sleep 10
 done
 
-# Once more after the last wait: a run that ended during it ended in time.
-if [ "$state" = running ]; then
-  run=$(status_file run.json) || run=''
-  state=$(printf '%s\n' "$run" | jq -r .state 2>/dev/null) || state=running
-fi
+# Once more after the last wait, the same way: a request taken or a run
+# ended during it was in time.
+case $state in
+  '' | running) look ;;
+esac
 
 # Failed only where update.sh ran and said so. A run that did not end in half
 # an hour, a request nobody took and an end the updater names itself leave
@@ -306,15 +342,18 @@ esac
 # after the run, and while its database is away it answers 503 and still
 # names its version. Ready is 200 with the new version; update.sh asks only
 # for the version. Another version, or the new one that never gets ready, is
-# an update that did not go through; no answer at all leaves it untried. A
-# question that gets no answer keeps the answer before it.
+# an update that did not go through; no answer at all leaves it untried. An
+# answer without a version, from a proxy or none at all, keeps the one before.
 running=''
 code=''
 for _ in $(seq 1 30); do
   if answer=$(curl --silent --max-time 10 --write-out '\n%{http_code}' "$base/health"); then
-    code=$(printf '%s\n' "$answer" | tail -n 1)
-    running=$(printf '%s\n' "$answer" | sed '$d' | jq -r '.version // empty' 2>/dev/null) || running=''
-    [ "$code" != 200 ] || [ "$running" != "$new" ] || break
+    seen=$(printf '%s\n' "$answer" | sed '$d' | jq -r '.version // empty' 2>/dev/null) || seen=''
+    if [ -n "$seen" ]; then
+      running=$seen
+      code=$(printf '%s\n' "$answer" | tail -n 1)
+      [ "$code" != 200 ] || [ "$running" != "$new" ] || break
+    fi
   fi
   sleep 2
 done
