@@ -368,7 +368,8 @@ jobs:
             "opengewerk-$VERSION.tar.gz.sigstore.json"
 
   # A real update from the release before to this one, through the updater
-  # of an installation, as the office of an instance starts it (#1107). After
+  # of an installation, with a request written the way the application writes
+  # it when the office of an instance starts one (#1107). After
   # the release page, since the updater offers only the latest release and
   # fetches the kit from there with its signature. A release before has no
   # updater before 0.9.0, and then the step says so and ends green. Red means

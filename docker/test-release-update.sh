@@ -156,6 +156,11 @@ if ! printf '%s\n' "${available:-}" | jq -e --arg new "$new" '.latest == $new an
   if not_latest; then
     exit 0
   fi
+  # GitHub not answering the updater, which asks without a token from the
+  # address of the runner, leaves the update untried rather than failed.
+  if trouble=$(printf '%s\n' "${available:-}" | jq -er '.error // empty' 2>/dev/null); then
+    fail "Der Dienst für Aktualisierungen erreichte GitHub nicht ($trouble); das Update ist nicht geprüft."
+  fi
   report "Der Dienst bietet $new nicht an: $(printf '%s' "${available:-nichts}" | tr -d '\n')"
 fi
 
@@ -189,8 +194,12 @@ done
 
 [ "$state" = succeeded ] || report "run.json sagt ${state:-nichts} statt succeeded."
 
-running=$(curl --fail --silent --show-error --max-time 30 "$base/health" | jq -r .version) ||
+# Asked apart: in a pipeline sh takes the status of its last command, and jq
+# ends well on an empty answer.
+answer=$(curl --fail --silent --show-error --max-time 30 "$base/health") ||
   report "/health antwortet nicht."
+running=$(printf '%s\n' "$answer" | jq -r .version) ||
+  report "/health antwortet nicht mit JSON."
 [ "$running" = "$new" ] || report "/health nennt $running statt $new."
 
 say "Das Update von $previous auf $new über den Dienst für Aktualisierungen ging durch, /health nennt $new."
