@@ -64,21 +64,30 @@ AS $$
 DECLARE
 	v_person uuid;
 	v_account text := nullif(current_setting('app.user_id', true), '');
+	v_year integer := extract(year FROM (new.started_at AT TIME ZONE 'Europe/Berlin'))::integer;
+	v_chain integer;
+	v_corrected integer;
+	v_own boolean;
 BEGIN
-	new.chain_year := coalesce(
-		(SELECT t.chain_year FROM public.time_entries t
-		  WHERE t.tenant_id = new.tenant_id AND t.id = new.corrects_entry_id),
-		extract(year FROM (new.started_at AT TIME ZONE 'Europe/Berlin'))::integer);
+	-- The entry it corrects, read once: the year of its chain, its own year,
+	-- and whether it is of the same account.
+	SELECT t.chain_year, extract(year FROM (t.started_at AT TIME ZONE 'Europe/Berlin'))::integer,
+	       t.user_id = v_account
+	  INTO v_chain, v_corrected, v_own
+	  FROM public.time_entries t
+	 WHERE t.tenant_id = new.tenant_id AND t.id = new.corrects_entry_id;
+	new.chain_year := coalesce(v_chain, v_year);
 
 	-- Its own year within the years OpenGewerk takes, before any lock (0163);
 	-- the year of its chain, for a correction, may be one from before. A
-	-- correction that stays in the year of its chain, or in the year of the
-	-- entry it corrects, brings no new year, so that an entry from before can
-	-- still be withdrawn with its own times or put right there.
-	IF new.corrects_entry_id IS NULL OR (extract(year FROM (new.started_at AT TIME ZONE 'Europe/Berlin'))::integer <> new.chain_year AND extract(year FROM (new.started_at AT TIME ZONE 'Europe/Berlin'))::integer IS DISTINCT FROM
-	     (SELECT extract(year FROM (t.started_at AT TIME ZONE 'Europe/Berlin'))::integer FROM public.time_entries t
-	       WHERE t.tenant_id = new.tenant_id AND t.id = new.corrects_entry_id)) THEN
-		PERFORM public.staff_year_within_bounds(extract(year FROM (new.started_at AT TIME ZONE 'Europe/Berlin'))::integer);
+	-- correction of an entry of the same account that stays in the year of
+	-- its chain, or in the year of that entry, brings no new year, so that an
+	-- entry from before can still be withdrawn with its own times or put
+	-- right there. An entry that names no entry found, itself included, or
+	-- one of another account, is bound like any.
+	IF v_chain IS NULL OR v_own IS NOT TRUE
+	   OR (v_year <> v_chain AND v_year IS DISTINCT FROM v_corrected) THEN
+		PERFORM public.staff_year_within_bounds(v_year);
 	END IF;
 
 	-- The account first, so that a link of a file to it waits for this record

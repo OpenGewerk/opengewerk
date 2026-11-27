@@ -29,9 +29,10 @@ describe('the year of a record of time (GHSA-9f85-85g8-g7w3)', () => {
     expect(timeEntryYearProblem('0026-06-02T05:00:00Z', now, [2026])).toBe(refused(26))
   })
 
-  it('counts a year before the common era below 1, not as the year its era names', () => {
-    // 2026 before the common era, in astronomical years -2025.
-    expect(timeEntryYearProblem('-002025-06-02T05:00:00Z', now)).toBe(refused(-2025))
+  it('counts a year before the common era as the database does, not as the year its era names', () => {
+    // 2026 before the common era, -2025 in astronomical years, -2026 in the
+    // database, which has no year 0.
+    expect(timeEntryYearProblem('-002025-06-02T05:00:00Z', now)).toBe(refused(-2026))
   })
 
   it('leaves a start that is no instant to the check of the times', () => {

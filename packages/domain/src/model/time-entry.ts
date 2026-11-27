@@ -110,9 +110,9 @@ export function timeEntryProblem(entry: {
 export const firstTimeEntryYear = 1970
 
 /**
- * The year an instant lies in, in Germany, as the database counts it: signed,
- * so that a year before the common era is one below 1, not the year of its
- * era that the calendar names.
+ * The year an instant lies in, in Germany, as the database counts it: signed
+ * and without a year 0, so that 2026 before the common era is -2026, not the
+ * year of its era that the calendar names.
  */
 export function germanYear(at: number): number {
   const parts = new Intl.DateTimeFormat('en-GB', {
@@ -123,7 +123,7 @@ export function germanYear(at: number): number {
   const year = Number(parts.find((part) => part.type === 'year')?.value)
   const era = parts.find((part) => part.type === 'era')?.value
 
-  return era === 'BC' ? 1 - year : year
+  return era === 'BC' ? -year : year
 }
 
 /**

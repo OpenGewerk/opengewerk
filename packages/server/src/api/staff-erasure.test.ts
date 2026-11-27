@@ -1446,6 +1446,29 @@ describe('what of the staff is due (#846)', () => {
       await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id, withdrawn)
          values ('${north}', 'kurt', 'work', '1503-01-02 07:00+01', '1503-01-02 08:00+01', 'quer zurück', '${await typed('kette quer')}', true)`),
     ).toBe('went through')
+
+    // An entry that names itself, or an entry of another account, finds no
+    // entry of its own to stay with, and is bound like any.
+    const itself = newId<'time-entry'>()
+
+    expect(
+      await written(`insert into time_entries (id, tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+         values ('${itself}', '${north}', 'kurt', 'work', '1500-06-02 07:00+01', '1500-06-02 15:00+01', 'sich selbst', '${itself}')`),
+    ).toBe(sentence(1500))
+
+    await admin.query(
+      `begin; set local app.user_id = 'lena';
+       alter table time_entries disable trigger chain_year_of_time_entries;
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year)
+       values ('${north}', 'lena', 'work', '1504-03-02 07:00+01', '1504-03-02 15:00+01', 'von lena', 1504);
+       alter table time_entries enable trigger chain_year_of_time_entries;
+       commit;`,
+    )
+
+    expect(
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+         values ('${north}', 'kurt', 'work', '1504-03-02 07:00+01', '1504-03-02 14:00+01', 'fremd', '${await typed('von lena')}')`),
+    ).toBe(sentence(1504))
   })
 
   it('lets a correction of a year outside the bound and a deletion of that year meet without a record left in it, either way round (GHSA-9f85-85g8-g7w3)', async () => {
