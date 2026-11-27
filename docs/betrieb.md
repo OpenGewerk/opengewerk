@@ -1176,10 +1176,14 @@ Betreiber ein, legt einen Auftrag für die neue Fassung in den Ordner
 er, wenn der Lauf durchging und `/health` die neue Fassung nennt. Hat die Fassung
 davor noch keinen Dienst für Aktualisierungen (vor 0.9.0) oder ist die neue nicht
 die neueste auf GitHub, etwa eine Korrektur einer älteren Reihe, sagt er das und
-endet grün, denn der Dienst bietet nur die neueste an. Ist er rot, ist die Fassung
-schon erschienen, und ein Update aus dem Bereich der Instanz auf sie trägt nicht,
-bis eine Korrektur erschienen ist; im Bericht stehen das Ende von `run.json` und
-das Protokoll des Dienstes. Vor einem Release lässt sich das nicht prüfen: Der
+endet grün, denn der Dienst bietet nur die neueste an. Ist er rot, weil der Lauf
+abgelehnt wurde, scheiterte oder `/health` danach eine andere Fassung nennt, ist
+die Fassung schon erschienen, und ein Update aus dem Bereich der Instanz auf sie
+trägt nicht, bis eine Korrektur erschienen ist; im Bericht stehen das Ende von
+`run.json` und das Protokoll des Dienstes. Ließ sich die vorige Fassung nicht
+holen, prüfen oder starten oder erreichte der Dienst GitHub nicht, sagt der
+Bericht, dass das Update nicht geprüft ist; dann ist der nächste Schritt, den Job
+neu zu starten. Vor einem Release lässt sich das nicht prüfen: Der
 Dienst nimmt nur ein Paket, das der Workflow "Release" seines Tags signiert hat.
 
 Eine Fassung, die eine Sicherheitslücke schließt, trägt in ihrem Abschnitt des
