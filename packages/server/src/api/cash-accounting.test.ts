@@ -48,17 +48,31 @@ function declare(tenantId: TenantId, value: 0 | 1, from: string) {
     .expect(201)
 }
 
-/** An invoice for work in that period, issued on that day in Germany. */
+/**
+ * An invoice for work in that period, issued on that day in Germany. With a
+ * day of supply it is a recurring invoice whose maintenance was on that day,
+ * which the engine of the contracts writes and nobody else (#1037).
+ */
 async function invoiced(
   tenantId: TenantId,
-  work: { readonly serviceFrom: string; readonly serviceUntil: string },
+  work: {
+    readonly serviceFrom: string
+    readonly serviceUntil: string
+    readonly supplyOn?: string
+  },
   issuedOn: string,
 ): Promise<readonly string[]> {
   const office = as(tenantId, 'office')
+  const { supplyOn, ...period } = work
   const draft = await issuableDraft(app, office, customers.get(tenantId) ?? '', {
     documentDate: issuedOn,
-    ...work,
+    ...period,
+    ...(supplyOn ? { kind: 'recurring_invoice' } : {}),
   })
+
+  if (supplyOn) {
+    await admin.query('update documents set supply_on = $2 where id = $1', [draft, supplyOn])
+  }
 
   vi.useFakeTimers({ toFake: ['Date'], now: new Date(`${issuedOn}T10:00:00+01:00`) })
 
@@ -130,6 +144,12 @@ describe('a business that switches to accrual accounting at the turn of the year
 
   it('does not state it for the work of January', async () => {
     expect(await invoiced(north.id, january, '2029-01-15')).not.toContain(cashAccountingNote)
+  })
+
+  it('states it for a period into January that pays for a maintenance in December', async () => {
+    const period = { serviceFrom: '2028-12-15', serviceUntil: '2029-01-14', supplyOn: '2028-12-20' }
+
+    expect(await invoiced(north.id, period, '2029-01-15')).toContain(cashAccountingNote)
   })
 })
 
