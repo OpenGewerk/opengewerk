@@ -12,6 +12,7 @@ import {
   type LogoContent,
   type RuleSet,
   type SiteContent,
+  supplyDateOf,
   type TenantId,
 } from '@opengewerk/domain'
 import type { TenantTransaction } from '@opengewerk/platform-server'
@@ -293,8 +294,11 @@ export async function contentAndGapsOf(
         }
       : null,
     zeroRateDeclaration: signature?.zeroRateDeclaration ?? null,
+    // Read on the day of the work, as the rate is (#1017): a turnover stays
+    // taxed the way the period it falls in is, whatever the business has
+    // switched to by the time it is invoiced (#1038).
     cashAccounting:
-      (await parameterAt(tx, 'cash_accounting.permitted', document.documentDate))?.value === 1,
+      (await parameterAt(tx, 'cash_accounting.permitted', supplyDateOf(document)))?.value === 1,
     deductions: await deductionsFor(tx, document, { lock: lockPredecessors }),
     paymentTermDays: await paymentTermDaysOf(tx, document),
     instructions: instructions.contents,

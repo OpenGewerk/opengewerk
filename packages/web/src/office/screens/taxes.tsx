@@ -515,8 +515,10 @@ function CashAccountingSection({
           <SettingsText muted>
             Mit der Erklärung trägt jede Rechnung außer einer nach § 19 UStG ab dem{' '}
             {date(statementFrom)} die Angabe „Versteuerung nach vereinnahmten Entgelten“, die das
-            Gesetz von da an verlangt (§ 14 Abs. 4 Satz 1 Nr. 6a UStG). Die Voranmeldung selbst, für
-            die der Unterschied eigentlich zählt, kommt mit der Buchhaltung und liest dieselbe
+            Gesetz von da an verlangt (§ 14 Abs. 4 Satz 1 Nr. 6a UStG). Das richtet sich nach dem
+            Tag der Leistung: Eine Rechnung, die nach einem Wechsel zum 1. Januar Arbeit aus dem
+            Dezember abrechnet, trägt noch, was im Dezember galt. Die Voranmeldung selbst, für die
+            der Unterschied eigentlich zählt, kommt mit der Buchhaltung und liest dieselbe
             Erklärung.
           </SettingsText>
         ) : null}
