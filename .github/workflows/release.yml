@@ -7,7 +7,8 @@ name: Release
 # CHANGELOG.md for that version and the installation kit: the folder docker/
 # with the version in its compose.yaml, so that "sh docker/start.sh" and every
 # docker compose command in it pull this release instead of building. A second
-# job mirrors the images with their signatures to Docker Hub (#281).
+# job mirrors the images with their signatures to Docker Hub (#281), a third
+# tries a real update from the release before through the updater (#1107).
 
 on:
   push:
@@ -371,12 +372,13 @@ jobs:
   # of an installation, with a request written the way the application writes
   # it when the office of an instance starts one (#1107). After
   # the release page, since the updater offers only the latest release and
-  # fetches the kit from there with its signature. A release before has no
-  # updater before 0.9.0, and then the step says so and ends green. Red with
-  # "ging nicht durch" means the release is out, and an update to it from the
-  # office does not get through until a correction is; red with "nicht
-  # geprüft" means the job did not get as far as the update, and running it
-  # again tries once more.
+  # fetches the kit from there with its signature. Green as well, with a
+  # sentence, where the release before has no updater (before 0.9.0) or a
+  # newer release is the latest by now. Red with "ging nicht durch" means the
+  # run of the update failed or /health names another version: the release is
+  # out, and an update to it from the office does not get through until a
+  # correction is. Red with "nicht geprüft" means the job cannot tell whether
+  # an update gets through, and running it again tries once more.
   update:
     name: Update von der vorigen Fassung prüfen
     needs: release

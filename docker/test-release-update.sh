@@ -195,8 +195,11 @@ fs.renameSync(`${folder}/.request-${id}.json`, `${folder}/request.json`)
 state=''
 for _ in $(seq 1 180); do
   refusal=$(status_file refusal.json) || refusal=''
+  # A refusal is the doing of the updater of the release before, which
+  # decides before anything of the new one runs: the update is untried.
   if [ -n "$refusal" ] && [ "$(printf '%s\n' "$refusal" | jq -r .id)" = "$id" ]; then
-    report "Der Dienst lehnte den Auftrag ab: $(printf '%s\n' "$refusal" | jq -r .reason)"
+    diagnose
+    fail "Der Dienst der Fassung $previous lehnte den Auftrag ab ($(printf '%s\n' "$refusal" | jq -r .reason)); das Update ist nicht geprüft."
   fi
   run=$(status_file run.json) || run=''
   if [ -n "$run" ] && [ "$(printf '%s\n' "$run" | jq -r .id)" = "$id" ]; then
@@ -206,8 +209,9 @@ for _ in $(seq 1 180); do
   sleep 10
 done
 
-# A run that did not end in half an hour, and a request nobody took, leave
-# the update untried; a run that ended otherwise failed.
+# Failed only where update.sh ran and said so. A run that did not end in half
+# an hour, a request nobody took and an end the updater names itself leave
+# open whether an update gets through: untried.
 case $state in
   succeeded) ;;
   running)
@@ -223,11 +227,22 @@ case $state in
     # start (docker) or went without saying how it ended (vanished): the
     # runner, not the update. update.sh itself names none.
     why=$(printf '%s\n' "$run" | jq -r '.reason // empty' 2>/dev/null) || why=''
-    if [ -n "$why" ]; then
-      diagnose
-      fail "Der Lauf endete mit dem Grund $why, ohne das Update auszuführen; das Update ist nicht geprüft."
-    fi
-    report "run.json sagt $state in Schritt $(printf '%s\n' "$run" | jq -r '.step // "?"') statt succeeded."
+    step=$(printf '%s\n' "$run" | jq -r '.step // "?"' 2>/dev/null) || step='?'
+    case $why in
+      '') report "run.json sagt $state in Schritt $step statt succeeded." ;;
+      docker)
+        diagnose
+        fail "Der Container des Laufs startete nicht; das Update ist nicht geprüft."
+        ;;
+      vanished)
+        diagnose
+        fail "Der Lauf verschwand in Schritt $step, ohne zu sagen, wie er endete; das Update ist nicht geprüft."
+        ;;
+      *)
+        diagnose
+        fail "Der Lauf endete mit dem Grund $why; das Update ist nicht geprüft."
+        ;;
+    esac
     ;;
 esac
 
