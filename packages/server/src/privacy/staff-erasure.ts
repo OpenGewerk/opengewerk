@@ -529,8 +529,14 @@ export async function holdStaffYear(
   // before the deletion did, so `people_link_only_kept_years` (0162) let it
   // through. The year is then not the one read, and the next pass reads it
   // with the account (opengewerk#1132), as `holdPerson` does for the file.
+  // The last year of a file that went takes the name with it (`takeName`),
+  // which changes the file and takes the answers of this account along: then
+  // the row is held from here on, so that the account stays the one read.
+  const gone = await fileGone(tx, year.personId)
   const { rows: file } = await tx.execute<{ user_id: string | null }>(
-    sql`select user_id from people where id = ${year.personId}`,
+    gone
+      ? sql`select user_id from people where id = ${year.personId} ${held(waiting)}`
+      : sql`select user_id from people where id = ${year.personId}`,
   )
 
   if ((file[0]?.user_id ?? null) !== year.userId) {
@@ -580,12 +586,6 @@ export async function holdStaffYear(
 
   if (dueOn > today) {
     return null
-  }
-
-  // The last year of a file that went takes the name with it (`takeName`),
-  // which changes the file: held as well.
-  if (await fileGone(tx, year.personId)) {
-    await tx.execute(sql`select 1 from people where id = ${year.personId} ${held(waiting)}`)
   }
 
   return {

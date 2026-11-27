@@ -1228,6 +1228,35 @@ describe('what of the staff is due (#846)', () => {
     ).toBe(0)
   })
 
+  it('holds the file whose name goes with its last year from the moment it reads its account again (#1132)', async () => {
+    const dennis = await kraft(false)
+
+    await pass()
+    await erase('person', [dennis.person]).expect(201)
+
+    // Held right after the account was read again, before the records of
+    // the year: the account `takeName` takes along is the one read.
+    const stopped = holdQuery((statement) => /select id, corrects_entry_id,/.test(statement))
+    const asked = erase('staff_year', [staffYearKey(dennis.person, oldYear)]).then(
+      (answer) => answer,
+    )
+
+    await reachedBefore(stopped, asked)
+
+    try {
+      await ownTransaction(async (client) => {
+        await client.query("set local lock_timeout = '300ms'")
+        await expect(
+          client.query("update people set user_id = 'lena' where id = $1", [dennis.person]),
+        ).rejects.toThrow(/lock timeout/)
+      })
+    } finally {
+      stopped.release()
+    }
+
+    expect((await asked).status).toBe(201)
+  })
+
   it('refuses a record of any of the four kinds in a year that went, and takes one of a year kept (#1043)', async () => {
     const dennis = await kraft(false)
     const o = String(oldYear)
