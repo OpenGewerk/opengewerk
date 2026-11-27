@@ -531,10 +531,15 @@ export async function holdStaffYear(
   // with the account (opengewerk#1132), as `holdPerson` does for the file.
   // The last year of a file that went takes the name with it (`takeName`),
   // which changes the file and takes the answers of this account along: then
-  // the row is held from here on, so that the account stays the one read.
+  // the row is held from here on, so that the account stays the one read. So
+  // it is for a year outside the years a record of time takes (0163): a link
+  // asks such a year without its lock, and waits for this row instead.
   const gone = await fileGone(tx, year.personId)
+  const { rows: bounds } = await tx.execute<{ within: boolean }>(
+    sql`select public.staff_year_in_bounds(${year.year}) as within`,
+  )
   const { rows: file } = await tx.execute<{ user_id: string | null }>(
-    gone
+    gone || bounds[0]?.within !== true
       ? sql`select user_id from people where id = ${year.personId} ${held(waiting)}`
       : sql`select user_id from people where id = ${year.personId}`,
   )

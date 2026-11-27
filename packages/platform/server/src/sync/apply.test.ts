@@ -1469,8 +1469,8 @@ describe('two transmissions to the same record (opengewerk#1074)', () => {
       ],
     })
 
-    const receipts = await inTenant(north.id, (tx) =>
-      watching.applyOperations(
+    const { receipts, ids } = await inTenant(north.id, async (tx) => {
+      const applied = await watching.applyOperations(
         tx,
         north.id,
         [
@@ -1482,11 +1482,22 @@ describe('two transmissions to the same record (opengewerk#1074)', () => {
           }),
         ],
         courier,
-      ),
-    )
+      )
+      // The ids of transactions the session holds in the one table of locks
+      // of the instance: one, as for a write without a second attempt. An
+      // attempt that was rolled back and left open held one more until the
+      // end (GHSA-9f85-85g8-g7w3).
+      const { rows } = await tx.execute<{ n: number }>(
+        sql`select count(*)::int as n from pg_locks
+             where locktype = 'transactionid' and pid = pg_backend_pid()`,
+      )
+
+      return { receipts: applied, ids: rows[0]?.n }
+    })
 
     expect(outcomes(receipts)).toEqual([{ outcome: 'applied', reason: null, fields: [] }])
     expect(judged).toEqual(['Zähler ablesen', 'Zähler frei'])
+    expect(ids).toBe(1)
   })
 
   it('judges a line by the letter it is in once the lock of its letter came, not the one it was read in (CodeRabbit on #1074)', async () => {

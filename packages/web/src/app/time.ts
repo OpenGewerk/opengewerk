@@ -2,12 +2,14 @@ import {
   berlinDay,
   correctionProblem,
   effectiveEntries,
+  germanYear,
   type IsoDate,
   minutesBetween,
   type RecordState,
   timeEntryKinds,
   type TimeEntryKind,
   timeEntryProblem,
+  timeEntryYearProblem,
 } from '@opengewerk/domain'
 import { accountQuery } from '@opengewerk/platform-web/session'
 import { maybeText, refusalFor, text, useRecords, useSync } from '@opengewerk/platform-web/sync'
@@ -242,7 +244,11 @@ export async function stopStopwatch({
     startedAt: onTheMinute(new Date(running.startedAt)),
     endedAt: onTheMinute(now),
   }
-  const problem = timeEntryProblem(values)
+  // The year too, as far as the device can tell: a clock set back before
+  // 1970 would send one the server refuses, and that holds the outbox up
+  // (GHSA-9f85-85g8-g7w3). A clock that runs ahead it cannot tell from its
+  // own; the server refuses that one and says why.
+  const problem = timeEntryProblem(values) ?? timeEntryYearProblem(values.startedAt, now)
 
   if (problem) {
     return problem
@@ -329,7 +335,21 @@ export async function recordEntry(
   corrects: string | null = null,
 ): Promise<EditResult | string> {
   const values = { ...entry, correctsEntryId: corrects }
-  const problem = timeEntryProblem(values) ?? correctionProblem(values)
+  // A correction may stay in the year its chain began in or in the year of
+  // the entry it corrects, one from before the bound included
+  // (GHSA-9f85-85g8-g7w3).
+  const corrected = corrects === null ? null : client.get('time_entries', corrects)
+  const correctedStart = corrected === null ? null : Date.parse(String(corrected['startedAt']))
+  const keptYears = [
+    ...(typeof corrected?.['chainYear'] === 'number' ? [corrected['chainYear']] : []),
+    ...(correctedStart === null || Number.isNaN(correctedStart)
+      ? []
+      : [germanYear(correctedStart)]),
+  ]
+  const problem =
+    timeEntryProblem(values) ??
+    timeEntryYearProblem(values.startedAt, new Date(), keptYears) ??
+    correctionProblem(values)
 
   return problem ?? client.create('time_entries', values)
 }

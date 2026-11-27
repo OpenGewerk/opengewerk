@@ -189,6 +189,16 @@ export interface Changes {
  */
 const mostAttempts = 5
 
+/**
+ * Up to this many operations a transmission locks each of them; a larger one
+ * holds its tenant alone (GHSA-9f85-85g8-g7w3). So it takes at most this many
+ * locks and one more, whatever it carries.
+ */
+export const lockedOneByOne = 64
+
+/** How a transmission keeps an operation from being applied twice at once. */
+type Locking = 'each' | 'tenant'
+
 /** A try that found its record changed since it was read (opengewerk#1074). */
 class ChangedMeanwhile extends Error {}
 
@@ -480,6 +490,7 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
     tenantId: TenantId,
     sent: Operation,
     sender: Sender,
+    locking: Locking,
   ): Promise<OperationReceipt> {
     // One at a time for one operation, until the transaction ends. The
     // question below was asked without it: a device that sent its queue again
@@ -487,15 +498,19 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
     // applied the operation a second time and failed on the receipt of the
     // first, and the whole transmission was refused over an operation that
     // had been taken (opengewerk-haustechnik#31). Now the second waits here,
-    // asks once the first is through and is told what became of it.
+    // asks once the first is through and is told what became of it. A large
+    // transmission holds its tenant alone instead (`applyOperations`).
     //
-    // The lock is on the id, in a key space of its own beside the named locks
-    // of the foundation. Two transmissions take their locks in the same
+    // The lock is on the id, written the one way a uuid is, so that the same
+    // id in capitals meets it too, in a key space of its own beside the named
+    // locks of the foundation. Two transmissions take their locks in the same
     // order, the one of the outbox they came from (`inOutboxOrder`), so they
     // do not wait for each other in a circle.
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtext('opengewerk.sync_operation'), hashtext(${sent.id}::text))`,
-    )
+    if (locking === 'each') {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtext('opengewerk.sync_operation'), hashtext((${sent.id})::uuid::text))`,
+      )
+    }
 
     const seen = await tx
       .select({
@@ -729,6 +744,11 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
           }
 
           await tx.execute(sql`rollback to savepoint opengewerk_sync_try`)
+          // And let go of it: rolled back to, a savepoint stays open, and the
+          // next attempt opened its own inside it. Each attempt left one more
+          // level whose id took a place in the one table of locks of the
+          // instance until the transmission ended (GHSA-9f85-85g8-g7w3).
+          await tx.execute(sql`release savepoint opengewerk_sync_try`)
 
           if (attempt >= mostAttempts) {
             throw changedEveryTime(error)
@@ -770,13 +790,32 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
       const receipts: OperationReceipt[] = []
       const ordered = inOutboxOrder(operations)
 
+      // A transmission locks each of its operations (`applyOne`) up to a few
+      // dozen of them; a larger one holds the transmissions of its tenant
+      // alone instead, under one lock (GHSA-9f85-85g8-g7w3). Each lock is one
+      // of the one table of locks every session of the instance shares, and
+      // a transmission of two thousand operations took two thousand of them.
+      // Its first write waits for the counter of the tenant anyway, so alone
+      // it waits little longer than before. A smaller transmission takes the
+      // lock of the tenant shared, so that it and a large one with the same
+      // operation, the same queue sent again, still wait for each other.
+      // Taken before anything else of the transmission, the lock of the
+      // tenant waits holding nothing, and no circle can close over it.
+      const locking: Locking = ordered.length > lockedOneByOne ? 'tenant' : 'each'
+
+      await tx.execute(
+        locking === 'tenant'
+          ? sql`select pg_advisory_xact_lock(hashtext('opengewerk.sync_transmission'), hashtext((${tenantId})::uuid::text))`
+          : sql`select pg_advisory_xact_lock_shared(hashtext('opengewerk.sync_transmission'), hashtext((${tenantId})::uuid::text))`,
+      )
+
       if (application.beforeOperations) {
         await application.beforeOperations({ tx, tenantId, operations: ordered, sender })
       }
 
       for (const operation of ordered) {
         try {
-          receipts.push(await applyOne(tx, tenantId, operation, sender))
+          receipts.push(await applyOne(tx, tenantId, operation, sender, locking))
         } catch (error) {
           // Whatever stops one operation still stops the transmission. Which
           // one it was travels with it, so that the answer can say.

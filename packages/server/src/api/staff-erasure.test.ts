@@ -1311,6 +1311,351 @@ describe('what of the staff is due (#846)', () => {
     expect((await asked).status).toBe(201)
   })
 
+  it('refuses a record of time or a time on call outside the years 1970 to the next, and takes the year after this one (GHSA-9f85-85g8-g7w3)', async () => {
+    const next = thisYear + 1
+    const later = String(next + 1)
+    const sentence = (year: number | string) =>
+      `OpenGewerk nimmt Arbeitszeit und Rufbereitschaft für die Jahre 1970 bis ${String(next)} an, nicht für ${String(year)}.`
+    const written = (statement: string) =>
+      ownTransaction(async (client) => {
+        await client.query("select set_config('app.user_id', 'kurt', true)")
+        await client.query(statement)
+        await client.query('commit')
+
+        return 'went through'
+      }).catch((error: unknown) => (error as Error).message)
+
+    await kraft(false)
+
+    expect(
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
+         values ('${north}', 'kurt', 'work', '1969-06-02 07:00+01', '1969-06-02 15:00+01', 'zu früh')`),
+    ).toBe(sentence(1969))
+    expect(
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
+         values ('${north}', 'kurt', 'work', '${later}-06-02 07:00+02', '${later}-06-02 15:00+02', 'zu spät')`),
+    ).toBe(sentence(later))
+    expect(
+      await written(`insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note)
+         values ('${north}', 'kurt', '1969-06-05 16:00+01', '1969-06-06 07:00+01', 'zu früh')`),
+    ).toBe(sentence(1969))
+    expect(
+      await written(`insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note)
+         values ('${north}', 'kurt', '${later}-06-05 16:00+02', '${later}-06-06 07:00+02', 'zu spät')`),
+    ).toBe(sentence(later))
+
+    // The year after this one stays open, for what is planned ahead, and 1970
+    // is the first year taken.
+    expect(
+      await written(`insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note)
+         values ('${north}', 'kurt', '${String(next)}-06-05 16:00+02', '${String(next)}-06-06 07:00+02', 'geplant')`),
+    ).toBe('went through')
+    expect(
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
+         values ('${north}', 'kurt', 'work', '1970-06-02 07:00+01', '1970-06-02 15:00+01', 'früh genug')`),
+    ).toBe('went through')
+
+    // A correction is bound by its own year, not by the year of its chain: an
+    // entry from before 0163 in a year outside the bound can still be put
+    // right, and a correction into such a year is refused.
+    await admin.query(
+      `begin; set local app.user_id = 'kurt';
+       alter table time_entries disable trigger chain_year_of_time_entries;
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year)
+       values ('${north}', 'kurt', 'work', '1500-03-02 07:00+01', '1500-03-02 15:00+01', 'vertippt', 1500);
+       alter table time_entries enable trigger chain_year_of_time_entries;
+       commit;`,
+    )
+
+    const { rows } = await admin.query<{ id: string }>(
+      "select id from time_entries where note = 'vertippt'",
+    )
+    const typo = rows[0]?.id ?? ''
+    const kept = await admin.query<{ id: string }>(
+      "select id from time_entries where note = 'früh genug'",
+    )
+
+    // And it asks the year 1500 of its chain without the lock of that year:
+    // all it holds is the lock of the account.
+    const corrected = await ownTransaction(async (client) => {
+      await client.query("select set_config('app.user_id', 'kurt', true)")
+      await client.query(
+        `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+           values ($1, 'kurt', 'work', $2, $3, 'berichtigt', $4)`,
+        [north, `${String(thisYear)}-03-02 07:00+01`, `${String(thisYear)}-03-02 15:00+01`, typo],
+      )
+
+      const { rows: held } = await client.query<{ n: number }>(
+        `select count(*)::int as n from pg_locks
+          where locktype = 'advisory' and pid = pg_backend_pid()`,
+      )
+
+      await client.query('commit')
+
+      return held[0]?.n
+    })
+
+    expect(corrected).toBe(1)
+    expect(await count("select count(*) as n from time_entries where note = 'berichtigt'")).toBe(1)
+    expect(
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+         values ('${north}', 'kurt', 'work', '1969-06-02 07:00+01', '1969-06-02 15:00+01', 'zurück', '${kept.rows[0]?.id ?? ''}')`),
+    ).toBe(sentence(1969))
+
+    // Two more from before: one is withdrawn with its own times, which stays
+    // in the year of its chain, and one moved into another year outside.
+    await admin.query(
+      `begin; set local app.user_id = 'kurt';
+       alter table time_entries disable trigger chain_year_of_time_entries;
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year)
+       values ('${north}', 'kurt', 'work', '1501-03-02 07:00+01', '1501-03-02 15:00+01', 'zweimal getippt', 1501),
+              ('${north}', 'kurt', 'work', '1502-03-02 07:00+01', '1502-03-02 15:00+01', 'falsch getippt', 1502);
+       alter table time_entries enable trigger chain_year_of_time_entries;
+       commit;`,
+    )
+
+    const typed = async (note: string) =>
+      (await admin.query<{ id: string }>('select id from time_entries where note = $1', [note]))
+        .rows[0]?.id ?? ''
+
+    expect(
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id, withdrawn)
+         values ('${north}', 'kurt', 'work', '1501-03-02 07:00+01', '1501-03-02 15:00+01', 'doppelt', '${await typed('zweimal getippt')}', true)`),
+    ).toBe('went through')
+    expect(
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+         values ('${north}', 'kurt', 'work', '1499-03-02 07:00+01', '1499-03-02 15:00+01', 'noch falscher', '${await typed('falsch getippt')}')`),
+    ).toBe(sentence(1499))
+
+    // A correction from before whose chain began in 1500 and whose own times
+    // lie in 1503: it is withdrawn with its own times, the year of the entry
+    // it corrects.
+    await admin.query(
+      `begin; set local app.user_id = 'kurt';
+       alter table time_entries disable trigger chain_year_of_time_entries;
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year)
+       values ('${north}', 'kurt', 'work', '1500-12-31 22:00+01', '1500-12-31 23:00+01', 'kette alt', 1500);
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year, corrects_entry_id)
+       select '${north}', 'kurt', 'work', '1503-01-02 07:00+01', '1503-01-02 08:00+01', 'kette quer', 1500, id
+         from time_entries where note = 'kette alt';
+       alter table time_entries enable trigger chain_year_of_time_entries;
+       commit;`,
+    )
+
+    expect(
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id, withdrawn)
+         values ('${north}', 'kurt', 'work', '1503-01-02 07:00+01', '1503-01-02 08:00+01', 'quer zurück', '${await typed('kette quer')}', true)`),
+    ).toBe('went through')
+
+    // An entry that names itself, or an entry of another account, finds no
+    // entry of its own to stay with, and is bound like any.
+    const itself = newId<'time-entry'>()
+
+    expect(
+      await written(`insert into time_entries (id, tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+         values ('${itself}', '${north}', 'kurt', 'work', '1500-06-02 07:00+01', '1500-06-02 15:00+01', 'sich selbst', '${itself}')`),
+    ).toBe(sentence(1500))
+
+    await admin.query(
+      `begin; set local app.user_id = 'lena';
+       alter table time_entries disable trigger chain_year_of_time_entries;
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year)
+       values ('${north}', 'lena', 'work', '1504-03-02 07:00+01', '1504-03-02 15:00+01', 'von lena', 1504);
+       alter table time_entries enable trigger chain_year_of_time_entries;
+       commit;`,
+    )
+
+    expect(
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+         values ('${north}', 'kurt', 'work', '1504-03-02 07:00+01', '1504-03-02 14:00+01', 'fremd', '${await typed('von lena')}')`),
+    ).toBe(sentence(1504))
+  })
+
+  it('lets a correction of a year outside the bound and a deletion of that year meet without a record left in it, either way round (GHSA-9f85-85g8-g7w3)', async () => {
+    const dennis = await kraft(false)
+
+    // Records of 1501 and 1502 from before 0163, of the account of the file,
+    // last written then, so that both years are due.
+    await admin.query(
+      `begin; set local app.user_id = 'kurt';
+       alter table time_entries disable trigger chain_year_of_time_entries;
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year)
+       values ('${north}', 'kurt', 'work', '1501-03-02 07:00+01', '1501-03-02 15:00+01', 'alt 1501', 1501),
+              ('${north}', 'kurt', 'work', '1502-03-02 07:00+01', '1502-03-02 15:00+01', 'alt 1502', 1502);
+       alter table time_entries enable trigger chain_year_of_time_entries;
+       set local session_replication_role = replica;
+       update time_entries set updated_at = started_at where note like 'alt 15%';
+       commit;`,
+    )
+    await pass()
+
+    const idOf = async (note: string) =>
+      (await admin.query<{ id: string }>('select id from time_entries where note = $1', [note]))
+        .rows[0]?.id
+    const correcting = (year: number, corrects: string | undefined) =>
+      ownTransaction(async (client) => {
+        await client.query("select set_config('app.user_id', 'kurt', true)")
+        await client.query(
+          `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+             values ($1, 'kurt', 'work', $2, $3, 'gekürzt', $4)`,
+          [north, `${String(year)}-03-02 07:00+01`, `${String(year)}-03-02 14:00+01`, corrects],
+        )
+        await client.query('commit')
+
+        return 'went through'
+      }).catch((error: unknown) => (error as Error).message)
+    const left = (year: number) =>
+      count("select count(*) as n from time_entries where user_id = 'kurt' and chain_year = $1", [
+        year,
+      ])
+
+    // The correction first, while the deletion is held before its line of the
+    // protocol: the year asks no lock, so it goes through, and the deletion
+    // may not remove the record the correction points at, and takes nothing.
+    // Had it removed it, it would have found the correction it never read
+    // when it counts what is left.
+    {
+      const key = staffYearKey(dennis.person, 1501)
+      const stopped = holdQuery((statement) => protocolLine.test(statement))
+      const asked = erase('staff_year', [key]).then((answer) => answer)
+
+      await reachedBefore(stopped, asked)
+
+      const corrected = await correcting(1501, await idOf('alt 1501')).finally(stopped.release)
+
+      expect(corrected).toBe('went through')
+      expect((await asked).status).toBe(409)
+      expect(await count('select count(*) as n from erasures where record_id = $1', [key])).toBe(0)
+      expect(await left(1501)).toBe(2)
+    }
+
+    // The deletion first, held after it removed the records, before it counts
+    // what is left: the correction waits for the record it points at, which
+    // the deletion holds removed, and fails on it once the deletion is through.
+    {
+      const key = staffYearKey(dennis.person, 1502)
+      const stopped = holdQuery(
+        (statement) =>
+          /count\(\*\) from time_entries/.test(statement) &&
+          /from leave_entitlements/.test(statement),
+      )
+      const asked = erase('staff_year', [key]).then((answer) => answer)
+
+      await reachedBefore(stopped, asked)
+
+      const corrected = correcting(1502, await idOf('alt 1502'))
+
+      await untilWaiting(stopped.holder()).finally(stopped.release)
+
+      expect((await asked).status).toBe(201)
+      expect(await corrected).toMatch(/time_entries_correction_in_tenant/)
+      expect(await left(1502)).toBe(0)
+    }
+  })
+
+  it('keeps a link that comes while a year outside the bound goes waiting at the row of the file, and refuses it then (GHSA-9f85-85g8-g7w3)', async () => {
+    const dennis = await kraft(false)
+    const key = staffYearKey(dennis.person, 1501)
+    const old = (who: string) =>
+      `select set_config('app.user_id', '${who}', true);
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year)
+       values ('${north}', '${who}', 'work', '1501-03-02 07:00+01', '1501-03-02 15:00+01', 'alt', 1501);`
+
+    // Records of 1501 from before 0163, of the account of the file and of
+    // another, last written then, so that the year of the file is due.
+    await admin.query(
+      `begin;
+       alter table time_entries disable trigger chain_year_of_time_entries;
+       ${old('kurt')}
+       ${old('lena')}
+       alter table time_entries enable trigger chain_year_of_time_entries;
+       set local session_replication_role = replica;
+       update time_entries set updated_at = '1501-03-02 15:00+01' where note = 'alt';
+       commit;`,
+    )
+    await pass()
+
+    const stopped = holdQuery((statement) => protocolLine.test(statement))
+    const asked = erase('staff_year', [key]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+
+    const linked = refusedWith(
+      database.forTenant({ tenantId: north, userId: 'lena' }, (tx) =>
+        tx.execute(sql`update people set user_id = 'lena' where id = ${dennis.person}`),
+      ),
+    )
+
+    await untilWaiting(stopped.holder()).finally(stopped.release)
+
+    expect((await asked).status).toBe(201)
+    expect(await linked).toBe(
+      'Das Jahr 1501 dieser Person ist nach dem Löschkonzept gelöscht. Für dieses Jahr nimmt OpenGewerk nichts mehr an.',
+    )
+  })
+
+  it('asks the years of an account outside the bound without a lock when a file is linked to it, and refuses one of them that went (GHSA-9f85-85g8-g7w3)', async () => {
+    const dennis = await kraft(false)
+    const y = String(thisYear)
+
+    // Records of an account from before 0163, in three years it takes no
+    // more, and one of this year.
+    await admin.query(
+      `begin; set local app.user_id = 'lena';
+       alter table time_entries disable trigger chain_year_of_time_entries;
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year)
+       values ('${north}', 'lena', 'work', '1500-03-02 07:00+01', '1500-03-02 15:00+01', 'alt', 1500),
+              ('${north}', 'lena', 'work', '1501-03-02 07:00+01', '1501-03-02 15:00+01', 'alt', 1501),
+              ('${north}', 'lena', 'work', '1502-03-02 07:00+01', '1502-03-02 15:00+01', 'alt', 1502);
+       alter table time_entries enable trigger chain_year_of_time_entries;
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
+       values ('${north}', 'lena', 'work', '${y}-01-05 07:00+01', '${y}-01-05 15:00+01', 'heute');
+       commit;`,
+    )
+
+    const link = async (client: PoolClient) => {
+      await client.query(
+        "select set_config('app.tenant_id', $1, true), set_config('app.user_id', 'bruno', true)",
+        [north],
+      )
+      await client.query('update people set user_id = $1 where id = $2', ['lena', dennis.person])
+    }
+    // Held open after the link, to count what it took.
+    const locks = await ownTransaction(async (client) => {
+      await link(client)
+
+      const { rows } = await client.query<{ n: number }>(
+        `select count(*)::int as n from pg_locks
+          where locktype = 'advisory' and pid = pg_backend_pid()`,
+      )
+
+      return rows[0]?.n
+    })
+
+    // The lock of the account and the one of this year, none for the three
+    // years before 1970.
+    expect(locks).toBe(2)
+
+    // One of them went, as a deletion of it would have it.
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       insert into erasures (tenant_id, kind, record_id, label, automatic, redactions, created_by)
+       values ('${north}', 'staff_year', staff_year_key('${dennis.person}', 1501), 'Jahr 1501', false, 0, 'lena');
+       commit;`,
+    )
+
+    expect(
+      await ownTransaction(async (client) => {
+        await link(client)
+        await client.query('commit')
+
+        return 'went through'
+      }).catch((error: unknown) => (error as Error).message),
+    ).toBe(
+      'Das Jahr 1501 dieser Person ist nach dem Löschkonzept gelöscht. Für dieses Jahr nimmt OpenGewerk nichts mehr an.',
+    )
+  })
+
   it('refuses a record of any of the four kinds in a year that went, and takes one of a year kept (#1043)', async () => {
     const dennis = await kraft(false)
     const o = String(oldYear)

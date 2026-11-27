@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 
-import type { RecordState } from '@opengewerk/domain'
+import { germanYear, type RecordState } from '@opengewerk/domain'
 import { openLocalStore } from '@opengewerk/platform-web/sync'
 import { TestServer } from '@opengewerk/platform-web/testing'
 import { describe, expect, it } from 'vitest'
@@ -94,6 +94,17 @@ describe('an entry typed by hand', () => {
     expect(await recordEntry(client, { ...entry, endedAt: '2026-09-21T04:00:00.000Z' })).toBe(
       'Das Ende liegt nicht nach dem Beginn.',
     )
+    // A year typed with two digits, which the server would refuse and so hold
+    // the outbox up (GHSA-9f85-85g8-g7w3).
+    expect(
+      await recordEntry(client, {
+        ...entry,
+        startedAt: '0026-09-21T05:00:00.000Z',
+        endedAt: '0026-09-21T09:00:00.000Z',
+      }),
+    ).toBe(
+      `OpenGewerk nimmt Arbeitszeit für die Jahre 1970 bis ${String(germanYear(Date.now()) + 1)} an, nicht für 26.`,
+    )
     expect(client.status().pending).toBe(0)
     expect(await recordEntry(client, entry)).toMatchObject({ outcome: 'queued' })
     expect(client.status().pending).toBe(1)
@@ -131,6 +142,30 @@ describe('a stopwatch that stops', () => {
     ).toEqual([
       { kind: 'work', startedAt: '2026-09-21T05:00:00.000Z', endedAt: '2026-09-21T06:00:00.000Z' },
     ])
+
+    client.stop()
+  })
+
+  it('keeps a year before 1970 out of the outbox that a clock set back gives it (GHSA-9f85-85g8-g7w3)', async () => {
+    const client = await SyncClient.start({
+      store: await openLocalStore('zeiten-falsche-uhr'),
+      transport: new TestServer(),
+      writer: new TestServer(),
+      deviceId: 'geraet',
+      entities: ['time_entries'],
+      onSignedOut: () => {},
+    })
+    const timing = { client, me: 'u-1', consent: false }
+
+    await startStopwatch(
+      { ...timing, now: new Date('1969-06-02T05:00:00.000Z') },
+      { kind: 'work', jobId: null },
+    )
+
+    expect(await stopStopwatch({ ...timing, now: new Date('1969-06-02T06:00:00.000Z') })).toBe(
+      'OpenGewerk nimmt Arbeitszeit für die Jahre 1970 bis 1970 an, nicht für 1969.',
+    )
+    expect(client.status().pending).toBe(0)
 
     client.stop()
   })
