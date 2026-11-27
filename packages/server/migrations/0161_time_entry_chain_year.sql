@@ -28,7 +28,11 @@
 -- year, and a record that held the counter while it waited for the lock would
 -- hold up the deletion that holds the lock. Whose a record of time is, the
 -- trigger reads from the request, as `time_entries_record_owner` writes it
--- after it.
+-- after it. A row changed that stays with its person in its year takes no
+-- lock of the year: it holds its row, which the deletion holds after the
+-- lock. Where a transmission wrote before and so holds the counter already,
+-- PostgreSQL breaks the deletion or the transmission off as a deadlock;
+-- nothing went, the deletion says so (`ErasureBusy`), and either comes again.
 --
 -- **Fits the version before it**: it writes no `chain_year`, and the trigger
 -- writes it for every entry it makes; `time_entry_year` answers as before for
@@ -113,6 +117,15 @@ AS $$
 DECLARE
 	v_person uuid;
 BEGIN
+	-- A row that stays with its person in its year takes no lock of the year:
+	-- it holds its row already, and the deletion holds the rows of the year
+	-- after its lock, so that waiting for the lock here would close a ring.
+	-- The row orders itself against the deletion as before 0161.
+	IF tg_op = 'UPDATE' AND new.user_id = old.user_id
+	   AND extract(year FROM (new.starts_at AT TIME ZONE 'Europe/Berlin')) = extract(year FROM (old.starts_at AT TIME ZONE 'Europe/Berlin')) THEN
+		RETURN new;
+	END IF;
+
 	FOR v_person IN SELECT p.id FROM public.people p WHERE p.user_id = new.user_id ORDER BY p.id LOOP
 		PERFORM public.staff_year_stays_kept(v_person, extract(year FROM (new.starts_at AT TIME ZONE 'Europe/Berlin'))::integer);
 	END LOOP;
@@ -125,6 +138,15 @@ CREATE FUNCTION "absence_stays_in_kept_years"() RETURNS trigger
 	SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
+	-- A row that stays with its person in its year takes no lock of the year:
+	-- it holds its row already, and the deletion holds the rows of the year
+	-- after its lock, so that waiting for the lock here would close a ring.
+	-- The row orders itself against the deletion as before 0161.
+	IF tg_op = 'UPDATE' AND new.person_id = old.person_id
+	   AND extract(year FROM new.first_day) = extract(year FROM old.first_day) THEN
+		RETURN new;
+	END IF;
+
 	PERFORM public.staff_year_stays_kept(new.person_id, extract(year FROM new.first_day)::integer);
 
 	RETURN new;
@@ -135,6 +157,14 @@ CREATE FUNCTION "leave_stays_in_kept_years"() RETURNS trigger
 	SET search_path = pg_catalog, public, pg_temp
 AS $$
 BEGIN
+	-- A row that stays with its person in its year takes no lock of the year:
+	-- it holds its row already, and the deletion holds the rows of the year
+	-- after its lock, so that waiting for the lock here would close a ring.
+	-- The row orders itself against the deletion as before 0161.
+	IF tg_op = 'UPDATE' AND new.person_id = old.person_id AND new.year = old.year THEN
+		RETURN new;
+	END IF;
+
 	PERFORM public.staff_year_stays_kept(new.person_id, new.year);
 
 	RETURN new;

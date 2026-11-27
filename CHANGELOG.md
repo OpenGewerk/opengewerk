@@ -32,8 +32,10 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 - Ein Lohnjahr, das nach dem Löschkonzept gelöscht ist, nimmt keine Arbeitszeit, Rufbereitschaft oder Abwesenheit und
   keinen Urlaubsanspruch mehr an, auch nicht, wenn ein solcher Eintrag in das Jahr verschoben wird (#1043). Kommt er,
-  während das Jahr gelöscht wird, wartet er, bis das Löschen durch ist, und wird dann abgelehnt. Warum: Das Jahr hat
-  genau eine Zeile im Protokoll, und ein Eintrag, der danach dazukam, ließ sich nie mehr löschen.
+  während das Jahr gelöscht wird, wartet er, bis das Löschen durch ist, und wird dann abgelehnt. Hat eine Übertragung
+  vorher schon etwas anderes geschrieben, bricht PostgreSQL eins von beiden ab: Das Löschen löscht dann nichts und sagt
+  das, eine Übertragung kommt wieder. Warum: Das Jahr hat genau eine Zeile im Protokoll, und ein Eintrag, der danach
+  dazukam, ließ sich nie mehr löschen.
 - Eine Korrektur der Arbeitszeit zählt im Löschkonzept zum Jahr des Eintrags, mit dem ihre Kette beginnt, auch hinter
   dem hundertsten Glied (#1044). Jeder Zeiteintrag hält dieses Jahr jetzt selbst, und die Migration trägt es für
   bestehende Einträge nach, ohne zu ändern, wann sie erfasst wurden. Warum: Die Datenbank suchte den ersten Eintrag nur

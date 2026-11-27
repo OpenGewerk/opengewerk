@@ -854,6 +854,94 @@ describe('what of the staff is due (#846)', () => {
     ).toBe(0)
   })
 
+  it('lets a record of the year be changed in its row while the deletion holds its year, ordered by its row (#1043)', async () => {
+    const dennis = await kraft(false)
+    const o = String(oldYear)
+    const key = staffYearKey(dennis.person, oldYear)
+
+    await pass()
+
+    // Held after it took the lock of the year and before it holds any row of it.
+    const stopped = holdQuery(
+      (statement) =>
+        /from on_call_shifts\s+where user_id/i.test(statement) &&
+        /for no key update/i.test(statement),
+    )
+    const asked = erase('staff_year', [key]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+
+    try {
+      // The office saves a time on call, an absence and days of leave of the
+      // year as their forms send them, with the fields the year is read from.
+      // A change in its year waits for no lock of the year and holds only its
+      // row, so the deletion waits for it and not the other way round, which
+      // would be a deadlock.
+      for (const statement of [
+        `update on_call_shifts set starts_at = starts_at, note = 'berichtigt'
+          where user_id = 'kurt' and extract(year from (starts_at at time zone 'Europe/Berlin'))::int = ${o}`,
+        `update absences set first_day = first_day, note = 'berichtigt' where id = '${dennis.vacation}'`,
+        `update leave_entitlements set year = year, carried_half_days = 5
+          where person_id = '${dennis.person}' and year = ${o}`,
+      ]) {
+        await ownTransaction(async (client) => {
+          await client.query("set local lock_timeout = '300ms'")
+          await client.query(statement)
+        })
+      }
+    } finally {
+      stopped.release()
+    }
+
+    expect((await asked).status).toBe(201)
+  })
+
+  it('answers a deletion that meets a transmission in a deadlock as busy, and the transmission goes through (#1043)', async () => {
+    const dennis = await kraft(false)
+    const n = String(nextYear)
+    const key = staffYearKey(dennis.person, oldYear)
+
+    await pass()
+
+    const stopped = holdQuery((statement) => protocolLine.test(statement))
+    const asked = erase('staff_year', [key]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+
+    // A transmission that wrote a record of this year first, and so holds the
+    // counter of the business, and then a correction into the year the
+    // deletion holds. The deletion waits for the counter first, and so it is
+    // the one PostgreSQL breaks off.
+    const transmitted = ownTransaction(async (client) => {
+      await client.query(
+        "select set_config('app.tenant_id', $1, true), set_config('app.user_id', 'kurt', true)",
+        [north],
+      )
+      await client.query(
+        `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
+           values ($1, 'kurt', 'work', $2, $3, 'heute')`,
+        [north, `${String(thisYear)}-01-05 07:00+01`, `${String(thisYear)}-01-05 15:00+01`],
+      )
+      stopped.release()
+      await waitingFor(admin, client, asked)
+      await client.query(
+        `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+           values ($1, 'kurt', 'work', $2, $3, 'noch einmal berichtigt', $4)`,
+        [north, `${n}-01-01 00:20+01`, `${n}-01-01 01:00+01`, dennis.correction],
+      )
+      await client.query('commit')
+
+      return 'went through'
+    }).catch((error: unknown) => (error as Error).message)
+
+    const answer = await asked
+
+    expect(answer.status).toBe(409)
+    expect(refusal(answer)).toContain('gleichzeitig wurde ein Eintrag dafür geschrieben')
+    expect(await transmitted).toBe('went through')
+    expect(await count('select count(*) as n from erasures where record_id = $1', [key])).toBe(0)
+  })
+
   it('refuses a record of any of the four kinds in a year that went, and takes one of a year kept (#1043)', async () => {
     const dennis = await kraft(false)
     const o = String(oldYear)

@@ -48,6 +48,7 @@ import {
   automationsOf,
   dueErasuresOf,
   eraseRecords,
+  ErasureBusy,
   ErasureInterrupted,
   ErasureRefused,
   erasureReason,
@@ -180,7 +181,11 @@ export class PrivacyController {
 
       return erased
     } catch (error) {
-      if (error instanceof ErasureRefused || error instanceof ErasureInterrupted) {
+      if (
+        error instanceof ErasureRefused ||
+        error instanceof ErasureInterrupted ||
+        error instanceof ErasureBusy
+      ) {
         throw new ConflictException(error.message)
       }
 

@@ -752,7 +752,23 @@ export function eraseRecords(
     case 'sickness':
     case 'staff_year':
     case 'person':
-      return eraseStaff(tx, input.kind, input)
+      // A write of a record of the year that met the deletion in a deadlock
+      // (0161, opengewerk#1043): a transmission that holds the counter of the
+      // business and then waits for the lock of the year. PostgreSQL broke the
+      // deletion off, and nothing went.
+      return eraseStaff(tx, input.kind, input).catch((error: unknown) => {
+        if (databaseCode(error) !== '40P01') {
+          throw error
+        }
+
+        throw new ErasureBusy(
+          input.automatic
+            ? `${erasureKindWords[input.kind].one}: gleichzeitig wurde ein Eintrag dafür geschrieben. ` +
+                'Gelöscht ist nichts; der nächste Lauf versucht es wieder.'
+            : `${erasureKindWords[input.kind].one}: gleichzeitig wurde ein Eintrag dafür geschrieben. ` +
+                'Gelöscht ist nichts; bitte noch einmal löschen.',
+        )
+      })
     case 'site':
       return eraseSites(tx, input)
   }
