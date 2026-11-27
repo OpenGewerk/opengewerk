@@ -103,13 +103,18 @@ status_file() {
   sudo cat "$status_volume/$1" 2>/dev/null
 }
 
-report() {
-  say "Das Update von $previous auf $new ging nicht durch: $1"
+# The end of run.json and the log of the updater, for the report.
+diagnose() {
   if run=$(status_file run.json); then
     printf '%s\n' "$run" | jq -r '"Schritt \(.step), Stand \(.state), Grund \(.reason // "keiner")", (.log // [] | .[])' |
       tee -a "$summary" || true
   fi
   compose logs --no-color --tail 200 updater 2>&1 | tail -n 200 || true
+}
+
+report() {
+  say "Das Update von $previous auf $new ging nicht durch: $1"
+  diagnose
   fail "Die Fassung $new ist erschienen. Ein Update aus dem Bereich der Instanz von $previous auf sie trägt nicht, bis eine Korrektur erschienen ist."
 }
 
@@ -194,7 +199,20 @@ for _ in $(seq 1 180); do
   sleep 10
 done
 
-[ "$state" = succeeded ] || report "run.json sagt ${state:-nichts} statt succeeded."
+# A run that did not end in half an hour, and a request nobody took, leave
+# the update untried; a run that ended otherwise failed.
+case $state in
+  succeeded) ;;
+  running)
+    diagnose
+    fail "Der Lauf war nach einer halben Stunde nicht zu Ende; das Update ist nicht geprüft."
+    ;;
+  '')
+    diagnose
+    fail "Der Dienst der Fassung $previous nahm den Auftrag in einer halben Stunde nicht an; das Update ist nicht geprüft."
+    ;;
+  *) report "run.json sagt $state statt succeeded." ;;
+esac
 
 # Asked apart: in a pipeline sh takes the status of its last command, and jq
 # ends well on an empty answer.
