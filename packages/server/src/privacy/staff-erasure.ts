@@ -523,6 +523,20 @@ export async function holdStaffYear(
   const written = sql`extract(year from (updated_at at time zone 'Europe/Berlin'))::int`
   const read = async (query: SQL) => (await tx.execute<{ id: string; written: number }>(query)).rows
 
+  // The account of the file as it is now, after the lock of the year: a file
+  // linked to another account between the list and the lock brings that
+  // account's records into the year, and its link took the lock of the year
+  // before the deletion did, so `people_link_only_kept_years` (0162) let it
+  // through. The year is then not the one read, and the next pass reads it
+  // with the account (opengewerk#1132), as `holdPerson` does for the file.
+  const { rows: file } = await tx.execute<{ user_id: string | null }>(
+    sql`select user_id from people where id = ${year.personId}`,
+  )
+
+  if ((file[0]?.user_id ?? null) !== year.userId) {
+    return null
+  }
+
   const yearRows =
     year.userId === null
       ? []

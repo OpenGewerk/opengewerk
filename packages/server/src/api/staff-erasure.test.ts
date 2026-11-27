@@ -1047,6 +1047,187 @@ describe('what of the staff is due (#846)', () => {
     expect(await linked('lena')).toBe(sentence)
   })
 
+  it('lets a link and a record of the account that meet wait for each other, so that the year that went takes nothing (#1132)', async () => {
+    const dennis = await kraft(false)
+    const o = String(oldYear)
+    const sentence =
+      `Das Jahr ${o} dieser Person ist nach dem Löschkonzept gelöscht. ` +
+      'Für dieses Jahr nimmt OpenGewerk nichts mehr an.'
+    const as = (client: PoolClient, userId: string) =>
+      client.query(
+        "select set_config('app.tenant_id', $1, true), set_config('app.user_id', $2, true)",
+        [north, userId],
+      )
+    const link = async (client: PoolClient, userId: string) => {
+      await as(client, 'bruno')
+      await client.query('update people set user_id = $1 where id = $2', [userId, dennis.person])
+    }
+    const record = async (client: PoolClient, userId: string) => {
+      await as(client, userId)
+      await client.query(
+        `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
+           values ($1, $2, 'work', $3, $4, 'gleichzeitig')`,
+        [north, userId, `${o}-04-07 07:00+02`, `${o}-04-07 15:00+02`],
+      )
+    }
+    // `first` keeps its transaction open until `second` waits for it, and
+    // ends it then; the answer is that of `second`.
+    const meeting = (
+      first: (client: PoolClient) => Promise<void>,
+      second: (client: PoolClient) => Promise<void>,
+    ) =>
+      ownTransaction(async (holder) => {
+        await first(holder)
+
+        const waiting = ownTransaction(async (client) => {
+          await second(client)
+          await client.query('commit')
+
+          return 'went through'
+        }).catch((error: unknown) => (error as Error).message)
+
+        await waitingFor(admin, holder, waiting)
+        await holder.query('commit')
+
+        return waiting
+      })
+
+    await pass()
+    await erase('staff_year', [staffYearKey(dennis.person, oldYear)]).expect(201)
+
+    // The file goes to an account without records, and the account writes
+    // one of the old year meanwhile: it waits and finds the file.
+    expect(
+      await meeting(
+        (client) => link(client, 'lena'),
+        (client) => record(client, 'lena'),
+      ),
+    ).toBe(sentence)
+    // The other way round: an account without a file writes a record of the
+    // old year, and the link that comes meanwhile waits and finds it.
+    expect(
+      await meeting(
+        (client) => record(client, 'bruno'),
+        (client) => link(client, 'bruno'),
+      ),
+    ).toBe(sentence)
+    // A time on call the office plans for the account meanwhile, the same.
+    expect(
+      await meeting(
+        (client) => link(client, 'kurt'),
+        async (client) => {
+          await as(client, 'bruno')
+          await client.query(
+            `insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note)
+               values ($1, 'kurt', $2, $3, 'gleichzeitig')`,
+            [north, `${o}-07-03 16:00+02`, `${o}-07-04 07:00+02`],
+          )
+        },
+      ),
+    ).toBe(sentence)
+
+    // The file is with the account of the last link, and nothing counts with
+    // it in the year that went.
+    expect(
+      await count('select count(*) as n from people where id = $1 and user_id = $2', [
+        dennis.person,
+        'kurt',
+      ]),
+    ).toBe(1)
+    expect(
+      await count(
+        `select (select count(*) from time_entries t where t.user_id = 'kurt' and t.chain_year = $1)
+              + (select count(*) from on_call_shifts s where s.user_id = 'kurt'
+                  and extract(year from (s.starts_at at time zone 'Europe/Berlin')) = $1) as n`,
+        [oldYear],
+      ),
+    ).toBe(0)
+  })
+
+  it('keeps a link that comes while the year goes waiting, and refuses it then (#1132)', async () => {
+    // With the years after, so that the file stays and the deletion leaves
+    // its row alone.
+    const dennis = await kraft()
+    const key = staffYearKey(dennis.person, oldYear)
+
+    await pass()
+    // An account without a file, with a record of the old year.
+    await admin.query(
+      `begin; set local app.user_id = 'lena';
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
+       values ('${north}', 'lena', 'work', '${String(oldYear)}-03-02 07:00+01', '${String(oldYear)}-03-02 15:00+01', 'ohne Akte');
+       commit;`,
+    )
+
+    const stopped = holdQuery((statement) => protocolLine.test(statement))
+    const asked = erase('staff_year', [key]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+
+    const linked = refusedWith(
+      database.forTenant({ tenantId: north, userId: 'lena' }, (tx) =>
+        tx.execute(sql`update people set user_id = 'lena' where id = ${dennis.person}`),
+      ),
+    )
+
+    await untilWaiting(stopped.holder(), 'advisory', 'update').finally(stopped.release)
+
+    expect((await asked).status).toBe(201)
+    expect(await linked).toBe(
+      `Das Jahr ${String(oldYear)} dieser Person ist nach dem Löschkonzept gelöscht. ` +
+        'Für dieses Jahr nimmt OpenGewerk nichts mehr an.',
+    )
+  })
+
+  it('leaves a year whose file was linked between the list and the lock for the next pass, which takes it whole (#1132)', async () => {
+    const dennis = await kraft(false)
+    const key = staffYearKey(dennis.person, oldYear)
+
+    // Without an account when the list is read: the year is due through its
+    // absences and days of leave, and the records of the account count with
+    // no file.
+    await admin.query(
+      `begin; set local app.user_id = 'bruno';
+       update people set user_id = null where id = '${dennis.person}';
+       commit;`,
+    )
+    await pass()
+
+    const stopped = holdQuery((_statement, values) =>
+      values.some((value) => typeof value === 'string' && value.startsWith('staff-year:')),
+    )
+    const asked = erase('staff_year', [key]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+    // Before the lock of the year, so the link goes through.
+    expect(
+      await refusedWith(
+        database.forTenant({ tenantId: north, userId: 'lena' }, (tx) =>
+          tx.execute(sql`update people set user_id = 'kurt' where id = ${dennis.person}`),
+        ),
+      ),
+    ).toBe('went through')
+    stopped.release()
+
+    const answer = await asked
+
+    expect(answer.status).toBe(409)
+    expect(refusal(answer)).toContain('nicht zum Löschen fällig')
+    expect(await count('select count(*) as n from erasures where record_id = $1', [key])).toBe(0)
+
+    // The next deletion reads the year with the account, and nothing of it
+    // stays behind.
+    await erase('staff_year', [key]).expect(201)
+    expect(
+      await count(
+        `select (select count(*) from time_entries where user_id = 'kurt' and chain_year = $1)
+              + (select count(*) from on_call_shifts where user_id = 'kurt'
+                  and extract(year from (starts_at at time zone 'Europe/Berlin')) = $1) as n`,
+        [oldYear],
+      ),
+    ).toBe(0)
+  })
+
   it('refuses a record of any of the four kinds in a year that went, and takes one of a year kept (#1043)', async () => {
     const dennis = await kraft(false)
     const o = String(oldYear)
