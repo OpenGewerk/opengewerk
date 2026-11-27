@@ -29,7 +29,6 @@ new=${1:-}
 repository=OpenGewerk/opengewerk
 identity="https://github.com/$repository/.github/workflows/release.yml@refs/tags"
 issuer=https://token.actions.githubusercontent.com
-work=${RUNNER_TEMP:-/tmp}/release-update
 summary=${GITHUB_STEP_SUMMARY:-/dev/null}
 base=http://127.0.0.1:23700
 statement='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
@@ -80,14 +79,18 @@ fi
 # Only on a machine without an installation of its own: the kit runs as the
 # compose project "opengewerk", and its start and the cleanup below would
 # take over the containers of one already there and remove its volumes.
-taken=$(docker ps --all --quiet --filter label=com.docker.compose.project=opengewerk)$(
-  docker volume ls --quiet --filter label=com.docker.compose.project=opengewerk) ||
+# Each question on its own, since an assignment keeps only the status of its
+# last substitution.
+containers=$(docker ps --all --quiet --filter label=com.docker.compose.project=opengewerk) ||
   fail "Docker sagt nicht, ob hier schon eine Installation läuft; das Update ist nicht geprüft."
-[ -z "$taken" ] ||
+volumes=$(docker volume ls --quiet --filter label=com.docker.compose.project=opengewerk) ||
+  fail "Docker sagt nicht, ob hier schon eine Installation läuft; das Update ist nicht geprüft."
+[ -z "$containers$volumes" ] ||
   fail "Auf dieser Maschine gibt es schon eine Installation im Projekt opengewerk. Das Skript läuft nur auf einer Maschine ohne sie, etwa einem Runner; geprüft ist nichts."
 
-rm -rf "$work"
-mkdir -p "$work"
+# A folder of this run, made new: nothing there before is removed.
+work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/release-update.XXXXXX") ||
+  fail "Es ließ sich kein Arbeitsordner anlegen; das Update ist nicht geprüft."
 kit="opengewerk-$previous.tar.gz"
 
 gh release download "v$previous" --repo "$repository" --dir "$work" \
@@ -99,7 +102,10 @@ cosign verify-blob "$work/$kit" --bundle "$work/$kit.sigstore.json" \
 tar --no-same-owner -xzf "$work/$kit" -C "$work"
 install="$work/opengewerk"
 
-# The service came with 0.9.0 (x-since in compose.yaml).
+# The service came with 0.9.0 (x-since in compose.yaml). A file that cannot
+# be read tells nothing about it.
+[ -r "$install/docker/compose.yaml" ] ||
+  fail "Im Paket von $previous fehlt docker/compose.yaml; das Update ist nicht geprüft."
 if ! grep -Eq '^  updater:' "$install/docker/compose.yaml"; then
   say "Die Fassung $previous hat noch keinen Dienst für Aktualisierungen, er kam mit 0.9.0. Ein Update über ihn lässt sich von ihr aus nicht prüfen."
   exit 0
@@ -136,8 +142,23 @@ report() {
 
 # The installation goes again however the script ends, after what a failure
 # reports, and with the status it ended with: also after a start that got
-# half way.
-trap 'ended=$?; compose down --volumes > /dev/null 2>&1 || true; exit "$ended"' EXIT
+# half way. The container of an update still running runs beside Compose and
+# goes first, since it holds the volume of the status and writes into the
+# installation. A cleanup that fails is said, and the status stays.
+cleanup() {
+  ended=$?
+  update_containers=$(docker ps --all --quiet --filter label=opengewerk.update.project=opengewerk 2>/dev/null) ||
+    update_containers=''
+  if [ -n "$update_containers" ]; then
+    # shellcheck disable=SC2086
+    docker rm --force $update_containers > /dev/null 2>&1 ||
+      printf '%s\n' 'Der Container des Updates ließ sich nicht entfernen.'
+  fi
+  compose down --volumes > /dev/null 2>&1 ||
+    printf '%s\n' 'Die Installation ließ sich nicht ganz abbauen.'
+  exit "$ended"
+}
+trap cleanup EXIT
 
 say "Update von $previous auf $new über den Dienst für Aktualisierungen."
 (cd "$install" && OPENGEWERK_ADDRESS="$base" sh docker/start.sh) ||
@@ -220,6 +241,12 @@ for _ in $(seq 1 180); do
   fi
   sleep 10
 done
+
+# Once more after the last wait: a run that ended during it ended in time.
+if [ "$state" = running ]; then
+  run=$(status_file run.json) || run=''
+  state=$(printf '%s\n' "$run" | jq -r .state 2>/dev/null) || state=running
+fi
 
 # Failed only where update.sh ran and said so. A run that did not end in half
 # an hour, a request nobody took and an end the updater names itself leave

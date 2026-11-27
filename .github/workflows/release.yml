@@ -53,8 +53,10 @@ jobs:
           set -eu
           version="${GITHUB_REF_NAME#v}"
 
-          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "Der Tag $GITHUB_REF_NAME hat nicht die Form v1.2.3." >&2
+          # Without leading zeros, as the updater and the check of the update
+          # after the release take a version (#1107).
+          if ! printf '%s' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "Der Tag $GITHUB_REF_NAME hat nicht die Form v1.2.3 ohne führende Nullen." >&2
             exit 1
           fi
 
