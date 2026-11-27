@@ -1186,8 +1186,8 @@ Netzfehler beim Holen von Paket oder Abbildern, was das Protokoll zeigt, lohnt
 vorher ein neuer Start des Jobs. Ließ sich die vorige Fassung nicht holen, prüfen,
 starten oder einrichten, bot ihr Dienst die neue Fassung nicht an, nahm er den
 Auftrag nicht an oder lehnte ihn ab, startete der Container des Laufs nicht oder
-verschwand er, wurde der Lauf in einer halben Stunde nicht fertig oder erreichte
-der Dienst GitHub nicht, sagt der Bericht, dass das Update nicht geprüft ist; dann
+verschwand er, wurde der Lauf in einer halben Stunde nicht fertig, nannte `/health`
+danach gar keine Fassung oder erreichte der Dienst GitHub nicht, sagt der Bericht, dass das Update nicht geprüft ist; dann
 ist der nächste Schritt, den Job neu zu starten. Vor einem Release lässt sich das nicht prüfen: Der
 Dienst nimmt nur ein Paket, das der Workflow "Release" seines Tags signiert hat.
 

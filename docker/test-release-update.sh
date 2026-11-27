@@ -246,12 +246,22 @@ case $state in
     ;;
 esac
 
-# Asked apart: in a pipeline sh takes the status of its last command, and jq
-# ends well on an empty answer.
-answer=$(curl --fail --silent --show-error --max-time 30 "$base/health") ||
-  report "/health antwortet nicht."
-running=$(printf '%s\n' "$answer" | jq -r .version) ||
-  report "/health antwortet nicht mit JSON."
+# What /health names, asked a few times: the application may start once more
+# after the run, and with the database away it answers 503 and still names
+# its version. Another version is a contradiction; none at all leaves the
+# update untried.
+running=''
+for _ in $(seq 1 30); do
+  answer=$(curl --silent --max-time 10 "$base/health") || answer=''
+  running=$(printf '%s\n' "$answer" | jq -r '.version // empty' 2>/dev/null) || running=''
+  [ -z "$running" ] || break
+  sleep 2
+done
+
+if [ -z "$running" ]; then
+  diagnose
+  fail "/health nannte nach dem Lauf keine Fassung; das Update ist nicht geprüft."
+fi
 [ "$running" = "$new" ] || report "/health nennt $running statt $new."
 
 say "Das Update von $previous auf $new über den Dienst für Aktualisierungen ging durch, /health nennt $new."
