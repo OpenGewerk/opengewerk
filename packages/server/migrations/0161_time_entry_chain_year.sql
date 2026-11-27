@@ -22,7 +22,8 @@
 -- (`staff-year:<key>`, `erasure.ts`), so that a record that comes while its
 -- year goes waits and is refused then. A lock of the year and not of the
 -- person: a record of another year, or one while the file of the person goes,
--- waits for nothing (#1033). Each fires before `stamp_sync_columns`, since
+-- waits for nothing (#1033). The records take it shared and the deletion
+-- alone, so that two writes of one year never wait for each other here. Each fires before `stamp_sync_columns`, since
 -- triggers of one event fire in the order of their names: that one takes the
 -- counter of the business, which the deletion takes after the lock of the
 -- year, and a record that held the counter while it waited for the lock would
@@ -76,8 +77,10 @@ CREATE FUNCTION "staff_year_stays_kept"(p_person uuid, p_year integer) RETURNS v
 AS $$
 BEGIN
 	-- The lock the deletion of the year takes first: a record that comes while
-	-- its year goes waits for the deletion, and then sees its line.
-	PERFORM pg_advisory_xact_lock(hashtextextended('staff-year:' || public.staff_year_key(p_person, p_year)::text, 0));
+	-- its year goes waits for the deletion, and then sees its line. Shared, so
+	-- that two writes of the same year pass each other; only the deletion
+	-- takes it alone.
+	PERFORM pg_advisory_xact_lock_shared(hashtextextended('staff-year:' || public.staff_year_key(p_person, p_year)::text, 0));
 
 	IF EXISTS (
 		SELECT 1 FROM public.erasures e

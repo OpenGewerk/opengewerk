@@ -942,6 +942,55 @@ describe('what of the staff is due (#846)', () => {
     expect(await count('select count(*) as n from erasures where record_id = $1', [key])).toBe(0)
   })
 
+  it('lets two writes into a year of the same person pass each other while nothing is deleted (#1043)', async () => {
+    const dennis = await kraft(false)
+    const y = String(thisYear)
+
+    // A transmission that wrote a customer first, and so holds the counter of
+    // the business; the office saves days of leave of the person meanwhile and
+    // waits for the counter; then the transmission writes a record of time of
+    // the same person and year. Each takes the lock of the year shared, so the
+    // record of time waits for nobody, the transmission ends, and the office
+    // goes on after it.
+    const transmitted = ownTransaction(async (transmission) => {
+      await transmission.query(
+        "select set_config('app.tenant_id', $1, true), set_config('app.user_id', 'kurt', true)",
+        [north],
+      )
+      await transmission.query(
+        "insert into customers (tenant_id, kind, name) values ($1, 'private', 'Familie Zähler')",
+        [north],
+      )
+
+      const saved = ownTransaction(async (office) => {
+        await office.query(
+          "select set_config('app.tenant_id', $1, true), set_config('app.user_id', 'bruno', true)",
+          [north],
+        )
+        await office.query(
+          `insert into leave_entitlements (tenant_id, person_id, year, entitled_half_days, carried_half_days)
+             values ($1, $2, $3, 60, 0)`,
+          [north, dennis.person, thisYear],
+        )
+        await office.query('commit')
+
+        return 'went through'
+      }).catch((error: unknown) => (error as Error).message)
+
+      await waitingFor(admin, transmission, saved)
+      await transmission.query(
+        `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
+           values ($1, 'kurt', 'work', $2, $3, 'heute')`,
+        [north, `${y}-01-05 07:00+01`, `${y}-01-05 15:00+01`],
+      )
+      await transmission.query('commit')
+
+      return saved
+    }).catch((error: unknown) => (error as Error).message)
+
+    expect(await transmitted).toBe('went through')
+  })
+
   it('refuses a record of any of the four kinds in a year that went, and takes one of a year kept (#1043)', async () => {
     const dennis = await kraft(false)
     const o = String(oldYear)
