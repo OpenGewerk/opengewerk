@@ -166,8 +166,11 @@ if ! printf '%s\n' "${available:-}" | jq -e --arg new "$new" '.latest == $new an
   if trouble=$(printf '%s\n' "${available:-}" | jq -er '.error // empty' 2>/dev/null); then
     fail "Der Dienst für Aktualisierungen erreichte GitHub nicht ($trouble); das Update ist nicht geprüft."
   fi
+  # What the updater of the release before offers is that release's doing:
+  # no request is written yet, and the update is untried.
   offered=$(printf '%s\n' "${available:-}" | jq -c '{latest, mode, reason}' 2>/dev/null) || offered=nichts
-  report "Der Dienst bietet $new nicht an: ${offered:-nichts}"
+  diagnose
+  fail "Der Dienst der Fassung $previous bietet $new nicht an (${offered:-nichts}); das Update ist nicht geprüft."
 fi
 
 # The request as the application writes it (update.ts): a file of its own,
