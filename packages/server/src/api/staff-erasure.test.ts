@@ -991,6 +991,19 @@ describe('what of the staff is due (#846)', () => {
            values ('${north}', '${dennis.person}', ${String(thisYear)}, 60, 0)`,
       ),
     ).toBe('went through')
+    // And so it is for the application role, in the name of the office: the
+    // trigger sees the line of the protocol whatever the person may read on
+    // the page.
+    expect(
+      await refusedWith(
+        database.forTenant({ tenantId: north, userId: 'bruno' }, (tx) =>
+          tx.execute(
+            sql.raw(`insert into absences (tenant_id, person_id, kind, state, first_day, last_day, note)
+              values ('${north}', '${dennis.person}', 'vacation', 'approved', '${o}-11-02', '${o}-11-03', 'vom Büro')`),
+          ),
+        ),
+      ),
+    ).toBe(sentence)
   })
 
   it('writes the day of a sickness as read again into its line of the protocol (#1033)', async () => {
