@@ -913,16 +913,21 @@ describe('what of the staff is due (#846)', () => {
     // deletion holds. The deletion waits for the counter first, and so it is
     // the one PostgreSQL breaks off.
     const transmitted = ownTransaction(async (client) => {
-      await client.query(
-        "select set_config('app.tenant_id', $1, true), set_config('app.user_id', 'kurt', true)",
-        [north],
-      )
-      await client.query(
-        `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
-           values ($1, 'kurt', 'work', $2, $3, 'heute')`,
-        [north, `${String(thisYear)}-01-05 07:00+01`, `${String(thisYear)}-01-05 15:00+01`],
-      )
-      stopped.release()
+      // Let go after the first write, and also when it fails: the request
+      // waits for the held statement, and the test for the request.
+      try {
+        await client.query(
+          "select set_config('app.tenant_id', $1, true), set_config('app.user_id', 'kurt', true)",
+          [north],
+        )
+        await client.query(
+          `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
+             values ($1, 'kurt', 'work', $2, $3, 'heute')`,
+          [north, `${String(thisYear)}-01-05 07:00+01`, `${String(thisYear)}-01-05 15:00+01`],
+        )
+      } finally {
+        stopped.release()
+      }
       await waitingFor(admin, client, asked)
       await client.query(
         `insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
