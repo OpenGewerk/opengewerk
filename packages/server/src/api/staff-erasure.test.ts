@@ -1003,6 +1003,50 @@ describe('what of the staff is due (#846)', () => {
     expect(await transmitted).toBe('went through')
   })
 
+  it('refuses to link a file to an account with records in a year of the file that went, and links one without (#1132)', async () => {
+    const dennis = await kraft(false)
+    const o = String(oldYear)
+    const sentence =
+      `Das Jahr ${o} dieser Person ist nach dem Löschkonzept gelöscht. ` +
+      'Für dieses Jahr nimmt OpenGewerk nichts mehr an.'
+    // As the application, in the name of whoever leads, as the page of the
+    // files writes it.
+    const linked = (userId: string) =>
+      refusedWith(
+        database.forTenant({ tenantId: north, userId: 'lena' }, (tx) =>
+          tx.execute(
+            sql.raw(`update people set user_id = '${userId}' where id = '${dennis.person}'`),
+          ),
+        ),
+      )
+
+    await pass()
+    await erase('staff_year', [staffYearKey(dennis.person, oldYear)]).expect(201)
+
+    // The account of the office has a record of time of the old year, from
+    // before any file named it.
+    await admin.query(
+      `begin; set local app.user_id = 'bruno';
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
+       values ('${north}', 'bruno', 'work', '${o}-03-02 07:00+01', '${o}-03-02 15:00+01', 'ohne Akte');
+       commit;`,
+    )
+
+    expect(await linked('bruno')).toBe(sentence)
+    // An account with nothing in that year is linked as before.
+    expect(await linked('lena')).toBe('went through')
+    expect(await linked('kurt')).toBe('went through')
+
+    // A time on call of the old year counts the same way.
+    await admin.query(
+      `insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note)
+       values ($1, 'lena', $2, $3, 'ohne Akte')`,
+      [north, `${o}-07-03 16:00+02`, `${o}-07-04 07:00+02`],
+    )
+
+    expect(await linked('lena')).toBe(sentence)
+  })
+
   it('refuses a record of any of the four kinds in a year that went, and takes one of a year kept (#1043)', async () => {
     const dennis = await kraft(false)
     const o = String(oldYear)
