@@ -743,6 +743,11 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
           }
 
           await tx.execute(sql`rollback to savepoint opengewerk_sync_try`)
+          // And let go of it: rolled back to, a savepoint stays open, and the
+          // next attempt opened its own inside it. Each attempt left one more
+          // level whose id took a place in the one table of locks of the
+          // instance until the transmission ended (GHSA-9f85-85g8-g7w3).
+          await tx.execute(sql`release savepoint opengewerk_sync_try`)
 
           if (attempt >= mostAttempts) {
             throw changedEveryTime(error)

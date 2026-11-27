@@ -1311,12 +1311,11 @@ describe('what of the staff is due (#846)', () => {
     expect((await asked).status).toBe(201)
   })
 
-  it('refuses a record of any of the four kinds outside the years 1970 to the next, and takes the year after this one (GHSA-9f85-85g8-g7w3)', async () => {
-    const dennis = await kraft(false)
+  it('refuses a record of time or a time on call outside the years 1970 to the next, and takes the year after this one (GHSA-9f85-85g8-g7w3)', async () => {
     const next = thisYear + 1
     const later = String(next + 1)
     const sentence = (year: number | string) =>
-      `OpenGewerk nimmt Arbeitszeit, Rufbereitschaft, Abwesenheit und Urlaub für die Jahre 1970 bis ${String(next)} an, nicht für ${String(year)}.`
+      `OpenGewerk nimmt Arbeitszeit und Rufbereitschaft für die Jahre 1970 bis ${String(next)} an, nicht für ${String(year)}.`
     const written = (statement: string) =>
       ownTransaction(async (client) => {
         await client.query("select set_config('app.user_id', 'kurt', true)")
@@ -1326,33 +1325,97 @@ describe('what of the staff is due (#846)', () => {
         return 'went through'
       }).catch((error: unknown) => (error as Error).message)
 
+    await kraft(false)
+
     expect(
       await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
          values ('${north}', 'kurt', 'work', '1969-06-02 07:00+01', '1969-06-02 15:00+01', 'zu früh')`),
     ).toBe(sentence(1969))
     expect(
-      await written(`insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note)
-         values ('${north}', 'kurt', '${later}-06-05 16:00+02', '${later}-06-06 07:00+02', 'zu spät')`),
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
+         values ('${north}', 'kurt', 'work', '${later}-06-02 07:00+02', '${later}-06-02 15:00+02', 'zu spät')`),
     ).toBe(sentence(later))
     expect(
-      await written(`insert into absences (tenant_id, person_id, kind, state, first_day, last_day, note)
-         values ('${north}', '${dennis.person}', 'vacation', 'approved', '1969-09-01', '1969-09-02', 'zu früh')`),
+      await written(`insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note)
+         values ('${north}', 'kurt', '1969-06-05 16:00+01', '1969-06-06 07:00+01', 'zu früh')`),
     ).toBe(sentence(1969))
     expect(
-      await written(`insert into leave_entitlements (tenant_id, person_id, year, entitled_half_days, carried_half_days)
-         values ('${north}', '${dennis.person}', ${later}, 60, 0)`),
+      await written(`insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note)
+         values ('${north}', 'kurt', '${later}-06-05 16:00+02', '${later}-06-06 07:00+02', 'zu spät')`),
     ).toBe(sentence(later))
 
     // The year after this one stays open, for what is planned ahead, and 1970
     // is the first year taken.
     expect(
-      await written(`insert into leave_entitlements (tenant_id, person_id, year, entitled_half_days, carried_half_days)
-         values ('${north}', '${dennis.person}', ${String(next)}, 60, 0)`),
+      await written(`insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note)
+         values ('${north}', 'kurt', '${String(next)}-06-05 16:00+02', '${String(next)}-06-06 07:00+02', 'geplant')`),
     ).toBe('went through')
     expect(
-      await written(`insert into on_call_shifts (tenant_id, user_id, starts_at, ends_at, note)
-         values ('${north}', 'kurt', '1970-06-05 16:00+01', '1970-06-06 07:00+01', 'früh genug')`),
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
+         values ('${north}', 'kurt', 'work', '1970-06-02 07:00+01', '1970-06-02 15:00+01', 'früh genug')`),
     ).toBe('went through')
+  })
+
+  it('asks the years of an account outside the bound without a lock when a file is linked to it, and refuses one of them that went (GHSA-9f85-85g8-g7w3)', async () => {
+    const dennis = await kraft(false)
+    const y = String(thisYear)
+
+    // Records of an account from before 0163, in three years it takes no
+    // more, and one of this year.
+    await admin.query(
+      `begin; set local app.user_id = 'lena';
+       alter table time_entries disable trigger chain_year_of_time_entries;
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year)
+       values ('${north}', 'lena', 'work', '1500-03-02 07:00+01', '1500-03-02 15:00+01', 'alt', 1500),
+              ('${north}', 'lena', 'work', '1501-03-02 07:00+01', '1501-03-02 15:00+01', 'alt', 1501),
+              ('${north}', 'lena', 'work', '1502-03-02 07:00+01', '1502-03-02 15:00+01', 'alt', 1502);
+       alter table time_entries enable trigger chain_year_of_time_entries;
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
+       values ('${north}', 'lena', 'work', '${y}-01-05 07:00+01', '${y}-01-05 15:00+01', 'heute');
+       commit;`,
+    )
+
+    const link = async (client: PoolClient) => {
+      await client.query(
+        "select set_config('app.tenant_id', $1, true), set_config('app.user_id', 'bruno', true)",
+        [north],
+      )
+      await client.query('update people set user_id = $1 where id = $2', ['lena', dennis.person])
+    }
+    // Held open after the link, to count what it took.
+    const locks = await ownTransaction(async (client) => {
+      await link(client)
+
+      const { rows } = await client.query<{ n: number }>(
+        `select count(*)::int as n from pg_locks
+          where locktype = 'advisory' and pid = pg_backend_pid()`,
+      )
+
+      return rows[0]?.n
+    })
+
+    // The lock of the account and the one of this year, none for the three
+    // years before 1970.
+    expect(locks).toBe(2)
+
+    // One of them went, as a deletion of it would have it.
+    await admin.query(
+      `begin; set local session_replication_role = replica;
+       insert into erasures (tenant_id, kind, record_id, label, automatic, redactions, created_by)
+       values ('${north}', 'staff_year', staff_year_key('${dennis.person}', 1501), 'Jahr 1501', false, 0, 'lena');
+       commit;`,
+    )
+
+    expect(
+      await ownTransaction(async (client) => {
+        await link(client)
+        await client.query('commit')
+
+        return 'went through'
+      }).catch((error: unknown) => (error as Error).message),
+    ).toBe(
+      'Das Jahr 1501 dieser Person ist nach dem Löschkonzept gelöscht. Für dieses Jahr nimmt OpenGewerk nichts mehr an.',
+    )
   })
 
   it('refuses a record of any of the four kinds in a year that went, and takes one of a year kept (#1043)', async () => {

@@ -744,18 +744,6 @@ describe('sending an outbox', () => {
   })
 
   /**
-   * A device that lost the answer sends its queue again, and the first
-   * transmission may still be at work when the second arrives. The receipt
-   * that makes a second transmission harmless is written at the end of the
-   * first, so the second found none, applied the operation again and then
-   * failed on that receipt: the device was told its transmission was refused
-   * over an operation the server had taken.
-   *
-   * The note is held until one transmission waits to write it and the other
-   * waits for the first. Sent off together and left to chance, one is through
-   * before the other asks, and nothing is ever at stake.
-   */
-  /**
    * Notes to make, then a change of a note the test holds: the transmission
    * waits at its last operation with everything before it taken, so what its
    * session holds then is all it took.
@@ -898,6 +886,18 @@ describe('sending an outbox', () => {
     }
   })
 
+  /**
+   * A device that lost the answer sends its queue again, and the first
+   * transmission may still be at work when the second arrives. The receipt
+   * that makes a second transmission harmless is written at the end of the
+   * first, so the second found none, applied the operation again and then
+   * failed on that receipt: the device was told its transmission was refused
+   * over an operation the server had taken.
+   *
+   * The note is held until one transmission waits to write it and the other
+   * waits for the first. Sent off together and left to chance, one is through
+   * before the other asks, and nothing is ever at stake.
+   */
   it('takes an operation once when its transmission arrives twice at the same moment', async () => {
     const { noteId } = await shelfWithNote('Keller', 'Zähler ablesen')
     const reworded = operation({
