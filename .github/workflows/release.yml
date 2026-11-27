@@ -377,7 +377,8 @@ jobs:
   # fetches the kit from there with its signature. Green as well, with a
   # sentence, where the release before has no updater (before 0.9.0) or a
   # newer release is the latest by now. Red with "ging nicht durch" means the
-  # run of the update failed or /health names another version: the release is
+  # run of the update failed or /health names another version, or the new one
+  # without getting ready: the release is
   # out, and an update to it from the office does not get through until a
   # correction is. Red with "nicht geprüft" means the job cannot tell whether
   # an update gets through, and running it again tries once more.

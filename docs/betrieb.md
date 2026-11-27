@@ -1173,12 +1173,14 @@ Ein dritter Job prüft danach ein echtes Update über diesen Dienst (#1107,
 Release-Seite, prüft seine Signatur, startet es, richtet die Instanz mit einem
 Betreiber ein, legt einen Auftrag für die neue Fassung in den Ordner
 `update-requests`, wie es die Anwendung tut, und wartet auf `run.json`. Grün ist
-er, wenn der Lauf durchging und `/health` die neue Fassung nennt. Hat die Fassung
+er, wenn der Lauf durchging und `/health` mit der neuen Fassung bereit ist
+(200). Hat die Fassung
 davor noch keinen Dienst für Aktualisierungen (vor 0.9.0) oder ist die neue nicht
 die neueste auf GitHub, etwa eine Korrektur einer älteren Reihe, sagt er das und
 endet grün, denn der Dienst bietet nur die neueste an. Ist er rot, weil der Lauf
 in einem seiner Schritte scheiterte oder `/health` danach eine andere Fassung
-nennt, sagt der Bericht „ging nicht durch“, mit dem Schritt, dem
+nennt oder mit der neuen nicht bereit wird (etwa 503),
+sagt der Bericht „ging nicht durch“, mit dem Schritt, dem
 Ende von `run.json` und dem Protokoll des Dienstes. Die Fassung ist dann schon
 erschienen, und ein Update aus dem Bereich der Instanz auf sie trägt nicht, bis
 eine Korrektur erschienen ist. Scheiterte der Lauf in Schritt 1 oder 2 an einem

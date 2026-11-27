@@ -296,15 +296,20 @@ case $state in
     ;;
 esac
 
-# What /health names, asked a few times: the application may start once more
-# after the run, and with the database away it answers 503 and still names
-# its version. Another version is a contradiction; none at all leaves the
-# update untried.
+# What /health says, asked a few times: the application may start once more
+# after the run, and while its database is away it answers 503 and still
+# names its version. Ready is 200 with the new version; update.sh asks only
+# for the version. Another version, or the new one that never gets ready, is
+# an update that did not go through; no answer at all leaves it untried. A
+# question that gets no answer keeps the answer before it.
 running=''
+code=''
 for _ in $(seq 1 30); do
-  answer=$(curl --silent --max-time 10 "$base/health") || answer=''
-  running=$(printf '%s\n' "$answer" | jq -r '.version // empty' 2>/dev/null) || running=''
-  [ -z "$running" ] || break
+  if answer=$(curl --silent --max-time 10 --write-out '\n%{http_code}' "$base/health"); then
+    code=$(printf '%s\n' "$answer" | tail -n 1)
+    running=$(printf '%s\n' "$answer" | sed '$d' | jq -r '.version // empty' 2>/dev/null) || running=''
+    [ "$code" != 200 ] || [ "$running" != "$new" ] || break
+  fi
   sleep 2
 done
 
@@ -313,5 +318,7 @@ if [ -z "$running" ]; then
   fail "/health nannte nach dem Lauf keine Fassung; das Update ist nicht geprüft."
 fi
 [ "$running" = "$new" ] || report "/health nennt $running statt $new."
+[ "$code" = 200 ] ||
+  report "/health nennt $new, antwortet aber mit $code statt 200: Die Anwendung wurde nach dem Update nicht bereit."
 
-say "Das Update von $previous auf $new über den Dienst für Aktualisierungen ging durch, /health nennt $new."
+say "Das Update von $previous auf $new über den Dienst für Aktualisierungen ging durch, /health meldet $new bereit."
