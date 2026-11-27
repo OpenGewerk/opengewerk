@@ -86,5 +86,6 @@ BEGIN
 	RETURN new;
 END;
 $$;--> statement-breakpoint
+DROP FUNCTION IF EXISTS "staff_year_stays_kept_within"(uuid, integer);--> statement-breakpoint
 DROP FUNCTION IF EXISTS "staff_year_within_bounds"(integer);--> statement-breakpoint
 DROP FUNCTION IF EXISTS "staff_year_in_bounds"(integer);

@@ -1354,6 +1354,76 @@ describe('what of the staff is due (#846)', () => {
       await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note)
          values ('${north}', 'kurt', 'work', '1970-06-02 07:00+01', '1970-06-02 15:00+01', 'früh genug')`),
     ).toBe('went through')
+
+    // A correction is bound by its own year, not by the year of its chain: an
+    // entry from before 0163 in a year outside the bound can still be put
+    // right, and a correction into such a year is refused.
+    await admin.query(
+      `begin; set local app.user_id = 'kurt';
+       alter table time_entries disable trigger chain_year_of_time_entries;
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year)
+       values ('${north}', 'kurt', 'work', '1500-03-02 07:00+01', '1500-03-02 15:00+01', 'vertippt', 1500);
+       alter table time_entries enable trigger chain_year_of_time_entries;
+       commit;`,
+    )
+
+    const { rows } = await admin.query<{ id: string }>(
+      "select id from time_entries where note = 'vertippt'",
+    )
+    const typo = rows[0]?.id ?? ''
+    const kept = await admin.query<{ id: string }>(
+      "select id from time_entries where note = 'früh genug'",
+    )
+
+    expect(
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+         values ('${north}', 'kurt', 'work', '${String(thisYear)}-03-02 07:00+01', '${String(thisYear)}-03-02 15:00+01', 'berichtigt', '${typo}')`),
+    ).toBe('went through')
+    expect(
+      await written(`insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, corrects_entry_id)
+         values ('${north}', 'kurt', 'work', '1969-06-02 07:00+01', '1969-06-02 15:00+01', 'zurück', '${kept.rows[0]?.id ?? ''}')`),
+    ).toBe(sentence(1969))
+  })
+
+  it('keeps a link that comes while a year outside the bound goes waiting at the row of the file, and refuses it then (GHSA-9f85-85g8-g7w3)', async () => {
+    const dennis = await kraft(false)
+    const key = staffYearKey(dennis.person, 1501)
+    const old = (who: string) =>
+      `select set_config('app.user_id', '${who}', true);
+       insert into time_entries (tenant_id, user_id, kind, started_at, ended_at, note, chain_year)
+       values ('${north}', '${who}', 'work', '1501-03-02 07:00+01', '1501-03-02 15:00+01', 'alt', 1501);`
+
+    // Records of 1501 from before 0163, of the account of the file and of
+    // another, last written then, so that the year of the file is due.
+    await admin.query(
+      `begin;
+       alter table time_entries disable trigger chain_year_of_time_entries;
+       ${old('kurt')}
+       ${old('lena')}
+       alter table time_entries enable trigger chain_year_of_time_entries;
+       set local session_replication_role = replica;
+       update time_entries set updated_at = '1501-03-02 15:00+01' where note = 'alt';
+       commit;`,
+    )
+    await pass()
+
+    const stopped = holdQuery((statement) => protocolLine.test(statement))
+    const asked = erase('staff_year', [key]).then((answer) => answer)
+
+    await reachedBefore(stopped, asked)
+
+    const linked = refusedWith(
+      database.forTenant({ tenantId: north, userId: 'lena' }, (tx) =>
+        tx.execute(sql`update people set user_id = 'lena' where id = ${dennis.person}`),
+      ),
+    )
+
+    await untilWaiting(stopped.holder()).finally(stopped.release)
+
+    expect((await asked).status).toBe(201)
+    expect(await linked).toBe(
+      'Das Jahr 1501 dieser Person ist nach dem Löschkonzept gelöscht. Für dieses Jahr nimmt OpenGewerk nichts mehr an.',
+    )
   })
 
   it('asks the years of an account outside the bound without a lock when a file is linked to it, and refuses one of them that went (GHSA-9f85-85g8-g7w3)', async () => {

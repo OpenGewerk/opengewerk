@@ -12,9 +12,17 @@
 --
 -- `staff_year_within_bounds` refuses such a year with a sentence, before the
 -- two triggers take any lock and before they look for the file. The year
--- after this one stays open for what is planned ahead. A link (0162) asks
--- every year an account has records in; one outside the bound, from before
--- this migration, it asks without the lock.
+-- after this one stays open for what is planned ahead.
+--
+-- A year outside the bound can come only from before this migration: the
+-- chain of a record of time written then, which a correction continues in
+-- the year it began, and the records of an account a file is linked to
+-- (0162). `staff_year_stays_kept_within` asks such a year without its lock,
+-- so that records from before cannot make a link or a transmission take a
+-- lock for each of their years. The deletion of such a year still meets
+-- both: it holds the row of the file (`holdStaffYear`), which a link waits
+-- for, and the record a correction points at, whose key the correction
+-- holds while it checks it.
 --
 -- **Fits the version before it**: it takes every record of a year within the
 -- bound as before. A device of the version before that sends one outside it
@@ -36,6 +44,19 @@ BEGIN
 	END IF;
 END;
 $$;--> statement-breakpoint
+CREATE FUNCTION "staff_year_stays_kept_within"(p_person uuid, p_year integer) RETURNS void
+	LANGUAGE plpgsql
+	SET search_path = pg_catalog, public, pg_temp
+AS $$
+BEGIN
+	IF public.staff_year_in_bounds(p_year) THEN
+		PERFORM public.staff_year_stays_kept(p_person, p_year);
+	ELSIF EXISTS (SELECT 1 FROM public.erasures e
+	               WHERE e.kind::text = 'staff_year' AND e.record_id = public.staff_year_key(p_person, p_year)) THEN
+		RAISE EXCEPTION 'Das Jahr % dieser Person ist nach dem Löschkonzept gelöscht. Für dieses Jahr nimmt OpenGewerk nichts mehr an.', p_year USING ERRCODE = 'OG001';
+	END IF;
+END;
+$$;--> statement-breakpoint
 CREATE OR REPLACE FUNCTION "time_entry_takes_its_chain_year"() RETURNS trigger
 	LANGUAGE plpgsql
 	SET search_path = pg_catalog, public, pg_temp
@@ -49,8 +70,9 @@ BEGIN
 		  WHERE t.tenant_id = new.tenant_id AND t.id = new.corrects_entry_id),
 		extract(year FROM (new.started_at AT TIME ZONE 'Europe/Berlin'))::integer);
 
-	-- Within the years OpenGewerk takes, before any lock (0163).
-	PERFORM public.staff_year_within_bounds(new.chain_year);
+	-- Its own year within the years OpenGewerk takes, before any lock (0163);
+	-- the year of its chain, for a correction, may be one from before.
+	PERFORM public.staff_year_within_bounds(extract(year FROM (new.started_at AT TIME ZONE 'Europe/Berlin'))::integer);
 
 	-- The account first, so that a link of a file to it waits for this record
 	-- or this record for the link, and the file below is the one after it.
@@ -62,7 +84,7 @@ BEGIN
 	FOR v_person IN SELECT p.id FROM public.people p
 	                 WHERE p.user_id = v_account
 	                 ORDER BY p.id LOOP
-		PERFORM public.staff_year_stays_kept(v_person, new.chain_year);
+		PERFORM public.staff_year_stays_kept_within(v_person, new.chain_year);
 	END LOOP;
 
 	RETURN new;
@@ -119,16 +141,7 @@ BEGIN
 		  FROM public.on_call_shifts s WHERE s.user_id = new.user_id
 		ORDER BY 1
 	LOOP
-		-- A year outside the bound comes only from before 0163, and asking it
-		-- takes no lock: a link would otherwise take one for every such year.
-		-- Such a year that went is refused all the same; only a deletion of
-		-- it at the very same moment is not waited for.
-		IF public.staff_year_in_bounds(v_year) THEN
-			PERFORM public.staff_year_stays_kept(new.id, v_year);
-		ELSIF EXISTS (SELECT 1 FROM public.erasures e
-		               WHERE e.kind::text = 'staff_year' AND e.record_id = public.staff_year_key(new.id, v_year)) THEN
-			RAISE EXCEPTION 'Das Jahr % dieser Person ist nach dem Löschkonzept gelöscht. Für dieses Jahr nimmt OpenGewerk nichts mehr an.', v_year USING ERRCODE = 'OG001';
-		END IF;
+		PERFORM public.staff_year_stays_kept_within(new.id, v_year);
 	END LOOP;
 
 	RETURN new;

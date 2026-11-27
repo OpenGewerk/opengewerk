@@ -789,8 +789,69 @@ describe('sending an outbox', () => {
   function reasonFor(answer: { body: unknown }, operationId: string): string | null | undefined {
     return (
       answer.body as { receipts: { operationId: string; reason: string | null }[] }
-    ).receipts.find((receipt) => receipt.operationId === operationId)?.reason
+    ).receipts.find((receipt) => receipt.operationId.toLowerCase() === operationId.toLowerCase())
+      ?.reason
   }
+
+  it('lets transmissions of the same tenant and operation wait for each other when one names them in capitals (GHSA-9f85-85g8-g7w3)', async () => {
+    // A large one held at its end, which holds its tenant alone; a small one
+    // names the tenant in capitals and sends one of its operations again.
+    {
+      const large = await heldAtTheEnd(lockedOneByOne + 5, 'Mandant groß')
+      const again = large.before[0]
+
+      try {
+        const sentLarge = sending(large.operations)
+
+        await waiting(1, sentLarge)
+
+        const sentSmall = push(
+          olga(north.id.toUpperCase() as TenantId),
+          again === undefined ? [] : [again],
+        ).then((answer) => answer)
+
+        await waiting(2, sentLarge, sentSmall)
+        await large.holder.query('commit')
+
+        expect((await sentLarge).status).toBe(201)
+
+        const small = await sentSmall
+
+        expect(small.status).toBe(201)
+        expect(reasonFor(small, again?.id ?? '')).toBe('already_seen')
+      } finally {
+        await large.holder.query('rollback')
+        large.holder.release()
+      }
+    }
+
+    // Two small ones, the second with the id of the operation in capitals.
+    {
+      const small = await heldAtTheEnd(0, 'Vorgang groß')
+      const [only] = small.operations
+
+      try {
+        const first = sending(small.operations)
+
+        await waiting(1, first)
+
+        const second = sending(only === undefined ? [] : [{ ...only, id: only.id.toUpperCase() }])
+
+        await waiting(2, first, second)
+        await small.holder.query('commit')
+
+        expect((await first).status).toBe(201)
+
+        const again = await second
+
+        expect(again.status).toBe(201)
+        expect(reasonFor(again, only?.id ?? '')).toBe('already_seen')
+      } finally {
+        await small.holder.query('rollback')
+        small.holder.release()
+      }
+    }
+  })
 
   it('takes one lock for a large transmission, however many operations it carries, and one more than its operations for a small one (GHSA-9f85-85g8-g7w3)', async () => {
     const held = async (count: number) => {

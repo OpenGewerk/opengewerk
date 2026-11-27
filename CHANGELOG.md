@@ -121,16 +121,16 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   hier ausnutzbar war, ist nicht belegt: `body-bytes.ts` begrenzt die Größe eines Anfragekörpers, bevor better-auth
   ihn prüft. Zwischen den beiden Fassungen von better-auth liegen nur Korrekturen, keine verlangt eine Änderung am Code.
 - Eine Übertragung des Abgleichs nimmt für ihre Vorgänge höchstens 65 Sperren statt bis zu 2000 (GHSA-9f85-85g8-g7w3):
-  bis 64 Vorgänge eine je Vorgang wie bisher, darüber eine für den ganzen Betrieb. Ein Vorgang, den der Abgleich
-  wiederholt, weil sein Datensatz sich zwischendurch geändert hat, lässt keine offene Ebene der Transaktion mehr zurück,
-  die bis zum Ende einen Platz unter den Sperren hielt. Arbeitszeit und Rufbereitschaft nimmt OpenGewerk nur noch für
-  die Jahre 1970 bis zum nächsten Jahr an, mit einem Satz, der das sagt (Migration 0163). Beim Verknüpfen einer Akte
-  prüft OpenGewerk Jahre des Zugangs außerhalb davon, die es nur aus der Zeit davor geben kann, ohne Sperre. Warum: Alle
-  Sitzungen einer Instanz teilen sich eine Tabelle für Sperren. Seit 0161 nimmt jeder Eintrag des Personals dazu eine
-  Sperre für sein Jahr, und die Jahre hatten keine Grenze. Mehrere große Übertragungen zugleich konnten diese Tabelle
-  füllen, und dann scheiterte jede andere Sitzung der Instanz, die eine Sperre brauchte. Einschränkung: Wird ein solches
-  altes Jahr außerhalb der Grenze genau in dem Moment gelöscht, in dem die Akte verknüpft wird, wartet die Verknüpfung
-  nicht darauf.
+  bis 64 Vorgänge eine je Vorgang wie bisher, darüber eine für den ganzen Betrieb, und eine Kennung in Großbuchstaben
+  trifft dieselbe Sperre. Ein Vorgang, den der Abgleich wiederholt, weil sein Datensatz sich zwischendurch geändert hat,
+  lässt keine offene Ebene der Transaktion mehr zurück, die bis zum Ende einen Platz unter den Sperren hielt.
+  Arbeitszeit und Rufbereitschaft nimmt OpenGewerk nur noch für die Jahre 1970 bis zum nächsten Jahr an, mit einem Satz,
+  der das sagt (Migration 0163). Ein Eintrag aus der Zeit davor in einem Jahr außerhalb davon lässt sich weiter
+  berichtigen, und beim Verknüpfen einer Akte prüft OpenGewerk solche Jahre ohne Sperre; das Löschen eines solchen
+  Jahres hält dafür die Akte. Warum: Alle Sitzungen einer Instanz teilen sich eine Tabelle für Sperren. Seit 0161 nimmt
+  jeder Eintrag des Personals dazu eine Sperre für sein Jahr, und die Jahre hatten keine Grenze. Mehrere große
+  Übertragungen zugleich konnten diese Tabelle füllen, und dann scheiterte jede andere Sitzung der Instanz, die eine
+  Sperre brauchte.
 
 ## [0.9.0] - 2026-11-25
 

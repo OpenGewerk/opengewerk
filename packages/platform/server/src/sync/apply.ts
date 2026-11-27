@@ -501,13 +501,14 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
     // asks once the first is through and is told what became of it. A large
     // transmission holds its tenant alone instead (`applyOperations`).
     //
-    // The lock is on the id, in a key space of its own beside the named locks
-    // of the foundation. Two transmissions take their locks in the same
+    // The lock is on the id, written the one way a uuid is, so that the same
+    // id in capitals meets it too, in a key space of its own beside the named
+    // locks of the foundation. Two transmissions take their locks in the same
     // order, the one of the outbox they came from (`inOutboxOrder`), so they
     // do not wait for each other in a circle.
     if (locking === 'each') {
       await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtext('opengewerk.sync_operation'), hashtext(${sent.id}::text))`,
+        sql`select pg_advisory_xact_lock(hashtext('opengewerk.sync_operation'), hashtext((${sent.id})::uuid::text))`,
       )
     }
 
@@ -804,8 +805,8 @@ export function serverSync<Sender>(application: SyncApplication<Sender>): Server
 
       await tx.execute(
         locking === 'tenant'
-          ? sql`select pg_advisory_xact_lock(hashtext('opengewerk.sync_transmission'), hashtext(${tenantId}::text))`
-          : sql`select pg_advisory_xact_lock_shared(hashtext('opengewerk.sync_transmission'), hashtext(${tenantId}::text))`,
+          ? sql`select pg_advisory_xact_lock(hashtext('opengewerk.sync_transmission'), hashtext((${tenantId})::uuid::text))`
+          : sql`select pg_advisory_xact_lock_shared(hashtext('opengewerk.sync_transmission'), hashtext((${tenantId})::uuid::text))`,
       )
 
       if (application.beforeOperations) {
