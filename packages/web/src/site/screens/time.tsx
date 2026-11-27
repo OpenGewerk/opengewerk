@@ -545,7 +545,9 @@ function EntryForm({ day, entry }: { readonly day: string; readonly entry?: Reco
           label="Tag"
           type="date"
           value={on}
-          min={`${String(firstTimeEntryYear)}-01-01`}
+          // Only for a new entry: a correction may stay in the year of an
+          // entry from before, which `recordEntry` decides.
+          min={entry === undefined ? `${String(firstTimeEntryYear)}-01-01` : undefined}
           max={today()}
           onChange={(event) => {
             setOn(event.target.value)

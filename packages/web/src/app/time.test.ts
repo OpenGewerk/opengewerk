@@ -145,4 +145,28 @@ describe('a stopwatch that stops', () => {
 
     client.stop()
   })
+
+  it('keeps a year out of the outbox that a clock set wrong gives it (GHSA-9f85-85g8-g7w3)', async () => {
+    const client = await SyncClient.start({
+      store: await openLocalStore('zeiten-falsche-uhr'),
+      transport: new TestServer(),
+      writer: new TestServer(),
+      deviceId: 'geraet',
+      entities: ['time_entries'],
+      onSignedOut: () => {},
+    })
+    const timing = { client, me: 'u-1', consent: false }
+
+    await startStopwatch(
+      { ...timing, now: new Date('1969-06-02T05:00:00.000Z') },
+      { kind: 'work', jobId: null },
+    )
+
+    expect(await stopStopwatch({ ...timing, now: new Date('1969-06-02T06:00:00.000Z') })).toBe(
+      'OpenGewerk nimmt Arbeitszeit für die Jahre 1970 bis 1970 an, nicht für 1969.',
+    )
+    expect(client.status().pending).toBe(0)
+
+    client.stop()
+  })
 })

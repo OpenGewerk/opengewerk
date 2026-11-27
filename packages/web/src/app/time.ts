@@ -244,7 +244,9 @@ export async function stopStopwatch({
     startedAt: onTheMinute(new Date(running.startedAt)),
     endedAt: onTheMinute(now),
   }
-  const problem = timeEntryProblem(values)
+  // The year too: a clock of the device set wrong would send one the server
+  // refuses, and that holds the outbox up (GHSA-9f85-85g8-g7w3).
+  const problem = timeEntryProblem(values) ?? timeEntryYearProblem(values.startedAt, now)
 
   if (problem) {
     return problem
