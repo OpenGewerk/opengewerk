@@ -197,9 +197,10 @@ export const syncPolicies: Readonly<Record<string, SyncPolicy>> = {
    * network and never changed afterwards: `change: 'never'` with no route
    * behind it and a database that grants reading and inserting. A correction
    * is a new entry that names the old one. Whose time it is, the server writes
-   * from the request, so `userId` is its own.
+   * from the request, so `userId` is its own, and so is the year of its chain
+   * of corrections, which the database writes (opengewerk#1044).
    */
-  time_entries: { create: true, change: 'never', reserved: ['userId'] },
+  time_entries: { create: true, change: 'never', reserved: ['userId', 'chainYear'] },
   /**
    * A note from the site about a job (#220), written without a network where
    * the work is and never changed afterwards, like a time entry: `change:

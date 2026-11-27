@@ -1128,6 +1128,13 @@
       "when": 1795714677427,
       "tag": "0160_contract_rate_day",
       "breakpoints": true
+    },
+    {
+      "idx": 161,
+      "version": "7",
+      "when": 1795765103149,
+      "tag": "0161_time_entry_chain_year",
+      "breakpoints": true
     }
   ]
 }

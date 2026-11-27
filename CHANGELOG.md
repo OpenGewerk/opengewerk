@@ -40,6 +40,18 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Ein Lohnjahr, das nach dem Löschkonzept gelöscht ist, nimmt keine Arbeitszeit, Rufbereitschaft oder Abwesenheit und
+  keinen Urlaubsanspruch mehr an, auch nicht, wenn ein solcher Eintrag in das Jahr verschoben wird (#1043). Kommt er,
+  während das Jahr gelöscht wird, wartet er, bis das Löschen durch ist, und wird dann abgelehnt. Hat eine Übertragung
+  vorher schon etwas anderes geschrieben, bricht PostgreSQL eins von beiden ab: Das Löschen löscht dann nichts und sagt
+  das, eine Übertragung kommt wieder. Warum: Das Jahr hat genau eine Zeile im Protokoll, und ein Eintrag, der danach
+  dazukam, ließ sich nie mehr löschen. Einschränkung: Verknüpft das Büro die Akte danach mit einem Zugang, der in diesem
+  Jahr schon Arbeitszeit oder Rufbereitschaft hat, zählen diese noch zum gelöschten Jahr (#1132).
+- Eine Korrektur der Arbeitszeit zählt im Löschkonzept zum Jahr des Eintrags, mit dem ihre Kette beginnt, auch hinter
+  dem hundertsten Glied (#1044). Jeder Zeiteintrag hält dieses Jahr jetzt selbst, und die Migration trägt es für
+  bestehende Einträge nach, ohne zu ändern, wann sie erfasst wurden. Warum: Die Datenbank suchte den ersten Eintrag nur
+  hundert Glieder weit. Eine längere Kette aus einer früheren Fassung zählte dahinter zum Jahr eines anderen Glieds, und
+  zwei Jahre konnten sich gegenseitig festhalten, sodass keines gelöscht wurde.
 - Ob eine Rechnung die Angabe „Versteuerung nach vereinnahmten Entgelten“ trägt, richtet sich nach der Erklärung
   zur Ist-Versteuerung am Tag der Leistung, wie der Steuersatz, im PDF wie in der E-Rechnung (#1038). Bisher zählte
   das Belegdatum. Warum: Ein Umsatz bleibt so besteuert, wie es für seinen Zeitraum galt. Wechselt ein Betrieb zum

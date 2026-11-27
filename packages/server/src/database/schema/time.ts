@@ -53,6 +53,9 @@ export const timeEntries = pgTable(
     endedAt: timestamp('ended_at', { withTimezone: true }).notNull(),
     note: text('note'),
     correctsEntryId: reference<'time-entry'>('corrects_entry_id'),
+    // Written by the trigger `chain_year_of_time_entries` (0161,
+    // opengewerk#1044), from the entry it corrects.
+    chainYear: integer('chain_year').notNull(),
     withdrawn: boolean('withdrawn').notNull().default(false),
     startLatitudeMicro: integer('start_latitude_micro'),
     startLongitudeMicro: integer('start_longitude_micro'),
@@ -88,6 +91,8 @@ export const timeEntries = pgTable(
     ),
     index('time_entries_user_idx').on(table.tenantId, table.userId, table.startedAt),
     index('time_entries_job_idx').on(table.tenantId, table.jobId),
+    // The years of the deletion concept, read every minute (opengewerk#1044).
+    index('time_entries_chain_year_idx').on(table.tenantId, table.userId, table.chainYear),
   ],
 )
 
