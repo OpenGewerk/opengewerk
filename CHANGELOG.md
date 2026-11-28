@@ -40,7 +40,7 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
-- Die Leiste des Abgleichs auf der Baustelle zeigt bei wartenden Änderungen wieder, was ein Server nach seinem ersten
+- Die Leiste des Abgleichs auf der Baustelle zeigt bei wartenden Änderungen auch, was ein Server nach seinem ersten
   Satz sagt, und die Zahl dahinter (#1139). Warum: Sie setzte die Zahl an die Stelle des Rests, und von „Gleichzeitig
   wurde etwas anderes gespeichert. Geändert ist nichts, bitte noch einmal versuchen.“ blieb nur der erste Satz stehen.
   Nur bei „Keine Verbindung.“ steht die Zahl weiter allein, weil der zweite Satz dort dasselbe sagt.
