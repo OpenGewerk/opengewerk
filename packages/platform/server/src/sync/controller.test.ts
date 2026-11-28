@@ -1044,7 +1044,7 @@ describe('sending an outbox', () => {
     )
   })
 
-  it('names no operation over a transmission the database broke off, so that the device sends it again (opengewerk#1132)', async () => {
+  it('names no operation over a transmission the database broke off, so that the device keeps it for its next round (opengewerk#1132)', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const answer = await push(olga(), [
       operation({ entity: 'notes', patches: [{ field: 'text', to: 'Ring' }] }),
