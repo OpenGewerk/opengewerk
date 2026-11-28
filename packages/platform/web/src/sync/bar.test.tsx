@@ -244,6 +244,56 @@ describe('the bar above every screen', () => {
     )
   })
 
+  it('keeps what a server says after its first sentence beside the count on site (opengewerk#1139)', async () => {
+    const server = new Quiet()
+    const client = await withClient(server)
+    const sentence =
+      'Gleichzeitig wurde etwas anderes gespeichert. Geändert ist nichts, bitte noch einmal versuchen.'
+
+    // A transmission the database broke off: a 503 that names no operation.
+    server.push = () =>
+      Promise.reject(
+        new RequestRefused(503, sentence, {
+          statusCode: 503,
+          message: sentence,
+          error: 'Service Unavailable',
+        }),
+      )
+
+    await client.create('shelves', { name: 'Hall', kind: 'wood' })
+    await client.synchronise()
+
+    expect(client.status().troubleKind).toBe('exchange_refused')
+
+    const { unmount } = render(
+      <Shell entry="site">
+        <SyncProvider client={client}>
+          <SyncStatusBar />
+        </SyncProvider>
+      </Shell>,
+    )
+
+    expect(screen.getByText('Gleichzeitig wurde etwas anderes gespeichert.')).toBeDefined()
+    expect(
+      screen.getByText(
+        'Geändert ist nichts, bitte noch einmal versuchen. 1 Änderung auf dem Gerät.',
+      ),
+    ).toBeDefined()
+    unmount()
+
+    render(
+      <Shell entry="office">
+        <SyncProvider client={client}>
+          <SyncStatusBar />
+        </SyncProvider>
+      </Shell>,
+    )
+
+    expect(screen.getByRole('status').textContent).toContain(
+      `1 Änderung auf dem Gerät. ${sentence}`,
+    )
+  })
+
   it('tries again when somebody asks it to', async () => {
     const server = new Quiet()
     const client = await withClient(server)

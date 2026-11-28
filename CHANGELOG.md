@@ -40,6 +40,10 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Die Leiste des Abgleichs auf der Baustelle zeigt bei wartenden Änderungen wieder, was ein Server nach seinem ersten
+  Satz sagt, und die Zahl dahinter (#1139). Warum: Sie setzte die Zahl an die Stelle des Rests, und von „Gleichzeitig
+  wurde etwas anderes gespeichert. Geändert ist nichts, bitte noch einmal versuchen.“ blieb nur der erste Satz stehen.
+  Nur bei „Keine Verbindung.“ steht die Zahl weiter allein, weil der zweite Satz dort dasselbe sagt.
 - Ein Lohnjahr, das nach dem Löschkonzept gelöscht ist, nimmt keine Arbeitszeit, Rufbereitschaft oder Abwesenheit und
   keinen Urlaubsanspruch mehr an, auch nicht, wenn ein solcher Eintrag in das Jahr verschoben wird (#1043). Kommt er,
   während das Jahr gelöscht wird, wartet er, bis das Löschen durch ist, und wird dann abgelehnt. Hat eine Übertragung
