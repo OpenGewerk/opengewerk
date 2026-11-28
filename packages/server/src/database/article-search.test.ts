@@ -210,8 +210,9 @@ describe('the search table', () => {
 /**
  * A catalogue the size of a wholesaler's, as #461 measured it: 700,000
  * articles of one business with a supplier's number each, and a few of
- * another. Written past the triggers, then copied over the way 0103 copies
- * what exists, so that it takes seconds and not minutes.
+ * another. Written past the triggers and the checks of the foreign keys, then
+ * copied over the way 0103 copies what exists, with the trigram index built
+ * once at the end, so that it takes seconds and not minutes (#1135).
  */
 describe('a catalogue of 700,000 articles', () => {
   const catalogue = 700_000
@@ -221,6 +222,12 @@ describe('a catalogue of 700,000 articles', () => {
     const client = await admin.connect()
 
     try {
+      // Off for the whole set-up: the triggers that write the search table,
+      // and the checks of the foreign keys, which are triggers as well. With
+      // them on, each of the 1.4 million rows of the search table looked up
+      // and locked its article and its supplier's number one at a time, and
+      // that was most of the five minutes a runner of the CI ran out of. Every
+      // row is copied from the rows it points to, so no check could fail.
       await client.query(`set session_replication_role = replica`)
       await client.query(
         `insert into articles (tenant_id, number, designation, unit, ean, group_of_goods)
@@ -238,7 +245,20 @@ describe('a catalogue of 700,000 articles', () => {
          select tenant_id, id, $2, 'R' || number, false from articles where tenant_id = $1 and number ~ '^[0-9]{7}$'`,
         [north.id, supplier],
       )
-      await client.query(`set session_replication_role = origin`)
+      // Kept up row by row, the trigram index cost about as much again as the
+      // copy itself; built once from what is there, it takes a few seconds.
+      // Its definition comes from the database, so that the plan below is
+      // checked against the index the migrations made.
+      const { rows: indexes } = await client.query<{ definition: string }>(
+        `select pg_get_indexdef('article_search_text'::regclass) as definition`,
+      )
+      const index = indexes[0]?.definition
+
+      if (index === undefined) {
+        throw new Error('article_search_text is not there')
+      }
+
+      await client.query('drop index article_search_text')
       await client.query(
         `insert into article_search (id, tenant_id, article_id, text)
          select id, tenant_id, id, lower(number || ' ' || designation || coalesce(' ' || ean, ''))
@@ -252,6 +272,7 @@ describe('a catalogue of 700,000 articles', () => {
           where coalesce(supplier_number, '') <> ''
             and not exists (select 1 from article_search s where s.id = sa.id)`,
       )
+      await client.query(index)
       await client.query('vacuum analyze articles, supplier_articles, article_search')
     } finally {
       await client.query(`set session_replication_role = origin`)

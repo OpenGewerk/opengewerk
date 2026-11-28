@@ -40,6 +40,12 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
 
 ### Behoben
 
+- Der Test mit dem Katalog von 700.000 Artikeln baut ihn in einem Drittel der Zeit auf (#1135). Warum: In der CI
+  überschritt sein Aufbau das Limit von fünf Minuten. Jede der 1,4 Millionen Zeilen der Suchtabelle prüfte und sperrte
+  über die Fremdschlüssel einzeln ihren Artikel und, wo sie eine hat, die Nummer ihres Lieferanten, und der
+  Trigramm-Index wurde Zeile für Zeile fortgeschrieben. Jetzt läuft auch diese Kopie an den Triggern vorbei, und den Index baut der Test am Ende
+  in einem Zug, nach der Definition aus den Migrationen. Auf der Arbeitsstation dauert der Aufbau 31 statt 102
+  Sekunden. Was der Test prüft, bleibt gleich.
 - Die Leiste des Abgleichs auf der Baustelle zeigt bei wartenden Änderungen auch, was ein Server nach seinem ersten
   Satz sagt, und die Zahl dahinter (#1139). Warum: Sie setzte die Zahl an die Stelle des Rests, und von „Gleichzeitig
   wurde etwas anderes gespeichert. Geändert ist nichts, bitte noch einmal versuchen.“ blieb nur der erste Satz stehen.
