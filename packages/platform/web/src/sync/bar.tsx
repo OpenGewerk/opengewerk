@@ -119,24 +119,21 @@ export function SyncStatusBar({
     )
 
     // The office says the count first, as one line; the site names the state
-    // in its first sentence and puts the count under it, as the two boards
-    // draw it. Without a count, whatever else the reason says goes there, and
-    // the reason to load the page again goes there before any count.
+    // in its first sentence and puts the rest of the reason and the count
+    // under it, as the two boards draw it. Only a missing connection loses its
+    // second sentence beside a count, which says the same thing; whatever else
+    // a reason says stays, such as a server's "Geändert ist nichts, bitte noch
+    // einmal versuchen." after it broke a transmission off (opengewerk#1139).
     const cut = why.indexOf('. ')
     const head = cut < 0 ? why : why.slice(0, cut + 1)
     const rest = cut < 0 ? null : why.slice(cut + 2)
+    const below =
+      status.troubleKind === 'unreachable'
+        ? (waiting ?? rest)
+        : [rest, waiting].filter((part) => part !== null).join(' ') || null
 
     return entry === 'site' ? (
-      <Strip
-        tone="wait"
-        icon={outdated ? RefreshCw : WifiOff}
-        detail={
-          outdated
-            ? [rest, waiting].filter((part) => part !== null).join(' ') || null
-            : (waiting ?? rest)
-        }
-        actions={retry}
-      >
+      <Strip tone="wait" icon={outdated ? RefreshCw : WifiOff} detail={below} actions={retry}>
         {head}
       </Strip>
     ) : (
