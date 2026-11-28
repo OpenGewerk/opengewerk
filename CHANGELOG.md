@@ -55,8 +55,8 @@ die Versionsnummern folgen der [Semantischen Versionierung](https://semver.org/l
   ließ.
 - Bricht die Datenbank eine Anfrage ab, weil sie sich mit einer anderen getroffen hat, antwortet der Server mit 503 und
   „Gleichzeitig wurde etwas anderes gespeichert. Geändert ist nichts, bitte noch einmal versuchen.“ statt mit einer 500
-  ohne Satz (#1132). Ein Gerät behält eine solche Übertragung wie vorher im Postausgang, zeigt den Satz in seiner Leiste
-  und sendet sie mit der nächsten Runde, wenn das Netz wiederkommt, jemand „Erneut versuchen“ drückt oder die nächste
+  ohne Satz (#1132). Ein Gerät behält eine solche Übertragung wie vorher im Postausgang und sendet sie mit der
+  nächsten Runde, wenn das Netz wiederkommt, jemand „Erneut versuchen“ drückt oder die nächste
   Änderung wartet; von selbst sendet es sie nicht noch einmal (#1138). Warum: Mit #1132 kann eine Verknüpfung
   im Büro mit einer Übertragung desselben Zugangs so aufeinandertreffen, und eine 500 sagte weder, dass nichts geändert
   ist, noch, dass ein zweiter Versuch reicht.

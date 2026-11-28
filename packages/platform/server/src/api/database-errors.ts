@@ -30,10 +30,10 @@ const rowLevelSecurity = '42501'
  * one, and PostgreSQL broke it off and took back all it wrote. Nothing was
  * wrong with the request, and the same one again goes through: a 503 with a
  * sentence for the person who sent it. It names no operation, so a device
- * does not keep one as refused: what it sent stays in its outbox, the strip
- * shows the sentence, and the next round sends it, once the network comes
- * back, the button is pressed or the next change waits (opengewerk#1138).
- * Nothing sends it again from here by itself.
+ * does not keep one as refused: what it sent stays in its outbox, and the
+ * next round sends it, once the network comes back, the button is pressed or
+ * the next change waits (opengewerk#1138). Nothing sends it again from here
+ * by itself.
  */
 const brokenOffCodes = new Set(['40P01', '40001'])
 
